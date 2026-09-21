@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  connectionCompany,
   connectionCreatedByLine,
+  connectionDomainsLine,
   connectionGrantsLine,
   connectionHostsLine,
+  connectionInstrument,
   connectionSpendCap,
   connectionsForViewer,
   connectorDescription,
@@ -20,6 +23,7 @@ import {
   ledgerBytes,
   ledgerStamp,
   resolveGoogleConnectTarget,
+  serviceMonogram,
   type ConnectionDetailView,
   type WorkbenchConnector,
   type WorkbenchConnectorId,
@@ -45,7 +49,7 @@ const view: WorkbenchView = {
     {
       ref: 'cred_vercel',
       name: 'Vercel',
-      kind: 'token',
+      service: 'vercel',
       hosts: ['api.vercel.com'],
       state: 'active',
       ownerId: VIEWER_A,
@@ -53,7 +57,7 @@ const view: WorkbenchView = {
     {
       ref: 'cred_google',
       name: 'Google',
-      kind: 'session',
+      service: 'google',
       hosts: [],
       state: 'active',
       ownerId: VIEWER_A,
@@ -61,7 +65,7 @@ const view: WorkbenchView = {
     {
       ref: 'cred_slack',
       name: 'Slack',
-      kind: 'token',
+      service: 'slack',
       hosts: ['slack.com'],
       state: 'error',
       ownerId: VIEWER_B,
@@ -145,6 +149,63 @@ const detail: ConnectionDetailView = {
   spendCap: '$25 cap',
   ledger: [],
 };
+
+describe('key row copy', () => {
+  it('puts the domains under the name and leaves a hostless key no quiet line', () => {
+    expect(connectionDomainsLine(view.connections[0])).toBe('api.vercel.com');
+    expect(connectionDomainsLine(view.connections[1])).toBe('');
+  });
+
+  it('names the company from the service the vault reports', () => {
+    expect(connectionCompany(view.connections[0])).toBe('vercel');
+    expect(connectionCompany(view.connections[1])).toBe('google');
+  });
+
+  it('keeps the service over a label and an address that disagree with it', () => {
+    // The case the label would get wrong: a GitHub key someone called
+    // `Work key`, with no hosts to read either.
+    const labelled = { ...view.connections[0], name: 'Work key', service: 'github', hosts: [] };
+    expect(connectionCompany(labelled)).toBe('github');
+    expect(serviceMonogram(connectionCompany(labelled))).toBe('G');
+    // And an address that is not its company's name at all.
+    const proxied = { ...view.connections[0], service: 'openai', hosts: ['10.0.0.7'] };
+    expect(connectionCompany(proxied)).toBe('openai');
+  });
+
+  it('falls back to the host, then the name, only when no service is reported', () => {
+    const noService = (hosts: string[], name = 'Vercel') => ({
+      ...view.connections[0],
+      name,
+      service: undefined,
+      hosts,
+    });
+    expect(connectionCompany(noService(['api.vercel.com']))).toBe('vercel');
+    expect(connectionCompany(noService(['slack.com']))).toBe('slack');
+    // A two-level suffix is not the company: `co.uk` used to read as `co`.
+    expect(connectionCompany(noService(['api.example.co.uk']))).toBe('example');
+    // An address names no company — the key's own name says more.
+    expect(connectionCompany(noService(['127.0.0.1'], 'Home box'))).toBe('Home box');
+    expect(connectionCompany(noService([], 'Home box'))).toBe('Home box');
+  });
+
+  it('carries the company letter on the mark, and never an empty plate', () => {
+    expect(serviceMonogram('vercel')).toBe('V');
+    expect(serviceMonogram('1password')).toBe('1');
+    expect(serviceMonogram('@slack')).toBe('S');
+    expect(serviceMonogram('')).toBe('?');
+    // One glyph, always: `ß` upper-cases to `SS`.
+    expect(serviceMonogram('ßeta')).toBe('S');
+  });
+
+  it('reads a live key and a broken one apart, each with its dot', () => {
+    expect(connectionInstrument('active')).toEqual({ value: 'active', glyph: 'live' });
+    expect(connectionInstrument('error')).toEqual({
+      value: 'error',
+      glyph: 'failed',
+      valueTone: 'danger',
+    });
+  });
+});
 
 describe('connection detail copy', () => {
   it('joins hosts and dashes an empty session list', () => {

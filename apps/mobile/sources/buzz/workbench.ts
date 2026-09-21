@@ -61,8 +61,17 @@ export type WorkbenchConnector = {
 export type WorkbenchConnection = {
   ref: string;
   name: string;
-  /** Vault kind: `session`, `token`, … */
-  kind: string;
+  /**
+   * The service this key is FOR, exactly as the vault reports it (`vercel`,
+   * `github`, `google`) — `workspace_connections.service`, carried by the
+   * read DTO's own `service` field. Absent when the vault reports none.
+   *
+   * It was called `kind` and documented as the vault kind (`session`,
+   * `token`), which is not what `workbench-source.ts` has ever filled it
+   * with. A reader who believed the old name had to guess the company from
+   * somewhere else; this is the authority, so it is named for what it is.
+   */
+  service?: string;
   hosts: readonly string[];
   state: 'active' | 'error';
   /** Which human provisioned the connection (sovereignty owner). */
@@ -372,6 +381,81 @@ export function isConnectorIdentityId(identityId: string | undefined | null): bo
 /** `api.vercel.com` joined, or `—` when a session kind has no host list. */
 export function connectionHostsLine(connection: WorkbenchConnection): string {
   return connection.hosts.length ? connection.hosts.join(', ') : '—';
+}
+
+/**
+ * The domains under a key row's name. A key with no host list has nothing to
+ * say here, so the row draws no quiet line rather than a `—` placeholder —
+ * the detail screen's Hosts row is where an empty list still has to be
+ * stated, because a value slot cannot be blank.
+ */
+export function connectionDomainsLine(connection: WorkbenchConnection): string {
+  return connection.hosts.join(', ');
+}
+
+/**
+ * The company a key is FOR. The vault's own `service` is the authority and
+ * is read first: it is what the credential was issued by, it survives a
+ * rename, and it is the only field here that cannot disagree with itself.
+ *
+ * The two fallbacks are for a vault that reports no service at all, and are
+ * explicitly weaker: a host is what the key is allowed to reach, which is
+ * usually but not always the company, and a name is whatever the tool or a
+ * person typed.
+ */
+export function connectionCompany(connection: WorkbenchConnection): string {
+  if (connection.service) return connection.service;
+  return hostCompany(connection.hosts[0]) ?? connection.name;
+}
+
+/**
+ * Registrable-ish name from a host: `api.vercel.com` → `vercel`,
+ * `api.example.co.uk` → `example`, `slack.com` → `slack`.
+ *
+ * `undefined` for an address that names no company at all — an IP literal
+ * (`127.0.0.1` would otherwise read as `0`) or a host with nothing before
+ * its suffix. There is no public-suffix list on the phone, so the one thing
+ * this knows is the handful of second-level suffixes that would otherwise
+ * make the mark read `C` for `co.uk`.
+ */
+const SECOND_LEVEL_SUFFIXES = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac']);
+
+function hostCompany(host: string | undefined): string | undefined {
+  if (!host) return undefined;
+  const labels = host.split('.').filter(Boolean);
+  if (!labels.length) return undefined;
+  // An IPv4 literal is all digits; an IPv6 one carries colons. Neither names
+  // a company, so the key's own name says more than its address does.
+  if (host.includes(':') || labels.every((label) => /^\d+$/.test(label))) return undefined;
+  if (labels.length === 1) return labels[0];
+  const penultimate = labels[labels.length - 2]!;
+  if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(penultimate)) return labels[labels.length - 3];
+  return penultimate;
+}
+
+/**
+ * The company's letter for its mark: the first letter or digit of the name,
+ * upper case. A name with neither draws `?` rather than an empty plate.
+ */
+export function serviceMonogram(company: string): string {
+  const character = [...company].find((entry) => /[\p{L}\p{N}]/u.test(entry));
+  if (!character) return '?';
+  // One glyph, always: `ß` upper-cases to `SS`, and a plate is one letter
+  // wide.
+  return [...character.toUpperCase()][0] ?? '?';
+}
+
+/** How a key row's trailing state reads: the state word beside its dot,
+ *  the same instrument vocabulary the tool rows above it carry. A broken
+ *  key reads broken — danger tone and the failed dot — instead of sitting in
+ *  the same quiet grey as a live one. */
+export function connectionInstrument(state: WorkbenchConnection['state']): {
+  value: string;
+  glyph: 'live' | 'failed';
+  valueTone?: 'danger';
+} {
+  if (state === 'error') return { value: 'error', glyph: 'failed', valueTone: 'danger' };
+  return { value: 'active', glyph: 'live' };
 }
 
 /** `@hoots · sign-up · 13 Sep`, or '' when the vault reports no such fact. */

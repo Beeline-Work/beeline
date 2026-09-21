@@ -6082,7 +6082,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgHighlight,
     },
     newMessageControlText: {
-      ...Typography.mono('semiBold'),
+      ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.ledgerQuiet,
       fontVariant: ['tabular-nums'],

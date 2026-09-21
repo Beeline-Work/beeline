@@ -392,9 +392,10 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
           ...(spec.additionalWritablePaths ?? []),
           ...harnessState,
         ]
-      : // A Room writes no checkout and no host path — only its own harness
-        // state, explicitly granted agent-private paths (persistent memory and
-        // the ephemeral workbench — never the repo), and the private /tmp.
+      : // A Room keeps source files read-only. Its explicit capabilities are
+        // limited to harness state, agent-private paths, and release-owned
+        // generated state such as the repository's .codegraph index; callers
+        // must name each path. /tmp remains private.
         [...(spec.additionalWritablePaths ?? []), ...harnessState],
   );
   // Everything this session must still see through the /tmp tmpfs, minus what a

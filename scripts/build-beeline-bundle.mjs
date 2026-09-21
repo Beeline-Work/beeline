@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { access, chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,6 +154,15 @@ async function sha256(path) {
 async function main() {
   const platform = parsePlatform();
   const binaries = await resolveAgentBinaries(platform);
+  const codegraphSource = resolve(
+    repoRoot,
+    'node_modules',
+    '@colbymchenry',
+    `codegraph-${platform}`,
+  );
+  if (!(await executable(resolve(codegraphSource, 'bin', 'codegraph')))) {
+    fail(`CodeGraph platform bundle not installed for ${platform}: ${codegraphSource}`);
+  }
   assertBinaryPlatform(binaries.agent, platform);
   assertBinaryPlatform(binaries.mcp, platform);
 
@@ -220,8 +239,13 @@ async function main() {
 
   await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
   await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));
+  await cp(codegraphSource, resolve(staging, 'lib', 'beeline', 'codegraph'), {
+    recursive: true,
+  });
   await chmod(resolve(staging, 'bin', 'buzz-agent'), 0o755);
   await chmod(resolve(staging, 'bin', 'buzz-dev-mcp'), 0o755);
+  await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'bin', 'codegraph'), 0o755);
+  await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'node'), 0o755);
   // The in-bundle wrappers never hand node a '..' component (node's module
   // resolver mis-resolves '..' after a symlinked directory — the exact
   // MODULE_NOT_FOUND shape from the layout regression). Executed through the
@@ -251,8 +275,13 @@ async function main() {
     { mode: 0o755 },
   );
   await writeFile(
+    resolve(staging, 'bin', 'codegraph'),
+    `${wrapperPrologue}\nexec "$BEELINE_BUNDLE_ROOT/lib/beeline/codegraph/bin/codegraph" "$@"\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(
     resolve(staging, 'bin', 'beeline'),
-    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
+    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
     { mode: 0o755 },
   );
 

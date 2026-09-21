@@ -32,6 +32,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
+  'If shell access is blocked, continue with read-only inspection instead of retrying it: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
   BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',

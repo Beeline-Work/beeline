@@ -39,6 +39,11 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
+import {
+  codegraphFingerprintServers,
+  codegraphMcpServer,
+  prepareCodegraphIndex,
+} from './codegraph.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -447,6 +452,8 @@ export class MonolithCornerTurnLoop {
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
+  /** Whether CodeGraph preparation succeeded for the live session. */
+  private sessionCodegraphReady = false;
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript = new WarmTranscript();
   /** The live session's environment, read back for pi's own turn record. */
@@ -578,6 +585,7 @@ export class MonolithCornerTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     if (client?.isAlive) await client.stop();
   }
@@ -605,11 +613,15 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        this.sessionCodegraphReady,
+      ),
       reviewerHandle: configuration.reviewerHandle,
     });
   }
@@ -732,19 +744,6 @@ export class MonolithCornerTurnLoop {
       npm_config_cache: npmCacheDir,
     };
     const operatorHome = this.options.config.operatorHome ?? homedir();
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
-      reviewerHandle: configuration.reviewerHandle,
-    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -806,6 +805,27 @@ export class MonolithCornerTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    const codegraphReady = await prepareCodegraphIndex(
+      this.options.config,
+      this.options.worktreePath,
+    );
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        codegraphReady,
+      ),
+      reviewerHandle: configuration.reviewerHandle,
+    });
     const servers: McpServerWire[] = [
       ...(repository
         ? [
@@ -843,6 +863,12 @@ export class MonolithCornerTurnLoop {
           : {}),
       }),
     ];
+    if (codegraphReady) {
+      const codegraph = codegraphMcpServer(this.options.config, this.options.worktreePath, {
+        readonly: false,
+      });
+      if (codegraph) servers.push(codegraph);
+    }
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
@@ -918,6 +944,7 @@ export class MonolithCornerTurnLoop {
     });
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
+    this.sessionCodegraphReady = codegraphReady;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -986,6 +1013,7 @@ export class MonolithCornerTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     if (client?.isAlive) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());

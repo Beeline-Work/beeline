@@ -18,6 +18,9 @@ async function fixture(root) {
   await writeFile(join(bundle, 'lib/beeline/bundle.json'), JSON.stringify(identity));
   await writeFile(join(bundle, 'lib/beeline/beeline-cli.mjs'), 'console.log("beeline v0.0.63")');
   await writeFile(join(bundle, 'lib/beeline/pi-mcp-adapter.mjs'), '');
+  await mkdir(join(bundle, 'lib/beeline/codegraph/bin'), { recursive: true });
+  await writeFile(join(bundle, 'lib/beeline/codegraph/bin/codegraph'), '#!/bin/sh\nexit 0\n');
+  await chmod(join(bundle, 'lib/beeline/codegraph/bin/codegraph'), 0o755);
   await writeFile(
     join(bundle, 'bin/beeline'),
     '#!/bin/sh\nnode "$BEELINE_LIB_DIR/lib/beeline/beeline-cli.mjs" "$@"\n',

@@ -63,6 +63,21 @@ describe('top-level Room MCP permission policy', () => {
         toolCall: { kind: 'other', title: 'mcp__files-mcp__read_file', rawInput: {} },
       }),
     ).toBe('allow');
+    // CodeGraph follows the same mounted-MCP policy through codex and Claude.
+    expect(
+      roomMcpPermissionDecision({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.codegraph.codegraph_explore',
+          rawInput: { server: 'codegraph', tool: 'codegraph_explore', arguments: {} },
+        },
+      }),
+    ).toBe('allow');
+    expect(
+      roomMcpPermissionDecision({
+        toolCall: { kind: 'other', title: 'mcp__codegraph__codegraph_explore', rawInput: {} },
+      }),
+    ).toBe('allow');
   });
 
   it('rejects anything that is not an MCP tool call', () => {
@@ -175,6 +190,20 @@ describe('top-level Room MCP permission policy', () => {
             rawInput: { tool_name: 'beeline-readonly-mcp__read_file', tool_input: { path: 'a' } },
           },
         }),
+      ).toBe('allow');
+      expect(
+        roomMcpPermissionDecision(
+          {
+            toolCall: {
+              title: 'use_tool',
+              rawInput: {
+                tool_name: 'codegraph__codegraph_explore',
+                tool_input: { query: 'trace a flow' },
+              },
+            },
+          },
+          ['beeline-readonly-mcp', 'beeline-agent', 'codegraph'],
+        ),
       ).toBe('allow');
     });
 

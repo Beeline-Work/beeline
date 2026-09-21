@@ -55,6 +55,7 @@
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
   },
   "devDependencies": {
+    "@colbymchenry/codegraph": "^1.6.0",
     "@types/node": "^22.9.0",
     "esbuild": "^0.28.1",
     "knip": "^5.88.1",

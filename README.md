@@ -124,7 +124,8 @@ Runtime state lives in `${XDG_STATE_HOME:-~/.local/state}/beeline/agents/<agent-
 
 ## Tool reference
 
-Two MCP surfaces are mounted into every agent session.
+Two Beeline MCP surfaces are mounted into every agent session. Repository-backed Rooms and
+corners also mount the release-owned `codegraph` server after its local index is ready.
 
 `beeline-readonly-mcp` — reading, in a Room and in a corner:
 
@@ -135,6 +136,15 @@ Two MCP surfaces are mounted into every agent session.
 | `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                                                       |
 | `read_agent_file`                               | Read the agent's approved skills or Workspace memory                                    |
 | `write_memory`                                  | Replace the agent's private Workspace `MEMORY.md` — the only memory write a Room allows |
+
+`codegraph` — indexed code relationships in repository-backed Rooms and corners:
+
+| Tool                | What it does                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `codegraph_explore` | Return relevant source, call paths, and blast radius from the repository's generated index   |
+
+Rooms run CodeGraph without a file watcher and keep source files read-only; only the generated
+`.codegraph` index is writable. Corners keep the watcher so edits are reflected as work proceeds.
 
 `beeline-agent` — acting, host-governed:
 

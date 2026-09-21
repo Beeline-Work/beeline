@@ -839,6 +839,14 @@ export class RoomRuntimeCoordinator {
       .finally(() => {
         if (this.running.get(roomId)?.body === loop) this.running.delete(roomId);
       });
+    // Shutdown snapshots `running` once. A start that was still in flight then
+    // must drop what it just built rather than join the map behind the abort
+    // pass, or its live subscription outlives the daemon.
+    if (this.stopped) {
+      controller.abort();
+      await promise;
+      return;
+    }
     this.running.set(roomId, {
       body: loop,
       controller,
@@ -1019,6 +1027,11 @@ export class RoomRuntimeCoordinator {
             this.running.delete(corner.cornerId);
           }
         });
+      if (this.stopped) {
+        controller.abort();
+        await promise;
+        return;
+      }
       this.running.set(corner.cornerId, {
         body: loop,
         controller,
@@ -1192,24 +1205,35 @@ export class RoomRuntimeCoordinator {
     // A pushed membership apply runs outside the run loop's signal, so a Room
     // whose start is in flight here would land in `running` after the abort
     // pass and never be stopped — its live subscription outlives the daemon.
-    // Refuse further pushes, then let the in-flight apply finish so whatever
-    // it started is in the snapshot below.
+    // Refuse further pushes, then wait — to the deadline, never past it — for
+    // the in-flight apply, so whatever it started is in the snapshot below.
     this.stopped = true;
     this.pendingMembershipEvents.clear();
-    await this.membershipDrain;
-    const rooms = [...this.running.values()];
-    for (const room of rooms) room.controller.abort();
-    const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
     const deadlineAt = Math.min(
       this.now() + this.drainDeadlineMs,
       this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,
     );
-    let timer: NodeJS.Timeout | undefined;
-    const deadline = new Promise<'deadline'>((resolveDeadline) => {
-      timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
-    });
-    const result = await Promise.race([drained.then(() => 'drained' as const), deadline]);
-    if (timer) clearTimeout(timer);
+    // A checkout can clone for minutes or stall on a black-holed fetch, so the
+    // wait for it rides the same deadline the Room drain does — the managed
+    // update's absolute convergence contract owns this process. Past the
+    // deadline the apply is on its own: `startRoomOnce`/`startCorner` see
+    // `stopped` and abort what they built instead of joining `running`.
+    const untilDeadline = async <T>(work: Promise<T>): Promise<T | 'deadline'> => {
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<'deadline'>((resolveDeadline) => {
+        timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
+      });
+      try {
+        return await Promise.race([work, deadline]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    const rooms = [...this.running.values()];
+    for (const room of rooms) room.controller.abort();
+    const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
+    const result = await untilDeadline(drained.then(() => 'drained' as const));
     if (result === 'deadline') {
       await Promise.allSettled(rooms.map((room) => room.body.forceRecoverRoom()));
       await drained;

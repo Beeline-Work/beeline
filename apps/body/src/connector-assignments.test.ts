@@ -283,6 +283,61 @@ describe('ConnectorAssignmentLoop', () => {
     }
   });
 
+  it('drains the moment the sign-in this helper owns exits, not on the recovery poll', async () => {
+    // Nothing on the wire says the human finished signing in: the row stays
+    // `installing` until a LATER run reaches Squire's already-connected
+    // short-circuit. The connect process exiting is that signal, so the phone
+    // must not wait out the five-minute recovery interval for it.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const claimed = squireConnectSession();
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const armed: (() => void)[] = [];
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      intervalMs: 10 * 60_000,
+      schedule: (fn) => {
+        armed.push(fn);
+        return armed.length;
+      },
+      cancel: () => {},
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(0);
+      // While the ceremony is live the watch only re-arms itself.
+      expect(armed).toHaveLength(1);
+      armed.pop()!();
+      await settle();
+      expect(started).toBe(0);
+      expect(armed).toHaveLength(1);
+
+      // The human finished and connect exited.
+      connect.abort();
+      for (let attempt = 0; attempt < 200 && isProcessAlive(claimed?.pid); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      armed.pop()!();
+      await settle();
+      expect(started).toBe(1);
+    } finally {
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
+  });
+
   it('supersedes a live connect when the human asked for this connector again', async () => {
     // `pairConnector` re-arms the row to its default all-pending steps, which
     // is the only thing that tells a fresh human request from the poll the

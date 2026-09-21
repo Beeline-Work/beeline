@@ -341,6 +341,58 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-2' });
   });
 
+  it('bounds the wait for a stalled pushed apply and drops what it started', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-shutdown-deadline-'));
+    roots.push(root);
+    let releaseCheckout!: () => void;
+    const checkoutGate = new Promise<void>((release) => {
+      releaseCheckout = release;
+    });
+    let checkoutStarted!: () => void;
+    const startInFlight = new Promise<void>((started) => {
+      checkoutStarted = started;
+    });
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomRepositoryState') {
+        checkoutStarted();
+        await checkoutGate;
+        return { resolution: 'none' };
+      }
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      return {};
+    });
+    let membership: ((event?: RoomMembershipChange) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        drainDeadlineMs: 20,
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (listener: (event?: RoomMembershipChange) => void) => {
+            membership = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    // A checkout that clones for minutes (or stalls on a black-holed fetch)
+    // must not hold shutdown past the drain deadline the managed update runs
+    // on — and the Room it was starting must still never end up running.
+    membership?.({ roomId: 'room-1' });
+    await startInFlight;
+    await coordinator.shutdown();
+    expect(coordinator.activeRoomIds()).toEqual([]);
+    releaseCheckout();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('getAgentCommands', expect.anything()));
+    expect(coordinator.activeRoomIds()).toEqual([]);
+  });
+
   it('an unscoped rooms-changed still arms the recovery reconcile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-unscoped-'));
     roots.push(root);

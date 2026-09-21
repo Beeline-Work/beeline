@@ -5,7 +5,10 @@
  * a human pairs, revokes, or unpairs; `getConnectorAssignments` drains it on
  * read. This loop is what makes that queue REAL on the helper: a Connect tap
  * pushes `connector-assignment` over the live socket, `wake()` drains then,
- * and a 5-minute poll is only recovery. It runs the Squire lifecycle
+ * and a 5-minute poll is only recovery. The one thing nothing on the wire
+ * announces is the human finishing a sign-in, so while this helper owns a
+ * ceremony it watches that connect process locally and drains when it exits
+ * (`CONNECT_WATCH_INTERVAL_MS`). It runs the Squire lifecycle
  * (`connector-squire.ts`) and reports each install step back through
  * `postConnectorStatus` so the phone paints progress live. A completed
  * install reports through `installConnector`, which flips the row to
@@ -53,6 +56,18 @@ import {
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 
 export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * How often the helper looks at a sign-in it OWNS. This is a local
+ * `kill(pid, 0)` on the connect process, never a server read, and it exists
+ * only while this helper is holding a ceremony open for a human: the row
+ * stays `installing` until a LATER run reaches Squire's already-connected
+ * short-circuit, and the only thing that says the human is finished is that
+ * connect process exiting. It is armed when a ceremony is published and
+ * disarmed the moment that process is gone, so an idle fleet runs no timer at
+ * all and the five-minute interval stays pure recovery.
+ */
+export const CONNECT_WATCH_INTERVAL_MS = 2_000;
 
 /** Said once, on the row, when a published ceremony ran out its own clock. */
 export const CEREMONY_EXPIRED =
@@ -111,6 +126,8 @@ export class ConnectorAssignmentLoop {
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly cancel: (handle: unknown) => void;
   private timer?: unknown;
+  /** Armed only while this helper owns a live sign-in ceremony. */
+  private connectWatch?: unknown;
   private started = false;
   private stopped = false;
   /** One install at a time per connector; other polls skip it. */
@@ -164,6 +181,45 @@ export class ConnectorAssignmentLoop {
       this.cancel(this.timer);
       this.timer = undefined;
     }
+    if (this.connectWatch !== undefined) {
+      this.cancel(this.connectWatch);
+      this.connectWatch = undefined;
+    }
+  }
+
+  /**
+   * Watch the sign-in this helper is holding open. The phone paints
+   * `installing` for the whole ceremony and only a drain that reaches
+   * Squire's already-connected short-circuit flips the row to `connected`;
+   * nothing on the wire announces that the human finished, so the connect
+   * process exiting is the signal. Drain on that, and the row settles on the
+   * same cadence it always has instead of waiting out the recovery poll.
+   */
+  private watchConnectSignIn(): void {
+    if (this.stopped || this.connectWatch !== undefined) return;
+    if (!this.connectCeremonyLive()) return;
+    this.connectWatch = this.schedule(() => this.checkConnectSignIn(), CONNECT_WATCH_INTERVAL_MS);
+  }
+
+  /** A ceremony of ours still worth waiting on: claimed, unspent, alive. */
+  private connectCeremonyLive(): boolean {
+    const claim = squireConnectSession();
+    if (!claim) return false;
+    if (Date.now() - claim.claimedAt >= CONNECT_TIMEOUT_MS) return false;
+    return isProcessAlive(claim.pid);
+  }
+
+  private checkConnectSignIn(): void {
+    this.connectWatch = undefined;
+    if (this.stopped) return;
+    if (this.connectCeremonyLive()) {
+      this.connectWatch = this.schedule(() => this.checkConnectSignIn(), CONNECT_WATCH_INTERVAL_MS);
+      return;
+    }
+    // The connect process is gone — the human signed in, closed the page, or
+    // the ceremony outlived its own tunnel. Every one of those is answered by
+    // the next drain, now rather than in five minutes.
+    void this.runOnce();
   }
 
   /** One interval tick: poll, then re-arm. */
@@ -320,6 +376,7 @@ export class ConnectorAssignmentLoop {
         this.log(
           `trusty-squire connect still waiting for sign-in (pid ${String(claim.pid)}); leaving it alone`,
         );
+        this.watchConnectSignIn();
         return;
       }
       this.log('trusty-squire re-pair requested; superseding the connect holding the browser');
@@ -383,6 +440,7 @@ export class ConnectorAssignmentLoop {
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
       ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
     });
+    this.watchConnectSignIn();
   }
 
   /** This connector's own row, or undefined when the server cannot answer. */

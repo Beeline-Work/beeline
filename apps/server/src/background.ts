@@ -132,7 +132,7 @@ export class PushDeliveryLoop {
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
       WITH recent_messages AS MATERIALIZED (
-        SELECT m.*,d.token push_token,d.identity_id push_identity_id,member.role push_role
+        SELECT m.*,d.token push_token,d.identity_id push_identity_id
         FROM messages m
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL

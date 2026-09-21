@@ -1,7 +1,7 @@
 import { RoundButton } from '@/components/RoundButton';
 import { Text, View } from 'react-native';
 import * as React from 'react';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -16,6 +16,7 @@ import { initialAuthUrl } from '@/auth/desktop-auth-session';
 import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
 
 export default function Home() {
+  const pathname = usePathname();
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
   const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
   const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
@@ -42,6 +43,12 @@ export default function Home() {
 
   React.useEffect(() => {
     if (!buzzCheckDone) return;
+    // `unstable_settings.initialRouteName` mounts this route UNDER whatever
+    // destination the app was opened at, so the redirect below runs even when
+    // the landing route is not the one on screen. Replacing from here would
+    // throw that destination away and land the person on the Room deck. The
+    // root layout has already resolved the notification gate for this case.
+    if (pathname !== '/') return;
     // Whichever way this resolves — including the storage-error screen below —
     // the landing route is now settled, and a tapped push may open its Room on
     // top of it instead of being replaced by this redirect.
@@ -89,6 +96,7 @@ export default function Home() {
     initialInviteToken,
     initialReviewSecret,
     initialUrl,
+    pathname,
     personNameOnboardingPending,
   ]);
 

@@ -295,7 +295,7 @@ describe('a Room turn that opens a corner, read back through the server', () => 
 
 describe('a Room turn whose recovered text is only harness preamble', () => {
   it('is a failed turn in the Room, not an empty reply', async () => {
-    const { view } = await runScenario({
+    const { roomId, view } = await runScenario({
       ask: "what's up",
       agentKind: 'pi',
       agentCommand: '/opt/harness/pi-acp',
@@ -324,6 +324,16 @@ describe('a Room turn whose recovered text is only harness preamble', () => {
     expect(agentReplies(view)).toEqual([]);
     expect(view.latestAgentTurns).toContainEqual(
       expect.objectContaining({ agentPubkey: AGENT, status: 'failed' }),
+    );
+    // The stored reason names the branch that actually read pi's record and
+    // sanitized its text away — a record the explainer never located phrases
+    // it differently and cannot pass this test in the same shape.
+    const stored = await db.query<{ failure_reason: string | null }>(
+      `SELECT failure_reason FROM agent_turns WHERE room_id=$1 AND status='failed'`,
+      [roomId],
+    );
+    expect(stored.rows.map((row) => row.failure_reason ?? '')).toContainEqual(
+      expect.stringContaining('pi recorded the answer but the ACP stream delivered no text'),
     );
     // The Room says so: a failed turn is a durable fact, never silence.
     expect(view.messages.some((message) => message.presentation === 'system')).toBe(true);

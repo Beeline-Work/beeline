@@ -26,6 +26,8 @@ async function runTurn(options: {
   configOverrides?: Partial<BodyConfig>;
   /** Model id the fake harness advertises, so a selection can be applied. */
   advertisedModel?: string;
+  /** Daemon operation the server refuses, so a test can fail one write. */
+  rejectWrite?: string;
   prompt: (input: {
     agentHomeRoot: string;
     attempt: number;
@@ -128,8 +130,9 @@ async function runTurn(options: {
   const posted: Array<Record<string, unknown>> = [];
   const writes: string[] = [];
   execute.mockImplementation(async (name: string, input: Record<string, unknown>) => {
-    if (name === 'postRoomMessage') posted.push(input);
     writes.push(name);
+    if (name === options.rejectWrite) throw new Error(`${name} refused`);
+    if (name === 'postRoomMessage') posted.push(input);
     return respond(name, input);
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
@@ -280,6 +283,36 @@ describe('Room turn failure receipt', () => {
     );
     expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
     expect(cornerOpens).toBe(1);
+  });
+
+  it('retracts the draft when the corner-open timeout cannot post its reply', async () => {
+    // `settle` posts the reply before it retracts, so a refused reply throws
+    // past its own retract. The same server trouble can refuse the `complete`
+    // receipt that would otherwise clean the row up, leaving a half-written
+    // answer pulsing under a turn the Room never settled.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { writes, posted } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      rejectWrite: 'postRoomMessage',
+      prompt: async ({ onChunk, onToolCalls }) => {
+        onToolCalls?.([
+          { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+        ]);
+        onChunk('The cards go stale.', 'The cards go stale.', 'The cards go stale.');
+        await new Promise((resolve) => setImmediate(resolve));
+        throw timeout;
+      },
+    });
+
+    expect(posted).toEqual([]);
+    expect(writes).toContain('postRoomMessage');
+    expect(laneWrites(writes).at(-1)).toBe('retractAgentLiveOutput');
   });
 
   it('still reports failed when the inactivity timeout hits a turn that opened no corner', async () => {
@@ -663,7 +696,11 @@ describe('Room turn failure receipt', () => {
     expect(posted).toEqual([]);
     const failed = receipts.find((receipt) => receipt.status === 'failed');
     expect(failed).toBeDefined();
-    expect(String(failed!.reason)).not.toBe('');
+    // Only the branch that actually READ pi's record phrases it this way, so a
+    // record the explainer never located cannot pass this test in its place.
+    expect(String(failed!.reason)).toContain(
+      'pi recorded the answer but the ACP stream delivered no text',
+    );
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(false);
   });
 });

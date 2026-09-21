@@ -83,11 +83,14 @@ export class AgentTurnStream {
   /**
    * The ACP delta hook: hand it straight to `sessionPrompt`. `full` is every
    * assistant run so far joined — not the final answer — so it is only ever
-   * shown provisionally.
+   * shown provisionally. A caller that cannot name the current run leaves
+   * `lastRunText` empty rather than letting the join stand in for it: an
+   * unknown last run is not an answer, and an ending that reads one must
+   * settle through whatever else it has.
    */
   readonly onChunk = (_delta: string, full: string, currentRun?: string): void => {
     this.latest = full;
-    this.latestRun = currentRun ?? full;
+    this.latestRun = currentRun ?? '';
     const text = sanitizeAgentReply(full);
     if (!text || this.closed) return;
     this.pending = text;

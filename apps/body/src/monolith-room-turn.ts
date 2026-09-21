@@ -1255,14 +1255,20 @@ export class MonolithRoomTurnLoop {
         // or sanitizes away settles through the card alone.
         const lastRun = liveStream?.lastRunText ?? '';
         const streamed = isPureRetryNarration(lastRun) ? '' : durableReplyText(lastRun);
-        await liveStream
-          ?.settle(streamed, streamed ? { triggerMessageId: item.id } : {})
-          .catch((settleError: unknown) => {
-            console.error(
-              `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
-              settleError,
-            );
-          });
+        if (liveStream) {
+          await liveStream
+            .settle(streamed, streamed ? { triggerMessageId: item.id } : {})
+            .catch((settleError: unknown) => {
+              console.error(
+                `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
+                settleError,
+              );
+            });
+          // `settle` posts the reply before it retracts, so a refused reply
+          // throws past its own retract and leaves the draft live under a turn
+          // this arm is about to report complete. The retract is idempotent.
+          await liveStream.retract();
+        }
         await api.execute('postAgentTurnReceipt', {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,

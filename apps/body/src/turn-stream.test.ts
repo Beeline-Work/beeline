@@ -116,6 +116,19 @@ describe('agent turn stream', () => {
     expect(stream.lastRunText).toBe('');
   });
 
+  it('leaves the last run empty when the caller never named it', async () => {
+    // The joined stream is not a second spelling of "last run": a caller that
+    // omits the current run leaves an ending nothing to commit, rather than
+    // handing it every assistant run concatenated.
+    const { api } = recorder();
+    const stream = streamFor(api);
+    stream.onChunk('Let me look.', 'Let me look.');
+    stream.onChunk('The fix is ready.', 'Let me look.\n\nThe fix is ready.');
+    await settled();
+    expect(stream.streamedText).toBe('Let me look.\n\nThe fix is ready.');
+    expect(stream.lastRunText).toBe('');
+  });
+
   it('keeps ONE draft on the wire and only the newest snapshot waiting', async () => {
     // This replaces the old "publishes every chunk" rule. A draft is a picture
     // of the whole answer so far, so a snapshot overtaken before it reached the

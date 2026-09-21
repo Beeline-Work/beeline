@@ -8,7 +8,8 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { systemLine } from './system-line.js';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 export const COMMAND_LEASE_SECONDS = 90;
 export const COMMAND_MAX_DEPTH = 3;
@@ -358,7 +359,10 @@ export async function routeAgentResult(
  * in both directions. It must not become a loop. Handbacks are counted per head
  * — a push moves the head and resets the count — and at
  * `REVIEW_HANDBACK_LIMIT` the corner stops waking the worker and names the
- * person who commissioned it instead, so a stuck disagreement surfaces.
+ * person who commissioned it instead, so a stuck disagreement surfaces. When
+ * no requester was recorded the same line still goes up in the corner, naming
+ * nobody — there is no person to name, and silence is the one outcome the
+ * limit must not produce.
  */
 export const REVIEW_HANDBACK_LIMIT = 3;
 
@@ -433,7 +437,11 @@ export async function queueCornerWorkerAfterReview(
     });
     return;
   }
-  if (!review.commissioned_by) return;
+  // A corner an agent opened off its own root message records no requester,
+  // and that corner is just as stuck. So the line is addressed to the corner
+  // itself rather than dropped: the loop stopping is the fact worth reading,
+  // and a review loop that stops must never stop in silence.
+  if (!review.commissioned_by) await ensureSystemIdentity(db);
   // Deterministic id per head: the cap is reached once, however many further
   // reviews end on the same commit.
   await systemLine(db, {
@@ -441,7 +449,10 @@ export async function queueCornerWorkerAfterReview(
       .update(`beeline:${input.roomId}:review-handback-limit:${review.head_sha}`)
       .digest('hex'),
     roomId: input.roomId,
-    subject: { kind: 'person', id: review.commissioned_by, name: 'the requester' },
+    authorId: review.commissioned_by ?? SYSTEM_IDENTITY_ID,
+    subject: review.commissioned_by
+      ? { kind: 'person', id: review.commissioned_by, name: 'the requester' }
+      : { kind: 'system', name: 'Somebody' },
     verb: 'may need to step in',
     consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
     afterMessageId: input.verdictMessageId,

@@ -29,6 +29,7 @@ export type SquireCredentialFact =
   | { readonly kind: 'none' }
   | { readonly kind: 'valid'; readonly accountId: string }
   | { readonly kind: 'expired' }
+  | { readonly kind: 'unproven' }
   | { readonly kind: 'challenge' };
 
 export type SquireConnectFacts = {
@@ -102,17 +103,19 @@ export function readSquireSession(configHome?: string): SquireSessionRecord | un
 }
 
 /**
- * A session file on disk is not a signed-in account. The token is `valid`
- * only once the account vault has answered for it (`noteSquireVaultAuth`);
- * a token that is refused, or that nothing has proved this run, is
- * `expired` — which is what sends Connect/Retry to a fresh ceremony
- * instead of reporting a dead account as connected.
+ * A session file on disk is not a signed-in account, and a refusal is not
+ * the same as silence. The token is `valid` only once the account vault
+ * answered for it, `expired` when the vault REFUSED it (which sends
+ * Connect/Retry to a fresh ceremony), and `unproven` when nothing answered
+ * at all — a blip leaves the session alone rather than raising another
+ * browser over it.
  */
 export function credentialFromSession(
   session: SquireSessionRecord | undefined,
   visibility: SquireVisibilityFact = publishedVisibility,
 ): SquireCredentialFact {
   if (session?.agentSessionToken) {
+    if (vaultAuth === 'unknown') return { kind: 'unproven' };
     return vaultAuth === 'ok' && session.accountId
       ? { kind: 'valid', accountId: session.accountId }
       : { kind: 'expired' };
@@ -128,18 +131,22 @@ export function credentialFromSession(
  */
 export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' | 'installing' | 'disconnected' {
   if (facts.credential.kind === 'valid') return 'connected';
-  if (facts.credential.kind === 'challenge') return 'installing';
+  if (facts.credential.kind === 'challenge' || facts.credential.kind === 'unproven') {
+    return 'installing';
+  }
   if (facts.visibility.kind !== 'none') return 'installing';
   if (facts.process.kind !== 'none') return 'installing';
   return 'disconnected';
 }
 
-/** Start only when nothing else holds the browser. This helper's own
- *  live connect may be released and retried; a foreign process may not.
- *  A ceremony nobody is running is not a holder: it is retired by the
- *  release the start itself performs, never handed back. */
+/** Start only when nothing else holds the browser and the account has
+ *  actually answered. This helper's own live connect may be released and
+ *  retried; a foreign process may not, and a session nothing could reach is
+ *  waited on rather than replaced. A ceremony nobody is running is not a
+ *  holder: it is retired by the release the start itself performs, never
+ *  handed back. */
 export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
-  if (facts.credential.kind === 'valid') return false;
+  if (facts.credential.kind === 'valid' || facts.credential.kind === 'unproven') return false;
   if (facts.process.kind === 'foreign') return false;
   return true;
 }

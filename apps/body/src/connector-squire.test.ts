@@ -22,6 +22,7 @@ import {
   readVaultFromSession,
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
+  SQUIRE_ACCOUNT_UNPROVEN,
   takeSquireConnectClaim,
   revokeGrants,
   squireConnectProcessEnv,
@@ -632,6 +633,58 @@ describe('installSquire', () => {
     expect(result.steps.every((step) => step.status === 'done')).toBe(true);
   });
 
+  it('waits on an account that never answered instead of raising another browser', async () => {
+    // A 5xx / rate limit / dead network is not a refusal: the session is
+    // simply unconfirmed, so nothing may spawn a second connect over it.
+    writeHostSession();
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: (async () => {
+        throw new Error('getaddrinfo ENOTFOUND vault.test');
+      }) as unknown as typeof fetch,
+      streamRun: async () => {
+        started += 1;
+        return { stdout: '', stderr: '', abort: () => {} };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(started).toBe(0);
+    expect(result.status).toBe('installing');
+    const waiting = result.steps.find((step) => step.label === 'waiting for sign-in');
+    expect(waiting?.status).toBe('running');
+    expect(waiting?.reason).toBe(SQUIRE_ACCOUNT_UNPROVEN);
+  });
+
+  it('says why the row is still installing when the account stopped answering', async () => {
+    // The connect left a session behind and Squire called it already
+    // connected, but the account never answered for it. The row must say so
+    // rather than sit on four done steps with nothing to press.
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: (async () => {
+        throw new Error('getaddrinfo ENOTFOUND vault.test');
+      }) as unknown as typeof fetch,
+      streamRun: async (...args: Parameters<StreamedShellRunner>) => {
+        started += 1;
+        writeHostSession();
+        return fakeStreamRunner({
+          stdout: 'Already connected (google + github). Codex config refreshed.\n',
+        })(...args);
+      },
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(started).toBe(1);
+    expect(result.status).toBe('installing');
+    expect(result.errorMessage).toBeUndefined();
+    const waiting = result.steps.find((step) => step.label === 'waiting for sign-in');
+    expect(waiting?.status).toBe('running');
+    expect(waiting?.reason).toBe(SQUIRE_ACCOUNT_UNPROVEN);
+  });
+
   it('sends an expired session back to a fresh ceremony, not to connected', async () => {
     // The session file is still on disk but the account refuses its token,
     // so pressing Connect must raise a new ceremony rather than report a
@@ -1210,6 +1263,27 @@ describe('vault reads from the session file', () => {
         }),
       ).toEqual({ kind: 'expired' });
     }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('leaves a proven token alone when the vault only failed to answer', async () => {
+    // Squire keeps a session through a blip; so does this reader — only a
+    // refusal retires the token.
+    const home = sessionHome();
+    noteSquireVaultAuth('ok');
+    expect(
+      await readVaultFromSession({
+        configHome: home,
+        fetch: async () => new Response('', { status: 500 }),
+      }),
+    ).toBeUndefined();
+    expect(
+      credentialFromSession({
+        apiBaseUrl: 'https://vault.test',
+        accountId: 'acct_9',
+        agentSessionToken: 'tok',
+      }),
+    ).toEqual({ kind: 'valid', accountId: 'acct_9' });
     rmSync(home, { recursive: true, force: true });
   });
 

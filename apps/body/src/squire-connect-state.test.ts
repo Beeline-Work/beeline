@@ -144,13 +144,14 @@ describe('credential and connect status', () => {
 
   it('marks the credential expired after a refused vault read', () => {
     noteSquireVaultAuth('expired');
-    expect(
-      credentialFromSession({
-        apiBaseUrl: 'https://vault.test',
-        accountId: 'acct_9',
-        agentSessionToken: 'dead',
-      }),
-    ).toEqual({ kind: 'expired' });
+    const credential = credentialFromSession({
+      apiBaseUrl: 'https://vault.test',
+      accountId: 'acct_9',
+      agentSessionToken: 'dead',
+    });
+    expect(credential).toEqual({ kind: 'expired' });
+    // A refusal is the one answer that sends Connect/Retry to a ceremony.
+    expect(shouldStartSquireConnect(facts({ credential }))).toBe(true);
   });
 
   it('calls a session valid only once the vault has answered for its token', () => {
@@ -159,11 +160,12 @@ describe('credential and connect status', () => {
       accountId: 'acct_9',
       agentSessionToken: 'tok',
     };
-    // A file nobody has proved this run is not a signed-in account.
-    expect(credentialFromSession(session)).toEqual({ kind: 'expired' });
-    expect(shouldStartSquireConnect(facts({ credential: credentialFromSession(session) }))).toBe(
-      true,
-    );
+    // Nothing answered for this file yet: not connected, and not a reason
+    // to raise another browser over a session that may be perfectly good.
+    const unproven = credentialFromSession(session);
+    expect(unproven).toEqual({ kind: 'unproven' });
+    expect(connectStatusFromFacts(facts({ credential: unproven }))).toBe('installing');
+    expect(shouldStartSquireConnect(facts({ credential: unproven }))).toBe(false);
     noteSquireVaultAuth('ok');
     expect(credentialFromSession(session)).toEqual({ kind: 'valid', accountId: 'acct_9' });
     expect(

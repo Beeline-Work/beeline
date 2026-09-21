@@ -504,6 +504,13 @@ export type StreamedShellRunner = (
 /** Safety bound for the connect process, and the life of the ceremony it prints. */
 export const CONNECT_TIMEOUT_MS = 300_000;
 
+/** The account vault answers in a second or two, or this run has no answer. */
+export const SQUIRE_VAULT_TIMEOUT_MS = 10_000;
+
+/** Said on the waiting step when nothing answered for this helper's session. */
+export const SQUIRE_ACCOUNT_UNPROVEN =
+  "Trusty Squire's account did not answer, so this helper's sign-in is unconfirmed. The next check settles it.";
+
 /**
  * Default streamed runner: spawns the process, reads stdout line by line,
  * resolves as soon as `parseConnectOutput` finds a sign-in URL (or when the
@@ -950,6 +957,11 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     return observeSquireConnectFacts({ profileDir, lockRoot });
   };
 
+  const waitReason = (facts: SquireConnectFacts): string | undefined => {
+    if (facts.process.kind === 'foreign') return facts.process.action;
+    return facts.credential.kind === 'unproven' ? SQUIRE_ACCOUNT_UNPROVEN : undefined;
+  };
+
   const observed = await provenFacts();
   if (connectStatusFromFacts(observed) === 'connected') {
     publishSquireVisibility({ kind: 'none' });
@@ -962,9 +974,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
     };
   }
-  if (!shouldStartSquireConnect(observed)) {
-    return wait(observed.process.kind === 'foreign' ? observed.process.action : undefined);
-  }
+  if (!shouldStartSquireConnect(observed)) return wait(waitReason(observed));
 
   const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
@@ -1023,8 +1033,16 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     publishSquireVisibility({ kind: 'none' });
   }
   const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
+  const settled = signIn ? undefined : await provenFacts();
+  const unproven = settled?.credential.kind === 'unproven';
 
-  push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
+  push(
+    step(
+      'waiting for sign-in',
+      signIn ? 'pending' : unproven ? 'running' : 'done',
+      unproven ? SQUIRE_ACCOUNT_UNPROVEN : undefined,
+    ),
+  );
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
@@ -1047,14 +1065,12 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(signedInAs ? { signedInAs } : {}),
     };
   }
-  const settled = await provenFacts();
+  const account = signedInAs ?? (settled ? sessionName(settled) : undefined);
   return {
-    status: connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
+    status: settled && connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
     steps,
     ...(version ? { squireVersion: version } : {}),
-    ...(signedInAs ?? sessionName(settled)
-      ? { signedInAs: signedInAs ?? sessionName(settled) }
-      : {}),
+    ...(account ? { signedInAs: account } : {}),
   };
 }
 
@@ -1122,7 +1138,10 @@ export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
  * account vault, so a host with no broker elected still lists its keys.
  * Undefined means "no answer" (no session, a refusal, or a body this reader
  * does not recognise) and the MCP read answers instead — never an empty list,
- * which would blank the Workbench KEYS surface.
+ * which would blank the Workbench KEYS surface. The same call is the
+ * CREDENTIAL fact's liveness proof: only a refusal marks the token expired,
+ * while a 5xx, a rate limit, or a host that never answers leaves it
+ * unproven, so a blip never forces another browser.
  */
 export async function readVaultFromSession(options?: {
   readonly configHome?: string;
@@ -1135,8 +1154,8 @@ export async function readVaultFromSession(options?: {
       headers: {
         Authorization: `Bearer ${session.agentSessionToken}`,
         Accept: 'application/json',
-        ...(session.accountId ? { 'x-account-id': session.accountId } : {}),
       },
+      signal: AbortSignal.timeout(SQUIRE_VAULT_TIMEOUT_MS),
     });
     if (response.status === 401 || response.status === 403) {
       noteSquireVaultAuth('expired');

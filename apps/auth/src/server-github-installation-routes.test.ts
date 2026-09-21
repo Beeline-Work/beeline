@@ -556,12 +556,135 @@ describe('GitHub installation, repositories, and token routes', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.headers['content-type']).toContain('text/html');
-    expect(response.body).toContain('connection link');
+    expect(response.body).toContain('connection link is not valid');
+    // A state nobody issued is neither expired nor reused, and must not
+    // borrow either explanation.
+    expect(response.body).not.toContain('has expired');
+    expect(response.body).not.toContain('was already used');
     expect(response.body).not.toContain('invalid_request');
     expect(() => JSON.parse(response.body)).toThrow();
     // Still no session or token side effects on the failed path.
     expect(state.roomTokenMint).toBeUndefined();
     await expect(store.githubInstallation(alphaTenant.community, 77)).resolves.toBeNull();
+  });
+
+  it('calls a missing installation id an unfinished install, never a dead link, and completes on approval', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, '1'.repeat(43));
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const installStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          installStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'beeline://beeline/github-installation',
+      },
+    });
+    expect(installStart.statusCode).toBe(200);
+    const installState = new URL(installStart.json().authorization_url).searchParams.get('state');
+
+    // GitHub's approval-required redirect: setup_action=request with NO
+    // installation id. Before this fix a seconds-old, perfectly valid link
+    // rendered "expired or already used" here.
+    const pending = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?setup_action=request&state=${installState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(pending.statusCode).toBe(200);
+    expect(pending.body).toContain('pending approval');
+    expect(pending.body).not.toContain('has expired');
+    expect(pending.body).not.toContain('was already used');
+
+    // A missing id without the request action is the same incomplete install.
+    const missingId = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?setup_action=install&state=${installState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(missingId.statusCode).toBe(200);
+    expect(missingId.body).toContain('pending approval');
+
+    // Neither checkpoint spent the flow.
+    const flows = await database.query<{ consumed_at: unknown }>(
+      `SELECT consumed_at FROM beeline_github_install_flows`,
+    );
+    expect(flows.rows).toHaveLength(1);
+    expect(flows.rows[0].consumed_at).toBeNull();
+
+    // The owner approves, GitHub calls back for real, the same link completes.
+    const installed = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${installState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(installed.statusCode).toBe(302);
+    expect(installed.headers.location).toBe('beeline://beeline/github-installation?installed=1');
+  });
+
+  it('says a link expired when its window closed, and says it was reused when the state was spent', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, '2'.repeat(43));
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const startInstall = async () => {
+      const started = await app.inject({
+        method: 'POST',
+        url: '/auth/github/install/start',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(
+            identity.secretKey,
+            identity.publicKey,
+            installStartUrl,
+            'POST',
+          ),
+        },
+        payload: {
+          pubkey: identity.publicKey,
+          redirect_uri: 'beeline://beeline/github-installation',
+        },
+      });
+      expect(started.statusCode).toBe(200);
+      return new URL(started.json().authorization_url).searchParams.get('state');
+    };
+
+    const expiredState = await startInstall();
+    await database.query(`UPDATE beeline_github_install_flows SET expires_at = $1`, [
+      new Date(Date.now() - 60_000),
+    ]);
+    const expired = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${expiredState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(expired.statusCode).toBe(400);
+    expect(expired.body).toContain('has expired');
+    expect(expired.body).not.toContain('was already used');
+
+    const usedState = await startInstall();
+    const first = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${usedState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(first.statusCode).toBe(302);
+    const reused = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${usedState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(reused.statusCode).toBe(400);
+    expect(reused.body).toContain('was already used');
+    expect(reused.body).not.toContain('has expired');
   });
 
   it('re-mints Room tokens for a repository that transferred after its Room binding was written', async () => {

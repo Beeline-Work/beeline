@@ -497,6 +497,25 @@ export interface GitHubInstallFlow {
   expiresAt: Date;
 }
 
+/**
+ * Why a GitHub install callback could not be matched to a live flow. The
+ * three misses are distinct facts for the person reading the page: a flow
+ * that was spent (the connection is already made), a flow that ran out of
+ * time (start again), and a state nobody ever issued (a bad link).
+ */
+export type GitHubInstallFlowLookup =
+  | { status: 'ok'; flow: GitHubInstallFlow }
+  | { status: 'missing' }
+  | { status: 'expired' }
+  | { status: 'used' };
+
+/**
+ * How long a spent or expired install flow is kept so a late callback can be
+ * told WHY it missed. Deleting the row at expiry would turn every miss into
+ * an indistinguishable "invalid".
+ */
+const GITHUB_INSTALL_FLOW_RETENTION_MS = 90 * 24 * 60 * 60_000;
+
 export interface GitHubInstallation {
   community: string;
   pubkey: string;
@@ -1270,8 +1289,12 @@ export class AuthStore {
   }
 
   async createGitHubInstallFlow(stateHash: string, flow: GitHubInstallFlow): Promise<void> {
+    // Prune only rows nobody can classify any more: a recently expired flow
+    // must survive long enough that a late callback (an owner-approved org
+    // install can return days later) is told it expired rather than read as a
+    // forged link.
     await this.database.query(`DELETE FROM beeline_github_install_flows WHERE expires_at < $1`, [
-      flow.createdAt,
+      new Date(flow.createdAt.getTime() - GITHUB_INSTALL_FLOW_RETENTION_MS),
     ]);
     await this.database.query(
       `INSERT INTO beeline_github_install_flows
@@ -1281,6 +1304,51 @@ export class AuthStore {
     );
   }
 
+  /**
+   * Read the flow behind a callback state WITHOUT spending it, classifying a
+   * miss as expired, already used, or never issued. One query used to answer
+   * all four, so a used link and an expired link were one indistinguishable
+   * miss and the page had to guess between them.
+   */
+  async peekGitHubInstallFlow(stateHash: string, now: Date): Promise<GitHubInstallFlowLookup> {
+    const result = await this.database.query<
+      QueryResultRow & {
+        community: string;
+        pubkey: string;
+        redirect_uri: string;
+        created_at: unknown;
+        expires_at: unknown;
+        consumed_at: unknown;
+      }
+    >(
+      `SELECT community, pubkey, redirect_uri, created_at, expires_at, consumed_at
+       FROM beeline_github_install_flows WHERE state_hash = $1`,
+      [stateHash],
+    );
+    const row = result.rows[0];
+    if (!row) return { status: 'missing' };
+    // Consumption wins the tie: a spent link is "already used" even after its
+    // window has since closed, because that is the fact that prevents reuse.
+    if (row.consumed_at !== null && row.consumed_at !== undefined) return { status: 'used' };
+    if (asDate(row.expires_at).getTime() < now.getTime()) return { status: 'expired' };
+    return {
+      status: 'ok',
+      flow: {
+        community: row.community,
+        pubkey: row.pubkey,
+        redirectUri: row.redirect_uri,
+        createdAt: asDate(row.created_at),
+        expiresAt: asDate(row.expires_at),
+      },
+    };
+  }
+
+  /**
+   * Spend a flow atomically. Kept as the success-path authority: only an
+   * unconsumed, unexpired state can complete an installation, and it can do so
+   * exactly once. Classification of a miss goes through
+   * `peekGitHubInstallFlow` so the caller can say which miss it was.
+   */
   async consumeGitHubInstallFlow(stateHash: string, now: Date): Promise<GitHubInstallFlow | null> {
     const result = await this.database.query<
       QueryResultRow & {

@@ -304,11 +304,37 @@ function githubInstallConnectedPage(): string {
   );
 }
 
-function githubInstallErrorPage(): string {
+function githubInstallErrorPage(reason: 'expired' | 'used' | 'invalid'): string {
+  if (reason === 'expired') {
+    return githubInstallReturnPage(
+      'This connection link has expired',
+      `<p>This GitHub connection link expired before the installation finished. Start again from the app (or ask for a fresh link) and the connection will complete normally.</p>
+      <p>If the installation itself already succeeded on GitHub, Beeline will discover it automatically — open the app and it will appear.</p>`,
+    );
+  }
+  if (reason === 'used') {
+    return githubInstallReturnPage(
+      'This connection link was already used',
+      `<p>This GitHub connection link has already been used to connect an account, so there is nothing further to do with it.</p>
+      <p>If that was you, the connection is already in place. If not, start again from the app (or ask for a fresh link) and the connection will complete normally. If an installation succeeded on GitHub, Beeline will discover it automatically.</p>`,
+    );
+  }
   return githubInstallReturnPage(
-    'This connection link has expired',
-    `<p>This GitHub connection link is invalid or has already been used.</p>
-      <p>If the installation itself succeeded on GitHub, Beeline will discover it automatically. Otherwise, start again from the app (or ask for a fresh link) and the connection will complete normally.</p>`,
+    'This connection link is invalid',
+    `<p>This GitHub connection link is not valid — it may have been mistyped, altered, or issued for a different account.</p>
+      <p>Start again from the app (or ask for a fresh link) and the connection will complete normally.</p>`,
+  );
+}
+
+// An organization that requires approval calls back BEFORE any installation
+// exists. Spending the flow there would burn the binding, so GitHub's eventual
+// install callback (days later) would find it consumed even though nothing was
+// ever connected. This is a mid-flow checkpoint, never a completion.
+function githubInstallPendingPage(): string {
+  return githubInstallReturnPage(
+    'GitHub installation is pending approval',
+    `<p>This GitHub installation has not finished yet. If the organization requires approval, your request is waiting on one of its owners.</p>
+      <p>Nothing more is needed from you here. Beeline checks for approved installations every five minutes and will pick this up automatically — you can close this tab.</p>`,
   );
 }
 
@@ -974,11 +1000,26 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
     const tenant = tenantFor(request);
     const query = request.query as Record<string, unknown>;
-    // Three shapes reach this route. (a) In-app-initiated: state present and a
-    // matching flow exists — complete the binding exactly as before. (b)
-    // Stateless/foreign: no state at all — a share-link or marketplace install;
-    // answer a friendly landing page and touch nothing. (c) State present but
-    // wrong — keep an error, but as a readable page rather than raw JSON.
+    // An organization that requires approval calls back BEFORE an
+    // installation exists, with setup_action=request. Spending the flow here
+    // would burn the binding: GitHub's real install callback lands later and
+    // would read as "already used" although nothing was ever connected. This
+    // checkpoint touches no state; the flow stays live for the approval, and
+    // it answers even without a state so the person is never told a pending
+    // request "connected".
+    if (query.setup_action === 'request') {
+      noStore(reply);
+      reply.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      return reply.status(200).type('text/html; charset=utf-8').send(githubInstallPendingPage());
+    }
+    // Three shapes remain. (a) In-app-initiated: state present and a matching
+    // flow exists — complete the binding exactly as before. (b) Stateless/
+    // foreign: no state at all — a share-link or marketplace install; answer a
+    // friendly landing page and touch nothing. (c) State present but wrong —
+    // keep an error, but as a readable page rather than raw JSON.
     if (query.state === undefined) {
       noStore(reply);
       reply.header(
@@ -991,20 +1032,47 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     const rawInstallationId = query.installation_id;
     const installationId =
       typeof rawInstallationId === 'string' ? Number(rawInstallationId) : Number.NaN;
-    const flowInvalid = () => {
+    const flowUnavailable = (reason: 'expired' | 'used' | 'invalid') => {
       noStore(reply);
       reply.header(
         'content-security-policy',
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
       );
-      return reply.status(400).type('text/html; charset=utf-8').send(githubInstallErrorPage());
+      return reply
+        .status(400)
+        .type('text/html; charset=utf-8')
+        .send(githubInstallErrorPage(reason));
     };
-    if (typeof state !== 'string' || !Number.isSafeInteger(installationId) || installationId <= 0) {
-      return flowInvalid();
+    // GitHub omits installation_id when the install did NOT complete; the
+    // documented case is an organization whose install is awaiting an owner's
+    // approval (setup_action=request). Treating a missing id as an invalid
+    // link was the production bug: a valid seconds-old link rendered "expired
+    // or already used" for a person still mid-install. Classify the state so a
+    // genuinely dead link still says why, but never spend it here — GitHub's
+    // real callback arrives once approval lands.
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      const pending = await options.store.peekGitHubInstallFlow(sha256(state), now());
+      if (pending.status !== 'ok' || pending.flow.community !== tenant.community) {
+        return flowUnavailable(
+          pending.status === 'expired' || pending.status === 'used' ? pending.status : 'invalid',
+        );
+      }
+      noStore(reply);
+      reply.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      return reply.status(200).type('text/html; charset=utf-8').send(githubInstallPendingPage());
     }
+    // Completion is atomic and single-use: only an unconsumed, unexpired state
+    // can bind an installation, and it can do so exactly once.
     const flow = await options.store.consumeGitHubInstallFlow(sha256(state), now());
     if (!flow || flow.community !== tenant.community) {
-      return flowInvalid();
+      // The state was spent or ran out of time; the row still says which.
+      const miss = await options.store.peekGitHubInstallFlow(sha256(state), now());
+      return flowUnavailable(
+        miss.status === 'expired' || miss.status === 'used' ? miss.status : 'invalid',
+      );
     }
     const [linkedAccountId, installedAccount, repositories] = await Promise.all([
       options.store.githubSubjectForPubkey(tenant.community, flow.pubkey),

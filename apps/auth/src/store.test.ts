@@ -59,16 +59,80 @@ describe('durable transactional identity-link store', () => {
     await store.migrate();
     const now = new Date();
     await store.createTicket('f'.repeat(64), {
-      challenge: 'challenge', community: 'community', issuer: 'https://github.com',
-      audience: 'github-client', subject: '42', createdAt: now,
-      expiresAt: new Date(now.getTime() + 60_000), attemptCount: 0,
-      consumedAt: null, boundPubkey: null, providerLogin: 'octocat',
+      challenge: 'challenge',
+      community: 'community',
+      issuer: 'https://github.com',
+      audience: 'github-client',
+      subject: '42',
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+      providerLogin: 'octocat',
       providerDisplayName: 'The Octocat',
     });
-    await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toMatchObject({
-      status: 'exchanged', ticket: { subject: '42', providerLogin: 'octocat' },
+    await expect(
+      store.consumeTicketForPhone('f'.repeat(64), 'community', now),
+    ).resolves.toMatchObject({
+      status: 'exchanged',
+      ticket: { subject: '42', providerLogin: 'octocat' },
     });
-    await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toEqual({ status: 'used' });
+    await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toEqual({
+      status: 'used',
+    });
+    await database.close();
+  }, 30_000);
+
+  it('classifies a GitHub install-flow miss as expired or used and keeps the row long enough to say which', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-auth-install-flow-'));
+    directories.push(directory);
+    const database = new DurablePgliteDatabase(directory);
+    await database.client.waitReady;
+    const store = new AuthStore(database);
+    await store.migrate();
+    const now = new Date();
+    const flow = (createdAt: Date, expiresAt: Date) => ({
+      community: 'community',
+      pubkey: 'a'.repeat(64),
+      redirectUri: 'beeline://beeline/github-installation',
+      createdAt,
+      expiresAt,
+    });
+
+    const liveHash = 'a'.repeat(64);
+    await store.createGitHubInstallFlow(liveHash, flow(now, new Date(now.getTime() + 60_000)));
+    await expect(store.peekGitHubInstallFlow(liveHash, now)).resolves.toMatchObject({
+      status: 'ok',
+    });
+    await expect(store.peekGitHubInstallFlow('b'.repeat(64), now)).resolves.toEqual({
+      status: 'missing',
+    });
+
+    const expiredHash = 'c'.repeat(64);
+    await store.createGitHubInstallFlow(
+      expiredHash,
+      flow(new Date(now.getTime() - 120_000), new Date(now.getTime() - 60_000)),
+    );
+    await expect(store.peekGitHubInstallFlow(expiredHash, now)).resolves.toEqual({
+      status: 'expired',
+    });
+
+    // Single-use stays atomic: the first consume wins, the second is a miss
+    // that the row now explains as "used".
+    await expect(store.consumeGitHubInstallFlow(liveHash, now)).resolves.not.toBeNull();
+    await expect(store.consumeGitHubInstallFlow(liveHash, now)).resolves.toBeNull();
+    await expect(store.peekGitHubInstallFlow(liveHash, now)).resolves.toEqual({ status: 'used' });
+
+    // A later flow's prune keeps the recently-expired row, so the page can
+    // still say "expired" instead of falling back to a generic invalid link.
+    await store.createGitHubInstallFlow(
+      'd'.repeat(64),
+      flow(now, new Date(now.getTime() + 60_000)),
+    );
+    await expect(store.peekGitHubInstallFlow(expiredHash, now)).resolves.toEqual({
+      status: 'expired',
+    });
     await database.close();
   }, 30_000);
 
@@ -195,17 +259,13 @@ describe('key succession ledger', () => {
 
     // Old key binds first.
     await store.createTicket('1'.repeat(64), ticket('1'));
-    expect(
-      (await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date())).status,
-    ).toBe('linked');
+    expect((await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date())).status).toBe(
+      'linked',
+    );
     // Candidate bind conflicts, then replace records the succession A→B.
     await store.createTicket('2'.repeat(64), ticket('2'));
     await store.consumeTicketAndLink('2'.repeat(64), midKey, new Date());
-    const replaced = await store.recoverConsumedTicketLink(
-      '2'.repeat(64),
-      midKey,
-      new Date(),
-    );
+    const replaced = await store.recoverConsumedTicketLink('2'.repeat(64), midKey, new Date());
     expect(replaced).toMatchObject({ status: 'replaced', previousPubkey: oldKey });
 
     // Chain A→B resolves.
@@ -245,9 +305,7 @@ describe('key succession ledger', () => {
     // A third device key replaces again FROM the current link key (B→C); then
     // a stale replay of B's recovery is refused as used, not re-recorded.
     await second('c'.repeat(64), '3');
-    await expect(store.resolveCurrentPubkey('relay.example', oldKey)).resolves.toBe(
-      'c'.repeat(64),
-    );
+    await expect(store.resolveCurrentPubkey('relay.example', oldKey)).resolves.toBe('c'.repeat(64));
     await expect(store.successionPredecessors('relay.example', 'c'.repeat(64))).resolves.toEqual([
       oldKey,
       'b'.repeat(64),
@@ -261,9 +319,9 @@ describe('key succession ledger', () => {
     await store.createTicket('1'.repeat(64), ticket('1'));
     await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date());
     await store.createTicket('2'.repeat(64), ticket('2'));
-    expect(
-      (await store.consumeTicketAndLink('2'.repeat(64), otherKey, new Date())).status,
-    ).toBe('conflict');
+    expect((await store.consumeTicketAndLink('2'.repeat(64), otherKey, new Date())).status).toBe(
+      'conflict',
+    );
     await expect(store.resolveCurrentPubkey('relay.example', otherKey)).resolves.toBe(otherKey);
     await expect(store.sameIdentity('relay.example', oldKey, otherKey)).resolves.toBe(false);
   }, 30_000);

@@ -279,6 +279,77 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
+/**
+ * Whether `delta` continues the word `current` stops on, so the non-text
+ * update between them was interleaved metadata rather than a message
+ * boundary. Only `CHUNK_CONTINUES_PREVIOUS_WORD` qualifies — a head that
+ * binds backwards and cannot open a message. A letter or digit head does
+ * not; see UNRESOLVED PROTOCOL AMBIGUITY below before widening this.
+ *
+ * ── UNRESOLVED PROTOCOL AMBIGUITY: a word-character resume ────────────────
+ *
+ * When a run stops part-way through a word and the next delta opens with a
+ * letter or a digit, the two readings are indistinguishable, in either case:
+ *
+ *     "Using Git"        + tool_call + "Hub works."        → one name, split
+ *     "Checking Docker"  + tool_call + "Found it."         → two messages
+ *     "The ans"          + tool_call + "wer is 42."        → one word, split
+ *     "Checking package" + tool_call + "npm test passes."  → two messages
+ *
+ * Same text; from a harness that emits a bare `tool_call`, the same update
+ * stream. Capitalization does not separate the first pair and lowercase does
+ * not separate the second — `npm`, `ls` and `git` open messages exactly as
+ * `Found` does. A single string-valued final message therefore has three
+ * possible values at that seam, and all three were built and run end to end
+ * on the branch that added this guard:
+ *
+ *   1. join with no separator — fuses two real messages ("DockerFound it.")
+ *   2. end the run — the split word loses its head ("Hub works.")   ← chosen
+ *   3. join across a paragraph break — keeps both, but promotes unpunctuated
+ *      interim narration into the reply, changing the final-message contract
+ *
+ * Reading 2 is in force by decision, to hold that contract: interim
+ * narration stays in the live draft and only the final post-tool message is
+ * the reply. The cost is real and is asserted in `leaves a word-character
+ * resume ambiguous instead of guessing at it` — a word split across such a
+ * seam still loses its head, exactly as before this guard existed.
+ *
+ * Resolving it needs a structural signal, and the repository was searched
+ * for one before settling on reading 2. There is none to be had today:
+ *
+ *   - Nothing in ACP groups message deltas. `toolCallId` is exactly the key
+ *     message chunks lack, which is why `toolCallEntries` below is trivially
+ *     correct and this function cannot be.
+ *   - The only verbatim harness captures held here are
+ *     `fixtures/grok-use-tool-permissions.ts` and
+ *     `fixtures/claude-agent-acp-permissions.ts`, both `tool_call` and
+ *     `session/request_permission` frames. Neither records a message chunk.
+ *   - The `_meta` a real harness does send is tool identity (`x.ai/tool`) or
+ *     per-turn identity (`goose.activeRunId`, read at
+ *     `activeRunIdFromUpdate`). Neither is per-message. `messageId` exists in
+ *     ACP only as a steer RPC's result, never on a stream update.
+ *   - The `_meta.goose.created` stamp that appears in `acp.test.ts` is
+ *     invented by a hand-written fake; no production code reads it.
+ *   - PRODUCTION-CORPUS REPLAY does not cover this. Its fixture is sanitized
+ *     relay events whose ACP payloads were replaced before commit.
+ *
+ * A harness message id or stop marker on `agent_message_chunk` would end the
+ * ambiguity outright, since two deltas of one message would then be
+ * identifiable as such. Settling whether any installed harness already sends
+ * one means capturing raw `session/update` frames per harness — the old
+ * `scripts/capture-acp-permissions.mjs` (deleted; see git history) did
+ * exactly that and is the shape of the job.
+ *
+ * Until then do not reach for the text. Capitalization was tried four ways —
+ * the word's own case, a prefix allowlist, the fragment's length, whether
+ * the word had already turned over — and lowercase once; each reading
+ * resolved one pair above by corrupting the other.
+ */
+function continuesPreviousWord(current: string, delta: string): boolean {
+  if (/\s$/.test(current)) return false;
+  return CHUNK_CONTINUES_PREVIOUS_WORD.test(delta);
+}
+
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
 
 /** Whether the configured harness label is pi's ACP adapter (`pi-acp`). */
@@ -301,28 +372,24 @@ function normalizeStreamDelta(text: string, _agentLabel?: string): string {
 /** Group streaming text into assistant-message runs separated by tool,
  * reasoning, or plan updates. Consecutive deltas are one message. A resuming
  * delta that binds to the prior word remains in that message too, since some
- * harnesses interleave metadata in the middle of a token. */
+ * harnesses interleave metadata in the middle of a token.
+ *
+ * The split is decided when the next delta arrives, never when the non-text
+ * update lands: a tool call used to close the run on sight, so a tool call
+ * between a word's first and second token broke the word in two and the head
+ * stopped being part of the final message. Whether the run ended is only
+ * knowable from what resumes it. */
 export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
   const runs: string[] = [];
   let current = '';
   let lastWasText = false;
   for (const u of updates) {
-    const isToolCall = u.update.sessionUpdate === 'tool_call';
     const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
     if (!delta) {
-      if (isToolCall && current) {
-        runs.push(current);
-        current = '';
-      }
       lastWasText = false;
       continue;
     }
-    if (
-      !lastWasText &&
-      current &&
-      !/\s$/.test(current) &&
-      !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
-    ) {
+    if (!lastWasText && current && !continuesPreviousWord(current, delta)) {
       runs.push(current);
       current = '';
     }

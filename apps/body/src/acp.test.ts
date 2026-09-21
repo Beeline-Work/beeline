@@ -169,6 +169,112 @@ describe('ACP streaming lane classifier', () => {
       ),
     ).toEqual(['gojiberry.ai\n- **YC']);
   });
+
+  it('resumes the same run when any non-text update lands inside a word', () => {
+    // A tool call used to end the run on sight, so it never reached the
+    // word-continuation guard that every other non-text update went
+    // through. All of them are decided by the guard now.
+    const interruptions = [
+      update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+      update('agent_thought_chunk', { content: { type: 'text', text: 'checking' } }),
+      update('plan', { entries: [] }),
+    ];
+    const whole = "I'll take a look at the README first.";
+    for (const interruption of interruptions) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: 'I' } }),
+        interruption,
+        update('agent_message_chunk', {
+          content: { type: 'text', text: "'ll take a look at the README first." },
+        }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([whole]);
+      expect(finalAgentMessageText(updates)).toBe(whole);
+    }
+  });
+
+  it('leaves a word-character resume ambiguous instead of guessing at it', () => {
+    // The unresolved protocol ambiguity recorded on `continuesPreviousWord`.
+    // Each pair below is one split word or two whole messages, and the two
+    // readings are the same text and the same update stream — capitalization
+    // does not separate the first pair, and lowercase does not separate the
+    // second, since `npm` opens a message exactly as `Found` does. None is
+    // joined: the run ends, as it did before this guard existed. That holds
+    // the final-message contract, and the price is asserted here rather
+    // than left to be discovered: a word split across such a seam loses its
+    // head.
+    for (const [head, tail] of [
+      ['Using Git', 'Hub works.'],
+      ['Checking Docker', 'Found it.'],
+      ['Open the READ', 'ME first.'],
+      ['The ans', 'wer is 42.'],
+      ['Checking package', 'npm test passes.'],
+    ]) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: head } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: tail } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([head, tail]);
+      expect(finalAgentMessageText(updates)).toBe(tail);
+    }
+  });
+
+  it('still ends a run when the text that resumes opens a new sentence', () => {
+    // The word-continuation guard must not swallow a genuine message
+    // boundary: a capital landing on an ordinary lowercase word is the
+    // harness opening a fresh message, and a run already closed by
+    // whitespace is a boundary on its own.
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting the files' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found the answer.' } }),
+      ]),
+    ).toEqual(['Inspecting the files', 'Found the answer.']);
+
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', {
+          content: { type: 'text', text: '...existing test and typecheck patterns' },
+        }),
+        update('tool_call', { toolCallId: 'read-2', kind: 'read' }),
+        update('agent_message_chunk', {
+          content: { type: 'text', text: 'Now I have the full picture.' },
+        }),
+      ]),
+    ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
+
+    // Narration that ends on any word, short or long, plain or stylized,
+    // ends its message once a capital follows it.
+    for (const shortWord of [
+      'I can do',
+      'Looking at the',
+      'Checking if',
+      'One to',
+      'Reading it as a',
+      'Tested on mac',
+      'Checking GitHub',
+      'Written in JavaScript',
+      'Using eBay',
+    ]) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: shortWord } }),
+        update('tool_call', { toolCallId: 'read-3', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found it.' } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([shortWord, 'Found it.']);
+      expect(finalAgentMessageText(updates)).toBe('Found it.');
+    }
+
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting ' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'done.' } }),
+      ]),
+    ).toEqual(['Inspecting ', 'done.']);
+  });
 });
 
 describe('harness retry narration is never the final answer', () => {
@@ -770,6 +876,47 @@ lines.on('line', (line) => {
     chunk('I');
     update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'checking' } });
     chunk("'ll take a look at the README first.");
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+/** The same stream-head shape, but the update that lands mid-word is a tool
+ *  call — the permutation the word-continuation guard could never see,
+ *  because a tool call closed the run before the guard ran. `head` and `tail`
+ *  are the two halves of the word the tool call lands inside. */
+async function fakeToolCallWordSplitAgent(head: string, tail: string): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-tool-word-split-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-tool-call-word-split-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const update = (update) =>
+  send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'tool-word-split-session', update } });
+const chunk = (text) =>
+  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'tool-word-split-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk(${JSON.stringify(head)});
+    update({ sessionUpdate: 'tool_call', toolCallId: 'read-1', kind: 'read', title: 'Read README' });
+    chunk(${JSON.stringify(tail)});
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -1525,6 +1672,119 @@ describe('AcpClient live steering', () => {
       // The live draft carries the same unbroken sentence, not a one-character
       // head followed by its own tail.
       expect(seenFullText.at(-1)).toBe(result.agentText);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn when a tool call splits the opening word', async () => {
+    // A tool call used to close the run the instant it arrived, before the
+    // word-continuation guard could look at what resumed the word, so this
+    // turn's final message began "'ll take a look at the README first." and
+    // its head was published as a separate one-character output row.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('I', "'ll take a look at the README first."),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe("I'll take a look at the README first.");
+      expect(runs.at(-1)).toEqual(["I'll take a look at the README first."]);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration that ends on a capitalized name out of the final message', async () => {
+    // `Checking Docker` + tool call + `Found it.` — every reading of the
+    // capital that joined `Git` to `Hub` also glued this genuine boundary
+    // into the single message "Checking DockerFound it.". The capital is
+    // now left alone, so the two messages stay two.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Checking Docker', 'Found it.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['Checking Docker', 'Found it.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration out of the reply when the reply opens with a lowercase command', async () => {
+    // `Checking package` + tool call + `npm test passes.` — reading any
+    // lowercase head as a word continuation fused these two real messages
+    // into "Checking packagenpm test passes.". A lowercase head opens a
+    // message as readily as a capital does.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Checking package', 'npm test passes.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('npm test passes.');
+      expect(result.agentText).not.toContain('packagenpm');
+      expect(runs.at(-1)).toEqual(['Checking package', 'npm test passes.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration that ends on a short word out of the final message', async () => {
+    // The boundary the word-continuation guard must not cross: `I can do` is
+    // narration that ended on a word, not half of a name, so tool work after
+    // it opens a new message. Reading the fragment by length instead of by
+    // name glued the two into "I can doFound it.".
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('I can do', 'Found it.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['I can do', 'Found it.']);
     } finally {
       await client.stop();
     }

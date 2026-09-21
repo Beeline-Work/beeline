@@ -7,13 +7,14 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 export const PUSH_LEVEL_LABELS: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
-  direct: 'Anything aimed at you: a DM, a tag naming you, a reply to you',
-  mine: 'Everything in Direct, plus member joins and leaves in your rooms',
-};
-const PUSH_LEVEL_VALUES: Readonly<Record<PushLevel, string>> = {
-  off: 'Off',
   direct: 'Direct',
   mine: 'My corners',
+};
+/** What each level actually delivers. A sentence never shares the row's
+ *  single-line label, so it rides the sheet row's own description slot. */
+const PUSH_LEVEL_DESCRIPTIONS: Readonly<Partial<Record<PushLevel, string>>> = {
+  direct: 'Anything aimed at you: a DM, a tag naming you, a reply to you',
+  mine: 'Everything in Direct, plus member joins and leaves in your rooms',
 };
 
 type Props = {
@@ -57,7 +58,7 @@ export function PushLevelSetting({ disabled = false, onSave, value }: Props) {
         }}
         testID="push-notifications-setting"
         title="Notifications"
-        value={PUSH_LEVEL_VALUES[value]}
+        value={PUSH_LEVEL_LABELS[value]}
       />
       <HullActionSheetModal
         accessibilityLabel="Close push notifications picker"
@@ -71,6 +72,7 @@ export function PushLevelSetting({ disabled = false, onSave, value }: Props) {
       >
         {PUSH_LEVELS.map((level) => (
           <HullActionSheetRow
+            description={PUSH_LEVEL_DESCRIPTIONS[level]}
             disabled={working}
             key={level}
             label={PUSH_LEVEL_LABELS[level]}

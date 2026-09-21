@@ -45,14 +45,18 @@ describe('PushLevelSetting', () => {
         .findAllByType('Choice')
         .map((choice: { props: { testID: string } }) => choice.props.testID),
     ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine']);
+    // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
+    // so the level's name rides the label and the sentence explaining what it
+    // delivers rides the wrapping description slot instead of ellipsizing.
     expect(
-      ['off', 'direct', 'mine'].map(
-        (level) => renderer.root.findByProps({ testID: `push-level-${level}` }).props.label,
-      ),
+      ['off', 'direct', 'mine'].map((level) => {
+        const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
+        return [choice.props.label, choice.props.description];
+      }),
     ).toEqual([
-      'Off',
-      'Anything aimed at you: a DM, a tag naming you, a reply to you',
-      'Everything in Direct, plus member joins and leaves in your rooms',
+      ['Off', undefined],
+      ['Direct', 'Anything aimed at you: a DM, a tag naming you, a reply to you'],
+      ['My corners', 'Everything in Direct, plus member joins and leaves in your rooms'],
     ]);
 
     await act(async () =>

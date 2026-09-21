@@ -60,4 +60,24 @@ describe('Members page layout contract', () => {
     const afterAgents = source.slice(source.indexOf('</KeyboardAwareScrollView>'));
     expect(afterAgents).not.toContain('model-config');
   });
+
+  it('removes an agent from one compact red control beside its identity copy', () => {
+    // The old danger zone — a red rule, a paragraph of warning copy and a
+    // full-width destructive button at the foot of the panel — is gone. The
+    // confirm dialog already states the whole consequence of removal, so the
+    // page keeps only the control, sat next to the name and owner byline.
+    expect(source).not.toContain('dangerZone');
+    expect(source).not.toContain('dangerCopy');
+    expect(source).not.toContain('BAN AGENT');
+    expect(source).not.toContain('Ban this agent from every Room');
+    const heading = source.slice(
+      source.indexOf('<View style={styles.detailHeading}>'),
+      source.indexOf('testID="close-agent-settings"'),
+    );
+    expect(heading).toContain('testID="agent-owner"');
+    expect(heading).toContain('testID="remove-agent"');
+    expect(heading).toContain('style={styles.removeAgentControl}');
+    expect(styleBlock(source, 'removeAgentControl')).toContain('borderColor: hull.dialogDanger');
+    expect(styleBlock(source, 'removeAgentText')).toContain('color: hull.dialogDanger');
+  });
 });

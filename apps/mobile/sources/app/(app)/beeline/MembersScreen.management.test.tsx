@@ -916,7 +916,9 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'remove-agent' }).props.label).toBe('BAN AGENT');
+    const ban = renderer.root.findByProps({ testID: 'remove-agent' });
+    expect(ban.props.accessibilityLabel).toBe('Ban agent');
+    expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
   });
 
   it('lets the owner flip yolo and shows who set it', async () => {
@@ -1026,6 +1028,11 @@ describe('Members workspace management', () => {
   it('warns about and invokes the full removeAgent host teardown path', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
+
+    const control = renderer.root.findByProps({ testID: 'remove-agent' });
+    expect(control.props.accessibilityLabel).toBe('Remove agent');
+    expect(control.findAllByType('Text')[0].props.children).toBe('Remove');
+
     await press(renderer, 'remove-agent');
 
     expect(modal.confirm).toHaveBeenCalledWith(

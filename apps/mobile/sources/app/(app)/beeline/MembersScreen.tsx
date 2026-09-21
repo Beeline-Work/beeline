@@ -1127,6 +1127,24 @@ export default function BuzzMembers() {
                     </Text>
                   )}
                 </View>
+                {canRemoveSelectedAgent && (
+                  <TouchableOpacity
+                    accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void removeSelectedAgent()}
+                    style={styles.removeAgentControl}
+                    testID="remove-agent"
+                  >
+                    <Text style={styles.removeAgentText}>
+                      {working === 'remove-agent'
+                        ? 'Removing…'
+                        : ownsSelectedAgent
+                          ? 'Remove'
+                          : 'Ban'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   accessibilityLabel="Close agent settings"
                   onPress={closeAgentSettings}
@@ -1332,29 +1350,6 @@ export default function BuzzMembers() {
                       {yoloError}
                     </Text>
                   )}
-                </View>
-              )}
-              {canRemoveSelectedAgent && (
-                <View style={styles.dangerZone}>
-                  <Text style={styles.dangerCopy}>
-                    {ownsSelectedAgent
-                      ? 'Removal tears down the paired host after Workspace absence is confirmed.'
-                      : 'Ban this agent from every Room in the Workspace.'}
-                  </Text>
-                  <MonoButton
-                    label={
-                      working === 'remove-agent'
-                        ? 'REMOVING AGENT'
-                        : ownsSelectedAgent
-                          ? 'REMOVE AGENT'
-                          : 'BAN AGENT'
-                    }
-                    loading={working === 'remove-agent'}
-                    disabled={busy}
-                    onPress={() => void removeSelectedAgent()}
-                    variant="destructive"
-                    testID="remove-agent"
-                  />
                 </View>
               )}
             </HullSurface>
@@ -1592,12 +1587,14 @@ const styles = StyleSheet.create((theme) => {
     },
     switchLabelOn: { color: hull.accent },
     switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
-    dangerZone: {
-      gap: hull.space.sm,
-      paddingTop: hull.space.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.danger,
+    removeAgentControl: {
+      minHeight: 32,
+      justifyContent: 'center',
+      paddingHorizontal: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.dialogDanger,
+      borderRadius: hull.radius,
     },
-    dangerCopy: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    removeAgentText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

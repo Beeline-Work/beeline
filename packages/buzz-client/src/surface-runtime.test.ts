@@ -315,9 +315,10 @@ describe('narrow live seam', () => {
   });
 
   it('ends a retracted draft whose turn completed with no durable reply', () => {
-    // A Room turn that opened a corner publishes nothing: the server's corner
-    // card is the whole handoff. Held for a final that never comes, the last
-    // streamed sentence stood as the answer until the Room was reopened.
+    // A textless Room turn that opened a corner publishes nothing: it settles
+    // through the server's corner card alone. Held for a final that never
+    // comes, the last streamed sentence stood as the answer until the Room was
+    // reopened.
     const overlay: LiveOverlay = {
       kind: 'draft',
       key: 'draft:agent:request',

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -7,6 +7,7 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
+import type { QueryResultRow } from 'pg';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
   B = 'c'.repeat(64);
@@ -89,6 +90,31 @@ beforeEach(async () => {
     [H],
   );
 });
+
+/** Fails the first query whose SQL matches, inside a transaction or out of one. */
+class FailOnce implements SqlDatabase {
+  fired = false;
+  constructor(
+    private readonly inner: SqlDatabase,
+    private readonly match: RegExp,
+    private readonly shared?: FailOnce,
+  ) {}
+  private get owner(): FailOnce {
+    return this.shared ?? this;
+  }
+  async query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) {
+    if (!this.owner.fired && this.match.test(sql)) {
+      this.owner.fired = true;
+      throw new Error('injected handoff failure');
+    }
+    return this.inner.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.inner.transaction((inner) =>
+      work(new FailOnce(inner, this.match, this.owner)),
+    );
+  }
+}
 
 /** Put the corner in the state a green transition leaves it in. */
 async function greenHead(number: number, headSha: string, checks = 'passing') {
@@ -210,6 +236,44 @@ describe('corner message attribution', () => {
     // The next green transition dispatches the reviewer again, unspent.
     await greenHead(14, '1'.repeat(40));
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+  });
+
+  it('commits the verdict and the handoff together, or neither', async () => {
+    // The stall this whole corner removes is a durable verdict nobody was
+    // woken for. A handoff written AFTER the verdict commits can produce
+    // exactly that and no retry can repair it: the reply is already stored and
+    // its command output authority is spent. So make the handoff fail and
+    // check that the verdict went with it.
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(17, '9'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    const verdict = 'Review complete: the findings stand, fix them.';
+    const failing = new FailOnce(db, /worker_agent_id/);
+    await expect(
+      new DaemonService(failing, new LiveHub()).execute(
+        'postRoomMessage',
+        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1', text: verdict },
+        B,
+      ),
+    ).rejects.toThrow('injected handoff failure');
+    expect(failing.fired).toBe(true);
+    const stored = async (text: string) =>
+      (await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text=$2`, [C, text])).rowCount;
+    expect(await stored(verdict)).toBe(0);
+    expect(
+      (
+        await db.query<{ state: string }>(
+          `SELECT state FROM agent_commands WHERE id=$1`,
+          [review!.id],
+        )
+      ).rows[0]?.state,
+    ).toBe('claimed');
+    expect(await commands(A, C)).toEqual([]);
+    // The reviewer's daemon retries the same reply, and this time both land.
+    await result(review!, verdict);
+    expect(await stored(verdict)).toBe(1);
+    expect((await commands(A, C)).map((command) => command.reason)).toEqual(['corner_review']);
   });
 
   /**

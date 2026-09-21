@@ -204,27 +204,23 @@ export class DaemonService {
       name === 'postRoomMessage' &&
       candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
-      typeof candidate.replyToMessageId !== 'string'
-    ) {
-      const posted = (await this.postRoomMessage(
+      typeof candidate.replyToMessageId !== 'string' &&
+      // A reply naming nobody normally has nothing to route, which is the whole
+      // reason for this shorter write: one autocommit statement that commits
+      // and publishes on its own. A corner reviewer's reply is the exception —
+      // it hands the branch back — and that handoff must not be a second write
+      // AFTER the commit. Losing it there is permanent: the verdict is durable,
+      // its command output authority is spent, and no retry can re-create the
+      // turn, which is exactly the stall this handback exists to remove. So the
+      // reviewer takes the transactional path below, where the verdict and the
+      // handoff commit together or not at all.
+      !cornerReviewer
+    )
+      return (await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
         authenticatedAgentId,
         true,
-      )) as { id: string };
-      // This path exists because a reply that names nobody has no tag to
-      // route. A review verdict is exactly that reply, and the handoff back to
-      // the corner's worker must not skip along with the routing. The live
-      // event is already published by here, so the handoff costs the reply
-      // nothing that a reader waits on — and only a corner's reviewer asks.
-      if (cornerReviewer)
-        await queueCornerWorkerAfterReview(this.database, {
-          roomId: scopedRoom,
-          reviewerAgentId: authenticatedAgentId,
-          turnRequestId: String(candidate.requestId ?? ''),
-          verdictMessageId: posted.id,
-        });
-      return posted as Output<Name>;
-    }
+      )) as Output<Name>;
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
@@ -332,8 +328,11 @@ export class DaemonService {
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
-          // A review that tags someone — a person, or an agent that is not the
-          // worker — still ends the review, so the handoff is owed here too.
+          // Every reviewer verdict lands here, tagged or not. `db` is the
+          // transaction that inserts the reply and completes its command, so a
+          // handoff that throws takes the verdict down with it and the retry
+          // writes both — rather than leaving a durable verdict nobody was
+          // woken for, which no retry could repair.
           if (cornerReviewer)
             await queueCornerWorkerAfterReview(db, {
               roomId: scopedRoom,

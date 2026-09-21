@@ -102,8 +102,11 @@ const hostByTestID = (renderer: ReactTestRenderer, testID: string): TestNode =>
  * The slot as the screen mounts it, driven the way the phone drives it: the
  * hidden copy reports a layout, the band comes, the band goes. The height the
  * assertions read is the height the list's viewport loses.
+ *
+ * `bandFromTheStart` is the cold open: a Room entered while an agent is
+ * already working, so the slot's first render is handed a band.
  */
-function mountBandSlot() {
+function mountBandSlot({ bandFromTheStart = false }: { bandFromTheStart?: boolean } = {}) {
   let renderer!: ReactTestRenderer;
   const band = React.createElement(TurnProgressLine, {
     label: 'nerd thinking…',
@@ -112,7 +115,7 @@ function mountBandSlot() {
   const tree = (showBand: boolean) =>
     React.createElement(TurnBandSlot, { testID: 'slot' }, showBand ? band : null);
   act(() => {
-    renderer = create(tree(false));
+    renderer = create(tree(bandFromTheStart));
   });
   return {
     /** The exact height the slot takes out of the screen right now. */
@@ -333,6 +336,66 @@ describe('the Room turn line is a band above the composer', () => {
     expect(slot.slotHeight()).toBe(before);
     slot.showBand(false);
     expect(slot.slotHeight()).toBe(before);
+
+    slot.unmount();
+  });
+
+  /**
+   * RB-31 cold open: the reader enters a Room while an agent is already
+   * working, so the ruler and the band mount in the same render. Measuring
+   * before showing is the whole rule — if the band were shown into the
+   * fallback and the ruler then reported taller, the slot would grow with the
+   * band already on screen and the transcript would lose that difference.
+   */
+  it('opens a Room mid-turn without resizing the slot under a band', () => {
+    const line = measureTurnLine();
+    const slot = mountBandSlot({ bandFromTheStart: true });
+    // The reader is on a larger text scale, so the real band is taller than
+    // the default-scale fallback the slot mounts with.
+    const scaled = line.box + 14;
+    expect(scaled).toBeGreaterThan(reservedTurnBandHeight({ reserved: null, measured: null }));
+
+    // Every frame the band is actually on screen, and the height the list's
+    // viewport is losing in it.
+    const underTheBand: number[] = [];
+    const frame = () => {
+      if (slot.bandIsMounted()) underTheBand.push(slot.slotHeight());
+    };
+
+    frame(); // the cold mount itself, before the ruler has reported
+    slot.reportMeasuredHeight(scaled);
+    frame();
+    slot.reportMeasuredHeight(scaled);
+    frame();
+    slot.showBand(false);
+    frame();
+    slot.showBand(true);
+    frame();
+
+    // Nothing is shown while the height is still a guess, however early the
+    // turn arrives — and from the first frame the band is on screen the slot
+    // holds one height through every later report and every come-and-go.
+    expect(underTheBand.length).toBeGreaterThan(0);
+    expect(underTheBand).toEqual(underTheBand.map(() => scaled));
+
+    slot.unmount();
+  });
+
+  /**
+   * A zero is not a measurement. If the ruler reported before it had been laid
+   * out and the slot took that as settled, the band would be shown into the
+   * fallback and the real height would grow the slot underneath it.
+   */
+  it('does not treat an unlaid-out ruler as a measurement', () => {
+    const line = measureTurnLine();
+    const slot = mountBandSlot({ bandFromTheStart: true });
+
+    slot.reportMeasuredHeight(0);
+    expect(slot.bandIsMounted()).toBe(false);
+
+    slot.reportMeasuredHeight(line.box + 14);
+    expect(slot.bandIsMounted()).toBe(true);
+    expect(slot.slotHeight()).toBe(line.box + 14);
 
     slot.unmount();
   });

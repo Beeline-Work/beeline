@@ -195,10 +195,19 @@ function TurnLineMeasure() {
  * height open whether or not an agent is working.
  *
  * `room-bottom-chrome.ts` carries the argument for why the slot is permanent.
- * The two rules it keeps here are that the height is EXACT — `height`, never
- * `minHeight`, so no child can grow the strip and move the transcript — and
- * that the height comes from `TurnLineMeasure`, which is already laid out by
- * the time a band arrives.
+ * The three rules it keeps here are that the height is EXACT — `height`, never
+ * `minHeight`, so no child can grow the strip and move the transcript — that
+ * the height comes from `TurnLineMeasure`, and that nothing is SHOWN until
+ * that ruler has reported.
+ *
+ * The last one is the cold open: a Room entered while an agent is already
+ * working hands the slot a band in its very first render, alongside the ruler.
+ * Holding the band back for that one layout pass is what keeps the slot's
+ * height from settling underneath a band the reader can already see; the
+ * alternative is the strip growing from the fallback to the measurement with
+ * the band in it, which is the transcript shifting once on the way into the
+ * Room. A height of zero is not a measurement — a ruler that reports before it
+ * has been laid out must not settle anything.
  */
 export function TurnBandSlot({
   children,
@@ -210,6 +219,7 @@ export function TurnBandSlot({
   const [reserved, setReserved] = useState<number | null>(null);
   const onMeasureLayout = useCallback((event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.height;
+    if (measured <= 0) return;
     setReserved((held) => reservedTurnBandHeight({ reserved: held, measured }));
   }, []);
 
@@ -228,7 +238,7 @@ export function TurnBandSlot({
       >
         <TurnLineMeasure />
       </View>
-      {children}
+      {reserved != null && children}
     </View>
   );
 }

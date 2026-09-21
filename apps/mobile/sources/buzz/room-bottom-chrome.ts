@@ -33,6 +33,10 @@
  * after that band has already been laid out, too late to hold anything still.
  * The hidden copy is laid out at the reader's text scale before any band is
  * shown, so the first band of the session lands in a slot that already fits.
+ * `TurnBandSlot` shows nothing until that copy has reported, which is what
+ * covers the cold open — a Room entered mid-turn, where the ruler and the band
+ * would otherwise mount together and the slot would settle under a band the
+ * reader can already see.
  *
  * `room-bottom-chrome.test.tsx` measures the overlay-cover counterfactual, the
  * in-flow placement, and the reserve against a rendered line.

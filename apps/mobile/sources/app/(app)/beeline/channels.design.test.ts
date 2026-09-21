@@ -168,6 +168,9 @@ describe('Room list layout contract', () => {
     expect(source).toMatch(/<MembersGlyph\b/);
     expect(source).toMatch(/<ChevronGlyph\b/);
     expect(source).toContain('color={styles.headerBookmarkGlyph.color}');
+    expect(source).toMatch(
+      /<BookmarksGlyph[\s\S]*?\bfilled\b[\s\S]*?testID="workspace-bookmarks-glyph"/,
+    );
     expect(styleBlock(source, 'headerBookmarkGlyph')).toContain('color: hull.accent');
     expect(source).toContain('color={styles.headerActionGlyph.color}');
     expect(styleBlock(source, 'headerActionGlyph')).toContain('color: hull.textMuted');

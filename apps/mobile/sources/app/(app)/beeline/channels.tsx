@@ -806,6 +806,7 @@ export default function BuzzChannels() {
               >
                 <BookmarksGlyph
                   color={styles.headerBookmarkGlyph.color}
+                  filled
                   size={HEADER_MARK_SIZE}
                   testID="workspace-bookmarks-glyph"
                 />

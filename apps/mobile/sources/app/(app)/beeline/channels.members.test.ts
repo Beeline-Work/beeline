@@ -44,6 +44,7 @@ describe('Workspace Members entry point', () => {
     expect(source).not.toContain('headerMembersAction');
     expect(bookmarks).toContain('size={HEADER_MARK_SIZE}');
     expect(bookmarks).toContain('color={styles.headerBookmarkGlyph.color}');
+    expect(bookmarks).toMatch(/<BookmarksGlyph[\s\S]*?\bfilled\b/);
     expect(bookmarks).toContain('style={styles.headerAction}');
     const members = source.slice(
       source.indexOf('testID="workspace-members"') - 400,

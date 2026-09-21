@@ -124,9 +124,24 @@ describe('parseConnectOutput', () => {
     });
   });
 
-  it('does not treat a bare trustysquire.ai origin as the ceremony', () => {
-    expect(parseConnectOutput('Visit https://trustysquire.ai for help\n')).toBeUndefined();
-    expect(parseConnectOutput('Visit https://trustysquire.ai/ for help\n')).toBeUndefined();
+  it('prefers a known ceremony surface over an earlier unknown URL', () => {
+    const signIn = parseConnectOutput(
+      'Visit https://trustysquire.ai for help\nOpen this: https://tunnel.test/#p=hunter22\n',
+    );
+    expect(signIn).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' });
+  });
+
+  it('falls OPEN to the best remaining candidate when no known surface matched', () => {
+    // The day Squire serves its ceremony from a surface nobody anticipated,
+    // the picker still hands the person a page instead of returning nothing.
+    expect(parseConnectOutput('Visit https://trustysquire.ai for help\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai',
+    });
+    expect(parseConnectOutput('Sign in: https://squire.example/oauth/authorize?state=abc\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://squire.example/oauth/authorize?state=abc',
+    });
   });
 
   it('takes the bare install confirm page', () => {
@@ -136,10 +151,12 @@ describe('parseConnectOutput', () => {
     });
   });
 
-  it('never publishes a URL that belongs to somebody other than Squire', () => {
+  it('keeps the negative npm and Cloudflare exclusions, which fail open', () => {
     // npm's update notifier writes this to the connect child's stderr, and a
     // failed tunnel rig puts Cloudflare's docs link in the stderr tail Squire
-    // quotes back. Neither is a page the phone may be sent to.
+    // quotes back. These are NEGATIVE rules: with them as the only candidates
+    // there is nothing worth falling back to, but a known surface among them
+    // still wins outright (tested above).
     expect(
       parseConnectOutput(
         'npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.2\n',
@@ -150,9 +167,11 @@ describe('parseConnectOutput', () => {
         'cloudflared: see https://developers.cloudflare.com/cloudflare-one/connections/connect-apps for details\n',
       ),
     ).toBeUndefined();
-    expect(
-      parseConnectOutput('Sign in: https://squire.example/oauth/authorize?state=abc\n'),
-    ).toBeUndefined();
+    // A github.com URL that is NOT npm's changelog stays a fallback candidate.
+    expect(parseConnectOutput('See https://github.com/trusty-squire/mcp for docs\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://github.com/trusty-squire/mcp',
+    });
   });
 
   it('takes the real ceremony out of a stream that carries foreign URLs first', () => {

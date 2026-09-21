@@ -801,7 +801,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
 
   // Surface the sign-in URL immediately so the phone paints the noVNC page.
-  push(step('waiting for sign-in', 'done'));
+  push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
@@ -815,10 +815,25 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     };
   }
   push(step('paired to workspace', 'done'));
+  // An OUTSTANDING ceremony is not a connected helper. The vault answering
+  // `list_credentials` proves the credential plane, never that the shared
+  // Chrome carries a provider session — and `installConnector` completes the
+  // row in one write, which navigates the connect screen off the surface the
+  // human still has to press. This run stays `installing` and hands the phone
+  // its ceremony; a LATER run reaches Squire's verified short-circuit, prints
+  // no URL, and only then is this connector connected.
+  if (signIn) {
+    return {
+      status: 'installing',
+      steps,
+      signIn,
+      ...(version ? { squireVersion: version } : {}),
+      ...(signedInAs ? { signedInAs } : {}),
+    };
+  }
   return {
     status: 'connected',
     steps,
-    signIn,
     ...(version ? { squireVersion: version } : {}),
     ...(signedInAs ? { signedInAs } : {}),
   };

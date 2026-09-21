@@ -14,13 +14,21 @@ import {
 
 type ExecuteCall = { op: string; input: Record<string, unknown> };
 
-function apiMock(assignments: readonly ConnectorAssignment[]) {
+function apiMock(
+  assignments: readonly ConnectorAssignment[],
+  status: { connectorId: string; steps: { label: string; status: string }[] } = {
+    connectorId: '',
+    steps: [],
+  },
+) {
   const calls: ExecuteCall[] = [];
   return {
     calls,
+    status,
     async execute(op: string, input: Record<string, unknown>) {
       calls.push({ op, input });
       if (op === 'getConnectorAssignments') return { assignments };
+      if (op === 'getConnectorStatus') return status;
       return {};
     },
   };
@@ -194,7 +202,7 @@ describe('ConnectorAssignmentLoop', () => {
     await loop.runOnce();
     await settle();
     expect(started).toBe(0);
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments']);
+    expect(api.calls.some((call) => call.op === 'postConnectorStatus')).toBe(false);
 
     // The human finished (or closed the page) and connect exited: the next
     // assignment is an ordinary fresh install again.
@@ -204,6 +212,53 @@ describe('ConnectorAssignmentLoop', () => {
     await settle();
     expect(started).toBe(1);
     loop.stop();
+  });
+
+  it('supersedes a live connect when the human asked for this connector again', async () => {
+    // `pairConnector` re-arms the row to its default all-pending steps, which
+    // is the only thing that tells a fresh human request from the poll the
+    // server re-issues every ten seconds while the row is `installing`.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
+      connectorId: 'conn-1',
+      steps: [
+        { label: 'helper reached', status: 'pending' },
+        { label: 'trusty-squire installed', status: 'pending' },
+      ],
+    });
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(1);
+
+      // The row still carrying settled steps is the ceremony we published, so
+      // the next re-issued poll leaves it alone.
+      api.status.steps = [
+        { label: 'helper reached', status: 'done' },
+        { label: 'waiting for sign-in', status: 'pending' },
+      ];
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(1);
+    } finally {
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
   });
 
   it('stops protecting a ceremony once it has outlived its own tunnel', async () => {

@@ -324,7 +324,7 @@ describe('defaultStreamedRunner', () => {
 });
 
 describe('installSquire', () => {
-  it('reports every step and the sign-in method the connect command printed', async () => {
+  it('stays installing while the ceremony it printed is outstanding', async () => {
     const { client, calls } = mockSquire({
       list_credentials: () => ({ credentials: [] }),
     });
@@ -337,7 +337,10 @@ describe('installSquire', () => {
       }),
       mcp: client,
     });
-    expect(result.status).toBe('connected');
+    // The vault answered, but the human still has a page to sign in on: a
+    // `connected` verdict completes the row in one write and navigates the
+    // connect screen off the surface they have to press.
+    expect(result.status).toBe('installing');
     expect(result.signIn).toEqual({
       method: 'streamed-page',
       url: 'https://trustysquire.ai/install?token=secret',
@@ -348,7 +351,9 @@ describe('installSquire', () => {
       'waiting for sign-in',
       'paired to workspace',
     ]);
-    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+    expect(result.steps.find((step) => step.label === 'waiting for sign-in')?.status).toBe(
+      'pending',
+    );
     expect(calls[0]).toEqual({
       tool: 'list_credentials',
       args: { fields: 'summary' },
@@ -446,6 +451,23 @@ describe('installSquire', () => {
     expect(said).toContain("couldn't verify a live provider session");
   });
 
+  it('marks the connector connected only once a run prints no ceremony at all', async () => {
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      // The human finished on the tunnel the previous run published, so this
+      // run reaches Squire's verified short-circuit and prints no URL.
+      streamRun: fakeStreamRunner({
+        stdout: 'Already connected (google + github). Codex config refreshed.\n',
+      }),
+      mcp: client,
+    });
+    expect(result.status).toBe('connected');
+    expect(result.signIn).toBeUndefined();
+    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {
     const failing: SquireMcpClient = {
       async call() {
@@ -488,7 +510,7 @@ describe('installSquire', () => {
       onProgress(steps) {
         progressSteps.push(steps.map((s) => s.label));
         const last = steps[steps.length - 1];
-        if (last?.label === 'waiting for sign-in' && last.status === 'done') {
+        if (last?.label === 'waiting for sign-in') {
           capturedSignIn = { method: 'streamed-page', url: 'https://vnc.trustysquire.ai/#p=secret' };
         }
       },
@@ -587,7 +609,7 @@ describe('version resolution', () => {
       log: (message) => logs.push(message),
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(streamInvocations[0]).toEqual([
       'npx',
       '-y',
@@ -802,7 +824,7 @@ describe('on-disk profile claim reclaim', () => {
       }),
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(existsSync(dir.lockPath)).toBe(false);
     dir.cleanup();
   });
@@ -827,7 +849,7 @@ describe('on-disk profile claim reclaim', () => {
       },
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
     expect(env?.XDG_CONFIG_HOME).toMatch(/\.config$/);
     expect(env?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);

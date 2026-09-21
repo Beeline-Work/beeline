@@ -300,10 +300,13 @@ export class ConnectorAssignmentLoop {
     // its Xvfb/x11vnc/websockify/cloudflared rig for the daemon's lifetime.
     const claim = squireConnectSession();
     if (claim && isProcessAlive(claim.pid) && Date.now() - claim.claimedAt < CONNECT_TIMEOUT_MS) {
-      this.log(
-        `trusty-squire connect still waiting for sign-in (pid ${String(claim.pid)}); leaving it alone`,
-      );
-      return;
+      if (!(await this.rearmedByHuman(connectorId))) {
+        this.log(
+          `trusty-squire connect still waiting for sign-in (pid ${String(claim.pid)}); leaving it alone`,
+        );
+        return;
+      }
+      this.log('trusty-squire re-pair requested; superseding the connect holding the browser');
     }
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
@@ -334,7 +337,6 @@ export class ConnectorAssignmentLoop {
         connectorId,
         ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
         ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
-        ...(result.signIn ? { signIn: result.signIn } : {}),
       });
       await this.reportVault(connectorId);
       return;
@@ -350,6 +352,24 @@ export class ConnectorAssignmentLoop {
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
       ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
     });
+  }
+
+  /**
+   * True when a human asked for this connector again while a connect of ours
+   * still holds the browser. `pairConnector` re-arms the row to its default
+   * all-pending steps, so a row whose every step is still pending is a fresh
+   * request; the row carrying the ceremony this helper published has settled
+   * ones. Unreadable, or naming another connector, is not evidence of a retry.
+   */
+  private async rearmedByHuman(connectorId: string): Promise<boolean> {
+    try {
+      const status = await this.api.execute('getConnectorStatus', { agentId: this.agentId });
+      if (status.connectorId !== connectorId) return false;
+      return status.steps.length > 0 && status.steps.every((step) => step.status === 'pending');
+    } catch (error) {
+      this.log(`connector status unavailable: ${describe(error)}`);
+      return false;
+    }
   }
 
   /** One vault report covers every live trusty-squire connector on this helper. */

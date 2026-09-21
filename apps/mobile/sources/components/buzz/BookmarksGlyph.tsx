@@ -43,10 +43,12 @@ const POINTS = [
  */
 export function BookmarksGlyph({
   color = brand.mark,
+  filled = false,
   size = 24,
   testID,
 }: {
   color?: string;
+  filled?: boolean;
   size?: number;
   testID?: string;
 }) {
@@ -59,9 +61,9 @@ export function BookmarksGlyph({
       width={size}
     >
       <Polygon
-        fill="none"
+        fill={filled ? color : 'none'}
         points={POINTS}
-        stroke={color}
+        stroke={filled ? 'none' : color}
         strokeLinejoin="round"
         strokeWidth={chromeStrokeWidth(size)}
       />

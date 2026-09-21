@@ -88,23 +88,19 @@ const ROW_COPY_GAP = 12;
 const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /**
- * A 28px mark centred in its own 44pt box. The boxes already touch and 44 is
- * the minimum target, so spacing had nothing left to give; 16px of ink in
- * that box sat 28pt apart and read sparse. 28 closes the ink to 16pt apart
- * without filling the box (a 44 mark would double the stroke and leave
- * nothing between the pair).
+ * A 21px mark centred in its own 44pt box. The box remains the complete touch
+ * target; changing the Room-list chrome must not shrink its interactive area.
  */
-const HEADER_MARK_SIZE = 28;
+const HEADER_MARK_SIZE = 21;
 const HEADER_TARGET_SIZE = 44;
 /** The Room-row corners toggle keeps the 16 it already drew; the header
  *  resize must not enlarge row chrome. */
 const CORNER_TOGGLE_MARK_SIZE = 16;
 /**
  * The trailing edge the Members mark shares with the compose FAB (`right: 16`)
- * and the expanded-corner tray. A 44pt box round a 28pt mark holds 8pt of its
- * own air on each side, so the header's own padding takes that off rather than
- * letting the box push the ink off the shared edge. Targets are spaced; ink is
- * aligned; neither pays for the other.
+ * and the expanded-corner tray. The header's own padding subtracts the air
+ * inside the 44pt target so the mark, rather than its target, meets the shared
+ * edge. Targets are spaced; ink is aligned; neither pays for the other.
  */
 const HEADER_EDGE_INSET = 16;
 const HEADER_TARGET_AIR = (HEADER_TARGET_SIZE - HEADER_MARK_SIZE) / 2;
@@ -809,7 +805,8 @@ export default function BuzzChannels() {
                 testID="workspace-bookmarks"
               >
                 <BookmarksGlyph
-                  color={styles.headerActionGlyph.color}
+                  color={styles.headerBookmarkGlyph.color}
+                  filled
                   size={HEADER_MARK_SIZE}
                   testID="workspace-bookmarks-glyph"
                 />
@@ -1222,12 +1219,13 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
-    // and they touch, so the marks sit 16pt apart (44 - 28).
+    // and they touch, so their centres stay one complete touch target apart.
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 0,
     },
+    headerBookmarkGlyph: { color: hull.accent },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {
       paddingHorizontal: 16,

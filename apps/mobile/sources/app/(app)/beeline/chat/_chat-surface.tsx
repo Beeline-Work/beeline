@@ -141,7 +141,12 @@ import {
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
-import { cornerDisplayFromRoomView, cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
+import {
+  cornerDisplayFromRoomView,
+  cornerDisplayState,
+  cornerHeaderAgent,
+  roomViewParentId,
+} from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -769,8 +774,9 @@ export function BuzzChatSurface({
   }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
 
   const cacheViewerPubkey = userPubkey;
-  const isArchived = roomSurface?.room.archived ?? false;
-  const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
+  const isArchived = roomSurface ? roomSurface.room.archived !== false : false;
+  const surfaceParentId = roomSurface ? roomViewParentId(roomSurface) : undefined;
+  const parentChannelId = surfaceParentId ?? routeParentChannelId;
   const desktopWorkRoomId = parentChannelId ?? decodedId;
   const [desktopParentRoom, setDesktopParentRoom] = useState<typeof roomSurface>(null);
   useEffect(() => {
@@ -835,7 +841,7 @@ export function BuzzChatSurface({
     workPaneMode === 'dismissed' &&
     hasLiveDesktopCorners;
   const channelKind: ChannelKind = roomSurface
-    ? roomSurface.parent
+    ? surfaceParentId
       ? 'corner'
       : 'room'
     : routeParentChannelId
@@ -852,29 +858,29 @@ export function BuzzChatSurface({
   const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
   const communities = useMemo(
     () =>
-      roomSurface
+      roomSurface && activeCommunityId
         ? [
             workspaceRailItem({
-              id: roomSurface.room.workspaceId,
+              id: activeCommunityId,
               name: roomSurface.parent?.name ?? roomSurface.room.name,
               visibility: 'invite-only',
               role: roomSurface.viewer.role,
-              updatedAt: roomSurface.room.updatedAt,
+              updatedAt: roomSurface.room.updatedAt ?? 0,
             }),
           ]
         : [],
-    [roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
+    [activeCommunityId, roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
   );
   const openCornerCount =
     workspaceChats.find((item) => item.room.id === (parentChannelId ?? decodedId))?.cornerCount ??
     0;
-  const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
+  const cornerTask = surfaceParentId ? roomSurface?.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
-    if (isCorner || !roomSurface?.repository) return null;
+    if (isCorner || !roomSurface?.repository || !activeCommunityId) return null;
     const repository = roomSurface.repository;
     return {
       channelId: decodedId,
-      communityId: roomSurface.room.workspaceId,
+      communityId: activeCommunityId,
       binding: {
         key: repository.key,
         name: repository.name,
@@ -888,7 +894,7 @@ export function BuzzChatSurface({
       githubEventsEnabled: repository.githubEventsEnabled,
       source: 'config',
     };
-  }, [decodedId, isCorner, roomSurface?.repository, roomSurface?.room.workspaceId]);
+  }, [activeCommunityId, decodedId, isCorner, roomSurface?.repository]);
   const roomRepositoryState = roomSurface?.repositoryResolution;
   // A loaded surface with no repository field is not enough to prompt. The
   // indexer distinguishes a proven empty Room from an unverified binding,

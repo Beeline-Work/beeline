@@ -140,7 +140,7 @@ export class PushGateway {
       cornerId: string,
       viewerPubkey: string,
     ) => Promise<{
-      room: { archived: boolean };
+      room: { archived?: boolean };
       parent?: { id: string };
       cornerLifecycle?: { lifecycle: string };
     } | null>,

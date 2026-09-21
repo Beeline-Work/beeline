@@ -4,16 +4,17 @@ import {
   type RoomViewClientOptions,
 } from '@beeline/buzz-client';
 import {
-  isAgentDetailView,
-  isAgentPairingClaimView,
-  isChatListView,
-  isCornerListView,
-  isInviteView,
-  isRoomHistoryView,
-  isRoomView,
-  isWorkspaceListView,
-  isWorkspaceMemberListView,
-  isWorkspaceView,
+  readAgentDetailView,
+  readAgentPairingClaimView,
+  readChatListView,
+  readCornerListView,
+  readInviteView,
+  readRoomHistoryView,
+  readRoomView,
+  readWorkspaceListView,
+  readWorkspaceMemberListView,
+  readWorkspaceView,
+  type SurfaceReader,
   type AgentDetailView,
   type AgentPairingClaimView,
   type ChatListView,
@@ -44,16 +45,16 @@ export function isRoomViewTimeoutError(error: unknown): boolean {
   return false;
 }
 
-type Guard<T> = (value: unknown) => value is T;
+type Guard<T> = SurfaceReader<T>;
 
 class MonolithRoomViewClient {
   private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl;
 
   workspaces(): Promise<WorkspaceListView> {
-    return this.get('/v1/phone/workspaces', isWorkspaceListView);
+    return this.get('/v1/phone/workspaces', readWorkspaceListView);
   }
   workspace(id: string): Promise<WorkspaceView> {
-    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}`, isWorkspaceView);
+    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}`, readWorkspaceView);
   }
   workspaceMembers(
     id: string,
@@ -66,33 +67,33 @@ class MonolithRoomViewClient {
     const suffix = params.toString() ? `?${params.toString()}` : '';
     return this.get(
       `/v1/phone/workspaces/${encodeURIComponent(id)}/members${suffix}`,
-      isWorkspaceMemberListView,
+      readWorkspaceMemberListView,
     );
   }
   agent(workspaceId: string, agentId: string): Promise<AgentDetailView> {
     return this.get(
       `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}`,
-      isAgentDetailView,
+      readAgentDetailView,
     );
   }
   chats(id: string): Promise<ChatListView> {
-    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}/chats`, isChatListView);
+    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}/chats`, readChatListView);
   }
   room(id: string): Promise<RoomView> {
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}`, isRoomView);
+    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}`, readRoomView);
   }
   corners(id: string): Promise<CornerListView> {
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/corners`, isCornerListView);
+    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/corners`, readCornerListView);
   }
   history(id: string, before?: { createdAt: number; id: string }): Promise<RoomHistoryView> {
     const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`, isRoomHistoryView);
+    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`, readRoomHistoryView);
   }
   invite(token: string): Promise<InviteView> {
-    return this.operation('resolveInvite', { token }, isInviteView);
+    return this.operation('resolveInvite', { token }, readInviteView);
   }
   claimAgentPairing(code: string): Promise<AgentPairingClaimView> {
-    return this.operation('claimAgentPairing', { code }, isAgentPairingClaimView);
+    return this.operation('claimAgentPairing', { code }, readAgentPairingClaimView);
   }
   abandonAgentPairing(): Promise<never> {
     return Promise.reject(new Error('Pairing abandon is not available on the phone API'));
@@ -117,8 +118,9 @@ class MonolithRoomViewClient {
   ): Promise<T> {
     const response = await this.request(path, method, body);
     const value = (await response.json()) as unknown;
-    if (!guard(value)) throw new RoomViewHttpError(502, 'invalid_surface_response');
-    return value;
+    const projected = guard(value);
+    if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
+    return projected;
   }
   private async request(path: string, method: 'GET' | 'POST', body?: unknown): Promise<Response> {
     // The phone API carries room/workspace reads and small writes only; media

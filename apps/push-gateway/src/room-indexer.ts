@@ -512,7 +512,8 @@ export class RoomIndexer {
       })
       .sort(
         (left, right) =>
-          right.room.updatedAt - left.room.updatedAt || left.room.id.localeCompare(right.room.id),
+          (right.room.updatedAt ?? 0) - (left.room.updatedAt ?? 0) ||
+          left.room.id.localeCompare(right.room.id),
       );
     const chats = allChats.slice(0, ROOM_VIEW_CHAT_LIMIT);
     const visibleRoomIds = new Set(chats.map((chat) => chat.room.id));
@@ -607,7 +608,9 @@ export class RoomIndexer {
         return cornerItem(data, previews.get(id));
       })
       .sort(
-        (a, b) => b.corner.createdAt - a.corner.createdAt || b.corner.id.localeCompare(a.corner.id),
+        (a, b) =>
+          (b.corner.createdAt ?? 0) - (a.corner.createdAt ?? 0) ||
+          b.corner.id.localeCompare(a.corner.id),
       );
     return {
       room: header(roomData),

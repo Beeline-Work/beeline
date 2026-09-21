@@ -700,7 +700,7 @@ function CornerCockpit({
           testID="desktop-work-corner-transcript"
         />
       )}
-      {detail && !detail.room.archived ? (
+      {detail && detail.room.archived === false ? (
         <View style={styles.cockpitComposer}>
           {sendError ? <Text style={styles.error}>{sendError}</Text> : null}
           {ack && (

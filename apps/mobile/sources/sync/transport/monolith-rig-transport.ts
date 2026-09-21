@@ -17,6 +17,7 @@ import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { MonolithPhoneOperationError } from './monolith-operation';
+import { sharedLiveConnection } from './live-connection';
 
 export type LiveWireTrace = {
   id: string;
@@ -26,7 +27,7 @@ export type LiveWireTrace = {
   paintAck?: 'database-clock';
 };
 
-type LiveWireEvent =
+export type LiveWireEvent =
   | {
       type: 'invalidate';
       roomId: string;
@@ -332,84 +333,11 @@ export class MonolithRigTransport {
     };
   }
 
-  async surfaceSubscribe(
+  surfaceSubscribe(
     filters: readonly { readonly '#h'?: readonly string[]; readonly '#d'?: readonly string[] }[],
     listener: (event: NostrEvent | MonolithSurfaceEvent) => void,
   ): Promise<() => void> {
-    const roomIds = new Set(
-      filters
-        .flatMap((filter) => [
-          ...(filter['#h'] ?? []),
-          ...(filter['#d'] ?? []).map((value) => value.split(':').at(-1) ?? ''),
-        ])
-        .filter(Boolean),
-    );
-    let socket: WebSocket | undefined;
-    let closed = false;
-    let reconnect: ReturnType<typeof setTimeout> | undefined;
-    let reconnectDelayMs = 1_000;
-    const poll = setInterval(
-      () =>
-        listener({
-          monolithLive: { type: 'invalidate', roomId: [...roomIds][0] ?? '', reason: 'poll' },
-        }),
-      30_000,
-    );
-    const scheduleReconnect = () => {
-      if (closed || reconnect) return;
-      const delayMs = reconnectDelayMs;
-      reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30_000);
-      reconnect = setTimeout(() => {
-        reconnect = undefined;
-        void connect();
-      }, delayMs);
-    };
-    const connect = async () => {
-      try {
-        const token = await monolithSession.authorization();
-        if (closed) return;
-        const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live';
-        const next = new WebSocket(url, [`bearer.${token}`]);
-        socket = next;
-        next.onopen = () => {
-          if (closed || socket !== next) return;
-          reconnectDelayMs = 1_000;
-          if (roomIds.size === 0) return;
-          next.send(JSON.stringify({ type: 'subscribe', roomIds: [...roomIds] }));
-        };
-        next.onmessage = (message) => {
-          if (closed || socket !== next) return;
-          const live = JSON.parse(String(message.data)) as LiveWireEvent;
-          const trace = 'trace' in live ? live.trace : undefined;
-          listener({
-            monolithLive: live,
-            ...(live.type !== 'trace-painted' &&
-            (typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock')
-              ? {
-                  acknowledgePaint: () => {
-                    if (!closed && socket === next && next.readyState === WebSocket.OPEN)
-                      next.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
-                  },
-                }
-              : {}),
-          });
-        };
-        next.onclose = () => {
-          if (socket !== next) return;
-          socket = undefined;
-          scheduleReconnect();
-        };
-      } catch {
-        scheduleReconnect();
-      }
-    };
-    await connect();
-    return () => {
-      closed = true;
-      clearInterval(poll);
-      if (reconnect) clearTimeout(reconnect);
-      socket?.close();
-    };
+    return sharedLiveConnection().register(filters, listener);
   }
 
   respondToWritePermission(

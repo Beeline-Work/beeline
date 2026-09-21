@@ -293,6 +293,15 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
 const UPPERCASE_HEAD = /^\p{Lu}/u;
 
 /**
+ * A word that has already turned over from lowercase to uppercase is whole:
+ * `GitHub`, `JavaScript`, `eBay`. `Git`, `Java` and `READ` have not turned
+ * over yet, so an uppercase delta is still their second half — which is what
+ * keeps `Checking GitHub` + `Found it.` two messages while `Using Git` +
+ * `Hub works.` stays one.
+ */
+const WORD_ALREADY_TURNED_OVER = /\p{Ll}\p{Lu}/u;
+
+/**
  * One lowercase letter is not a word — `a` is the only one English has — so
  * a run that stops on one stopped inside a word, never at the end of a
  * message. That is the whole of what separates `Using u` + `Block works.`
@@ -317,11 +326,12 @@ function resumesSplitWord(word: string): boolean {
  * An uppercase resume is read against the word it lands on, because nothing
  * else separates a split name from a new sentence — `Bay works.` and `Found
  * the answer.` are the same shape. It resumes a word when that word is
- * itself capitalized (`Git` + `Hub`, `READ` + `ME`, `Java` + `Script`) or is
- * a single lowercase letter, which no message can have ended on (`e` + `Bay`,
- * `u` + `Block`); a whole lowercase word taking a capital (`typecheck
- * patterns` + `Now I have the full picture.`, `I can do` + `Found it.`) is
- * the harness finishing one message and opening the next.
+ * itself capitalized and not yet turned over (`Git` + `Hub`, `READ` + `ME`,
+ * `Java` + `Script`) or is a single lowercase letter, which no message can
+ * have ended on (`e` + `Bay`, `u` + `Block`). A word that already turned
+ * over (`GitHub` + `Found it.`) or a whole lowercase word taking a capital
+ * (`typecheck patterns` + `Now I have the full picture.`, `I can do` +
+ * `Found it.`) is the harness finishing one message and opening the next.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
@@ -329,7 +339,7 @@ function continuesPreviousWord(current: string, delta: string): boolean {
   const word = RUN_TRAILING_WORD.exec(current)?.[0];
   if (!word) return false;
   if (CHUNK_RESUMES_WORD.test(delta)) return true;
-  if (!UPPERCASE_HEAD.test(delta)) return false;
+  if (!UPPERCASE_HEAD.test(delta) || WORD_ALREADY_TURNED_OVER.test(word)) return false;
   return UPPERCASE_HEAD.test(word) || resumesSplitWord(word);
 }
 

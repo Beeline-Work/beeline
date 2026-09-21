@@ -251,6 +251,11 @@ describe('ACP streaming lane classifier', () => {
       // on this side of the line — nothing in the stream tells `mac` apart
       // from the `do` above.
       'Tested on mac',
+      // A name that already turned over from lowercase to uppercase is a
+      // finished word, so narration ending on one ends its message.
+      'Checking GitHub',
+      'Written in JavaScript',
+      'Using eBay',
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: shortWord } }),
@@ -1775,6 +1780,33 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe('Using uBlock works.');
       expect(runs.at(-1)).toEqual(['Using uBlock works.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration that ends on a finished name out of the final message', async () => {
+    // `Checking GitHub` + tool call + `Found it.` — reading a capitalized
+    // trailing word as proof of continuation glued this genuine boundary
+    // into the single message "Checking GitHubFound it.".
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Checking GitHub', 'Found it.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['Checking GitHub', 'Found it.']);
     } finally {
       await client.stop();
     }

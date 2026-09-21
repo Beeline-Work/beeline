@@ -647,30 +647,36 @@ describe('installSquire', () => {
 
   it('emits the waiting-for-sign-in step via onProgress before the connect process would exit', async () => {
     const progressSteps: string[][] = [];
-    let capturedSignIn: { method: string; url: string } | undefined;
     const { client } = mockSquire({
       list_credentials: () => ({ credentials: [] }),
     });
-    await installSquire({
+    const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
       streamRun: fakeStreamRunner({
         report: report({
           state: 'needs-sign-in',
-          sign_in_url: 'https://vnc.trustysquire.ai/#p=secret',
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'host_screen' },
         }),
       }),
       onProgress(steps) {
         progressSteps.push(steps.map((s) => s.label));
-        const last = steps[steps.length - 1];
-        if (last?.label === 'waiting for sign-in') {
-          capturedSignIn = { method: 'streamed-page', url: 'https://vnc.trustysquire.ai/#p=secret' };
-        }
       },
       mcp: client,
     });
-    expect(capturedSignIn).toBeDefined();
-    expect(progressSteps.some((labels) => labels.includes('waiting for sign-in'))).toBe(true);
+    // The step reaches the phone while the ceremony is still outstanding —
+    // one snapshot carries it with the pairing probe still to come.
+    const waiting = progressSteps.find((labels) => labels.includes('waiting for sign-in'));
+    expect(waiting).toBeDefined();
+    expect(waiting).not.toContain('paired to workspace');
+    expect(result.status).toBe('installing');
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=secret',
+      browserLocation: { kind: 'host_screen' },
+    });
+    expect(result.steps.find((s) => s.label === 'waiting for sign-in')?.status).toBe('pending');
   });
 });
 

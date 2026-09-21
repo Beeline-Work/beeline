@@ -14,7 +14,6 @@ import {
   connectorIdentityId,
   connectorInstrument,
   googleEntryConnector,
-  googleEntryDescription,
   googleEntryState,
   isConnectorIdentityId,
   isGoogleToolConnectorId,
@@ -336,18 +335,6 @@ describe('the ONE Google entry', () => {
         ),
       ),
     ).toBe('connected');
-  });
-
-  it('describes a repair as how much of the one grant is live', () => {
-    const repaired = catalog.map((c) =>
-      c.id === 'google-gmail' || c.id === 'google-calendar' ? tool(c.id, 'connected') : c,
-    );
-    expect(googleEntryDescription(repaired, googleEntryState(repaired))).toBe(
-      '2 of 4 tools connected',
-    );
-    expect(googleEntryDescription(catalog, 'connect')).toBe(
-      'Covers Gmail, Google Calendar, YouTube, and other Google services.',
-    );
   });
 
   it('resolves the connect target to the first unconnected tool in canonical order', () => {

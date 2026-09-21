@@ -205,19 +205,6 @@ export function googleEntryConnector(
   };
 }
 
-export function googleEntryDescription(
-  connectors: readonly WorkbenchConnector[],
-  state: GoogleEntryState,
-): string {
-  if (state === 'repair') {
-    const tools = googleEntryTools(connectors);
-    const connected = tools.filter((tool) => tool.status === 'connected').length;
-    return `${connected} of ${tools.length} tools connected`;
-  }
-  const entry = googleEntryConnector(connectors);
-  return entry ? connectorDescription(entry) : '';
-}
-
 /** Per-tool rows for the Google entry's expanded disclosure: one line per
  *  folded tool (Gmail / Calendar / Drive / YouTube) with its own status word,
  *  so a single tool like YouTube is visible and legible behind the fold.

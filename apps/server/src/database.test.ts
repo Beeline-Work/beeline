@@ -359,10 +359,12 @@ describe('the three-level push migration', () => {
     // constraint no longer accepts 'all'.
     await migrate(database);
     expect(
-      (await database.query<{ push_level: string }>(
-        `SELECT push_level FROM identities WHERE id=$1`,
-        [OWNER],
-      )).rows[0]?.push_level,
+      (
+        await database.query<{ push_level: string }>(
+          `SELECT push_level FROM identities WHERE id=$1`,
+          [OWNER],
+        )
+      ).rows[0]?.push_level,
     ).toBe('mine');
     await expect(
       database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]),

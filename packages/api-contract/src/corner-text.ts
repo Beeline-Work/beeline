@@ -2,7 +2,7 @@
  * A corner carries two texts and they do different jobs.
  *
  *   - the NAME titles the corner on every surface — the Room-list child row,
- *     the corner header, the corner card, the archived card, the push. It is
+ *     the corner header, the corner card, the archived card. It is
  *     at most three words because those places are one line wide (C89);
  *   - the OBJECTIVE is the fixed statement of the work. It stays at 24 words,
  *     is shown in the card body, and is the corner's opening line.

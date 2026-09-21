@@ -5,10 +5,10 @@
  * VISIBILITY — can a person see it, and is one looking right now?
  * CREDENTIAL — is the account actually signed in?
  *
- * The Workbench status is derived from these. A dead connect does not
- * start another display (visibility already published). KEYS read the
- * session the app owns, so they do not wait on a host broker. Connected
- * is that same session, not a phrase Squire printed.
+ * The Workbench status is derived from these. A dead connect's ceremony is
+ * retired rather than handed back. KEYS read the session the app owns, so
+ * they do not wait on a host broker. Connected is that same session, not a
+ * phrase Squire printed.
  */
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -125,11 +125,12 @@ export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' |
 }
 
 /** Start only when nothing else holds the browser. This helper's own
- *  live connect may be released and retried; a foreign process may not. */
+ *  live connect may be released and retried; a foreign process may not.
+ *  A ceremony nobody is running is not a holder: it is retired by the
+ *  release the start itself performs, never handed back. */
 export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
   if (facts.credential.kind === 'valid') return false;
   if (facts.process.kind === 'foreign') return false;
-  if (facts.visibility.kind !== 'none') return false;
   return true;
 }
 

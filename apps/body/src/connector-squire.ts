@@ -64,7 +64,6 @@ import {
   visibilitySignIn,
   type SquireConnectFacts,
   type SquireProcessFact,
-  type SquireSessionRecord,
 } from './squire-connect-state.js';
 import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
@@ -392,7 +391,6 @@ export function observeSquireProcess(options?: {
 export function observeSquireConnectFacts(options?: {
   readonly profileDir?: string;
   readonly lockRoot?: string;
-  readonly configHome?: string;
 }): SquireConnectFacts {
   const processFact = observeSquireProcess(options);
   const published = publishedSquireVisibility();
@@ -405,7 +403,7 @@ export function observeSquireConnectFacts(options?: {
   return {
     process: processFact,
     visibility,
-    credential: credentialFromSession(readSquireSession(options?.configHome), visibility),
+    credential: credentialFromSession(readSquireSession(), visibility),
   };
 }
 
@@ -585,7 +583,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     const checkOutput = () => {
       const signIn = parseConnectOutput(stdout) ?? parseConnectOutput(stderr);
       if (signIn) {
-        finish({ stdout, stderr, signIn, abort });
+        finish({ stdout, stderr, pid: child.pid ?? undefined, signIn, abort });
       }
     };
 
@@ -802,8 +800,6 @@ export type InstallSquireOptions = {
    */
   readonly profileDir?: string;
   readonly lockRoot?: string;
-  /** Session file root (`<configHome>/trusty-squire/session.json`). */
-  readonly configHome?: string;
 };
 
 export type InstallSquireResult = {
@@ -906,8 +902,9 @@ export function parseSignedInAs(output: string): string | undefined {
  * Install and pair Squire on this helper, reporting every step in order.
  *
  * Process, visibility, and credential are observed first. A valid session
- * is connected. A live or published surface stays installing and does not
- * start another browser. Connect runs only when all three facts are empty.
+ * is connected. A browser another helper holds is waited on, never failed.
+ * Connect runs otherwise, and the verdict afterwards is the session this
+ * helper owns — never the sentence Squire printed.
  *
  * Connect inherits this process's env as it stands, screen and all, and
  * Squire picks the host screen or its own virtual display from that.
@@ -918,7 +915,6 @@ export function parseSignedInAs(output: string): string | undefined {
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const profileDir = options.profileDir ?? squireChromeProfileDir();
   const lockRoot = options.lockRoot ?? tmpdir();
-  const configHome = options.configHome;
   const run = options.run ?? defaultShellRunner;
   const streamRun = options.streamRun ?? defaultStreamedRunner;
   const log = options.log ?? (() => {});
@@ -937,7 +933,14 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     facts.credential.kind === 'valid' ? facts.credential.accountId : undefined;
   emit();
 
-  const observed = observeSquireConnectFacts({ profileDir, lockRoot, configHome });
+  const wait = (reason?: string): InstallSquireResult => {
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'running', reason));
+    const sign = visibilitySignIn(publishedSquireVisibility());
+    return { status: 'installing', steps, ...(sign ? { signIn: sign } : {}) };
+  };
+
+  const observed = observeSquireConnectFacts({ profileDir, lockRoot });
   if (connectStatusFromFacts(observed) === 'connected') {
     publishSquireVisibility({ kind: 'none' });
     push(step('trusty-squire installed', 'done'));
@@ -949,21 +952,8 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
     };
   }
-  if (observed.process.kind === 'foreign') {
-    push(step('trusty-squire installed', 'failed', observed.process.action));
-    return fail(observed.process.action);
-  }
   if (!shouldStartSquireConnect(observed)) {
-    push(step('trusty-squire installed', 'done'));
-    push(step('waiting for sign-in', 'running'));
-    return {
-      status: 'installing',
-      steps,
-      ...(visibilitySignIn(observed.visibility)
-        ? { signIn: visibilitySignIn(observed.visibility) }
-        : {}),
-      ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
-    };
+    return wait(observed.process.kind === 'foreign' ? observed.process.action : undefined);
   }
 
   const previousPid = squireConnectSession()?.pid;
@@ -983,10 +973,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     profileDir,
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
-  if (shared.kind === 'blocked-foreign') {
-    push(step('trusty-squire installed', 'failed', shared.action));
-    return fail(shared.action);
-  }
+  if (shared.kind === 'blocked-foreign') return wait(shared.action);
 
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
@@ -1054,11 +1041,14 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(signedInAs ? { signedInAs } : {}),
     };
   }
+  const settled = observeSquireConnectFacts({ profileDir, lockRoot });
   return {
-    status: 'connected',
+    status: connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
     steps,
     ...(version ? { squireVersion: version } : {}),
-    ...(signedInAs ? { signedInAs } : {}),
+    ...(signedInAs ?? sessionName(settled)
+      ? { signedInAs: signedInAs ?? sessionName(settled) }
+      : {}),
   };
 }
 
@@ -1129,11 +1119,10 @@ export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
  * which would blank the Workbench KEYS surface.
  */
 export async function readVaultFromSession(options?: {
-  readonly session?: SquireSessionRecord;
   readonly configHome?: string;
   readonly fetch?: typeof fetch;
 }): Promise<VaultConnectionMeta[] | undefined> {
-  const session = options?.session ?? readSquireSession(options?.configHome);
+  const session = readSquireSession(options?.configHome);
   if (!session?.agentSessionToken) return undefined;
   try {
     const response = await (options?.fetch ?? fetch)(`${session.apiBaseUrl}/v1/vault/credentials`, {
@@ -1149,10 +1138,7 @@ export async function readVaultFromSession(options?: {
     }
     if (!response.ok) return undefined;
     noteSquireVaultAuth('ok');
-    const body = (await response.json()) as unknown;
-    if (Array.isArray(body)) return body.map(vaultConnectionMeta);
-    const record = asRecord(body);
-    const credentials = record.credentials ?? record.items;
+    const { credentials } = asRecord(await response.json());
     return Array.isArray(credentials) ? credentials.map(vaultConnectionMeta) : undefined;
   } catch {
     return undefined;

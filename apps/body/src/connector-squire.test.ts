@@ -53,6 +53,20 @@ afterEach(() => {
   rmSync(isolatedHome, { recursive: true, force: true });
 });
 
+/** The session file a real `connect` writes once the account is signed in. */
+function writeHostSession(accountId = 'acct_9'): void {
+  const dir = join(isolatedHome, '.config', 'trusty-squire');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'session.json'),
+    JSON.stringify({
+      api_base_url: 'https://vault.test',
+      account_id: accountId,
+      agent_session_token: 'tok',
+    }),
+  );
+}
+
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
 function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {
   const calls: { tool: string; args?: Record<string, unknown> }[] = [];
@@ -395,27 +409,37 @@ describe('defaultStreamedRunner', () => {
       method: 'streamed-page',
       url: 'https://tunnel.test/#p=hunter2',
     });
+    // The ceremony is published and its process is still running: the result
+    // names that process, which is what keeps the shared claim held.
+    expect(isProcessAlive(result.pid)).toBe(true);
     result.abort();
     releaseSquireConnectSession();
   });
 });
 
 describe('installSquire', () => {
-  it('does not start another browser when a ceremony is already published', async () => {
-    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=x' });
+  it('retires an abandoned ceremony instead of handing its dead URL back', async () => {
+    // Nothing is running that tunnel any more, so re-serving it would leave
+    // the person pressing a dead link until the ceremony's own clock ran out.
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=dead' });
     let started = 0;
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
       streamRun: async () => {
         started += 1;
-        return { stdout: '', stderr: '', abort: () => {} };
+        return {
+          stdout: '',
+          stderr: '',
+          signIn: { method: 'streamed-page' as const, url: 'https://tunnel.test/#p=fresh' },
+          abort: () => {},
+        };
       },
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(started).toBe(0);
+    expect(started).toBe(1);
     expect(result.status).toBe('installing');
-    expect(result.signIn).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=x' });
+    expect(result.signIn?.url).toBe('https://tunnel.test/#p=fresh');
   });
 
   it('starts a fresh connect once the published ceremony is released', async () => {
@@ -537,11 +561,14 @@ describe('installSquire', () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
-      streamRun: fakeStreamRunner({
-        stdout:
-          'Already connected (google + github). Codex config refreshed.\n' +
-          'Pass --force-relogin to switch accounts or to refresh a stale/expired session.\n',
-      }),
+      streamRun: async (...args: Parameters<StreamedShellRunner>) => {
+        writeHostSession();
+        return fakeStreamRunner({
+          stdout:
+            'Already connected (google + github). Codex config refreshed.\n' +
+            'Pass --force-relogin to switch accounts or to refresh a stale/expired session.\n',
+        })(...args);
+      },
       mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
     });
     expect(result.status).toBe('connected');
@@ -576,15 +603,32 @@ describe('installSquire', () => {
       workspaceId: 'ws-1',
       run: okRunner(),
       // The human finished on the tunnel the previous run published, so this
-      // run reaches Squire's verified short-circuit and prints no URL.
-      streamRun: fakeStreamRunner({
-        stdout: 'Already connected (google + github). Codex config refreshed.\n',
-      }),
+      // run prints no URL and leaves a signed-in session behind.
+      streamRun: async (...args: Parameters<StreamedShellRunner>) => {
+        writeHostSession();
+        return fakeStreamRunner({
+          stdout: 'Already connected (google + github). Codex config refreshed.\n',
+        })(...args);
+      },
       mcp: client,
     });
     expect(result.status).toBe('connected');
     expect(result.signIn).toBeUndefined();
     expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
+  it('does not call a helper connected on Squire\u2019s sentence alone', async () => {
+    // Squire says the machine is already connected but left no session this
+    // helper owns, so the app's own fact — not the wording — decides.
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stdout: 'Already connected (google + github). Codex config refreshed.\n',
+      }),
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('installing');
   });
 
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {
@@ -860,7 +904,7 @@ describe('on-disk profile claim reclaim', () => {
     dir.cleanup();
   });
 
-  it('does not kill a live foreign owner; installSquire fails with an actionable pid', async () => {
+  it('does not kill a live foreign owner; installSquire waits on it by name', async () => {
     const dir = claimDir();
     const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
     writeLock(dir.lockPath, holder.pid!);
@@ -876,9 +920,13 @@ describe('on-disk profile claim reclaim', () => {
       },
     });
     expect(streamed).toBe(false);
-    expect(result.status).toBe('error');
-    expect(result.errorMessage).toContain(String(holder.pid));
-    expect(result.errorMessage).toContain('Finish or close that Trusty Squire session');
+    // A sign-in in progress holds the browser and everyone else waits: the
+    // row stays installing rather than erroring on every poll until it ends.
+    expect(result.status).toBe('installing');
+    expect(result.errorMessage).toBeUndefined();
+    const waiting = result.steps.find((step) => step.label === 'waiting for sign-in');
+    expect(waiting?.status).toBe('running');
+    expect(waiting?.reason).toContain(String(holder.pid));
     expect(existsSync(dir.lockPath)).toBe(true);
     expect(isProcessAlive(holder.pid)).toBe(true);
     holder.kill();
@@ -1006,9 +1054,36 @@ describe('on-disk profile claim reclaim', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     expect(streamed).toBe(false);
-    expect(result.status).toBe('error');
-    expect(result.errorMessage).toContain(String(holder.pid));
+    expect(result.status).toBe('installing');
+    expect(
+      result.steps.find((step) => step.label === 'waiting for sign-in')?.reason,
+    ).toContain(String(holder.pid));
 
+    holder.kill();
+    dir.cleanup();
+  });
+
+  it('keeps the shared claim for the whole ceremony it published', async () => {
+    const dir = claimDir();
+    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const { run } = scriptedRunner([{ stdout: '1.1.15' }, { stdout: '1.1.15' }]);
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run,
+      streamRun: async () => ({
+        stdout: '',
+        stderr: '',
+        pid: holder.pid!,
+        signIn: { method: 'streamed-page' as const, url: 'https://tunnel.test/#p=live' },
+        abort: () => {},
+      }),
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(result.signIn?.url).toBe('https://tunnel.test/#p=live');
+    // A sibling helper arriving mid-ceremony must find the browser taken.
+    expect(takeSquireConnectClaim({ profileDir: dir.profileDir }).kind).toBe('blocked-foreign');
     holder.kill();
     dir.cleanup();
   });
@@ -1080,12 +1155,6 @@ describe('vault reads from the session file', () => {
         fetch: async () => new Response(JSON.stringify({ data: 'something else' })),
       }),
     ).toBeUndefined();
-    expect(
-      await readVaultFromSession({
-        configHome: home,
-        fetch: async () => new Response(JSON.stringify([{ reference: 'cred_bare' }])),
-      }),
-    ).toEqual([expect.objectContaining({ reference: 'cred_bare' })]);
     rmSync(home, { recursive: true, force: true });
   });
 

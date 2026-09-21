@@ -102,14 +102,16 @@ describe('credential and connect status', () => {
     ).toBe(false);
   });
 
-  it('does not start another browser when a ceremony is already published', () => {
+  it('does not hand back a ceremony nobody is running', () => {
+    // The surface is still published but no process holds it, so the next
+    // attempt raises a new one rather than re-serving a dead tunnel.
     expect(
       shouldStartSquireConnect(
         facts({
           visibility: { kind: 'remote', held: false, url: 'https://tunnel.test/vnc' },
         }),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       connectStatusFromFacts(
         facts({

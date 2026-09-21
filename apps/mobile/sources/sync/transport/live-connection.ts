@@ -24,14 +24,17 @@ type Registration = {
   readonly filters: SurfaceFilters;
   readonly listener: SurfaceListener;
   readonly roomIds: ReadonlySet<string>;
+  tickDueAt: number;
   closed: boolean;
 };
 
 type LiveConnectionDeps = {
   authorization: () => Promise<string>;
-  liveUrl: string | (() => string);
-  subscribeIdentityChange?: (listener: () => void) => () => void;
+  liveUrl: () => string;
+  subscribeIdentityChange: (listener: () => void) => () => void;
 };
+
+const FALLBACK_INTERVAL_MS = 30_000;
 
 function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
   return new Set(
@@ -44,16 +47,12 @@ function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
   );
 }
 
-function overlayKey(agentId: string, turnId?: string): string {
-  return turnId ? `${agentId}:${turnId}` : agentId;
+function overlayKey(agentId: string, turnId: string): string {
+  return `${agentId}:${turnId}`;
 }
 
 function isSocketOpen(socket: WebSocket): boolean {
   return socket.readyState === 1;
-}
-
-function liveUrlOf(liveUrl: LiveConnectionDeps['liveUrl']): string {
-  return typeof liveUrl === 'function' ? liveUrl() : liveUrl;
 }
 
 /**
@@ -73,10 +72,10 @@ export class LiveConnection {
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
-  private readonly unsubscribeIdentity?: () => void;
+  private readonly unsubscribeIdentity: () => void;
 
   constructor(private readonly deps: LiveConnectionDeps) {
-    this.unsubscribeIdentity = deps.subscribeIdentityChange?.(() => this.handleIdentityChanged());
+    this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
   }
 
   register(filters: SurfaceFilters, listener: SurfaceListener): Promise<() => void> {
@@ -86,6 +85,7 @@ export class LiveConnection {
       filters,
       listener,
       roomIds,
+      tickDueAt: Date.now() + FALLBACK_INTERVAL_MS,
       closed: false,
     };
     this.registrations.set(registration.id, registration);
@@ -94,8 +94,8 @@ export class LiveConnection {
     for (const roomId of roomIds) {
       const previous = this.refcount.get(roomId) ?? 0;
       this.refcount.set(roomId, previous + 1);
-      if (previous > 0 || this.seenSubscribed.has(roomId)) held.push(roomId);
-      else fresh.push(roomId);
+      if (this.seenSubscribed.has(roomId)) held.push(roomId);
+      else if (previous === 0) fresh.push(roomId);
     }
     this.ensureFallback();
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
@@ -105,7 +105,7 @@ export class LiveConnection {
 
   dispose(): void {
     this.handleIdentityChanged();
-    this.unsubscribeIdentity?.();
+    this.unsubscribeIdentity();
   }
 
   private handleIdentityChanged(): void {
@@ -140,9 +140,9 @@ export class LiveConnection {
       if (next > 0) this.refcount.set(roomId, next);
       else {
         this.refcount.delete(roomId);
-        this.seenSubscribed.delete(roomId);
+        const acknowledged = this.seenSubscribed.delete(roomId);
         this.overlays.delete(roomId);
-        if (this.socket && isSocketOpen(this.socket))
+        if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
     }
@@ -151,14 +151,16 @@ export class LiveConnection {
   private ensureFallback(): void {
     if (this.fallbackTimer) return;
     this.fallbackTimer = setInterval(() => {
+      const now = Date.now();
       for (const registration of this.registrations.values()) {
-        if (registration.closed) continue;
+        if (registration.closed || now < registration.tickDueAt) continue;
+        registration.tickDueAt = now + FALLBACK_INTERVAL_MS;
         const roomId = [...registration.roomIds][0] ?? '';
         registration.listener({
           monolithLive: { type: 'invalidate', roomId, reason: 'poll' },
         });
       }
-    }, 30_000);
+    }, FALLBACK_INTERVAL_MS);
   }
 
   private ensureSocket(): Promise<void> {
@@ -174,7 +176,7 @@ export class LiveConnection {
     try {
       const token = await this.deps.authorization();
       if (generation !== this.generation) return;
-      const url = liveUrlOf(this.deps.liveUrl);
+      const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
       next.onopen = () => {
@@ -236,21 +238,26 @@ export class LiveConnection {
   }
 
   private dispatch(live: LiveWireEvent, generation: WebSocket): void {
-    if (live.type === 'subscribed') this.seenSubscribed.add(live.roomId);
-    this.rememberOverlay(live);
     if (live.type === 'trace-painted') {
       const owner = this.traceOwners.get(live.id);
+      this.traceOwners.delete(live.id);
       if (owner && !owner.closed) owner.listener({ monolithLive: live });
       return;
     }
     if (!('roomId' in live)) return;
+    if (!this.refcount.has(live.roomId)) {
+      if (live.type === 'subscribed' && this.socket === generation && isSocketOpen(generation))
+        generation.send(JSON.stringify({ type: 'unsubscribe', roomId: live.roomId }));
+      return;
+    }
+    if (live.type === 'subscribed') this.seenSubscribed.add(live.roomId);
+    this.rememberOverlay(live);
     for (const registration of this.registrations.values()) {
       if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
       const trace = 'trace' in live ? live.trace : undefined;
       registration.listener({
         monolithLive: live,
-        ...(live.type !== 'trace-painted' &&
-        (typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock')
+        ...(typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock'
           ? {
               acknowledgePaint: () => {
                 if (

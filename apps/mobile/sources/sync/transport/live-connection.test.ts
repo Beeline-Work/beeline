@@ -59,7 +59,7 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
   const identityListeners = new Set<() => void>();
   const connection = new LiveConnection({
     authorization,
-    liveUrl: 'wss://server.example/v1/phone/live',
+    liveUrl: () => 'wss://server.example/v1/phone/live',
     subscribeIdentityChange: (listener) => {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);
@@ -95,6 +95,7 @@ describe('LiveConnection', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.open();
     expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
 
     await connection.register([{ '#h': [ROOM_A, ROOM_B] }], (event) => second.push(event));
     expect(sockets).toHaveLength(1);
@@ -103,7 +104,57 @@ describe('LiveConnection', () => {
       JSON.stringify({ type: 'subscribe', roomIds: [ROOM_B] }),
     ]);
     expect(second).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
-    expect(first).toEqual([]);
+    expect(first).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+
+    connection.dispose();
+  });
+
+  it('hands a room whose subscribe is still in flight exactly one subscribed frame', async () => {
+    const { connection } = createConnection();
+    const deck: unknown[] = [];
+    const room: unknown[] = [];
+
+    await connection.register([{ '#h': [ROOM_A] }], (event) => deck.push(event));
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
+    expect(room).toEqual([]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(room).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+    expect(deck).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+
+    connection.dispose();
+  });
+
+  it('retires a room whose last holder left before the server confirmed it', async () => {
+    const { connection } = createConnection();
+    const room: unknown[] = [];
+    const stop = await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    stop();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(sockets[0]!.sent).toEqual([
+      JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] }),
+      JSON.stringify({ type: 'unsubscribe', roomId: ROOM_A }),
+    ]);
+
+    sockets[0]!.emit({
+      type: 'draft',
+      roomId: ROOM_A,
+      agentId: 'agent',
+      turnId: 'turn-1',
+      text: 'streaming',
+    });
+    const rejoined: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => rejoined.push(event));
+    expect(rejoined).toEqual([]);
 
     connection.dispose();
   });
@@ -182,6 +233,7 @@ describe('LiveConnection', () => {
 
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
     sockets[0]!.emit({
       type: 'draft',
       roomId: ROOM_A,
@@ -234,6 +286,29 @@ describe('LiveConnection', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(first).toEqual([{ monolithLive: { type: 'invalidate', roomId: ROOM_A, reason: 'poll' } }]);
     expect(second).toEqual([
+      { monolithLive: { type: 'invalidate', roomId: ROOM_B, reason: 'poll' } },
+    ]);
+
+    connection.dispose();
+  });
+
+  it('gives a registration created mid-interval a full interval before its first tick', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const early: unknown[] = [];
+    const late: unknown[] = [];
+
+    await connection.register([{ '#h': [ROOM_A] }], (event) => early.push(event));
+    sockets[0]!.open();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await connection.register([{ '#h': [ROOM_B] }], (event) => late.push(event));
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(early).toHaveLength(1);
+    expect(late).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(late).toEqual([
       { monolithLive: { type: 'invalidate', roomId: ROOM_B, reason: 'poll' } },
     ]);
 
@@ -374,8 +449,16 @@ describe('LiveConnection', () => {
       databaseAt: 11,
       upperBoundMs: 4,
     });
-    expect(first.some((event) => event.monolithLive.type === 'trace-painted')).toBe(true);
+    expect(first.filter((event) => event.monolithLive.type === 'trace-painted')).toHaveLength(1);
     expect(second.some((event) => event.monolithLive.type === 'trace-painted')).toBe(false);
+
+    sockets[0]!.emit({
+      type: 'trace-painted',
+      id: 'trace-direct',
+      databaseAt: 11,
+      upperBoundMs: 4,
+    });
+    expect(first.filter((event) => event.monolithLive.type === 'trace-painted')).toHaveLength(1);
 
     connection.dispose();
   });

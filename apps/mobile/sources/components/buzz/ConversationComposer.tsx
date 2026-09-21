@@ -258,7 +258,12 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
-              isListening && speech.partialText ? styles.inputTransparent : undefined,
+              isListening && speech.partialText
+                ? [
+                    styles.inputTransparent,
+                    Platform.OS === 'android' && styles.inputTransparentAndroid,
+                  ]
+                : undefined,
             ]}
             value={value}
             onChangeText={commitInputChange}
@@ -458,6 +463,12 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     bottom: 0,
   } as any,
+  inputTransparentAndroid: {
+    // Android can keep painting native composing glyphs through a transparent
+    // text color. Hide that whole visual layer while the interim overlay owns
+    // the words; the TextInput stays mounted and focused for the keyboard.
+    opacity: 0,
+  },
   interimOverlay: {
     justifyContent: 'flex-start',
     minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,

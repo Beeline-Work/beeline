@@ -6,6 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { REVIEW_HANDBACK_LIMIT } from './agent-command.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';
 const H = 'a'.repeat(64),
@@ -314,6 +315,29 @@ describe('corner message attribution', () => {
     ).toEqual([
       `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
     ]);
+  });
+
+  // Reproduction REVIEW-HANDBACK-NULL: a corner an agent opened off its own
+  // root message records no requester, so the cap stopped the handbacks and
+  // said nothing — the transcript ended on the reviewer's last round.
+  it('posts the deadlock line to the corner when no requester is recorded', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [C]);
+    await greenHead(18, '8'.repeat(40));
+    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1)
+      expect(await reviewRound(round)).toHaveLength(round <= REVIEW_HANDBACK_LIMIT ? 1 : 0);
+    const lines = (
+      await db.query<{ text: string; author_id: string }>(
+        `SELECT text,author_id FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
+        [C],
+      )
+    ).rows;
+    // Nobody to name, so the line names nobody — and it is still one line per
+    // head, however many further reviews end on this commit.
+    expect(lines.map((row) => row.text)).toEqual([
+      `Somebody may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
+    ]);
+    expect(lines[0]!.author_id).toBe(SYSTEM_IDENTITY_ID);
   });
 
   it('resets the handback count when the worker pushes a new head', async () => {

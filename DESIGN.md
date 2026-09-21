@@ -577,17 +577,18 @@ the picture renders through the same `IdentityMark` primitive in the rail,
 header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 
-**A Workspace picture is seated in its bezel, never cropped by it.** Every tile
+**A picture in a bezel is seated in it, never cropped by it.** Every tile
 that wears one — the rail tile, the room-list header plate, the Workspace
-settings tile — derives one seat from its own geometry
-(`buzz/workspace-tile.ts`): the picture is centred inside the bezel and its
-radius is the tile's inner radius (tile radius less the bezel) less the margin
-of slab around it. That makes the picture's curve concentric with the bezel's,
-so the gap to the brass is the same width at the corners as along the flats at
-every size. Coverage: `buzz/workspace-tile.test.ts`,
-`components/buzz/workspace-nav-parity.contract.test.ts`, and
-`components/buzz/workspace-picture-seat.browser.test.ts`, which measures what
-each surface actually paints in a browser.
+settings tile, and the person's Settings identity tile — derives one seat from
+its own geometry (`buzz/workspace-tile.ts`): the picture is centred inside the
+bezel and its radius is the tile's inner radius (tile radius less the bezel)
+less the margin of slab around it. That makes the picture's curve concentric
+with the bezel's, so the gap to the brass is the same width at the corners as
+along the flats at every size. The identity tile is `IDENTITY_SETTINGS_TILE`,
+not a Workspace constant. Coverage: `buzz/workspace-tile.test.ts`,
+`components/buzz/workspace-nav-parity.contract.test.ts`,
+`components/buzz/workspace-picture-seat.browser.test.ts`, and
+`app/(app)/beeline/settings/identity-picture-seat.browser.test.ts`.
 
 One concept gets one glyph, product-wide. Members chrome on the Room-list
 header, the desktop workspace heading, and the corner roster row is

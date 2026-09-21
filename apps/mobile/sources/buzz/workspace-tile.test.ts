@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  IDENTITY_SETTINGS_TILE,
   WORKSPACE_HEADER_PLATE,
   WORKSPACE_RAIL_TILE,
   WORKSPACE_SETTINGS_TILE,
@@ -12,6 +13,7 @@ const TILES: Array<[string, WorkspaceTile]> = [
   ['rail tile', WORKSPACE_RAIL_TILE],
   ['room-list header plate', WORKSPACE_HEADER_PLATE],
   ['settings tile', WORKSPACE_SETTINGS_TILE],
+  ['identity settings tile', IDENTITY_SETTINGS_TILE],
 ];
 
 describe('the Workspace picture seat', () => {
@@ -62,5 +64,21 @@ describe('the Workspace picture seat', () => {
     for (const [, tile] of TILES) {
       expect(tile.borderWidth).toBe(WORKSPACE_RAIL_TILE.borderWidth);
     }
+  });
+
+  it('names the identity settings tile on its own, seated by the same rule', () => {
+    // Same numbers as the Workspace settings tile — 76 / 20 / 2 / 64, inner
+    // radius 18, margin 4, picture radius 14 — but a human mark must not read
+    // through a `WORKSPACE_` constant, so this is its own object.
+    expect(IDENTITY_SETTINGS_TILE).toEqual({
+      size: 76,
+      radius: 20,
+      borderWidth: 2,
+      pictureSize: 64,
+    });
+    expect(workspacePictureSeat(IDENTITY_SETTINGS_TILE)).toEqual(
+      workspacePictureSeat(WORKSPACE_SETTINGS_TILE),
+    );
+    expect(IDENTITY_SETTINGS_TILE).not.toBe(WORKSPACE_SETTINGS_TILE);
   });
 });

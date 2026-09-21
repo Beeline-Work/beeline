@@ -49,8 +49,16 @@ describe('Settings reads as the Members page', () => {
 
   it('centres a 2px brass-bezelled identity tile above the handle', () => {
     expect(styleBlock(settings, 'ident')).toContain("alignItems: 'center'");
-    expect(styleBlock(settings, 'tile')).toContain('borderWidth: 2');
+    // The 2px brass bezel is named once, with the rest of the tile's geometry
+    // (`buzz/workspace-tile`, where the picture's seat is derived from it).
+    expect(settings).toContain('const PICTURE_TILE = IDENTITY_SETTINGS_TILE');
+    expect(settings).toContain('const PICTURE_SEAT = workspacePictureSeat(PICTURE_TILE)');
+    expect(styleBlock(settings, 'tile')).toContain('borderWidth: PICTURE_TILE.borderWidth');
     expect(styleBlock(settings, 'tile')).toContain('borderColor: hull.accent');
+    expect(styleBlock(settings, 'pictureSeat')).toContain('borderRadius: PICTURE_SEAT.pictureRadius');
+    expect(settings).toContain('size={PICTURE_SEAT.pictureSize}');
+    expect(settings).not.toContain('WORKSPACE_SETTINGS_TILE');
+    expect(settings).not.toContain('const IDENTITY_TILE');
     expect(settings).toContain('testID="identity-face-setting"');
     expect(settings).toContain('testID="identity-managed-handle"');
   });

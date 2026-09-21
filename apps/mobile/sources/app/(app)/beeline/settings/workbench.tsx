@@ -9,11 +9,14 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
-  connectionHostsLine,
+  connectionCompany,
+  connectionDomainsLine,
+  connectionInstrument,
   connectionsForViewer,
   connectorInstrument,
   isGoogleToolConnectorId,
@@ -227,22 +230,34 @@ export default function WorkbenchScreen() {
               tone="quiet"
             />
           ) : (
-            connections.map((connection) => (
-              <SettingsRow
-                key={connection.ref}
-                chevron="right"
-                description={[connection.kind, connectionHostsLine(connection)].join(' · ')}
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/settings/workbench/connection',
-                    params: { workspaceId, viewerId, ref: connection.ref },
-                  } as unknown as Href)
-                }
-                testID={`workbench-connection-${connection.ref}`}
-                title={connection.name}
-                value={connection.state}
-              />
-            ))
+            connections.map((connection) => {
+              const instrument = connectionInstrument(connection.state);
+              const domains = connectionDomainsLine(connection);
+              return (
+                <SettingsRow
+                  key={connection.ref}
+                  chevron="right"
+                  description={domains || undefined}
+                  leading={
+                    <ServiceMark
+                      company={connectionCompany(connection)}
+                      testID={`workbench-connection-${connection.ref}-mark`}
+                    />
+                  }
+                  onPress={() =>
+                    router.push({
+                      pathname: '/beeline/settings/workbench/connection',
+                      params: { workspaceId, viewerId, ref: connection.ref },
+                    } as unknown as Href)
+                  }
+                  statusGlyph={instrument.glyph}
+                  testID={`workbench-connection-${connection.ref}`}
+                  title={connection.name}
+                  value={instrument.value}
+                  valueTone={instrument.valueTone}
+                />
+              );
+            })
           )}
         </View>
       </ScrollView>
@@ -258,6 +273,11 @@ const styles = StyleSheet.create((theme) => {
     contentInner: {
       padding: hull.space.md,
       gap: hull.layout.sectionGap,
+      // Both section heads take the same air above them: the Keys head gets
+      // `sectionGap` from the list it follows, so the Tools head takes the
+      // screen's own `screenTop` rather than the smaller page padding —
+      // which is what made the first head sit tighter than the second.
+      paddingTop: hull.layout.screenTop,
       paddingBottom: hull.space.xxl,
     },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },

@@ -31,7 +31,7 @@ export const VERCEL_CONNECTION: ConnectionDetailView = {
   connection: {
     ref: 'cred_vercel',
     name: 'Vercel',
-    kind: 'token',
+    service: 'vercel',
     hosts: ['api.vercel.com'],
     state: 'active',
     ownerId: MEMBER_A,
@@ -56,7 +56,7 @@ export const GOOGLE_CONNECTION: ConnectionDetailView = {
   connection: {
     ref: 'cred_google',
     name: 'Google',
-    kind: 'session',
+    service: 'google',
     hosts: [],
     state: 'active',
     ownerId: MEMBER_A,
@@ -71,8 +71,33 @@ export const GOOGLE_CONNECTION: ConnectionDetailView = {
   ],
 };
 
+/**
+ * A key whose label says nothing about its company and whose vault reports no
+ * hosts: the shape that proves the row reads the vault's `service` rather
+ * than guessing from a label or an address.
+ */
+export const GITHUB_CONNECTION: ConnectionDetailView = {
+  connection: {
+    ref: 'cred_github',
+    name: 'Work key',
+    service: 'github',
+    hosts: [],
+    state: 'active',
+    ownerId: MEMBER_A,
+    grantCount: 1,
+  },
+  createdBy: { handle: '@hoots', cause: 'sign-up', at: '11 Sep' },
+  grants: [{ grantId: 'hoots', createdAt: 4 }],
+  spendCap: 'none',
+  ledger: [{ at: '10:04', actor: '@hoots', action: 'open pull request', status: '201' }],
+};
+
 const MOCK_VIEWERS: readonly MockViewer[] = [
-  { id: MEMBER_A, name: 'dani', connections: [VERCEL_CONNECTION, GOOGLE_CONNECTION] },
+  {
+    id: MEMBER_A,
+    name: 'dani',
+    connections: [VERCEL_CONNECTION, GOOGLE_CONNECTION, GITHUB_CONNECTION],
+  },
   { id: MEMBER_B, name: 'terra', connections: [] },
 ];
 

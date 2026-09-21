@@ -96,7 +96,7 @@ export default function ConnectionDetailScreen() {
           />
         </TouchableOpacity>
         <Text style={styles.title}>{detail?.connection.name ?? 'Key'}</Text>
-        <Text style={styles.subtitle}>{detail?.connection.kind ?? ''}</Text>
+        <Text style={styles.subtitle}>{detail?.connection.service ?? ''}</Text>
       </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         {detail ? (

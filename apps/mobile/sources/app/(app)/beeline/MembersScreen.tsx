@@ -27,7 +27,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
+import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -1108,7 +1108,15 @@ export default function BuzzMembers() {
                     {ownsSelectedAgent ? 'Agent settings' : 'Agent'}
                   </Text>
                   <View style={styles.agentTitleRow}>
-                    <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
+                    <Text numberOfLines={1} style={styles.name}>
+                      {selectedAgent.agent.identity.name}
+                    </Text>
+                    {/* The handle is the string you type to summon this agent,
+                        so the panel names it the way the roster row above does
+                        rather than leaving it to the row alone. */}
+                    <Text numberOfLines={1} style={styles.detail} testID="agent-handle">
+                      {memberRosterTitle(selectedAgent.agent.identity)}
+                    </Text>
                     {ownsSelectedAgent && (
                       <TouchableOpacity
                         accessibilityLabel="Edit agent settings"
@@ -1127,6 +1135,24 @@ export default function BuzzMembers() {
                     </Text>
                   )}
                 </View>
+                {canRemoveSelectedAgent && (
+                  <TouchableOpacity
+                    accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void removeSelectedAgent()}
+                    style={styles.removeAgentControl}
+                    testID="remove-agent"
+                  >
+                    <Text style={styles.removeAgentText}>
+                      {working === 'remove-agent'
+                        ? 'Removing…'
+                        : ownsSelectedAgent
+                          ? 'Remove'
+                          : 'Ban'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   accessibilityLabel="Close agent settings"
                   onPress={closeAgentSettings}
@@ -1334,29 +1360,6 @@ export default function BuzzMembers() {
                   )}
                 </View>
               )}
-              {canRemoveSelectedAgent && (
-                <View style={styles.dangerZone}>
-                  <Text style={styles.dangerCopy}>
-                    {ownsSelectedAgent
-                      ? 'Removal tears down the paired host after Workspace absence is confirmed.'
-                      : 'Ban this agent from every Room in the Workspace.'}
-                  </Text>
-                  <MonoButton
-                    label={
-                      working === 'remove-agent'
-                        ? 'REMOVING AGENT'
-                        : ownsSelectedAgent
-                          ? 'REMOVE AGENT'
-                          : 'BAN AGENT'
-                    }
-                    loading={working === 'remove-agent'}
-                    disabled={busy}
-                    onPress={() => void removeSelectedAgent()}
-                    variant="destructive"
-                    testID="remove-agent"
-                  />
-                </View>
-              )}
             </HullSurface>
                 ) : null}
                 </View>
@@ -1496,7 +1499,8 @@ const styles = StyleSheet.create((theme) => {
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     rowCopy: { flex: 1, minWidth: 0 },
-    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    // A long display name truncates before it can crowd the handle beside it.
+    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flexShrink: 1 },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
     personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
@@ -1592,12 +1596,19 @@ const styles = StyleSheet.create((theme) => {
     },
     switchLabelOn: { color: hull.accent },
     switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
-    dangerZone: {
-      gap: hull.space.sm,
-      paddingTop: hull.space.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.danger,
+    // Compact next to the identity copy, but still a full 44pt target. The
+    // red is the border: `dialogDanger` clears the 3:1 non-text floor on both
+    // canvases, where the same value as small ink would sit at 4.36:1 on
+    // Obsidian and 3.81:1 on Bone — under the 4.5:1 text floor. The word
+    // carries the meaning either way, so the label takes the primary ink.
+    removeAgentControl: {
+      minHeight: 44,
+      justifyContent: 'center',
+      paddingHorizontal: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.dialogDanger,
+      borderRadius: hull.radius,
     },
-    dangerCopy: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    removeAgentText: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
   };
 });

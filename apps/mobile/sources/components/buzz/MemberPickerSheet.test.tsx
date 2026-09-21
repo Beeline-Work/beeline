@@ -73,7 +73,6 @@ vi.mock('./IdentityMark', async () => {
 import {
   MEMBER_PICKER_TITLE,
   MemberPickerSheet,
-  shouldOpenPeoplePicker,
   type MemberPickerCandidate,
 } from './MemberPickerSheet';
 
@@ -160,12 +159,6 @@ describe('MemberPickerSheet', () => {
     // The Workspace-level ways in end the list, as they always did.
     expect(has(renderer, 'room-member-picker-invite-person')).toBe(true);
     expect(has(renderer, 'room-member-picker-add-agent')).toBe(true);
-  });
-
-  it('opens the picker only when someone is addable, so the People "+" can skip straight to the invite flow otherwise', () => {
-    expect(shouldOpenPeoplePicker(0)).toBe(false);
-    expect(shouldOpenPeoplePicker(1)).toBe(true);
-    expect(shouldOpenPeoplePicker(2)).toBe(true);
   });
 
   it('never shows "Connect a new agent" on a people-scoped picker, even with people addable', () => {

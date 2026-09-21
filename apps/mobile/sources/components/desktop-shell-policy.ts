@@ -1,6 +1,8 @@
 export type DesktopSessionState = 'checking' | 'signed-in' | 'signed-out';
 
-/** A native desktop window keeps its desktop frame at every supported width. */
+/** A native desktop window keeps its desktop frame at every supported width.
+ *  A browser must pass the live width class (`isTablet` / `useIsTablet`),
+ *  never `isDesktopPlatform()` — that is true for every web session. */
 export function usesPersistentDesktopFrame(
   inDesktopShell: boolean,
   tabletLayout: boolean,

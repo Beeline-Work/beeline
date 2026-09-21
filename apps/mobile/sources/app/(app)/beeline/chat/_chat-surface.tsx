@@ -322,7 +322,7 @@ import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
-import { isDesktopPlatform } from '@/utils/platform';
+import { isDesktopShell } from '@/utils/isDesktopShell';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerHistoryLine,
@@ -483,13 +483,13 @@ export function BuzzChatSurface({
     allowOlderHistoryRef.current = Boolean(messageAnchorId);
   }, [decodedId, messageAnchorId]);
   const { width: windowWidth } = useWindowDimensions();
-  // A desktop browser keeps the permanent Room list even when its window is
-  // narrower than the work-pane threshold. Native phones keep their ordinary
-  // compact navigation because they are not desktop platforms.
-  const desktopExperience = isDesktopPlatform();
-  const workPaneWindowClass = desktopWorkPaneWindowClass(
-    typeof window === 'undefined' ? windowWidth : window.screen?.availWidth || windowWidth,
-  );
+  // Desktop chrome and the work pane follow the live window, not the
+  // monitor. `isDesktopPlatform()` is true for every browser, and
+  // `screen.availWidth` is the display — either one sizes a phone tab as a
+  // desktop shell and a narrowed desktop window as a 3-column wide layout.
+  // A packaged Tauri window keeps the desktop experience at every width.
+  const desktopExperience = isDesktop || isDesktopShell();
+  const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;

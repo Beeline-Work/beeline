@@ -196,6 +196,7 @@ describe('defaultStreamedRunner', () => {
     const line = reportLine({
       state: 'needs-sign-in',
       sign_in_url: 'https://tunnel.test/#p=hunter22',
+      browser_location: { kind: 'host_screen' },
     });
     const cut = Math.floor(line.length / 2);
     const result = await defaultStreamedRunner(process.execPath, [
@@ -236,7 +237,7 @@ describe('defaultStreamedRunner', () => {
     try {
       const result = await defaultStreamedRunner(process.execPath, [
         '-e',
-        `process.stdout.write(${JSON.stringify(`${reportLine({ state: 'needs-sign-in', sign_in_url: 'https://tunnel.test/#p=hunter22' })}\n`)});` +
+        `process.stdout.write(${JSON.stringify(`${reportLine({ state: 'needs-sign-in', sign_in_url: 'https://tunnel.test/#p=hunter22', browser_location: { kind: 'host_screen' } })}\n`)});` +
           'setInterval(() => {}, 30_000);',
       ]);
       expect(result.report?.sign_in_url).toBe('https://tunnel.test/#p=hunter22');
@@ -256,6 +257,7 @@ describe('defaultStreamedRunner', () => {
     const line = reportLine({
       state: 'needs-sign-in',
       sign_in_url: 'https://tunnel.test/#p=hunter2',
+      browser_location: { kind: 'host_screen' },
     });
     const result = await defaultStreamedRunner(process.execPath, [
       '-e',
@@ -268,6 +270,41 @@ describe('defaultStreamedRunner', () => {
       ].join(''),
     ]);
     expect(result.report?.sign_in_url).toBe('https://tunnel.test/#p=hunter2');
+    result.abort();
+    releaseSquireConnectSession();
+  });
+
+  it('publishes the placement Squire reports on a later line, not the first one', async () => {
+    // Squire writes the sign-in line before the ceremony browser is placed
+    // and writes it again once the placement is known — always before it
+    // starts waiting on the human. Settling on the first line publishes a
+    // page with nowhere attached to it.
+    const first = reportLine({
+      state: 'needs-sign-in',
+      sign_in_url: 'https://trustysquire.ai/install?token=secret',
+    });
+    const placed = reportLine({
+      state: 'needs-sign-in',
+      sign_in_url: 'https://trustysquire.ai/install?token=secret',
+      browser_location: { kind: 'virtual', url: 'https://tunnel.test/vnc.html#p=hunter22' },
+    });
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        `process.stdout.write(${JSON.stringify(`${first}\n`)});`,
+        'setTimeout(() => {',
+        `  process.stdout.write(${JSON.stringify(`${placed}\n`)});`,
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    // Still alive: the placement, not the exit, is what published the page.
+    expect(isProcessAlive(result.pid)).toBe(true);
+    expect(result.report?.sign_in_url).toBe('https://trustysquire.ai/install?token=secret');
+    expect(connectBrowserLocation(result.report?.browser_location)).toEqual({
+      kind: 'virtual',
+      url: 'https://tunnel.test/vnc.html#p=hunter22',
+    });
     result.abort();
     releaseSquireConnectSession();
   });

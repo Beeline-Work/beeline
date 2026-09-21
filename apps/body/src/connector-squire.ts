@@ -4,8 +4,11 @@
  * One helper shares the host Squire broker and its one Chrome. The install
  * runs Squire's own `connect --json` through a STREAMING runner that reads
  * the newline-delimited typed reports on stdout and hands the phone the
- * sign-in page the moment a `needs-sign-in` report carries one. Connect is
- * not given `--skip-browser` or `--force-relogin`: skip-browser signs the
+ * run's LAST report: the sign-in page once that report also names where the
+ * page opened (Squire writes the placement on a later line, always before it
+ * waits on the human), or a terminal report.
+ *
+ * Connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
  * human in outside the bot profile so the shared Chrome never gains the
  * session, and force-relogin clears provider cookies and asserts a
  * single-session precondition the broker does not have. Not passing
@@ -19,7 +22,7 @@
  * version probe and other quick commands. A new `StreamedShellRunner`
  * (`defaultStreamedRunner`) handles the connect command: it spawns the
  * process, reads stdout line by line, and resolves the promise as soon as a
- * `needs-sign-in` report publishes its page (or the process exits).
+ * report is publishable (`isPublishableConnectReport`) or the process exits.
  *
  * Two guards keep a fresh connect attempt working (captain, 2026-09-17):
  *
@@ -350,9 +353,10 @@ export const CONNECT_TIMEOUT_MS = 300_000;
 
 /**
  * Default streamed runner: spawns the process, reads its NEWLINE-DELIMITED
- * `--json` reports line by line, and resolves as soon as a `needs-sign-in`
- * report hands over the sign-in page (or when the process exits). Keeps the
- * process alive until the safety timeout or an explicit `abort()`.
+ * `--json` reports line by line, and resolves with the last one read as soon
+ * as it is publishable — a sign-in that names its placement, or a terminal
+ * report — or when the process exits. Keeps the process alive until the
+ * safety timeout or an explicit `abort()`.
  */
 function killConnectTree(child: { pid?: number; kill: () => boolean }): void {
   const pid = child.pid;
@@ -442,9 +446,13 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
 
     const publishSignIn = () => {
       consumeReports(false);
-      // A `needs-sign-in` report carries the page by contract. Hand it to the
-      // phone while the connect process is still alive, then keep waiting.
-      if (report?.state === 'needs-sign-in' && report.sign_in_url) {
+      // The run's answer is its LAST report. Squire writes the first
+      // `needs-sign-in` line before the ceremony browser is placed and writes
+      // another one the moment the placement is known — always before it
+      // starts waiting on the human — so publishing the first line would
+      // publish a page with nowhere attached to it. Wait for the placement,
+      // never for the process.
+      if (report && isPublishableConnectReport(report)) {
         finish({ stdout, stderr, pid: child.pid ?? undefined, report, abort });
       }
     };
@@ -546,6 +554,21 @@ export function parseConnectReport(line: string): SquireConnectReport | undefine
     holder: parsed.holder,
     browser_location: parsed.browser_location,
   };
+}
+
+/**
+ * Whether this report is the one the run's caller can act on, or whether
+ * another line is still coming. `terminal` says the run ended. A live
+ * `needs-sign-in` is publishable once it names where the page opened: the
+ * placement is written on a later line than the URL, and every ceremony
+ * reports it before it starts waiting on the human, so this waits on Squire's
+ * own next line and never on the human or on the process.
+ */
+export function isPublishableConnectReport(report: SquireConnectReport): boolean {
+  if (report.terminal) return true;
+  if (report.state !== 'needs-sign-in' || !report.sign_in_url) return false;
+  const location = report.browser_location;
+  return isRecord(location) && typeof location.kind === 'string' && location.kind !== 'none';
 }
 
 /** Squire's reason codes, in the words a person reads. The code is the
@@ -742,7 +765,7 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
  * Order: helper reached → trusty-squire installed → waiting for sign-in →
  * paired to the workspace. The connect command runs through a STREAMING
  * runner that reads Squire's newline-delimited `--json` reports and hands the
- * phone the sign-in page the moment a `needs-sign-in` report carries one, or
+ * phone the sign-in page once a `needs-sign-in` report names where it opened, or
  * continues with no page at all when the last report says the shared profile
  * is already connected. The connect process stays alive in the background for
  * the human to complete sign-in. The post-install `pairSquire` probe confirms

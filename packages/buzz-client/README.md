@@ -71,8 +71,11 @@ reachable they always run for real.
 ## Current boundaries
 
 - **Relay transport:** this package signs relay writes and offers HTTP/WS query helpers.
-- **Durable reads:** [`RoomViewClient`](./src/room-view.ts) verifies server-indexed Room,
-  history, Workspace, and agent-detail responses before a client can cache or render them.
+- **Durable reads:** [`RoomViewClient`](./src/room-view.ts) projects server-indexed Room,
+  history, Workspace, and agent-detail responses through the `read*` surface readers before a
+  client can cache or render them. Those readers are tolerant by contract — an unknown field is
+  ignored and an unreadable row is dropped rather than discarding the whole response; the rule
+  lives with the readers in `packages/api-contract/src/phone-guards.ts`.
 - **Live updates:** relay signals invalidate those surfaces; only verified draft, thought, and
   presence events may appear as live overlays.
 - **Execution:** [`apps/body`](../../apps/body) owns ACP sessions, permission requests,

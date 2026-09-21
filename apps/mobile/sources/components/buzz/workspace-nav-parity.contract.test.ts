@@ -36,7 +36,17 @@ describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
 
   it('keeps the desktop rail as the reference tile (48px, 14px radius, 2px bezel, left pill)', () => {
     expect(desktopRail).toContain('TILE_SIZE = 48');
-    expect(desktopRail).toContain('borderRadius: 14');
+    expect(desktopRail).toContain('const TILE_RADIUS = 14');
+    expect(desktopRail).toContain('borderRadius: TILE_RADIUS');
     expect(desktopRail).toContain('currentTile: { borderWidth: 2, borderColor: hull.accent }');
+  });
+
+  it('clips the desktop rail picture to the same bezel the drawer clips to', () => {
+    // Both rails wear the one tile, so both name the same three numbers and
+    // clip their square Workspace picture to the border's inner curve.
+    expect(desktopRail).toContain('const TILE_BORDER_WIDTH = 2');
+    expect(desktopRail).toContain('const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH');
+    expect(desktopRail).toContain('borderRadius: TILE_INNER_RADIUS');
+    expect(desktopRail).toContain("overflow: 'hidden'");
   });
 });

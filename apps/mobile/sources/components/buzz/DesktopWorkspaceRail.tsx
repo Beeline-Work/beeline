@@ -15,6 +15,22 @@ import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal
 const RAIL_WIDTH = 76;
 const TILE_SIZE = 48;
 
+/**
+ * The Workspace tile bezel. The picture inside is square, so the tile has to
+ * clip it or its corners stay hard while the tile is round. A border eats into
+ * the curve, so the radius the content is clipped at is the outer radius LESS
+ * the border width, not the outer radius. Same three numbers as the mobile
+ * drawer (`CommunityRail`), which wears this same tile.
+ */
+const TILE_RADIUS = 14;
+const TILE_BORDER_WIDTH = 2;
+const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
+/** The bezel's content box: the tile less its border on both edges. */
+const TILE_CLIP_SIZE = TILE_SIZE - TILE_BORDER_WIDTH * 2;
+/** The mark inside that box, at the drawer's 40-in-44 geometry: a picture wide
+ *  enough to meet the bezel, which is what gives the clip something to cut. */
+const TILE_MARK_SIZE = 40;
+
 export type DesktopWorkspaceRailItem = {
   readonly id: string;
   readonly name: string;
@@ -170,14 +186,16 @@ export function DesktopWorkspaceRail({
                     ]}
                     testID={`desktop-workspace-tile-${workspace.id}`}
                   >
-                    <IdentityMark
-                      avatarUrl={workspace.avatar}
-                      kind="workspace"
-                      name={workspace.name}
-                      seed={workspace.id}
-                      size={32}
-                      testID={`desktop-workspace-mark-${workspace.id}`}
-                    />
+                    <View style={styles.tileClip}>
+                      <IdentityMark
+                        avatarUrl={workspace.avatar}
+                        kind="workspace"
+                        name={workspace.name}
+                        seed={workspace.id}
+                        size={TILE_MARK_SIZE}
+                        testID={`desktop-workspace-mark-${workspace.id}`}
+                      />
+                    </View>
                   </Pressable>
                   {labelled && (
                     <View
@@ -267,10 +285,23 @@ const stylesheet = StyleSheet.create((theme) => {
       minHeight: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 14,
+      borderRadius: TILE_RADIUS,
       backgroundColor: hull.bgHighlight,
       outlineStyle: 'none',
     } as any,
+    /* The bezel's content box. A Workspace picture is square, so without this
+     * its corners stay hard inside a round tile. The clip follows the border's
+     * INNER curve, which is the outer radius less the border width. It is the
+     * tile's content box whether or not the tile is currently wearing its
+     * bezel, so the mark does not move when a Workspace becomes current. */
+    tileClip: {
+      width: TILE_CLIP_SIZE,
+      height: TILE_CLIP_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: TILE_INNER_RADIUS,
+      overflow: 'hidden',
+    },
     currentTile: { borderWidth: 2, borderColor: hull.accent },
     focusedTile: { borderWidth: 2, borderColor: hull.accent },
     pill: {

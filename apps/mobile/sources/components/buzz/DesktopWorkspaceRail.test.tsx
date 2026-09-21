@@ -137,6 +137,28 @@ describe('desktop Workspace rail', () => {
     ).toBe('Bravo, 1 Rooms, needs you');
   });
 
+  it('clips the Workspace picture to the tile bezel at the inner radius', () => {
+    const tree = renderRail();
+    const mark = tree.root.findByProps({ testID: 'desktop-workspace-mark-alpha' });
+    const clip = tree.root
+      .findAllByType('View' as any)
+      .find((node: any) =>
+        node.props.style?.overflow === 'hidden' &&
+        node.findAllByProps({ testID: 'desktop-workspace-mark-alpha' }).length > 0,
+      );
+
+    // 48px tile, 2px bezel: the content box is 44 and its curve is 14 - 2.
+    // A picture that stopped short of that curve would be clipped by nothing,
+    // so the mark has to fill the box for the clip to mean anything.
+    expect(clip?.props.style).toMatchObject({
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      overflow: 'hidden',
+    });
+    expect(mark.props.size).toBe(40);
+  });
+
   it('reveals the name and Room count on hover or focus', () => {
     const tree = renderRail();
     act(() => tree.root.findByProps({ testID: 'desktop-workspace-tile-bravo' }).props.onHoverIn());

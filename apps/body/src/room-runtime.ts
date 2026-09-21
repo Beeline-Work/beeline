@@ -451,11 +451,12 @@ export class RoomRuntimeCoordinator {
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
-      if (event?.roomId) {
-        this.queueMembershipEvent(event);
+      const roomId = event?.roomId;
+      if (!roomId) {
+        this.discoveryWakes.wake();
         return;
       }
-      this.discoveryWakes.wake();
+      this.queueMembershipEvent({ ...event, roomId });
     });
     this.options.daemonApi.setCornerCompleteListener?.((roomId) => {
       void this.applyCornerComplete(roomId).catch((error) =>
@@ -650,12 +651,8 @@ export class RoomRuntimeCoordinator {
    * burst; unbounded, that burst is exactly the concurrent restore reads and
    * worktree checkouts this change exists to stop.
    */
-  private queueMembershipEvent(event: RoomMembershipChange): void {
+  private queueMembershipEvent(event: RoomMembershipChange & { roomId: string }): void {
     if (this.stopped) return;
-    if (!event.roomId) {
-      this.discoveryWakes.wake();
-      return;
-    }
     this.pendingMembershipEvents.set(event.roomId, event);
     this.membershipDrain ??= this.drainMembershipEvents().finally(() => {
       this.membershipDrain = undefined;

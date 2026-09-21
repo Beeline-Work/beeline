@@ -211,6 +211,41 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
+  it('arms the recovery reconcile when a pushed apply fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-failed-apply-'));
+    roots.push(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomRepositoryState') throw new Error('index.lock held by a sibling');
+      return {};
+    });
+    let membership: ((event?: RoomMembershipChange) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (listener: (event?: RoomMembershipChange) => void) => {
+            membership = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      expect(coordinator.needsFastReconcile()).toBe(false);
+      membership?.({ roomId: 'room-1' });
+      await vi.waitFor(() => expect(coordinator.needsFastReconcile()).toBe(true));
+      expect(coordinator.activeRoomIds()).not.toContain('room-1');
+    } finally {
+      await coordinator.shutdown();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('an unscoped rooms-changed still arms the recovery reconcile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-unscoped-'));
     roots.push(root);

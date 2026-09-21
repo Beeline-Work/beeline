@@ -663,9 +663,10 @@ export class RoomRuntimeCoordinator {
       const batch = [...this.pendingMembershipEvents.values()];
       this.pendingMembershipEvents.clear();
       await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
-        this.applyMembershipEvent(event).catch((error) =>
-          console.error('[thin-core] live membership apply failed', error),
-        ),
+        this.applyMembershipEvent(event).catch((error) => {
+          console.error('[thin-core] live membership apply failed', error);
+          this.discoveryWakes.wake();
+        }),
       );
     }
   }
@@ -910,11 +911,6 @@ export class RoomRuntimeCoordinator {
           roomId: corner.parentRoomId,
         }),
       ]);
-      // An archived corner is already closed. Reconcile filters those out of
-      // its own list; a pushed membership row carries no archive state, and
-      // inheriting a Room membership writes one row per corner under it,
-      // including the archived ones.
-      if (restore.closeRequested) return;
       configKey = cornerStartConfigKey(repository, restore.objective ?? '');
       const previousStanding = this.standingCornerStartFaults.get(corner.cornerId);
       if (previousStanding === configKey) return;

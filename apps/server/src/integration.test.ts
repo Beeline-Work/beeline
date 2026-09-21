@@ -1632,6 +1632,60 @@ describe('monolith integration', () => {
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
 
+  it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
+    const messageId = '7'.repeat(64);
+    expect(
+      (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'Agent react here' }))
+        .status,
+    ).toBe(200);
+
+    expect(
+      (await daemonOperation('reactToRoomMessage', { roomId: ROOM, messageId, emoji: '🎉' }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await daemonOperation('reactToRoomMessage', { roomId: ROOM, messageId, emoji: '🎉' }))
+        .status,
+    ).toBe(200);
+
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(room.messages.find((message) => message.id === messageId)?.reactions).toEqual([
+      {
+        emoji: '🎉',
+        count: 1,
+        reacted: false,
+        members: [{ pubkey: AGENT, kind: 'agent', name: 'Bee', handle: 'bee' }],
+      },
+    ]);
+
+    expect(
+      (await daemonOperation('reactToRoomMessage', { roomId: ROOM, messageId, emoji: '🔥' }))
+        .status,
+    ).toBe(400);
+
+    const outsider = '6'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outside','outside')`,
+      [outsider],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [outsider, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, outsider],
+    );
+    const exchange = await auth.createDaemonExchange(outsider);
+    const outsiderToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    expect(
+      (
+        await daemonOperation(
+          'reactToRoomMessage',
+          { roomId: ROOM, messageId, emoji: '✅' },
+          outsiderToken,
+        )
+      ).status,
+    ).toBe(403);
+  });
+
   it('keeps private bookmarks in the Workspace index and projects their message marker', async () => {
     const messageId = '8'.repeat(64);
     expect(

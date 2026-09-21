@@ -792,7 +792,11 @@ export class DaemonService {
     return { assignments };
   }
 
-  /** The helper reports it completed (or accepted) an install. */
+  /**
+   * The helper reports it completed (or accepted) an install. `sign_in` is
+   * written, not merged: the run that reaches `connected` printed no
+   * ceremony, so whatever tunnel an earlier run published dies with it.
+   */
   private async connectorInstall(
     input: Input<'installConnector'>,
     agentId: string,
@@ -898,7 +902,11 @@ export class DaemonService {
     return { id: agentId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
-  /** The helper polls its connector's state; stale metadata stages a sync. */
+  /**
+   * The helper polls one connector's state; stale metadata stages a sync.
+   * `connectorId` names WHICH row — a helper carrying the four Google rows
+   * beside its Squire row would otherwise read whichever came first.
+   */
   private async connectorStatusView(
     agentId: string,
     connectorId?: string,

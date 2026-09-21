@@ -850,15 +850,14 @@ export type InstallConnectorInput = AgentInput & {
   /** Final install report (the completion of a `postConnectorStatus` run). */
   readonly squireVersion?: string;
   readonly signedInAs?: string;
+  /**
+   * The sign-in surface, written authoritatively: a completing run normally
+   * omits it, and the row's stored surface is cleared with it, so no dead
+   * tunnel outlives the connect that printed it.
+   */
   readonly signIn?: ConnectorSignIn;
 };
 
-/**
- * Incremental helper install report: the ordered steps as they settle, posted
- * once per step transition while the helper runs an install or after a sync.
- * A `errorMessage` marks the run failed; otherwise the row stays installing
- * until `installConnector` completes it.
- */
 /**
  * Read one connector row. `connectorId` names WHICH one: a helper carries the
  * four Google tool rows beside its Squire row, and without it the answer is
@@ -868,6 +867,12 @@ export type GetConnectorStatusInput = AgentInput & {
   readonly connectorId?: string;
 };
 
+/**
+ * Incremental helper install report: the ordered steps as they settle, posted
+ * once per step transition while the helper runs an install or after a sync.
+ * A `errorMessage` marks the run failed; otherwise the row stays installing
+ * until `installConnector` completes it.
+ */
 export type PostConnectorStatusInput = AgentInput & {
   readonly connectorId: string;
   readonly steps: readonly ConnectorStep[];

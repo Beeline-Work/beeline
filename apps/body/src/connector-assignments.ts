@@ -7,8 +7,10 @@
  * seconds it asks for work, runs the Squire lifecycle (`connector-squire.ts`),
  * and reports each install step back through `postConnectorStatus` so the
  * phone paints progress live. A completed install reports through
- * `installConnector`, which flips the row to `connected` and persists the
- * sign-in surface and installed version; a failed step reports its error.
+ * `installConnector`, which flips the row to `connected`, records the
+ * installed version, and clears the sign-in surface — a run that reaches
+ * `connected` printed no ceremony, so no dead tunnel survives it. A failed
+ * step reports its error.
  *
  * One helper carries ONE Squire account (captain decision 2026-09-14), so
  * after an install or a `sync` assignment the vault list is reported once

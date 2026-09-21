@@ -294,33 +294,20 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
  * update between them was interleaved metadata rather than a message
  * boundary. A run already closed by whitespace is a boundary on its own.
  *
- * An uppercase head is not a continuation and not a boundary either — see
- * `SEAM_IS_UNDECIDABLE`.
+ * An uppercase head is deliberately NOT read as a continuation. `Using Git` +
+ * `Hub works.` and `Checking Docker` + `Found it.` are the same text and the
+ * same update stream, so no rule can tell a split name from the harness
+ * opening a new message; every reading of capitalization tried here — the
+ * word's own case, a prefix allowlist, its length, whether it had already
+ * turned over — resolved one of that pair by corrupting the other. The
+ * ambiguity is therefore left standing: an uppercase resume ends the run, as
+ * it always did. That keeps a split name's head out of the final message,
+ * which is the cost of never gluing two real messages into one.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
   if (CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) return true;
   return RUN_ENDS_MID_WORD.test(current) && CHUNK_RESUMES_WORD.test(delta);
-}
-
-/**
- * The one seam nothing in the stream can decide: a run stopped part-way
- * through a word and an uppercase delta resumes it. `Using Git` + `Hub
- * works.` is one name; `Checking Docker` + `Found it.` is two messages; they
- * are the same text and, from harnesses that emit a bare `tool_call`, the
- * same update stream. Every reading of capitalization tried on this branch —
- * the word's own case, a prefix allowlist, the fragment's length, whether
- * the word had already turned over — resolved one of that pair by corrupting
- * the other.
- *
- * So the seam is not decided, it is represented. The run carries on with a
- * paragraph break at the seam, which keeps every character the model wrote —
- * the reply's head included — and never fuses two words into `DockerFound`.
- * A wrong guess here costs a paragraph break that was not in the original;
- * the alternatives cost either the head or the word.
- */
-function seamIsUndecidable(current: string, delta: string): boolean {
-  return RUN_ENDS_MID_WORD.test(current) && /^\p{Lu}/u.test(delta);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
@@ -351,9 +338,7 @@ function normalizeStreamDelta(text: string, _agentLabel?: string): string {
  * update lands: a tool call used to close the run on sight, so a tool call
  * between a word's first and second token broke the word in two and the head
  * stopped being part of the final message. Whether the run ended is only
- * knowable from what resumes it, and where even that cannot tell
- * (`seamIsUndecidable`) the run carries on across a paragraph break rather
- * than lose its head. */
+ * knowable from what resumes it. */
 export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
   const runs: string[] = [];
   let current = '';
@@ -365,12 +350,8 @@ export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?:
       continue;
     }
     if (!lastWasText && current && !continuesPreviousWord(current, delta)) {
-      if (seamIsUndecidable(current, delta)) {
-        current += '\n\n';
-      } else {
-        runs.push(current);
-        current = '';
-      }
+      runs.push(current);
+      current = '';
     }
     current += delta;
     lastWasText = true;

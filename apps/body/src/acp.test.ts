@@ -187,55 +187,85 @@ describe('ACP streaming lane classifier', () => {
     }
   });
 
-  it('carries an undecidable seam across a paragraph break instead of guessing', () => {
-    // `Using Git` + `Hub works.` is one name; `Checking Docker` + `Found it.`
-    // is two messages. Same text, same update stream — nothing tells them
-    // apart. Rather than drop the head of the first or fuse the words of the
-    // second, the run carries on across a paragraph break: every character
-    // the model wrote survives and no two words are glued together.
+  it('leaves an uppercase resume ambiguous instead of guessing at it', () => {
+    // `Using Git` + `Hub works.` and `Checking Docker` + `Found it.` are the
+    // same text and the same update stream. Nothing can tell a split name
+    // from the harness opening a new message, so neither is joined: the run
+    // ends, exactly as it did before this guard existed. A split name's head
+    // stays out of the final message; the alternative is gluing two real
+    // messages together, which is the worse of the two.
     for (const [head, tail] of [
       ['Using Git', 'Hub works.'],
       ['Checking Docker', 'Found it.'],
       ['Using e', 'Bay works.'],
       ['Checking GitHub', 'Found it.'],
-      ['I can do', 'Found it.'],
+      ['Open the READ', 'ME first.'],
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: head } }),
         update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
         update('agent_message_chunk', { content: { type: 'text', text: tail } }),
       ];
-      const joined = `${head}\n\n${tail}`;
-      expect(agentMessageRuns(updates)).toEqual([joined]);
-      expect(finalAgentMessageText(updates)).toBe(joined);
-      // The head is in the reply, and the seam never fuses two words.
-      expect(finalAgentMessageText(updates)).toContain(head);
-      expect(finalAgentMessageText(updates)).not.toContain(head + tail);
+      expect(agentMessageRuns(updates)).toEqual([head, tail]);
+      expect(finalAgentMessageText(updates)).toBe(tail);
     }
   });
 
-  it('still ends a run where the harness closed its message', () => {
-    // A run that stopped at a word boundary is a boundary: terminal
-    // punctuation or trailing whitespace ends the message, so post-tool
-    // narration stays out of the final reply. Only a run stopped part-way
-    // through a word is undecidable.
-    for (const narration of [
-      'Inspecting the files.',
-      'Let me look at that first!',
-      'Checking the gate:',
-      'Reading the config\n',
-      'Inspecting ',
-    ]) {
-      const updates = [
-        update('agent_message_chunk', { content: { type: 'text', text: narration } }),
+  it('still ends a run when the text that resumes opens a new sentence', () => {
+    // The word-continuation guard must not swallow a genuine message
+    // boundary: a capital landing on an ordinary lowercase word is the
+    // harness opening a fresh message, and a run already closed by
+    // whitespace is a boundary on its own.
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting the files' } }),
         update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
         update('agent_message_chunk', { content: { type: 'text', text: 'Found the answer.' } }),
-      ];
-      expect(agentMessageRuns(updates)).toEqual([narration, 'Found the answer.']);
-      expect(finalAgentMessageText(updates)).toBe('Found the answer.');
-    }
-  });
+      ]),
+    ).toEqual(['Inspecting the files', 'Found the answer.']);
 
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', {
+          content: { type: 'text', text: '...existing test and typecheck patterns' },
+        }),
+        update('tool_call', { toolCallId: 'read-2', kind: 'read' }),
+        update('agent_message_chunk', {
+          content: { type: 'text', text: 'Now I have the full picture.' },
+        }),
+      ]),
+    ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
+
+    // Narration that ends on any word, short or long, plain or stylized,
+    // ends its message once a capital follows it.
+    for (const shortWord of [
+      'I can do',
+      'Looking at the',
+      'Checking if',
+      'One to',
+      'Reading it as a',
+      'Tested on mac',
+      'Checking GitHub',
+      'Written in JavaScript',
+      'Using eBay',
+    ]) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: shortWord } }),
+        update('tool_call', { toolCallId: 'read-3', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found it.' } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([shortWord, 'Found it.']);
+      expect(finalAgentMessageText(updates)).toBe('Found it.');
+    }
+
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting ' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'done.' } }),
+      ]),
+    ).toEqual(['Inspecting ', 'done.']);
+  });
 });
 
 describe('harness retry narration is never the final answer', () => {
@@ -1519,7 +1549,7 @@ describe('AcpClient live steering', () => {
     }
   });
 
-  it('keeps interim narration in the live draft, and out of a cleanly closed final message', async () => {
+  it('keeps interim narration in the live draft but returns only the final post-tool message', async () => {
     const client = new AcpClient({
       agentBinary: await fakeInterruptedNarrationAgent(),
       agentEnv: {},
@@ -1540,15 +1570,8 @@ describe('AcpClient live steering', () => {
           if (snapshot) snapshots.push(snapshot);
         },
       );
-      // This fixture's narration stops mid-word ("patterns", no terminal
-      // punctuation), which is the seam nothing in the stream can decide.
-      // The words are never fused, and the text is never dropped; the
-      // separately asserted case below is the one the harness closed
-      // cleanly, where narration does stay out of the reply.
       expect(result.agentText).not.toContain('patternsNow');
-      expect(result.agentText).toBe(
-        '...existing test and typecheck patterns\n\nNow I have the full picture.',
-      );
+      expect(result.agentText).toBe('Now I have the full picture.');
       expect(seenFullText.at(-1)).toBe(
         '...existing test and typecheck patterns\n\nNow I have the full picture.',
       );
@@ -1559,34 +1582,6 @@ describe('AcpClient live steering', () => {
         messageText: 'Now I have the full picture.',
         thoughtText: '...existing test and typecheck patterns',
       });
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it('keeps a cleanly closed narration out of the final post-tool message', async () => {
-    // The seam the stream does decide: narration that ended on terminal
-    // punctuation is a finished message, so the reply is the post-tool text
-    // alone — the behaviour the undecidable-seam case must not be read as
-    // overturning.
-    const client = new AcpClient({
-      agentBinary: await fakeInterruptedNarrationAgent(
-        'Checking the certification gate.',
-        'Now I have the full picture.',
-      ),
-      agentEnv: {},
-    });
-    await client.start();
-    try {
-      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      const seenFullText: string[] = [];
-      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (_delta, fullText) => {
-        seenFullText.push(fullText);
-      });
-      expect(result.agentText).toBe('Now I have the full picture.');
-      expect(seenFullText.at(-1)).toBe(
-        'Checking the certification gate.\n\nNow I have the full picture.',
-      );
     } finally {
       await client.stop();
     }
@@ -1701,12 +1696,11 @@ describe('AcpClient live steering', () => {
     }
   });
 
-  it('keeps both halves of an undecidable seam, fusing neither', async () => {
+  it('keeps narration that ends on a capitalized name out of the final message', async () => {
     // `Checking Docker` + tool call + `Found it.` — every reading of the
-    // capital that joined `Git` to `Hub` also glued this into the single
-    // malformed message "Checking DockerFound it.". Both halves now reach
-    // the reply with a paragraph break between them, so the head survives
-    // whichever of the two this really was.
+    // capital that joined `Git` to `Hub` also glued this genuine boundary
+    // into the single message "Checking DockerFound it.". The capital is
+    // now left alone, so the two messages stay two.
     const client = new AcpClient({
       agentBinary: await fakeToolCallWordSplitAgent('Checking Docker', 'Found it.'),
       agentEnv: {},
@@ -1723,9 +1717,36 @@ describe('AcpClient live steering', () => {
           if (currentRuns) runs.push([...currentRuns]);
         },
       );
-      expect(result.agentText).toBe('Checking Docker\n\nFound it.');
-      expect(result.agentText).not.toContain('DockerFound');
-      expect(runs.at(-1)).toEqual(['Checking Docker\n\nFound it.']);
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['Checking Docker', 'Found it.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration that ends on a short word out of the final message', async () => {
+    // The boundary the word-continuation guard must not cross: `I can do` is
+    // narration that ended on a word, not half of a name, so tool work after
+    // it opens a new message. Reading the fragment by length instead of by
+    // name glued the two into "I can doFound it.".
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('I can do', 'Found it.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['I can do', 'Found it.']);
     } finally {
       await client.stop();
     }

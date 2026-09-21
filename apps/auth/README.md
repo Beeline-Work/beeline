@@ -150,6 +150,12 @@ authorization callback is `https://<tenant>/auth/github/callback` and GitHub's
 Setup URL field is intentionally unavailable. Keep **Redirect on update**
 enabled: the same callback dispatches `installation_id`/`setup_action` returns
 from installs and repository-selection updates before deep-linking to Beeline.
+An organization that requires approval returns `setup_action=request` with no
+`installation_id` while the install is still pending; that is an unfinished
+installation, never a dead link — the callback says so, spends nothing, and
+lets GitHub's later approval callback complete the same state. Reconciliation
+(every five minutes) picks up an approved install even if that callback never
+lands.
 Enable the GitHub App dashboard's **Expiring user authorization tokens** setting.
 It is a GitHub App setting, not an OAuth scope: when GitHub returns a refresh
 token and expiry, Beeline seals them in server-side credential storage and uses

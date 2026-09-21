@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
 
 /** A fake Squire MCP child: newline JSON-RPC in, scripted newline JSON-RPC out. */
@@ -33,6 +36,11 @@ function fakeChild(handlers: Record<string, unknown>) {
   };
   return { child, written };
 }
+
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
 
 describe('StdioSquireMcpClient', () => {
   it('initializes once, then answers each tool call with the parsed tool result', async () => {
@@ -126,7 +134,13 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
-  it('spawns the vault MCP server subcommand, not the connect CLI', async () => {
+  it('spawns the non-electing façade, never a server of its own', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-squire-client-'));
+    homes.push(home);
+    const previousHome = process.env.HOME;
+    const previousProfile = process.env.TRUSTY_SQUIRE_PROFILE_DIR;
+    process.env.HOME = home;
+    delete process.env.TRUSTY_SQUIRE_PROFILE_DIR;
     const spawned: string[][] = [];
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     const { child } = fakeChild({
@@ -140,11 +154,27 @@ describe('StdioSquireMcpClient', () => {
         return child;
       }) as typeof import('node:child_process').spawn,
     });
-    await client.call('ping');
-    expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
-    expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toMatch(/chrome-profile$/);
-    expect(spawnedEnv?.XDG_CONFIG_HOME).toMatch(/\.config$/);
-    expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
+    try {
+      await client.call('ping');
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousProfile === undefined) delete process.env.TRUSTY_SQUIRE_PROFILE_DIR;
+      else process.env.TRUSTY_SQUIRE_PROFILE_DIR = previousProfile;
+    }
+    // N helper daemons restarting together each reach this client; an
+    // electing `npx … server` per daemon is the eight-brokers incident. The
+    // façade reaches the one host broker or refuses.
+    expect(spawned[0]?.[0]).toBe(process.execPath);
+    expect(spawned[0]?.at(-1)).toMatch(/squire-facade\.(js|ts)$/);
+    expect(spawned[0]).not.toContain('@trusty-squire/mcp@latest');
+    expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(
+      join(home, '.trusty-squire', 'chrome-profile'),
+    );
+    expect(spawnedEnv?.XDG_CONFIG_HOME).toBe(join(home, '.config'));
+    expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
+      join(home, '.trusty-squire', 'broker.sock'),
+    );
     client.close();
   });
 });

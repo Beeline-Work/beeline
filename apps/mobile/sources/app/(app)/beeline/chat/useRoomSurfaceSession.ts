@@ -92,12 +92,12 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 export { markRoomOpen };
 
 /**
- * Window.requestAnimationFrame is a host method. Extracting it
- * (`const raf = globalThis.requestAnimationFrame; raf(cb)`) throws
- * `TypeError: Illegal invocation` on WebKit and Firefox — the same
- * detached-receiver class as Keyboard.addListener. Chrome is lenient,
- * which is why a Chromium-only repro misses the desktop/Safari crash.
- * Call it on `globalThis` so `this` stays the Window.
+ * Call the host scheduler on `globalThis` so its receiver is always the
+ * Window. A detached host method (`const f = host.method; f(...)`) is what
+ * raises `TypeError: Illegal invocation` on web; Window operations happen
+ * to survive it because Web IDL substitutes the global for an undefined
+ * receiver, but nothing here depends on that exemption, and neither the
+ * substitution nor the exemption survives a reassignment of the global.
  */
 function scheduleAnimationFrame(callback: FrameRequestCallback): boolean {
   if (typeof globalThis.requestAnimationFrame !== 'function') return false;

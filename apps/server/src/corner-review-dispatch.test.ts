@@ -5,6 +5,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
+import { REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
@@ -83,9 +84,33 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL,
+       review_handback_head=NULL,review_handback_count=0,commissioned_by=$1`,
+    [H],
   );
 });
+
+/** Put the corner in the state a green transition leaves it in. */
+async function greenHead(number: number, headSha: string, checks = 'passing') {
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks,
+        lifecycle: 'in-review',
+        pr: { number, url: `https://github.com/acme/repo/pull/${number}`, headSha },
+      }),
+    ],
+  );
+  await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+}
 
 describe('corner message attribution', () => {
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {
@@ -127,58 +152,27 @@ describe('corner message attribution', () => {
 
   // Reproduction REVIEW-HANDOFF-1: the reviewer's verdict named nobody, so the
   // corner's worker was never woken and the corner stopped on a finished review.
+  // Nothing records a FAIL, so both verdicts below are the same state to the
+  // server — no approval row for this head — and both must hand the corner on.
   for (const verdict of [
     'Review complete: the reproduction is missing. Fix that and push.',
     `Review complete: PASS at ${'1'.repeat(40)}. Approved, merge it.`,
   ])
     it(`wakes the corner's worker when a review ending "${verdict.slice(19, 32)}" tags nobody`, async () => {
       await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-      await db.query(
-        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
-        [
-          C,
-          JSON.stringify({
-            checks: 'passing',
-            lifecycle: 'in-review',
-            pr: { number: 11, url: 'https://github.com/acme/repo/pull/11', headSha: '1'.repeat(40) },
-          }),
-        ],
-      );
-      await systemLine(db, {
-        roomId: C,
-        authorId: H,
-        subject: { kind: 'github', name: 'GitHub' },
-        verb: 'passed a check',
-        kind: 'check-passed',
-      });
+      await greenHead(11, '1'.repeat(40));
       const [review] = await commands(B, C);
       await claim(review!);
       await result(review!, verdict);
       const handoff = await commands(A, C);
       expect(handoff.map((command) => command.reason)).toEqual(['corner_review']);
+      // The worker reads which verdict it was; the server never classified it.
       expect(handoff[0]!.source.body).toBe(verdict);
     });
 
-  it("wakes the worker when the verdict tags a person instead of it", async () => {
+  it('wakes the worker when the verdict tags a person instead of it', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
-      [
-        C,
-        JSON.stringify({
-          checks: 'passing',
-          lifecycle: 'in-review',
-          pr: { number: 13, url: 'https://github.com/acme/repo/pull/13', headSha: '1'.repeat(40) },
-        }),
-      ],
-    );
-    await systemLine(db, {
-      roomId: C,
-      authorId: H,
-      subject: { kind: 'github', name: 'GitHub' },
-      verb: 'passed a check',
-      kind: 'check-passed',
-    });
+    await greenHead(13, '1'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
     // A typed mention takes the routed write path, but it reaches a person by
@@ -190,24 +184,7 @@ describe('corner message attribution', () => {
 
   it('leaves the reviewer a single turn when its verdict tags the worker itself', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
-      [
-        C,
-        JSON.stringify({
-          checks: 'passing',
-          lifecycle: 'in-review',
-          pr: { number: 12, url: 'https://github.com/acme/repo/pull/12', headSha: '1'.repeat(40) },
-        }),
-      ],
-    );
-    await systemLine(db, {
-      roomId: C,
-      authorId: H,
-      subject: { kind: 'github', name: 'GitHub' },
-      verb: 'passed a check',
-      kind: 'check-passed',
-    });
+    await greenHead(12, '1'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, '@hoots approved, merge it.');
@@ -215,6 +192,91 @@ describe('corner message attribution', () => {
     // second turn for the same reply.
     const handoff = await commands(A, C);
     expect(handoff.map((command) => command.reason)).toEqual(['agent_tag']);
+  });
+
+  it('hands nothing back when the reviewer ends a turn on a head that is not green', async () => {
+    // A reviewer that ends its turn to WAIT for CI has not finished reviewing.
+    // Pushing the worker here would send it at a pull request still mid-run.
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(14, '1'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      [C],
+    );
+    await result(review!, 'Checks are still running on this head; I will look when they land.');
+    expect(await commands(A, C)).toEqual([]);
+    // The next green transition dispatches the reviewer again, unspent.
+    await greenHead(14, '1'.repeat(40));
+    expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+  });
+
+  /**
+   * Round 1 comes from the green transition; every round after it comes from
+   * the worker disagreeing and tagging the reviewer straight back. That is the
+   * loop with no new commit and no new check in it — the one that has to stop.
+   */
+  async function reviewRound(round: number, previous?: AgentCommand): Promise<AgentCommand[]> {
+    const review = previous ?? (await commands(B, C))[0]!;
+    await claim(review, `r${round}`);
+    await result(review, `Round ${round}: still not fixed.`, `r${round}`);
+    const handbacks = (await commands(A, C)).filter(
+      (command) => command.reason === 'corner_review',
+    );
+    for (const handback of handbacks) {
+      await claim(handback, `w${round}`);
+      await result(handback, '@goosy I disagree, the code is right. Look again.', `w${round}`);
+    }
+    return handbacks;
+  }
+
+  it('stops waking the worker at the handback limit and names the requester instead', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(15, '5'.repeat(40));
+    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
+      const handbacks = await reviewRound(round);
+      // The worker claims each handback, so what is pending is what this round
+      // produced: one, until the limit stops them.
+      expect(handbacks).toHaveLength(round <= REVIEW_HANDBACK_LIMIT ? 1 : 0);
+    }
+    expect(
+      (
+        await db.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
+          [C],
+        )
+      ).rows.map((row) => row.text),
+    ).toEqual([
+      `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
+    ]);
+  });
+
+  it('resets the handback count when the worker pushes a new head', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(16, '6'.repeat(40));
+    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT; round += 1)
+      expect(await reviewRound(round)).toHaveLength(1);
+    // The worker pushes: a new head, a new green check, and the count starts over
+    // rather than the fourth review hitting the limit.
+    await greenHead(16, '7'.repeat(40));
+    expect(await reviewRound(REVIEW_HANDBACK_LIMIT + 1)).toHaveLength(1);
+    expect(
+      (
+        await db.query<{ review_handback_count: number }>(
+          `SELECT review_handback_count FROM corner_facts WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows[0]?.review_handback_count,
+    ).toBe(1);
+    expect(
+      (
+        await db.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
+          [C],
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
   });
 
   it('keeps a configured reviewer as the review target even when it is not a corner member', async () => {

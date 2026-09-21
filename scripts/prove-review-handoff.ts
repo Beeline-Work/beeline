@@ -9,13 +9,16 @@
  * only way a daemon ever does — by polling `getAgentCommands`. Nothing in the
  * proof reaches past those routes.
  *
- * Two scenarios, one per verdict, and NEITHER verdict names the worker:
+ * Four scenarios. The first two are the defect — neither verdict names the
+ * worker, and both used to end in silence, because the worker's turn was
+ * created only by the tag inside the reviewer's reply. The last two are the
+ * bounds, which must hold or the handback is worse than the silence:
  *   1. The reviewer refuses with findings and types no tag.
  *   2. The reviewer records `approve_merge` and types no tag.
- *
- * Both used to end in silence: the worker's turn was created only by the tag
- * inside the reviewer's reply, so a verdict that named nobody stalled the
- * corner until a person noticed.
+ *   3. The reviewer ends a turn to WAIT for CI — no handback, and its wake
+ *      is not spent.
+ *   4. Review and fix go round on one head with nothing new pushed — the
+ *      handbacks stop at the limit and the requester is named instead.
  *
  * Local invocation:
  *   npm run prove:review-handoff
@@ -30,6 +33,7 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { GitHubOperations } from '../apps/server/src/github-operations.js';
+import { REVIEW_HANDBACK_LIMIT } from '../apps/server/src/agent-command.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64);
@@ -39,6 +43,8 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const REFUSED_CORNER = '33333333-3333-4333-8333-333333333333';
 const APPROVED_CORNER = '44444444-4444-4444-8444-444444444444';
+const WAITING_CORNER = '55555555-5555-4555-8555-555555555555';
+const STUCK_CORNER = '66666666-6666-4666-8666-666666666666';
 const INSTALLATION = 77;
 const WEBHOOK_SECRET = 'webhook-secret';
 
@@ -88,6 +94,8 @@ async function main(): Promise<void> {
   const corners = [
     { id: REFUSED_CORNER, name: 'Refused', branch: 'feature/refused', number: 1, seed: '1' },
     { id: APPROVED_CORNER, name: 'Approved', branch: 'feature/approved', number: 2, seed: '2' },
+    { id: WAITING_CORNER, name: 'Waiting', branch: 'feature/waiting', number: 3, seed: '3' },
+    { id: STUCK_CORNER, name: 'Stuck', branch: 'feature/stuck', number: 4, seed: '4' },
   ] as const;
   for (const corner of corners) {
     await database.query(
@@ -95,8 +103,8 @@ async function main(): Promise<void> {
       [corner.id, WORKSPACE, ROOM, HUMAN, corner.name],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
-       VALUES($1,$2,'Do the work',$3,$4::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,feature_branch,lifecycle)
+       VALUES($1,$2,$5,'Do the work',$3,$4::jsonb)`,
       [
         corner.id,
         WORKER,
@@ -114,11 +122,12 @@ async function main(): Promise<void> {
             mergeability: 'clean',
           },
         }),
+        HUMAN,
       ],
     );
   }
   for (const who of [HUMAN, REVIEWER, WORKER])
-    for (const room of [null, ROOM, REFUSED_CORNER, APPROVED_CORNER])
+    for (const room of [null, ROOM, ...corners.map((corner) => corner.id)])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4)`,
         [WORKSPACE, room, who, who === HUMAN ? 'owner' : 'member'],
@@ -131,13 +140,16 @@ async function main(): Promise<void> {
   }));
   // The only stand-in: GitHub itself. A check delivery makes the server ask
   // for the commit's aggregate rollup, and this proof has no GitHub to ask.
+  // `rollup` is what CI would currently say, so a scenario can re-run checks
+  // on a head the way a real pull request does.
+  let rollup: 'passed' | 'pending' = 'passed';
   const app = {
     installationToken: async () => ({ token: 'ghs-proof' }),
     readCommitCheckRollup: async () => ({
-      state: 'passed' as const,
+      state: rollup,
       total: 1,
       failing: [],
-      checks: [{ name: 'build', status: 'passed' as const, conclusion: 'success' }],
+      checks: [{ name: 'build', status: rollup, conclusion: 'success' }],
     }),
   } as unknown as GitHubAppClient;
   const github = new GitHubOperations(
@@ -185,7 +197,7 @@ async function main(): Promise<void> {
     call(`/v1/phone/operations/${name}`, accessToken, payload);
   const daemonOperation = (name: string, payload: unknown, token = reviewerToken) =>
     call(`/v1/daemon/operations/${name}`, token, payload);
-  const checkPassed = async (branch: string, headSha: string) => {
+  const deliverCheck = async (branch: string, headSha: string, name: string) => {
     const body = JSON.stringify({
       action: 'completed',
       installation: { id: INSTALLATION },
@@ -193,11 +205,11 @@ async function main(): Promise<void> {
       sender: { login: 'ci-bot' },
       check_run: {
         id: 5,
-        name: 'build',
+        name,
         status: 'completed',
         conclusion: 'success',
         head_sha: headSha,
-        html_url: 'https://github.com/owner/widgets/runs/build',
+        html_url: `https://github.com/owner/widgets/runs/${name}`,
         check_suite: { head_branch: branch, head_sha: headSha },
       },
     });
@@ -213,9 +225,31 @@ async function main(): Promise<void> {
     });
     if (!response.ok) throw new Error(`webhook -> ${response.status} ${await response.text()}`);
   };
+  // A check run reports once. GitHub's own re-run is a NEW run with a new name
+  // here, which is also what keeps each delivery a distinct corner fact.
+  let checkRun = 0;
+  const checkPassed = async (branch: string, headSha: string) => {
+    rollup = 'passed';
+    await deliverCheck(branch, headSha, `build-${(checkRun += 1)}`);
+  };
+  /** CI re-runs on the same commit: green leaves, then comes back. */
+  const checksRerun = async (branch: string, headSha: string) => {
+    rollup = 'pending';
+    await deliverCheck(branch, headSha, `build-${(checkRun += 1)}`);
+  };
   type Command = { id: string; agentId: string; roomId: string; turnRequestId: string; reason: string };
   const commandsFor = async (roomId: string, token: string) =>
     ((await daemonOperation('getAgentCommands', { roomId }, token)).commands ?? []) as Command[];
+  /** Every turn ever created for the reviewer here, claimed or not. */
+  const reviewTurnsFor = async (cornerId: string) =>
+    Number(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*) count FROM agent_commands WHERE room_id=$1 AND agent_id=$2`,
+          [cornerId, REVIEWER],
+        )
+      ).rows[0]?.count ?? 0,
+    );
   const describe = (commands: Command[]) =>
     commands.length
       ? commands.map((command) => command.reason).join(', ')
@@ -291,6 +325,97 @@ async function main(): Promise<void> {
   console.log(`   worker polled its corner and got ${describe(afterApproval)}`);
   if (!afterApproval.length) failures.push('no worker turn after the review approved');
 
+  console.log('\n# 3. the reviewer ends a turn to WAIT for CI, not because review is over');
+  await checkPassed('feature/waiting', head('3'));
+  const [waitingReview] = await commandsFor(WAITING_CORNER, reviewerToken);
+  if (!waitingReview) throw new Error('the reviewer was never woken on the green head');
+  const waiting = await startReview(waitingReview);
+  await checksRerun('feature/waiting', head('3'));
+  console.log('   CI started over on the same commit while the reviewer was reading');
+  await postVerdict(
+    waitingReview,
+    waiting,
+    'Checks are running again on this head; I will review when they land.',
+  );
+  console.log('   reviewer ended its turn without a verdict');
+  const afterWaiting = await commandsFor(WAITING_CORNER, workerToken);
+  console.log(
+    `   worker polled its corner and got ${
+      afterWaiting.length ? describe(afterWaiting) : 'NOTHING — correct, the head is not green'
+    }`,
+  );
+  if (afterWaiting.length) failures.push('the worker was pushed at a head that was not green');
+  const reviewsBefore = await reviewTurnsFor(WAITING_CORNER);
+  await checkPassed('feature/waiting', head('3'));
+  const reviewsAfter = await reviewTurnsFor(WAITING_CORNER);
+  console.log(
+    `   checks came back green; review turns for the reviewer went ${reviewsBefore} -> ${reviewsAfter}` +
+      `${reviewsAfter > reviewsBefore ? '' : ' — the wake was spent'}`,
+  );
+  if (reviewsAfter <= reviewsBefore)
+    failures.push('the green transition did not re-dispatch the reviewer');
+
+  console.log('\n# 4. review and fix go round on one head with nothing new pushed');
+  // Round 1 starts on the green transition. After that the worker disagrees and
+  // tags the reviewer straight back, which is the loop this has to bound: no
+  // new commit, no new check, just the two of them passing it between them.
+  await checkPassed('feature/stuck', head('4'));
+  let pending = (await commandsFor(STUCK_CORNER, reviewerToken))[0];
+  for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
+    if (!pending) throw new Error(`round ${round}: the reviewer was never woken`);
+    const stuck = await startReview(pending);
+    await postVerdict(pending, stuck, `Round ${round}: still not fixed.`);
+    const handbacks = (await commandsFor(STUCK_CORNER, workerToken)).filter(
+      (command) => command.reason === 'corner_review',
+    );
+    // The worker claims each handback as it arrives, so what is pending here is
+    // what THIS round produced: one, until the limit stops them.
+    const expected = round <= REVIEW_HANDBACK_LIMIT ? 1 : 0;
+    console.log(
+      `   round ${round}: reviewer ended a review -> ${handbacks.length} new worker turn(s)`,
+    );
+    if (handbacks.length !== expected)
+      failures.push(`round ${round} produced ${handbacks.length} worker turns, wanted ${expected}`);
+    const handback = handbacks[handbacks.length - 1];
+    if (!handback) break;
+    // The worker disagrees and hands it back by tag, the direction that works.
+    await daemonOperation(
+      'claimAgentCommand',
+      { roomId: STUCK_CORNER, commandId: handback.id, generationId: `w${round}` },
+      workerToken,
+    );
+    await daemonOperation(
+      'postAgentTurnReceipt',
+      {
+        roomId: STUCK_CORNER,
+        agentId: WORKER,
+        requestId: handback.turnRequestId,
+        generationId: `w${round}`,
+        status: 'working',
+      },
+      workerToken,
+    );
+    await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: STUCK_CORNER,
+        requestId: handback.turnRequestId,
+        generationId: `w${round}`,
+        text: '@reviewer I disagree, the code is right as written. Look again.',
+      },
+      workerToken,
+    );
+    pending = (await commandsFor(STUCK_CORNER, reviewerToken))[0];
+  }
+  const surfaced = (
+    await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
+      [STUCK_CORNER],
+    )
+  ).rows.map((row) => row.text);
+  console.log(`   at the limit the corner said: ${surfaced[0] ?? 'NOTHING — nobody was told'}`);
+  if (surfaced.length !== 1) failures.push('the requester was not named once at the handback limit');
+
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database.close();
   if (failures.length) {
@@ -298,7 +423,10 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('\nPASSED: both verdicts handed the corner back to its worker with no tag typed.');
+  console.log(
+    '\nPASSED: both verdicts handed the corner back with no tag typed, a reviewer ' +
+      'waiting on CI handed back nothing, and the loop stopped at the limit.',
+  );
 }
 
 main()

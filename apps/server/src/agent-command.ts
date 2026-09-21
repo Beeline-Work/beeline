@@ -45,6 +45,10 @@ CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,ro
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
+-- Handbacks to the corner's worker, counted per pull-request head so a push
+-- resets them and a review/fix loop over one commit cannot run forever.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_head text;
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS request_id text;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id text;
 `;
@@ -327,10 +331,37 @@ export async function routeAgentResult(
  * — so this adds a turn only where there would otherwise be none.
  *
  * "The review" is read structurally, never from the verdict's wording: this
- * agent is the configured reviewer on the corner's parent Room, and the turn
- * it just ended was dispatched from a `check-passed` fact. Both dispatch paths
- * — the green transition and reconciliation — cite that fact.
+ * agent is the configured reviewer on the corner's parent Room, and the turn it
+ * just ended belongs to the review loop — dispatched either from a
+ * `check-passed` fact (the green transition and reconciliation both cite one)
+ * or from the worker's own message handing the branch back. A turn the reviewer
+ * ran because a person asked it something in the corner is neither, and wakes
+ * nobody.
+ *
+ * Nothing records a FAIL. `corner_merge_approvals` holds approvals only, so an
+ * explicit rejection, a stale-head refusal and a turn that said nothing are one
+ * state to the server: no approval row for the current head. That is why the
+ * handback reads the reviewer's TURN ENDING rather than any verdict record, and
+ * why it carries the reviewer's own closing text — the worker reads which of
+ * the three it was, because the server cannot.
+ *
+ * Two bounds keep it from firing where it would only cost a turn:
+ *
+ * A reviewer that ends a turn to WAIT for CI has not finished reviewing, so a
+ * handback there would push the worker at a pull request still mid-run. The
+ * handback therefore fires only while `lifecycle.checks` is passing, and firing
+ * nothing costs the review nothing: `GitHubOperations.updateLifecycle` clears
+ * `command_check_state` on every change of the checks value, so the wake this
+ * turn spent is reissued by the next green transition.
+ *
+ * The worker may disagree with the findings, and that conversation runs on tags
+ * in both directions. It must not become a loop. Handbacks are counted per head
+ * — a push moves the head and resets the count — and at
+ * `REVIEW_HANDBACK_LIMIT` the corner stops waking the worker and names the
+ * person who commissioned it instead, so a stuck disagreement surfaces.
  */
+export const REVIEW_HANDBACK_LIMIT = 3;
+
 export async function queueCornerWorkerAfterReview(
   db: SqlDatabase,
   input: {
@@ -341,8 +372,17 @@ export async function queueCornerWorkerAfterReview(
   },
 ): Promise<void> {
   const review = (
-    await db.query<CommandRow & { worker_agent_id: string }>(
-      `SELECT command.*,COALESCE(fact.owner_agent_id,corner.created_by) worker_agent_id
+    await db.query<
+      CommandRow & {
+        worker_agent_id: string;
+        head_sha: string;
+        checks: string | null;
+        commissioned_by: string | null;
+      }
+    >(
+      `SELECT command.*,COALESCE(fact.owner_agent_id,corner.created_by) worker_agent_id,
+              fact.lifecycle->'pr'->>'headSha' head_sha,fact.lifecycle->>'checks' checks,
+              fact.commissioned_by
        FROM agent_commands command
        JOIN rooms corner ON corner.id=command.room_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -353,19 +393,58 @@ export async function queueCornerWorkerAfterReview(
        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          AND command.action IN ('input','resume')
          AND parent.reviewer_agent_id=command.agent_id
-         AND dispatch.system_event->>'kind'='check-passed'
+         AND (dispatch.system_event->>'kind'='check-passed'
+              OR dispatch.author_id=COALESCE(fact.owner_agent_id,corner.created_by))
+         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by)<>command.agent_id
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
       [input.roomId, input.reviewerAgentId, input.turnRequestId],
     )
   ).rows[0];
   if (!review) return;
-  await createAgentCommand(db, {
+  if (review.checks !== 'passing') return;
+  // One statement owns the count, so two reviews that somehow land together
+  // cannot both read the same number and both decide they are under the cap.
+  const handbacks =
+    (
+      await db.query<{ review_handback_count: number }>(
+        `UPDATE corner_facts SET
+           review_handback_head=$2,
+           review_handback_count=CASE
+             WHEN review_handback_head IS NOT DISTINCT FROM $2 THEN review_handback_count+1
+             ELSE 1 END
+         WHERE corner_id=$1
+         RETURNING review_handback_count`,
+        [input.roomId, review.head_sha],
+      )
+    ).rows[0]?.review_handback_count ?? 1;
+  if (handbacks <= REVIEW_HANDBACK_LIMIT) {
+    await createAgentCommand(db, {
+      roomId: input.roomId,
+      agentId: review.worker_agent_id,
+      sourceMessageId: input.verdictMessageId,
+      parent: review,
+      // Handing the branch back is a lifecycle transfer, not one agent
+      // delegating to another, so it keeps the chain's depth. Otherwise the
+      // review loop dies on COMMAND_MAX_DEPTH — silently, mid-argument — before
+      // REVIEW_HANDBACK_LIMIT can reach the person who could settle it.
+      retainDepth: true,
+      reason: 'corner_review',
+    });
+    return;
+  }
+  if (!review.commissioned_by) return;
+  // Deterministic id per head: the cap is reached once, however many further
+  // reviews end on the same commit.
+  await systemLine(db, {
+    id: createHash('sha256')
+      .update(`beeline:${input.roomId}:review-handback-limit:${review.head_sha}`)
+      .digest('hex'),
     roomId: input.roomId,
-    agentId: review.worker_agent_id,
-    sourceMessageId: input.verdictMessageId,
-    parent: review,
-    reason: 'corner_review',
+    subject: { kind: 'person', id: review.commissioned_by, name: 'the requester' },
+    verb: 'may need to step in',
+    consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
+    afterMessageId: input.verdictMessageId,
   });
 }
 

@@ -70,8 +70,8 @@ describe('phoneTranscriptTailPadding', () => {
 
 /**
  * The captain's scroll rule (2026-09): a new message or live draft in the
- * open Room/corner follows the newest end from any resting position; an
- * active drag is never interrupted.
+ * open Room/corner follows only while the reader is at the newest end;
+ * history and an active drag are never interrupted.
  */
 describe('scrollFollowOnArrival', () => {
   it('scrolls once for a genuinely new arrival', () => {
@@ -168,7 +168,7 @@ describe('scrollFollowOnArrival', () => {
     ).toBe('hold');
   });
 
-  it('scrolls a new Room message to the newest end from history', () => {
+  it('preserves the reader position when a new Room message arrives in history', () => {
     expect(
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
@@ -176,7 +176,77 @@ describe('scrollFollowOnArrival', () => {
         isPinnedToTail: false,
         isUserDragging: false,
       }),
-    ).toBe('scroll');
+    ).toBe('hold');
+  });
+});
+
+describe('native variable-height history anchoring', () => {
+  it('uses measured visible-child frames without eager rendering or fixed row heights', () => {
+    const list = chatSource.slice(
+      chatSource.indexOf('<FlatList\n            {...(desktopTranscript'),
+      chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
+    );
+
+    expect(list).toContain('maintainVisibleContentPosition=');
+    expect(list).toContain('minIndexForVisible: 1');
+    expect(list).not.toMatch(/\n\s+getItemLayout=/);
+    expect(list).toContain(
+      'desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined',
+    );
+  });
+
+  it('re-resolves a failed boundary jump after measuring its window', () => {
+    const failedLanding = chatSource.slice(
+      chatSource.indexOf('onScrollToIndexFailed='),
+      chatSource.indexOf('onEndReached='),
+    );
+
+    expect(failedLanding).toContain('pendingNewMessageLandingRef.current');
+    expect(failedLanding).toContain('pending.boundaryId');
+    expect(failedLanding).toContain('transcriptMessagesRef.current');
+    expect(failedLanding).toContain('offset: averageItemLength * currentIndex');
+    expect(failedLanding).toContain('landAtNewMessageBoundary(');
+    expect(failedLanding).not.toContain('averageItemLength * index');
+
+    const landing = chatSource.slice(
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+      chatSource.indexOf('const resumePendingNewMessageLanding ='),
+    );
+    expect(landing).toContain('boundaryRowIndex(transcriptMessagesRef.current, boundaryId)');
+    expect(landing).not.toContain('boundaryRowIndex(transcriptMessages, boundaryId)');
+  });
+
+  it('acknowledges only after the durable boundary is visible', () => {
+    const completion = chatSource.slice(
+      chatSource.indexOf('const completePendingNewMessageLanding ='),
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+    );
+    const landing = chatSource.slice(
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+      chatSource.indexOf('const resumePendingNewMessageLanding ='),
+    );
+
+    expect(completion).toContain('visibleTranscriptMessagesRef.current.some');
+    expect(completion).toContain('messageContainsBoundary(message, pending.boundaryId)');
+    expect(completion).toContain('pendingNewMessageLandingRef.current = null');
+    expect(completion).toContain('acknowledgeNewMessageQueue(current)');
+    expect(landing).toContain('Keep the durable boundary armed');
+    expect(landing).not.toContain('pendingNewMessageLandingRef.current = null');
+  });
+
+  it('keeps pending landings armed through native momentum', () => {
+    const gestureHandlers = chatSource.slice(
+      chatSource.indexOf('onScrollEndDrag='),
+      chatSource.indexOf('onContentSizeChange='),
+    );
+
+    expect(gestureHandlers).toContain('const velocity = event.nativeEvent.velocity?.y');
+    expect(gestureHandlers).toContain('if (velocity !== undefined)');
+    expect(gestureHandlers).toContain('scheduleAnimationFrame(() =>');
+    expect(gestureHandlers).toContain('dragEndSequenceRef.current !== sequence');
+    expect(gestureHandlers).toContain('dragEndSequenceRef.current += 1');
+    expect(gestureHandlers).toContain('onMomentumScrollEnd');
+    expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
   });
 });
 

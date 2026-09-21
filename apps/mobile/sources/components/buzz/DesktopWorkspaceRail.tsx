@@ -15,6 +15,25 @@ import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal
 const RAIL_WIDTH = 76;
 const TILE_SIZE = 48;
 
+/**
+ * The Workspace tile bezel. A border eats into the curve, so the radius inside
+ * the bezel is the outer radius LESS the border width. Same numbers as the
+ * mobile drawer (`CommunityRail`), which wears this same tile.
+ */
+const TILE_RADIUS = 14;
+const TILE_BORDER_WIDTH = 2;
+const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
+/**
+ * The picture is seated in the bezel like a picture in a frame, not clipped
+ * against it: the whole picture stays visible with slab showing all the way
+ * round, and no corner of it touches the brass. Its own radius is the inner
+ * radius less that margin, which keeps its curve parallel to the bezel's the
+ * whole way round instead of tightening into the corners.
+ */
+const TILE_PICTURE_SIZE = 34;
+const TILE_PICTURE_MARGIN = (TILE_SIZE - TILE_BORDER_WIDTH * 2 - TILE_PICTURE_SIZE) / 2;
+const TILE_PICTURE_RADIUS = TILE_INNER_RADIUS - TILE_PICTURE_MARGIN;
+
 export type DesktopWorkspaceRailItem = {
   readonly id: string;
   readonly name: string;
@@ -198,14 +217,16 @@ export function DesktopWorkspaceRail({
                     ]}
                     testID={`desktop-workspace-tile-${workspace.id}`}
                   >
-                    <IdentityMark
-                      avatarUrl={workspace.avatar}
-                      kind="workspace"
-                      name={workspace.name}
-                      seed={workspace.id}
-                      size={32}
-                      testID={`desktop-workspace-mark-${workspace.id}`}
-                    />
+                    <View style={styles.tilePictureSeat}>
+                      <IdentityMark
+                        avatarUrl={workspace.avatar}
+                        kind="workspace"
+                        name={workspace.name}
+                        seed={workspace.id}
+                        size={TILE_PICTURE_SIZE}
+                        testID={`desktop-workspace-mark-${workspace.id}`}
+                      />
+                    </View>
                   </Pressable>
                   {labelled && (
                     <View
@@ -347,10 +368,23 @@ const stylesheet = StyleSheet.create((theme) => {
       minHeight: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 14,
+      borderRadius: TILE_RADIUS,
       backgroundColor: hull.bgHighlight,
       outlineStyle: 'none',
     } as any,
+    /* The picture's seat: square, centred, and rounded parallel to the bezel.
+     * It rounds the picture's own corners; the generated Workspace cypher draws
+     * well inside this box, so it keeps the square silhouette it is meant to
+     * have. Centred in the tile, so the seat does not move when a Workspace
+     * becomes current and the tile puts its bezel on. */
+    tilePictureSeat: {
+      width: TILE_PICTURE_SIZE,
+      height: TILE_PICTURE_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: TILE_PICTURE_RADIUS,
+      overflow: 'hidden',
+    },
     currentTile: { borderWidth: 2, borderColor: hull.accent },
     focusedTile: { borderWidth: 2, borderColor: hull.accent },
     pill: {

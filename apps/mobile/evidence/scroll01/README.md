@@ -14,7 +14,7 @@ visible-child anchoring.
 ## Frames
 
 - `before-history-jump.png`: a history reader is pulled from rows 11–19 to the
-  tail, rows 35–41, when one row arrives.
+  tail, rows 33–41, when one row arrives.
 - `after-history-hold.png`: the same arrival is queued and the measured visible
   range remains rows 12–20.
 - `before-tail-follow.png` / `after-tail-follow.png`: a pinned reader reaches

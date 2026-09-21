@@ -2021,6 +2021,11 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
+  // Landing retries can outlive the render that scheduled them. Read the
+  // current inverted order so arrivals during measurement cannot shift the
+  // durable boundary away from the numeric index we retry.
+  const transcriptMessagesRef = useRef(transcriptMessages);
+  transcriptMessagesRef.current = transcriptMessages;
   // A live queue supersedes the cold-open boundary only after it has its own
   // earliest row. A visited queue keeps its divider until another batch starts.
   const firstNewMessageId = newMessageQueue.boundaryId ?? firstUnreadMessageId;
@@ -2162,12 +2167,15 @@ export function BuzzChatSurface({
       // a tap whose target remained on screen while the compact count grew.
       if (completePendingNewMessageLanding()) return;
 
-      const visibleIndex = boundaryRowIndex(transcriptMessages, boundaryId);
+      const visibleIndex = boundaryRowIndex(transcriptMessagesRef.current, boundaryId);
       if (visibleIndex >= 0) {
         scheduleAnimationFrame(() => {
           const pending = pendingNewMessageLandingRef.current;
           if (userDraggingRef.current || pending?.boundaryId !== boundaryId) return;
-          const currentIndex = boundaryRowIndex(transcriptMessages, boundaryId);
+          const currentIndex = boundaryRowIndex(
+            transcriptMessagesRef.current,
+            boundaryId,
+          );
           if (currentIndex < 0) return;
           cancelDesktopOpenLanding();
           flatListRef.current?.scrollToIndex({
@@ -2196,7 +2204,6 @@ export function BuzzChatSurface({
       loadOlderTranscriptMessages,
       revealTranscriptThrough,
       transcriptHistoryStatus,
-      transcriptMessages,
     ],
   );
   const resumePendingNewMessageLanding = useCallback(() => {
@@ -5018,7 +5025,7 @@ export function BuzzChatSurface({
               const pending = pendingNewMessageLandingRef.current;
               if (!pending || userDraggingRef.current) return;
               const currentIndex = boundaryRowIndex(
-                transcriptMessages,
+                transcriptMessagesRef.current,
                 pending.boundaryId,
               );
               if (currentIndex < 0) return;

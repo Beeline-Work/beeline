@@ -203,9 +203,17 @@ describe('native variable-height history anchoring', () => {
 
     expect(failedLanding).toContain('pendingNewMessageLandingRef.current');
     expect(failedLanding).toContain('pending.boundaryId');
+    expect(failedLanding).toContain('transcriptMessagesRef.current');
     expect(failedLanding).toContain('offset: averageItemLength * currentIndex');
     expect(failedLanding).toContain('landAtNewMessageBoundary(');
     expect(failedLanding).not.toContain('averageItemLength * index');
+
+    const landing = chatSource.slice(
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+      chatSource.indexOf('const resumePendingNewMessageLanding ='),
+    );
+    expect(landing).toContain('boundaryRowIndex(transcriptMessagesRef.current, boundaryId)');
+    expect(landing).not.toContain('boundaryRowIndex(transcriptMessages, boundaryId)');
   });
 
   it('acknowledges only after the durable boundary is visible', () => {

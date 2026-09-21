@@ -85,7 +85,10 @@ function toConnection(
   return {
     ref: dto.reference,
     name: dto.label,
-    kind: dto.service ?? 'vault',
+    // The vault's own service, carried through as itself. A server that
+    // reports none leaves the field absent rather than inventing a `vault`
+    // placeholder, so the screens can tell "no service reported" from one.
+    ...(dto.service ? { service: dto.service } : {}),
     hosts: dto.allowedHosts,
     state: dto.state,
     ownerId: viewerId,

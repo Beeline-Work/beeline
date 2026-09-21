@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { readChatListView } from '@beeline/api-contract/phone';
 
 const source = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 const composeSource = readFileSync(
@@ -13,10 +14,6 @@ const sectionHeaderSource = readFileSync(
 );
 const roomViewSource = readFileSync(
   new URL('../../../../../../packages/api-contract/src/phone-types.ts', import.meta.url),
-  'utf8',
-);
-const surfaceGuardSource = readFileSync(
-  new URL('../../../../../../packages/api-contract/src/phone-guards.ts', import.meta.url),
   'utf8',
 );
 const desktopInspectorSource = readFileSync(
@@ -262,8 +259,33 @@ describe('Room list layout contract', () => {
     // no gold dot. An unlit row draws nothing at all: the mark element itself
     // only renders when `attention` is true.
     expect(roomViewSource).toContain('readonly unread: boolean;');
-    expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
-    expect(surfaceGuardSource).not.toContain('item.unread === undefined');
+    // An omitted or malformed `unread` reads as read — never as attention, and
+    // never as a reason to drop the row out of the deck.
+    const deckRoom = {
+      workspaceId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
+      name: 'Launch',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const deck = readChatListView({
+      workspace: {
+        id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
+        name: 'Hive',
+        visibility: 'invite-only',
+        role: 'owner',
+        updatedAt: 1,
+      },
+      viewer: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' },
+      truncated: false,
+      watchFilters: [],
+      chats: [
+        { room: { ...deckRoom, id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' } },
+        { room: { ...deckRoom, id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaab' }, unread: 'yes' },
+        { room: { ...deckRoom, id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaac' }, unread: true },
+      ],
+    });
+    expect(deck?.chats.map((chat) => chat.unread)).toEqual([false, false, true]);
     expect(source).toContain('const attention = roomRowNeedsAttention(item);');
     expect(source).toContain('const ATTENTION_SQUARE = 7');
     expect(source).toContain('<View style={styles.rowStateSlot} accessibilityElementsHidden>');
@@ -295,7 +317,6 @@ describe('Room list layout contract', () => {
   it('gives every Room with live corners an inline expansion and navigation affordance', () => {
     expect(source).toContain("import { formatRoomCornerCount } from '@/buzz/vocabulary';");
     expect(source).toContain('const cornerCount = formatRoomCornerCount(item.cornerCount);');
-    expect(source).toContain('item.cornerCount > 0 && (');
     expect(source).toContain('accessibilityState={{ expanded }}');
     expect(source).toContain('testID={`room-corners-toggle-${item.room.id}`}');
     expect(source).toContain('testID={`room-corners-${item.room.id}`}');

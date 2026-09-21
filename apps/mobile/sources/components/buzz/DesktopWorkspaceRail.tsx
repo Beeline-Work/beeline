@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { WORKSPACE_RAIL_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
 import {
   cancelScheduledAnimationFrame,
@@ -17,26 +18,16 @@ import {
 } from '@/buzz/host-scheduler';
 
 const RAIL_WIDTH = 76;
-const TILE_SIZE = 48;
 
 /**
- * The Workspace tile bezel. A border eats into the curve, so the radius inside
- * the bezel is the outer radius LESS the border width. Same numbers as the
- * mobile drawer (`CommunityRail`), which wears this same tile.
+ * The reference Workspace tile, and the picture seated in its bezel like a
+ * picture in a frame rather than clipped against it (`buzz/workspace-tile`).
+ * The mobile drawer (`CommunityRail`) wears this same tile.
  */
-const TILE_RADIUS = 14;
-const TILE_BORDER_WIDTH = 2;
-const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
-/**
- * The picture is seated in the bezel like a picture in a frame, not clipped
- * against it: the whole picture stays visible with slab showing all the way
- * round, and no corner of it touches the brass. Its own radius is the inner
- * radius less that margin, which keeps its curve parallel to the bezel's the
- * whole way round instead of tightening into the corners.
- */
-const TILE_PICTURE_SIZE = 34;
-const TILE_PICTURE_MARGIN = (TILE_SIZE - TILE_BORDER_WIDTH * 2 - TILE_PICTURE_SIZE) / 2;
-const TILE_PICTURE_RADIUS = TILE_INNER_RADIUS - TILE_PICTURE_MARGIN;
+const TILE = WORKSPACE_RAIL_TILE;
+const TILE_SIZE = TILE.size;
+const TILE_RADIUS = TILE.radius;
+const TILE_SEAT = workspacePictureSeat(TILE);
 
 export type DesktopWorkspaceRailItem = {
   readonly id: string;
@@ -229,7 +220,7 @@ export function DesktopWorkspaceRail({
                         kind="workspace"
                         name={workspace.name}
                         seed={workspace.id}
-                        size={TILE_PICTURE_SIZE}
+                        size={TILE_SEAT.pictureSize}
                         testID={`desktop-workspace-mark-${workspace.id}`}
                       />
                     </View>
@@ -384,11 +375,11 @@ const stylesheet = StyleSheet.create((theme) => {
      * have. Centred in the tile, so the seat does not move when a Workspace
      * becomes current and the tile puts its bezel on. */
     tilePictureSeat: {
-      width: TILE_PICTURE_SIZE,
-      height: TILE_PICTURE_SIZE,
+      width: TILE_SEAT.pictureSize,
+      height: TILE_SEAT.pictureSize,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: TILE_PICTURE_RADIUS,
+      borderRadius: TILE_SEAT.pictureRadius,
       overflow: 'hidden',
     },
     currentTile: { borderWidth: 2, borderColor: hull.accent },

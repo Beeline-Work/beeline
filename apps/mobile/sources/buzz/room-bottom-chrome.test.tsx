@@ -66,9 +66,9 @@ import { beelineThemes } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
 import {
-  reservedTurnBandHeight,
+  TURN_LINE_BAR_MARGIN_BOTTOM,
+  TURN_LINE_ROW_MIN_HEIGHT,
   roomBottomChromeStyles,
-  turnLineOverlayCoverPx,
 } from './room-bottom-chrome';
 
 /**
@@ -176,247 +176,37 @@ function measureTurnLine(): { height: number; bottomMargin: number; box: number 
   return { height, bottomMargin, box: height + bottomMargin };
 }
 
-describe('the Room turn line is a band above the composer', () => {
-  it('sits in flow, unfenced, flush on the composer, not over the transcript', () => {
-    const hanging = layout.hangingTurnChrome;
-    // Overlay used position/bottom to paint over the list. The in-flow band
-    // is only the canvas fill — no overlay fields, no extra air that would
-    // shove the composer row, and no rule: the slot is held open even when
-    // nobody is working, so a hairline here would draw a fence across an
-    // empty strip. The composer keeps its own top border.
-    expect(Object.keys(hanging).sort()).toEqual(['backgroundColor']);
-    expect(Object.keys(hanging)).not.toContain('borderTopWidth');
-    expect(Object.keys(hanging)).not.toContain('borderTopColor');
-    expect(hanging.backgroundColor).toBe(beelineThemes.obsidian.bgTerminal);
-    expect(layout.composerRow.borderTopWidth).toBe(1);
-    expect(layout.composerRow.borderTopColor).toBe(beelineThemes.obsidian.border);
-    expect(Object.keys(layout.stack)).toEqual(['position']);
-    expect(Object.keys(layout.stack)).not.toContain('gap');
-    expect(Object.keys(layout.stack)).not.toContain('paddingTop');
-    expect(Object.keys(hanging)).not.toContain('marginBottom');
-    expect(Object.keys(layout.composerRow)).not.toContain('marginTop');
-    expect(layout.composerRow.paddingTop).toBe(8);
+/** Two message rows at 6px of padding each side: the gap a speaker change
+ *  leaves between any two messages, and the room the line paints into. */
+const SPEAKER_CHANGE_MARGIN = 24;
+
+describe('the Room turn line paints the transcript margin', () => {
+  it('sits on the transcript surface, unfenced, flush on the composer', () => {
+    const styles = roomBottomChromeStyles({ bgTerminal: '#111', border: '#333' });
+    // No rule and no second surface: the line is painted into space the
+    // transcript already owns, so fencing it off would read as a new panel.
+    expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
+    expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
+    expect(styles.hangingTurnChrome.backgroundColor).toBe('#111');
+    // The composer keeps its own border; that one separates two real surfaces.
+    expect(styles.composerRow.borderTopWidth).toBe(1);
   });
 
-  it('would cover the last row if it overlaid the ordinary tail, so it must not overlay', () => {
-    const line = measureTurnLine();
-    const idle = phoneTranscriptTailPadding({
-      turnChromeVisible: false,
-      pushedChromeVisible: false,
-    });
-    const thinking = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: false,
-    });
-
-    expect(line.height).toBeGreaterThan(0);
-    expect(thinking).toBe(idle);
-    expect(thinking).toBe(ROOM_OPEN_LIST_TAIL_PADDING);
-    expect(line.box).toBeGreaterThan(thinking);
-
-    const overlayCover = turnLineOverlayCoverPx(line.box, thinking);
-    expect(overlayCover).toBe(line.box - thinking);
-    expect(overlayCover).toBeGreaterThan(0);
-
-    // In-flow band: no overlay fields, so none of the 30px line box is taken
-    // from the 12px tail. The last row keeps the ordinary margin.
-    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('position');
-    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('bottom');
-    expect(turnLineOverlayCoverPx(0, thinking)).toBe(0);
+  it('reserves nothing, so there is no height for the transcript to lose', () => {
+    const styles = roomBottomChromeStyles({ bgTerminal: '#111', border: '#333' });
+    // The regression this file exists for: a band with a height of its own
+    // took that height out of the list every time an agent started working,
+    // and a slot held open to prevent it left an empty strip in every Room.
+    // Neither is possible while the line's own container claims no size.
+    expect(styles.hangingTurnChrome).not.toHaveProperty('height');
+    expect(styles.hangingTurnChrome).not.toHaveProperty('minHeight');
   });
 
-  /**
-   * The band's slot is reserved whether or not an agent is working, which is
-   * the whole reason the transcript holds still. These read the reserve
-   * against a RENDERED line, so a band that grows past the slot — a taller
-   * row, more air under the bar — fails here rather than on someone's phone.
-   */
-  it('reserves the rendered band box before any band has been laid out', () => {
-    const line = measureTurnLine();
-    const coldOpen = reservedTurnBandHeight({ reserved: null, measured: null });
-
-    // The reserve a Room opens with already fits a single-line band, so the
-    // first turn of the session does not grow the slot underneath the reader.
-    expect(coldOpen).toBe(line.box);
-    expect(coldOpen).toBeGreaterThan(0);
-    // Measuring the real band changes nothing when it matches.
-    expect(reservedTurnBandHeight({ reserved: coldOpen, measured: line.box })).toBe(coldOpen);
-  });
-
-  it('takes the measured band over the fallback and never gives the room back', () => {
-    const line = measureTurnLine();
-    // A wrapped label or a larger text scale measures taller than the
-    // fallback; the slot has to follow it or the shift comes back.
-    const wrapped = line.box + 18;
-    expect(reservedTurnBandHeight({ reserved: line.box, measured: wrapped })).toBe(wrapped);
-    // Then a short band comes back. The slot must NOT shrink to it — that
-    // would move the transcript in the other direction.
-    expect(reservedTurnBandHeight({ reserved: wrapped, measured: line.box })).toBe(wrapped);
-    // No band mounted reports nothing, and holds what it was holding.
-    expect(reservedTurnBandHeight({ reserved: wrapped, measured: 0 })).toBe(wrapped);
-    expect(reservedTurnBandHeight({ reserved: wrapped, measured: null })).toBe(wrapped);
-  });
-
-  /**
-   * The slot as it is actually mounted, through the transition the reader
-   * sees. The reducer above is the rule; these are the frames.
-   */
-  it('mounts its ruler while nobody is working, hidden and out of flow', () => {
-    const slot = mountBandSlot();
-    const measure = slot.measure();
-
-    // The ruler is what makes the reserve knowable before the first band. It
-    // is there when no agent is working, it cannot be seen, touched or heard,
-    // and being absolute it adds no height to the strip it is measured in.
-    expect(measure, 'the slot must keep a hidden copy of the band mounted').toBeTruthy();
-    expect(typeof measure.props.onLayout).toBe('function');
-    expect(slot.bandIsMounted()).toBe(false);
-    const hidden = Object.assign({}, ...flattenStyle(measure.props.style)) as ViewStyle;
-    expect(hidden.position).toBe('absolute');
-    expect(hidden.opacity).toBe(0);
-    expect(measure.props.pointerEvents).toBe('none');
-    expect(measure.props.accessibilityElementsHidden).toBe(true);
-    expect(measure.props.importantForAccessibility).toBe('no-hide-descendants');
-
-    slot.unmount();
-  });
-
-  it('holds an exact height, not a floor the band could push open', () => {
-    const line = measureTurnLine();
-    const slot = mountBandSlot();
-
-    // `height`, never `minHeight`: a floor is what lets a band taller than the
-    // reserve grow the strip the moment it mounts, which is the shift again.
-    expect(slot.slotHeight()).toBe(line.box);
-    expect(Object.keys(slot.slotStyle())).not.toContain('minHeight');
-
-    slot.unmount();
-  });
-
-  it('does not move when the band comes or goes at the default text scale', () => {
-    const line = measureTurnLine();
-    const slot = mountBandSlot();
-    slot.reportMeasuredHeight(line.box);
-
-    const before = slot.slotHeight();
-    slot.showBand(true);
-    const during = slot.slotHeight();
-    slot.showBand(false);
-    const after = slot.slotHeight();
-
-    expect(slot.bandIsMounted()).toBe(false);
-    expect([during, after]).toEqual([before, before]);
-
-    slot.unmount();
-  });
-
-  /**
-   * RB-31 at a larger accessibility text scale, which is where measuring the
-   * VISIBLE band left a hole: the first band mounted at its real, taller
-   * height, the slot grew to it, and the transcript shrank once before the
-   * measurement ever landed. The hidden copy is laid out at the reader's text
-   * scale while the slot is still empty, so the first band is shown into a
-   * slot that already fits it.
-   */
-  it('shows the first band of the session into a slot that already fits it', () => {
-    const line = measureTurnLine();
-    const slot = mountBandSlot();
-    // The same band at a larger text scale: taller than the default-scale
-    // fallback, and reported by the ruler before any band is shown.
-    const scaled = line.box + 14;
-    expect(scaled).toBeGreaterThan(reservedTurnBandHeight({ reserved: null, measured: null }));
-    slot.reportMeasuredHeight(scaled);
-
-    const before = slot.slotHeight();
-    expect(before).toBe(scaled);
-
-    // The reader's first turn of the session.
-    slot.showBand(true);
-    expect(slot.bandIsMounted()).toBe(true);
-    expect(slot.slotHeight()).toBe(before);
-    slot.showBand(false);
-    expect(slot.slotHeight()).toBe(before);
-
-    slot.unmount();
-  });
-
-  /**
-   * RB-31 cold open: the reader enters a Room while an agent is already
-   * working, so the ruler and the band mount in the same render. Measuring
-   * before showing is the whole rule — if the band were shown into the
-   * fallback and the ruler then reported taller, the slot would grow with the
-   * band already on screen and the transcript would lose that difference.
-   */
-  it('opens a Room mid-turn without resizing the slot under a band', () => {
-    const line = measureTurnLine();
-    const slot = mountBandSlot({ bandFromTheStart: true });
-    // The reader is on a larger text scale, so the real band is taller than
-    // the default-scale fallback the slot mounts with.
-    const scaled = line.box + 14;
-    expect(scaled).toBeGreaterThan(reservedTurnBandHeight({ reserved: null, measured: null }));
-
-    // Every frame the band is actually on screen, and the height the list's
-    // viewport is losing in it.
-    const underTheBand: number[] = [];
-    const frame = () => {
-      if (slot.bandIsMounted()) underTheBand.push(slot.slotHeight());
-    };
-
-    frame(); // the cold mount itself, before the ruler has reported
-    slot.reportMeasuredHeight(scaled);
-    frame();
-    slot.reportMeasuredHeight(scaled);
-    frame();
-    slot.showBand(false);
-    frame();
-    slot.showBand(true);
-    frame();
-
-    // Nothing is shown while the height is still a guess, however early the
-    // turn arrives — and from the first frame the band is on screen the slot
-    // holds one height through every later report and every come-and-go.
-    expect(underTheBand.length).toBeGreaterThan(0);
-    expect(underTheBand).toEqual(underTheBand.map(() => scaled));
-
-    slot.unmount();
-  });
-
-  /**
-   * A zero is not a measurement. If the ruler reported before it had been laid
-   * out and the slot took that as settled, the band would be shown into the
-   * fallback and the real height would grow the slot underneath it.
-   */
-  it('does not treat an unlaid-out ruler as a measurement', () => {
-    const line = measureTurnLine();
-    const slot = mountBandSlot({ bandFromTheStart: true });
-
-    slot.reportMeasuredHeight(0);
-    expect(slot.bandIsMounted()).toBe(false);
-
-    slot.reportMeasuredHeight(line.box + 14);
-    expect(slot.bandIsMounted()).toBe(true);
-    expect(slot.slotHeight()).toBe(line.box + 14);
-
-    slot.unmount();
-  });
-
-  /**
-   * The defect this reserve exists for, in the one arithmetic that shows it:
-   * the list viewport is what is left of the screen under the chrome, and it
-   * must be the same number in all three states.
-   */
-  it('leaves the list viewport the same height before, during and after a band', () => {
-    const line = measureTurnLine();
-    const screen = 780;
-    const composer = 52;
-    const reserve = reservedTurnBandHeight({ reserved: null, measured: line.box });
-    const viewport = (bandMounted: boolean) =>
-      screen - composer - Math.max(reserve, bandMounted ? line.box : 0);
-
-    expect(viewport(true)).toBe(viewport(false));
-    // Without the reserve the very same band costs the viewport its height —
-    // the jump the reader sees.
-    const unreserved = (bandMounted: boolean) => screen - composer - (bandMounted ? line.box : 0);
-    expect(unreserved(true)).toBe(unreserved(false) - line.box);
+  it('keeps the line to one row so it cannot paint over the message above', () => {
+    // The margin it paints into is the ordinary speaker-change gap. One row
+    // fits; a wrapped line would not, and would cover the newest message.
+    expect(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM).toBeLessThanOrEqual(
+      SPEAKER_CHANGE_MARGIN,
+    );
   });
 });

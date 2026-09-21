@@ -34,17 +34,16 @@ const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 12;
  * The inverted phone transcript's visual-tail padding. Always the ordinary
  * 12px, and this function's whole job is to be the one place that says so.
  *
- * The band's height is NOT taken out of here and never can be: the tail is
- * 12px and the band is about 30, so subtracting it underflows and leaves the
- * newest row flush against the line. The band holds its own reserved slot in
- * the chrome stack instead (`reservedTurnBandHeight`), which is what keeps the
- * transcript still — this padding has no part in that and must not acquire
- * one.
+ * It must never be keyed on whether a turn line is showing. Growing the tail
+ * while an agent works and shrinking it afterwards is a step the reader sees
+ * as the transcript jumping, and it is the first thing anyone tries. The turn
+ * line needs nothing from here: it paints inside the margin the transcript
+ * already leaves below its newest message (`room-bottom-chrome`), so it takes
+ * no height from the list and this padding has no part to play.
  *
- * That is why the chrome flags are still taken and still ignored: keying the
- * padding on either of them is precisely the regression this signature exists
- * to fail, and `room-scroll-follow.test.ts` reads them back to prove no
- * caller has started doing it.
+ * That is why the chrome flags are still taken and still ignored. The
+ * signature exists to fail the regression: `room-scroll-follow.test.ts` reads
+ * the parameters back to prove no caller has started keying padding on them.
  */
 export function phoneTranscriptTailPadding(_chrome: {
   turnChromeVisible: boolean;

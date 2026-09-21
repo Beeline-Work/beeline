@@ -26,11 +26,13 @@ async function runTurn(options: {
   configOverrides?: Partial<BodyConfig>;
   /** Model id the fake harness advertises, so a selection can be applied. */
   advertisedModel?: string;
+  /** Daemon operation the server refuses, so a test can fail one write. */
+  rejectWrite?: string;
   prompt: (input: {
     agentHomeRoot: string;
     attempt: number;
     /** The ACP delta hook, so a test can stream a draft before it fails. */
-    onChunk: (delta: string, full: string) => void;
+    onChunk: (delta: string, full: string, currentRun?: string) => void;
     /** The ACP tool-call hook: every stream update's tool-call snapshot. */
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
@@ -128,8 +130,9 @@ async function runTurn(options: {
   const posted: Array<Record<string, unknown>> = [];
   const writes: string[] = [];
   execute.mockImplementation(async (name: string, input: Record<string, unknown>) => {
-    if (name === 'postRoomMessage') posted.push(input);
     writes.push(name);
+    if (name === options.rejectWrite) throw new Error(`${name} refused`);
+    if (name === 'postRoomMessage') posted.push(input);
     return respond(name, input);
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
@@ -156,7 +159,7 @@ async function runTurn(options: {
       return options.prompt({
         agentHomeRoot,
         attempt: attempts,
-        onChunk: (delta, full) => onChunk?.(delta, full),
+        onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
       });
     },
@@ -233,6 +236,85 @@ describe('Room turn failure receipt', () => {
     expect(cornerOpens).toBe(1);
   });
 
+  it('commits the prose it streamed when the corner-opening turn then times out', async () => {
+    // The reported production loss: the reader watched an answer arrive, the
+    // session wedged after the corner opened, and the `complete` receipt ended
+    // the draft — leaving the card alone and an empty `live_outputs`. The words
+    // already read are the same completion as the card, so they settle durably.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { receipts, posted, cornerOpens } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk, onToolCalls }) => {
+        // Run one is progress narration around the tool call; the answer is the
+        // run after it, exactly as a prompt that returned would report.
+        onChunk(
+          'Let me take this into a corner.',
+          'Let me take this into a corner.',
+          'Let me take this into a corner.',
+        );
+        onToolCalls?.([
+          { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+        ]);
+        onChunk(
+          'Here is what I found: the cards go stale.',
+          'Let me take this into a corner.\n\nHere is what I found: the cards go stale.',
+          'Here is what I found: the cards go stale.',
+        );
+        await new Promise((resolve) => setImmediate(resolve));
+        throw timeout;
+      },
+    });
+
+    expect(posted).toEqual([
+      expect.objectContaining({
+        text: 'Here is what I found: the cards go stale.',
+        requestId: 'ask-1',
+        triggerMessageId: 'ask-1',
+      }),
+    ]);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+    );
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(cornerOpens).toBe(1);
+  });
+
+  it('retracts the draft when the corner-open timeout cannot post its reply', async () => {
+    // `settle` posts the reply before it retracts, so a refused reply throws
+    // past its own retract. The same server trouble can refuse the `complete`
+    // receipt that would otherwise clean the row up, leaving a half-written
+    // answer pulsing under a turn the Room never settled.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { writes, posted } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      rejectWrite: 'postRoomMessage',
+      prompt: async ({ onChunk, onToolCalls }) => {
+        onToolCalls?.([
+          { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+        ]);
+        onChunk('The cards go stale.', 'The cards go stale.', 'The cards go stale.');
+        await new Promise((resolve) => setImmediate(resolve));
+        throw timeout;
+      },
+    });
+
+    expect(posted).toEqual([]);
+    expect(writes).toContain('postRoomMessage');
+    expect(laneWrites(writes).at(-1)).toBe('retractAgentLiveOutput');
+  });
+
   it('still reports failed when the inactivity timeout hits a turn that opened no corner', async () => {
     // The timeout is doing real work on turns that genuinely wedge. Without a
     // corner to excuse it, an inactivity timeout keeps its old ending.
@@ -249,9 +331,7 @@ describe('Room turn failure receipt', () => {
     });
 
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
-    expect(failed).toEqual(
-      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
-    );
+    expect(failed).toEqual(expect.objectContaining({ requestId: 'ask-1', status: 'failed' }));
     expect(failed.reason).toBe(
       `ACP session/prompt timed out after ${ROOM_PROMPT_INACTIVITY_TIMEOUT_MS}ms of inactivity`,
     );
@@ -546,5 +626,81 @@ describe('Room turn failure receipt', () => {
     });
     expect(posted.map((message) => message.text)).toEqual(['All good.']);
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  });
+
+  it('keeps pi-recorded text when a corner opens with an empty ACP stream', async () => {
+    const { receipts, posted } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: async ({ agentHomeRoot }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, '2026_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'All good.' }],
+                stopReason: 'stop',
+              },
+            }),
+          ].join('\n'),
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: '',
+          toolCalls: [
+            { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+          ],
+        };
+      },
+    });
+    expect(posted.map((message) => message.text)).toEqual(['All good.']);
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  });
+
+  it('fails the turn when the only pi-recorded text is harness preamble', async () => {
+    // pi records its startup banner as an assistant message, so a turn whose
+    // ACP stream delivered nothing recovers text that sanitizes away entirely.
+    // With no corner to complete the turn, that is silence — and silence is a
+    // failed turn with a named reason, never a quiet `complete`.
+    const { receipts, posted } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: async ({ agentHomeRoot }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, '2026_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: {
+                role: 'assistant',
+                content: [
+                  { type: 'text', text: 'pi v0.85.1\n\n## Skills\n- /home/agent/skills/skill.md' },
+                ],
+                stopReason: 'stop',
+              },
+            }),
+          ].join('\n'),
+        );
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+      },
+    });
+    expect(posted).toEqual([]);
+    const failed = receipts.find((receipt) => receipt.status === 'failed');
+    expect(failed).toBeDefined();
+    // Only the branch that actually READ pi's record phrases it this way, so a
+    // record the explainer never located cannot pass this test in its place.
+    expect(String(failed!.reason)).toContain(
+      'pi recorded the answer but the ACP stream delivered no text',
+    );
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(false);
   });
 });

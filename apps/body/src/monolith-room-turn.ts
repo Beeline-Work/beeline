@@ -11,6 +11,7 @@ import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   AcpRequestTimeoutError,
+  isPureRetryNarration,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -1057,9 +1058,9 @@ export class MonolithRoomTurnLoop {
                       this.sessionId!,
                       nextPrompt,
                       ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-                      (delta, full) => {
+                      (delta, full, currentRun) => {
                         trace.firstModelOutput();
-                        stream.onChunk(delta, full);
+                        stream.onChunk(delta, full, currentRun);
                       },
                       undefined,
                       (calls) => {
@@ -1100,8 +1101,8 @@ export class MonolithRoomTurnLoop {
               trace.promptSettled();
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
-              let explained = cornerOpened ? undefined : await this.explainEmpty(result);
-              if (explained && shouldRetryEmptyTurn(explained)) {
+              let explained = await this.explainEmpty(result);
+              if (!cornerOpened && explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
@@ -1113,7 +1114,7 @@ export class MonolithRoomTurnLoop {
                   trace.promptSettled();
                   openCornerCall = openCornerToolCall(result.toolCalls);
                   cornerOpened = openedACorner(openCornerCall);
-                  explained = cornerOpened ? undefined : await this.explainEmpty(result);
+                  explained = await this.explainEmpty(result);
                 }
               }
               // The requester stopped this turn while it ran. A stopped turn
@@ -1153,29 +1154,34 @@ export class MonolithRoomTurnLoop {
               // reply must never queue behind a draft nobody will read.
               stream.close();
               let reply = durableReplyText(result.agentText);
-              if (!reply && explained) {
-                // Either text the harness recorded but never streamed, or a named
-                // reason (pi's provider refusal, an empty model answer, the stream's
-                // shape) carrying the provider that served the turn — never the bare
-                // "no reply" as the only fact.
-                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
-                if (!reply) {
-                  throw new Error(
-                    turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
-                  );
-                }
+              if (!reply && explained?.recoveredText) {
+                // Text the harness recorded but never streamed. Kept on a
+                // corner-open turn too: it is the same reply the live lane
+                // would have shown, arriving only at settle. Sanitized first,
+                // because a recovered string that is only harness preamble or
+                // the scaffold echo leaves nothing to say.
+                reply = durableReplyText(explained.recoveredText);
+              }
+              if (!reply && explained && !cornerOpened) {
+                // A named reason (pi's provider refusal, an empty model answer,
+                // the stream's shape) carrying the provider that served the
+                // turn — never the bare "no reply" as the only fact. A corner
+                // that already opened is the Room's completion even without
+                // prose; do not fail that turn for emptiness.
+                throw new Error(
+                  turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
+                );
+              }
+              if (reply && explained) {
                 console.warn(
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );
               }
-              // A successful corner open completes this Room turn silently.
-              // The server's corner-open card is the complete handoff; publishing
-              // any model text here would create a second, competing completion.
-              // Silence is only correct once that card is a fact, which is why
-              // this waits for `completed` and never merely for "not failed".
-              if (cornerOpened) {
-                reply = '';
-              }
+              // The server's corner-open card and this reply are one
+              // completion: live prefixes of the same text, then that text
+              // written durably. An empty last run still settles through the
+              // card alone. Silence waits for `completed`, never merely for
+              // "not failed".
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
@@ -1224,11 +1230,11 @@ export class MonolithRoomTurnLoop {
       }
       // An inactivity timeout on a turn that already opened a corner is not a
       // failure: the work moved to the corner, and the Room going quiet is the
-      // correct successful ending — the same one the success path produces when
-      // a corner-opening turn returns normally without text. Only the
-      // inactivity timeout is excused; a provider error, a crash, or a stop
-      // keeps reporting exactly as before. The timeout does real work on turns
-      // that genuinely wedge and is not lengthened or removed.
+      // correct successful ending — the same one the success path produces for
+      // a corner-opening turn that returns normally. Only the inactivity
+      // timeout is excused; a provider error, a crash, or a stop keeps
+      // reporting exactly as before. The timeout does real work on turns that
+      // genuinely wedge and is not lengthened or removed.
       if (
         liveCornerOpened &&
         error instanceof AcpRequestTimeoutError &&
@@ -1240,12 +1246,29 @@ export class MonolithRoomTurnLoop {
             'inactivity timeout after opening a corner; the work continues in the corner',
         );
         this.options.onCornerOpened?.();
-        await liveStream?.retract().catch((retractError: unknown) => {
-          console.error(
-            `[thin-core] monolith Room ${this.options.roomId} draft retract failed:`,
-            retractError,
-          );
-        });
+        // The prose the reader watched arrive is the same completion as the
+        // card, and the `complete` receipt below ends the draft either way, so
+        // settling it here is what keeps it on the page. It is the LAST run
+        // alone — what `result.agentText` would have carried had the prompt
+        // returned — never the joined stream, so a turn's durable answer does
+        // not depend on whether it wedged. A last run that is retry narration
+        // or sanitizes away settles through the card alone.
+        const lastRun = liveStream?.lastRunText ?? '';
+        const streamed = isPureRetryNarration(lastRun) ? '' : durableReplyText(lastRun);
+        if (liveStream) {
+          await liveStream
+            .settle(streamed, streamed ? { triggerMessageId: item.id } : {})
+            .catch((settleError: unknown) => {
+              console.error(
+                `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
+                settleError,
+              );
+            });
+          // `settle` posts the reply before it retracts, so a refused reply
+          // throws past its own retract and leaves the draft live under a turn
+          // this arm is about to report complete. The retract is idempotent.
+          await liveStream.retract();
+        }
         await api.execute('postAgentTurnReceipt', {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,
@@ -1339,12 +1362,12 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
 /**
  * True only for a corner this turn actually opened.
  *
- * Everything the Room does about a corner — the silent completion, the corner
- * card handoff — rests on this, so it asks the harness for an affirmative
- * `completed` and accepts nothing weaker. A call still `pending` when the turn
- * ended, or carrying no status at all, opened no corner: read as success it
- * would delete the model's answer in favour of a card that never comes, and
- * the Room would show a turn that finished having said nothing.
+ * A completed open is what lets a textless turn settle through the card alone,
+ * and what excuses the empty-turn retry and the inactivity timeout, so it asks
+ * the harness for an affirmative `completed` and accepts nothing weaker. A call
+ * still `pending` when the turn ended, or carrying no status at all, opened no
+ * corner: read as success it would let a turn that said nothing pass as
+ * answered by a card that never comes.
  */
 function openedACorner(call: ToolCallEntry | undefined): boolean {
   return !!call && isCompletedToolCall(call);

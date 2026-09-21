@@ -2,14 +2,18 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
+import { HullSurface } from '@/components/buzz/MonoHull';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WalletQr } from '@/components/buzz/WalletQr';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -43,9 +47,11 @@ export default function WalletScreen() {
   const [history, setHistory] = useState<WalletLedgerEntry[] | null>(null);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [grantError, setGrantError] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const load = useCallback(async () => {
     try {
@@ -71,11 +77,17 @@ export default function WalletScreen() {
 
   const grant = useCallback(async () => {
     setGranting(true);
+    setGrantError(null);
     try {
       await getWalletSource().grantDelegation({ workspaceId });
       await load();
-    } catch {
-      setError('network');
+    } catch (failure) {
+      // grantWalletDelegation throws `wallet not created` when there is no
+      // binding; every other refusal rides the server's `{error}` through
+      // MonolithPhoneOperationError. A fetch miss keeps its own message.
+      // That sentence belongs on this banner — `error` only paints the
+      // empty-wallet NetworkUnavailableState.
+      setGrantError(phoneOperationFailureReason(failure));
     } finally {
       setGranting(false);
     }
@@ -92,33 +104,72 @@ export default function WalletScreen() {
   const address = wallet?.address ?? '';
   const coins = wallet?.coins ?? [];
 
+  const header = (
+    <HullSurface strength="quiet" style={[styles.header, { paddingTop: insets.top }]}>
+      <TouchableOpacity
+        accessibilityLabel="Back"
+        accessibilityRole="button"
+        onPress={() => router.back()}
+        style={styles.backButton}
+        testID="wallet-back"
+      >
+        <ChevronGlyph
+          color={styles.backButtonText.color}
+          direction="left"
+          size={CHEVRON_BACK_SIZE}
+        />
+      </TouchableOpacity>
+      <View style={styles.headerCopy}>
+        <Text style={styles.title} testID="wallet-header-title">
+          Wallets
+        </Text>
+        <Text style={styles.subtitle} testID="wallet-header-subtitle">
+          Coinbase CDP Server Wallet
+        </Text>
+      </View>
+    </HullSurface>
+  );
+
   if (error && wallet === null) {
     return (
-      <NetworkUnavailableState onRetry={() => void load()} testID="wallet-network-unavailable" />
+      <View style={styles.container}>
+        {header}
+        <NetworkUnavailableState onRetry={() => void load()} testID="wallet-network-unavailable" />
+      </View>
     );
   }
 
   if (wallet === null) {
     return (
-      <View style={[styles.container, styles.centered]} testID="wallet-loading">
-        <SurfaceGlyphLoader testID="wallet-loader" />
+      <View style={styles.container}>
+        {header}
+        <View style={[styles.container, styles.centered]} testID="wallet-loading">
+          <SurfaceGlyphLoader testID="wallet-loader" />
+        </View>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      {header}
       <ScrollView contentContainerStyle={styles.contentInner} style={styles.content}>
         <View testID="wallet-screen">
           <>
             {needsGrant ? (
               <SettingsRow
-                action="grant"
-                description="Your agents need permission again to spend."
-                onPress={granting ? undefined : grant}
+                action={granting ? undefined : 'grant'}
+                description={
+                  grantError ?? 'Your agents need permission again to spend.'
+                }
+                descriptionTone={grantError ? 'danger' : undefined}
+                onPress={grant}
+                statusGlyph={granting ? 'pulse' : undefined}
                 testID="wallet-delegation-banner"
                 title="Permission expired"
                 tone="action"
+                value={granting ? 'Granting…' : undefined}
+                valueTone={granting ? 'accent' : undefined}
               />
             ) : null}
 
@@ -304,6 +355,19 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1 },
+    header: {
+      minHeight: 66,
+      paddingHorizontal: hull.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backButtonText: { color: hull.textPrimary },
+    headerCopy: { flex: 1, minWidth: 0 },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    subtitle: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
     centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
     activityLoading: { alignItems: 'flex-start', paddingVertical: hull.space.sm },
     content: { flex: 1 },

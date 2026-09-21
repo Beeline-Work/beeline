@@ -397,6 +397,11 @@ export class MonolithRigTransport {
   closeCorner(roomId: string) {
     return this.operation('requestCornerClose', { roomId }).then(() => undefined);
   }
+  createHumanCorner(roomId: string, title: string) {
+    return this.operation('createHumanCorner', { roomId, title }).then(
+      (value) => (value as { id: string }).id,
+    );
+  }
   agentCommandsRead() {
     return Promise.resolve(null);
   }

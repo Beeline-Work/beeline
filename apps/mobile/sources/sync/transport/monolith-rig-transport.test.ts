@@ -573,6 +573,24 @@ describe('monolith Room send path', () => {
     expect(String(controls.fetch.mock.calls[0]![1]?.body)).not.toContain('Close this corner.');
   });
 
+  it('creates a title-only human corner through the phone operation', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'human-corner-id' }), { status: 200 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.createHumanCorner(ROOM, 'Release notes')).resolves.toBe(
+      'human-corner-id',
+    );
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/createHumanCorner',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ roomId: ROOM, title: 'Release notes' }),
+      }),
+    );
+  });
+
   it('returns the server refusal when a corner close request fails', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),

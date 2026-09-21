@@ -21,6 +21,9 @@ import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { NewCornerDialog } from '@/components/buzz/NewCornerDialog';
+import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { cornerHref } from '@/buzz/corner-navigation';
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -30,6 +33,10 @@ export default function BuzzCorners() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTitle, setCreateTitle] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
   useEffect(() => {
@@ -89,6 +96,31 @@ export default function BuzzCorners() {
     [surface],
   );
 
+  const closeCreate = () => {
+    if (creating) return;
+    setCreateOpen(false);
+    setCreateTitle('');
+    setCreateError(null);
+  };
+  const createCorner = async () => {
+    const nextTitle = createTitle.replace(/\s+/g, ' ').trim();
+    if (!nextTitle || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const identity = await loadBuzzIdentity();
+      if (!identity) throw new Error('Beeline identity is unavailable');
+      const cornerId = await new BuzzRigTransport(identity).createHumanCorner(decodedId, nextTitle);
+      setCreateOpen(false);
+      setCreateTitle('');
+      router.push(cornerHref(cornerId, decodedId, nextTitle));
+    } catch (reason) {
+      setCreateError(phoneOperationFailureReason(reason));
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (!surface && !error) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -135,6 +167,7 @@ export default function BuzzCorners() {
           title={title}
           count={surface.corners.length}
           onBack={() => router.back()}
+          onAdd={() => setCreateOpen(true)}
         />
         {!!error && (
           // F5: it is tappable, so it announces as a button. `alert` promised
@@ -160,6 +193,18 @@ export default function BuzzCorners() {
             setRefreshing(true);
             schedulerRef.current?.force();
           }}
+        />
+        <NewCornerDialog
+          visible={createOpen}
+          title={createTitle}
+          setTitle={(value) => {
+            setCreateTitle(value);
+            if (createError) setCreateError(null);
+          }}
+          creating={creating}
+          error={createError}
+          onCreate={() => void createCorner()}
+          onClose={closeCreate}
         />
       </View>
     </BuzzCommunityShell>

@@ -32,6 +32,8 @@ import type {
   WorkbenchView,
 } from './workbench.js';
 
+export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
+
 export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
@@ -42,6 +44,7 @@ export type PhoneOperationMap = {
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
+  createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
@@ -224,6 +227,7 @@ export type CancelAgentTurnInput = RoomInput & {
   readonly requestId: string;
   readonly agentId: string;
 };
+export type CreateHumanCornerInput = RoomInput & { readonly title: string };
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;
   readonly requestId: string;

@@ -26,8 +26,24 @@ import {
 
 const EAS_CLI_VERSION = '22.2.0';
 // During a compatibility rollout the production branch carries more than one
-// runtime. Read enough history to resolve every current release target.
-const PRODUCTION_LOOKUP_LIMIT = '10';
+// runtime, and one promotion publishes one update group per target. A FIXED
+// page therefore stops resolving every target the moment the target list grows
+// past it: `--limit 10` against eleven targets can never show the newest group
+// for all eleven, so a promotion that fully succeeded still fails its own
+// read-back. Derive the page from the target count instead, with one
+// generation of headroom for the groups an earlier promotion left behind.
+// `eas update:list` refuses a limit outside 1..50, so that is the ceiling; a
+// target list too long for one page fails with that stated as the reason
+// rather than as a target mismatch.
+const PRODUCTION_LOOKUP_FLOOR = 10;
+const PRODUCTION_LOOKUP_CEILING = 50;
+
+function productionLookupLimit(targets) {
+  const needed = Array.isArray(targets) ? targets.length : 0;
+  return String(
+    Math.min(PRODUCTION_LOOKUP_CEILING, Math.max(PRODUCTION_LOOKUP_FLOOR, needed * 2)),
+  );
+}
 // Compatibility runtime targets: OTA updates published alongside the current
 // store pins for as long as live installs still run those older store
 // binaries. Keep this list ordered so the release log is deterministic, and
@@ -529,7 +545,7 @@ function publish(options) {
       '--branch',
       'production',
       '--limit',
-      PRODUCTION_LOOKUP_LIMIT,
+      productionLookupLimit(targets),
       '--json',
       '--non-interactive',
     ],
@@ -858,13 +874,14 @@ function assertProductionList(options) {
   if (!Array.isArray(ledger.updateTargets) || !Array.isArray(ledger.production?.targets)) {
     fail('Production target-list proof requires a target-aware release ledger.');
   }
+  const limit = productionLookupLimit(ledger.production.targets);
   const listed = runEas(
     [
       'update:list',
       '--branch',
       'production',
       '--limit',
-      PRODUCTION_LOOKUP_LIMIT,
+      limit,
       '--json',
       '--non-interactive',
     ],
@@ -879,11 +896,23 @@ function assertProductionList(options) {
     observed.length !== expected.size ||
     observed.some((target) => expected.get(targetKey(target)) !== target.group)
   ) {
-    const description = [...expected.entries()]
-      .map(([target, group]) => target + '=' + group)
-      .join(', ');
+    const seen = new Map(observed.map((target) => [targetKey(target), target.group]));
+    const absent = [...expected.keys()].filter((key) => !seen.has(key));
+    const wrong = [...expected.entries()]
+      .filter(([key, group]) => seen.has(key) && seen.get(key) !== group)
+      .map(([key, group]) => key + ' expected ' + group + ', listed ' + seen.get(key));
+    const pageFull = Number(limit) === PRODUCTION_LOOKUP_CEILING && absent.length > 0;
     fail(
-      'eas update:list does not show the exact production targets: expected ' + description + '.',
+      'eas update:list does not show the exact production targets.' +
+        (absent.length ? ' Not listed: ' + absent.join(', ') + '.' : '') +
+        (wrong.length ? ' Wrong group: ' + wrong.join('; ') + '.' : '') +
+        (pageFull
+          ? ' The lookup already read the largest page eas allows (' +
+            PRODUCTION_LOOKUP_CEILING +
+            ' update groups) for ' +
+            expected.size +
+            ' release targets, so this may be the page and not the promotion.'
+          : ''),
     );
   }
   console.log('listed_production_targets=' + observed.map(targetKey).join(','));
@@ -936,7 +965,7 @@ function rollback(options) {
         '--branch',
         'production',
         '--limit',
-        PRODUCTION_LOOKUP_LIMIT,
+        productionLookupLimit(releaseUpdateTargets(process.cwd())),
         '--json',
         '--non-interactive',
       ],

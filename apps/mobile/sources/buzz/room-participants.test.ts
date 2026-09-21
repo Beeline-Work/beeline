@@ -9,12 +9,14 @@ import {
   hasChannelMentionToken,
   isChannelMentionHandle,
   mentionedAgentPubkey,
+  orderRoomRoster,
   replaceActiveMention,
   resolveComposerMentions,
+  ROOM_ROSTER_VISIBLE_ROWS,
+  roomRosterWindow,
+  sectionRoomRoster,
   selectedMentionPubkeys,
   shouldReadWorkspaceRoster,
-  sectionRoomParticipants,
-  sectionRoomRoster,
 } from './room-participants';
 
 describe('Room participant presentation', () => {
@@ -66,17 +68,39 @@ describe('Room participant presentation', () => {
     expect(formatRoomParticipantTotal(8)).toBe('8 members');
   });
 
-  it('groups the visible Room roster into people and Agents', () => {
+  it('keeps the visible Room roster one list: people in order, agents after', () => {
     const participants = [
-      { pubkey: 'person-a', kind: 'person' as const },
+      { pubkey: 'you', kind: 'person' as const },
       { pubkey: 'agent-a', kind: 'agent' as const },
       { pubkey: 'person-b', kind: 'person' as const },
+      { pubkey: 'agent-b', kind: 'agent' as const },
     ];
 
-    expect(sectionRoomParticipants(participants)).toEqual({
-      people: [participants[0], participants[2]],
-      agents: [participants[1]],
-    });
+    expect(orderRoomRoster(participants)).toEqual([
+      participants[0],
+      participants[2],
+      participants[1],
+      participants[3],
+    ]);
+  });
+
+  it('shows ten members and counts the rest until the viewer asks for them', () => {
+    const members = Array.from({ length: 13 }, (_, index) => `member-${index}`);
+
+    const collapsed = roomRosterWindow(members, false);
+    expect(collapsed.visible).toHaveLength(ROOM_ROSTER_VISIBLE_ROWS);
+    expect(collapsed.visible.at(-1)).toBe('member-9');
+    expect(collapsed.hidden).toBe(3);
+    expect(collapsed.overflowLabel).toBe('3 more');
+
+    const expanded = roomRosterWindow(members, true);
+    expect(expanded.visible).toEqual(members);
+    expect(expanded.overflowLabel).toBeNull();
+
+    // Ten or fewer: every member is on screen, so no overflow row at all.
+    const short = roomRosterWindow(members.slice(0, 10), false);
+    expect(short.visible).toHaveLength(10);
+    expect(short.overflowLabel).toBeNull();
   });
 
   it('maps only exact @handles to pubkeys without name or partial matches', () => {

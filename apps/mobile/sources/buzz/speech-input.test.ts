@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SPEECH_SILENCE_TIMEOUT_MS, useSpeechInput } from './speech-input';
+import {
+  SPEECH_FINALIZATION_TIMEOUT_MS,
+  SPEECH_SILENCE_TIMEOUT_MS,
+  useSpeechInput,
+} from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
 
 vi.mock('react-native', () => ({
@@ -116,6 +120,7 @@ describe('useSpeechInput', () => {
 
     await act(async () => {
       speech().stop();
+      fireEvent('end');
     });
     expect(speech().state).toBe('idle');
     expect(mockMod.stop).toHaveBeenCalled();
@@ -376,6 +381,7 @@ describe('useSpeechInput', () => {
     });
     await act(async () => {
       speech().stop();
+      fireEvent('end');
     });
     expect(speech().state).toBe('idle');
   });
@@ -396,22 +402,33 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('idle');
   });
 
-  it('commits a pending interim on explicit stop without waiting for end', async () => {
+  it('waits for the final transcript after stop instead of committing a truncated interim', async () => {
     const { onResult, speech } = renderHook();
     await act(async () => {
       await speech().start();
       fireEvent('result', { results: [{ transcript: 'send these words' }], isFinal: false });
     });
+    let stopResult: Promise<boolean>;
     await act(async () => {
-      speech().stop();
+      stopResult = speech().stop();
     });
+    expect(speech().state).toBe('finalizing');
+    expect(onResult).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'send these words completely' }],
+        isFinal: true,
+      });
+    });
+    await expect(stopResult!).resolves.toBe(true);
     expect(onResult).toHaveBeenCalledOnce();
-    expect(onResult).toHaveBeenCalledWith('send these words');
+    expect(onResult).toHaveBeenCalledWith('send these words completely');
     expect(speech().state).toBe('idle');
     expect(speech().partialText).toBe('');
   });
 
-  it('does not accept a late result after an explicit stop has already captured', async () => {
+  it('falls back to the latest interim when Android ends without a final result', async () => {
     const { onResult, speech } = renderHook();
     await act(async () => {
       await speech().start();
@@ -419,11 +436,32 @@ describe('useSpeechInput', () => {
     });
     await act(async () => {
       speech().stop();
-      fireEvent('result', { results: [{ transcript: 'hello there' }], isFinal: true });
       fireEvent('end');
     });
     expect(onResult).toHaveBeenCalledOnce();
     expect(onResult).toHaveBeenCalledWith('hello');
+  });
+
+  it('bounds finalization when the recognizer emits neither final nor end', async () => {
+    vi.useFakeTimers();
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+      fireEvent('result', { results: [{ transcript: 'bounded fallback' }], isFinal: false });
+    });
+
+    let stopResult: Promise<boolean>;
+    await act(async () => {
+      stopResult = speech().stop();
+    });
+    expect(speech().state).toBe('finalizing');
+    await act(async () => {
+      vi.advanceTimersByTime(SPEECH_FINALIZATION_TIMEOUT_MS);
+    });
+
+    await expect(stopResult!).resolves.toBe(true);
+    expect(onResult).toHaveBeenCalledWith('bounded fallback');
+    expect(speech().state).toBe('idle');
   });
 
   it('ignores recognizer results after a stopped session has ended', async () => {

@@ -37,6 +37,7 @@ import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
+import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import {
@@ -377,8 +378,7 @@ function CornerRow({
 }
 
 function scheduleFrame(callback: () => void) {
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(callback);
-  else callback();
+  if (!scheduleAnimationFrame(callback)) callback();
 }
 
 function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string): boolean {

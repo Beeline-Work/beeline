@@ -263,6 +263,23 @@ function Harness({
   });
 }
 
+function stubFrameScheduler(): {
+  queued: FrameRequestCallback[];
+  receivers: unknown[];
+} {
+  const queued: FrameRequestCallback[] = [];
+  const receivers: unknown[] = [];
+  vi.stubGlobal('requestAnimationFrame', function requestAnimationFrame(
+    this: unknown,
+    callback: FrameRequestCallback,
+  ) {
+    receivers.push(this);
+    queued.push(callback);
+    return receivers.length;
+  });
+  return { queued, receivers };
+}
+
 function LiveCornerHarness({ channelId }: { channelId: string }) {
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
     resetTranscript: vi.fn(),
@@ -494,11 +511,7 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('yields a paint turn after cache apply before installing the live watch', async () => {
-    const queued: FrameRequestCallback[] = [];
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      (callback: FrameRequestCallback) => queued.push(callback),
-    );
+    const { queued, receivers } = stubFrameScheduler();
     controls.cached = roomView('room-a');
     controls.roomResponse = null;
     let current!: UseRoomSurfaceSessionResult;
@@ -525,15 +538,13 @@ describe('useRoomSurfaceSession', () => {
     await flushMicrotasks();
     expect(controls.subscriptions).toHaveLength(1);
     expect(controls.transportCount).toBe(1);
+    expect(receivers.length).toBeGreaterThan(0);
+    expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
     await act(async () => renderer.unmount());
   });
 
   it('paints cached newest row before authorization occupies the session', async () => {
-    const queued: FrameRequestCallback[] = [];
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      (callback: FrameRequestCallback) => queued.push(callback),
-    );
+    const { queued, receivers } = stubFrameScheduler();
     let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
     controls.identityPromise = new Promise((resolve) => {
       resolveAuth = resolve;
@@ -565,6 +576,8 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushMicrotasks();
     expect(controls.transportCount).toBe(1);
+    expect(receivers.length).toBeGreaterThan(0);
+    expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
     await act(async () => renderer.unmount());
   });
 

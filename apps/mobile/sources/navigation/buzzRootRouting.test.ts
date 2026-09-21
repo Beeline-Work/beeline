@@ -8,11 +8,14 @@ const buzzIdentityStorage = vi.hoisted(() => ({ loadBuzzIdentity: vi.fn() }));
 const desktopAuthSession = vi.hoisted(() => ({ initialAuthUrl: vi.fn() }));
 const personName = vi.hoisted(() => ({ isPersonNameOnboardingPending: vi.fn() }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+// The committed route. `unstable_settings.initialRouteName` mounts this
+// landing route under every deep-linked destination, so it is not always '/'.
+const routing = vi.hoisted(() => ({ pathname: '/' }));
 
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/auth/buzz-identity-storage', () => buzzIdentityStorage);
 vi.mock('@/auth/desktop-auth-session', () => desktopAuthSession);
-vi.mock('expo-router', () => ({ router: navigation }));
+vi.mock('expo-router', () => ({ router: navigation, usePathname: () => routing.pathname }));
 vi.mock('@/buzz/person-name', () => personName);
 
 vi.mock('react-native', async () => {
@@ -59,6 +62,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  routing.pathname = '/';
   auth.isAuthenticated = false;
   buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue(null);
   desktopAuthSession.initialAuthUrl.mockResolvedValue(null);
@@ -133,6 +137,18 @@ describe('Buzz root launch routing', () => {
       params: { secret },
     });
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/onboarding');
+  });
+
+  it.each([
+    ['a Room', '/beeline/chat/room-id'],
+    ['Settings', '/beeline/settings'],
+  ])('leaves the app where it booted when that was %s, not this route', async (_what, booted) => {
+    routing.pathname = booted;
+    buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
+
+    await renderHome();
+
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 
   it('renders the storage error instead of routing', async () => {

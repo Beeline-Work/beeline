@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -19,11 +19,16 @@ describe('desktop profile settings path', () => {
     expect(sidebar).toContain('testID="profile-settings-name"');
     expect(sidebar).toContain('<IdentityMark\n                  seed={identityPubkey}');
     expect(sidebar).not.toContain('PROFILE & SETTINGS');
-    // The duplicated /settings redirect door is gone; the identity screen IS
-    // the settings surface.
-    expect(() =>
-      statSync(new URL('../app/(app)/settings/index.tsx', import.meta.url)),
-    ).toThrow();
+    // The identity screen IS the settings surface. `/settings` keeps a route
+    // because `(app)/_layout.tsx` declares that screen and expo-router warns
+    // a declared screen with no route out of existence, but it must stay a
+    // redirect to the one hub — never a second Settings surface.
+    const legacySettings = readFileSync(
+      new URL('../app/(app)/settings/index.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(legacySettings).toContain('<Redirect href="/beeline/settings" />');
+    expect(legacySettings).not.toMatch(/SettingsRow|AppearanceSetting|Sign out/);
   });
 
   it('keeps the person Identity controls on that destination', () => {

@@ -22,17 +22,6 @@ export type MemberPickerCandidate = {
 
 export const MEMBER_PICKER_TITLE = 'Add people or agents';
 
-/**
- * Whether the People "+" should open this picker at all. With nobody left to
- * add, the picker would only restate that and hand back the exact same
- * invite-link share the "Invite a person…" row already reaches, so the "+"
- * skips straight to it instead (captain report: the redundant "Add people or
- * agents" sheet).
- */
-export function shouldOpenPeoplePicker(addablePersonCount: number): boolean {
-  return addablePersonCount > 0;
-}
-
 type MemberPickerSheetProps = {
   visible: boolean;
   onClose: () => void;

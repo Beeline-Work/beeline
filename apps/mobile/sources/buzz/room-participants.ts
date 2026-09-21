@@ -108,17 +108,41 @@ export function sectionRoomRoster<T extends RoomRosterMember>(
   return { inRoom, addable };
 }
 
-/** Split the authoritative Room roster by visible identity kind. */
-export function sectionRoomParticipants<T extends RoomParticipant>(
-  participants: T[],
-): {
-  people: T[];
-  agents: T[];
-} {
-  return {
-    people: participants.filter((participant) => participant.kind === 'person'),
-    agents: participants.filter((participant) => participant.kind === 'agent'),
-  };
+/**
+ * The authoritative Room roster as ONE list: people in membership order, agents
+ * after. The sheet heads and counts that single list — the viewer among them,
+ * since the viewer is a member of the Room they are reading — so no member
+ * falls between two sections and no count disagrees with another.
+ */
+export function orderRoomRoster<T extends RoomParticipant>(participants: readonly T[]): T[] {
+  return [
+    ...participants.filter((participant) => participant.kind !== 'agent'),
+    ...participants.filter((participant) => participant.kind === 'agent'),
+  ];
+}
+
+/**
+ * Collapsed roster length. Ten rows fill the sheet on a phone and still leave
+ * the overflow row on screen; the head keeps the true total beside the word,
+ * so a Room with more members says so before anyone scrolls.
+ */
+export const ROOM_ROSTER_VISIBLE_ROWS = 10;
+
+export type RoomRosterWindow<T> = {
+  readonly visible: readonly T[];
+  readonly hidden: number;
+  readonly overflowLabel: string | null;
+};
+
+export function roomRosterWindow<T>(
+  members: readonly T[],
+  expanded: boolean,
+  cap = ROOM_ROSTER_VISIBLE_ROWS,
+): RoomRosterWindow<T> {
+  if (expanded) return { visible: members, hidden: 0, overflowLabel: null };
+  const visible = members.slice(0, Math.max(0, cap));
+  const hidden = Math.max(0, members.length - visible.length);
+  return { visible, hidden, overflowLabel: hidden > 0 ? `${hidden} more` : null };
 }
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */

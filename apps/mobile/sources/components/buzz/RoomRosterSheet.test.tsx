@@ -87,23 +87,24 @@ afterAll(() => vi.restoreAllMocks());
 
 const OX = 'agent';
 const ANA = 'ana';
-const rosterSections = {
-  people: [{ pubkey: ANA, name: 'Ana', handle: 'ana', kind: 'person' as const }],
-  agents: [
-    {
-      pubkey: OX,
-      name: 'Ox',
-      handle: 'ox',
-      kind: 'agent' as const,
-      agent: { pubkey: OX, displayName: 'Ox', face: 'octopus' },
-      model: 'Sonnet',
-      ownerHandle: 'ana',
-    },
-  ],
+const VIEWER = 'viewer';
+const ana = { pubkey: ANA, name: 'Ana', handle: 'ana', kind: 'person' as const };
+const ox = {
+  pubkey: OX,
+  name: 'Ox',
+  handle: 'ox',
+  kind: 'agent' as const,
+  agent: { pubkey: OX, displayName: 'Ox', face: 'octopus' },
+  model: 'Sonnet',
+  ownerHandle: 'ana',
 };
-const members = new Map([
+const viewer = { pubkey: VIEWER, name: 'Viewer', handle: 'viewer', kind: 'person' as const };
+/** As the surface hands it over: people first, agents after. */
+const members = [ana, ox];
+const roles = new Map([
   [OX, { pubkey: OX, role: 'member' }],
   [ANA, { pubkey: ANA, role: 'admin' }],
+  [VIEWER, { pubkey: VIEWER, role: 'member' }],
 ]);
 
 function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> = {}) {
@@ -112,24 +113,37 @@ function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> 
       bottomInset={0}
       canManage
       isDirectMessage={false}
-      memberByPubkey={members as any}
+      memberByPubkey={roles as any}
+      members={members}
       membershipActionPubkey={null}
       membershipError={null}
-      onAddAgents={vi.fn()}
-      onAddPeople={vi.fn()}
+      onAddMembers={vi.fn()}
       onClose={vi.fn()}
       onRemove={vi.fn()}
       onlineByPubkey={{ [OX]: true }}
       workingByPubkey={{ [OX]: true }}
       parentChannelId={null}
       personProfileByPubkey={new Map()}
-      rosterSections={rosterSections}
-      total={2}
-      userPubkey="viewer"
+      userPubkey={VIEWER}
       visible
       {...overrides}
     />
   );
+}
+
+/** The member rows on screen, in the order the sheet drew them. */
+function rowIds(renderer: ReactTestRenderer): string[] {
+  return renderer.root
+    .findAll(
+      (node: any) =>
+        node.type === 'TouchableOpacity' && /^room-roster-(person|agent)-/.test(node.props.testID),
+    )
+    .map((node: any) => node.props.testID);
+}
+
+/** The row's trailing slot: the chevron it hands the shared row component. */
+function rowTrailing(renderer: ReactTestRenderer, testID: string): unknown {
+  return renderer.root.findAllByProps({ testID }).at(0)!.props.trailing;
 }
 
 function render(element: React.ReactElement): ReactTestRenderer {
@@ -144,11 +158,7 @@ describe('RoomRosterSheet', () => {
   it('renders a changed collapsed online verdict through the shared modal boundary', () => {
     function ChatHarness({ liveEventId, online }: { liveEventId: string; online: boolean }) {
       void liveEventId;
-      return sheet({
-        rosterSections: { people: [], agents: rosterSections.agents },
-        total: 1,
-        onlineByPubkey: { [OX]: online },
-      });
+      return sheet({ members: [ox], onlineByPubkey: { [OX]: online } });
     }
 
     let renderer!: ReactTestRenderer;
@@ -170,11 +180,10 @@ describe('RoomRosterSheet', () => {
     (_surface, parentChannelId) => {
       const renderer = render(sheet({ parentChannelId }));
       expect(
-        renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
-      ).toEqual(['People', ' ', 1]);
-      expect(
-        renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
-      ).toEqual(['Agents', ' ', 1]);
+        renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
+      ).toEqual(['Members', ' ', 2]);
+      expect(renderer.root.findAllByProps({ testID: 'room-roster-people-head' })).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
 
       const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
       const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
@@ -246,80 +255,127 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: `remove-room-member-${ANA}` })).toHaveLength(0);
 
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    expect(agentRow.props.disabled).toBe(false);
+    expect(agentRow.props.disabled).toBeFalsy();
     act(() => agentRow.props.onPress());
     const remove = renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` }).at(-1)!;
     expect(remove.findByType('Text' as any).props.children).toBe('Remove from this Room');
     act(() => remove.props.onPress());
-    expect(onRemove).toHaveBeenCalledWith(rosterSections.agents[0]);
+    expect(onRemove).toHaveBeenCalledWith(ox);
   });
 
-  it('renders a + on each section head that opens the picker pre-scoped to its own kind (C82)', () => {
-    const onAddPeople = vi.fn();
-    const onAddAgents = vi.fn();
-    const renderer = render(sheet({ onAddPeople, onAddAgents }));
+  it('counts the viewer into the one Members section and keeps agents after the people', () => {
+    const renderer = render(sheet({ members: [viewer, ana, ox] }));
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
+    ).toEqual(['Members', ' ', 3]);
 
-    const people = renderer.root.findByProps({ testID: 'room-roster-add-people' });
-    expect(people.props.accessibilityLabel).toBe('Add people');
-    expect(people.props.style.height).toBeGreaterThanOrEqual(44);
-    act(() => people.props.onPress());
-    expect(onAddPeople).toHaveBeenCalledTimes(1);
-    expect(onAddAgents).not.toHaveBeenCalled();
+    expect(rowIds(renderer)).toEqual([
+      `room-roster-person-${VIEWER}`,
+      `room-roster-person-${ANA}`,
+      `room-roster-agent-${OX}`,
+    ]);
 
-    const agents = renderer.root.findByProps({ testID: 'room-roster-add-agents' });
-    expect(agents.props.accessibilityLabel).toBe('Add agents');
-    expect(agents.props.style.height).toBeGreaterThanOrEqual(44);
-    act(() => agents.props.onPress());
-    expect(onAddAgents).toHaveBeenCalledTimes(1);
+    // The viewer's own row opens like any other, and says what it holds.
+    const own = renderer.root.findAllByProps({ testID: `room-roster-person-${VIEWER}` }).at(-1)!;
+    expect(rowTrailing(renderer, `room-roster-person-${VIEWER}`)).toBeTruthy();
+    act(() => own.props.onPress());
+    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${VIEWER}` })).toHaveLength(
+      0,
+    );
+    expect(
+      renderer.root
+        .findByProps({ testID: `room-roster-${VIEWER}-detail` })
+        .findByType('Text' as any).props.children,
+    ).toBe('This is you.');
   });
 
-  it('keeps an empty section’s head so a manager can still add into it (C83)', () => {
+  it('shows ten rows and holds the rest behind one overflow row', () => {
+    const crowd = Array.from({ length: 13 }, (_, index) => ({
+      pubkey: `person-${index}`,
+      name: `Person ${index}`,
+      handle: `person-${index}`,
+      kind: 'person' as const,
+    }));
+    const renderer = render(sheet({ members: crowd }));
+    const visible = () => rowIds(renderer);
+
+    // The head counts all thirteen even while ten are on screen.
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
+    ).toEqual(['Members', ' ', 13]);
+    expect(visible()).toHaveLength(10);
+    expect(visible().at(-1)).toBe('room-roster-person-person-9');
+
+    const more = renderer.root.findAllByProps({ testID: 'room-roster-more' }).at(-1)!;
+    expect(more.findAllByType('Text' as any)[0].props.children).toBe('3 more');
+    act(() => more.props.onPress());
+    expect(visible()).toHaveLength(13);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-more' })).toHaveLength(0);
+  });
+
+  it('renders one + on the Members head that opens the one picker', () => {
+    const onAddMembers = vi.fn();
+    const renderer = render(sheet({ onAddMembers }));
+
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
+    const add = renderer.root.findByProps({ testID: 'room-roster-add-members' });
+    expect(add.props.accessibilityLabel).toBe('Add members');
+    expect(add.props.style.height).toBeGreaterThanOrEqual(44);
+    act(() => add.props.onPress());
+    expect(onAddMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the head on an empty Room so a manager can still add into it (C83)', () => {
     // The Room header's `+` is gone, so an agentless Room reaches an agent
     // only through this head. It stays a manager-of-a-top-level-Room affair.
-    const onAddAgents = vi.fn();
-    const empty = render(
-      sheet({ onAddAgents, rosterSections: { people: rosterSections.people, agents: [] } }),
-    );
-    const head = empty.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!;
-    expect(head.props.children).toEqual(['Agents', ' ', 0]);
-    act(() => empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress());
-    expect(onAddAgents).toHaveBeenCalledTimes(1);
+    const onAddMembers = vi.fn();
+    const empty = render(sheet({ onAddMembers, members: [] }));
+    const head = empty.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!;
+    expect(head.props.children).toEqual(['Members', ' ', 0]);
+    act(() => empty.root.findByProps({ testID: 'room-roster-add-members' }).props.onPress());
+    expect(onAddMembers).toHaveBeenCalledTimes(1);
 
-    // Not in a DM, and not in a corner: neither has a section to add into.
+    // Not in a DM, and not in a corner: neither has a Room roster to add to.
     for (const scope of [{ isDirectMessage: true }, { parentChannelId: 'parent' }]) {
-      const scoped = render(
-        sheet({ ...scope, rosterSections: { people: rosterSections.people, agents: [] } }),
-      );
-      expect(scoped.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
+      const scoped = render(sheet({ ...scope, members: [] }));
+      expect(scoped.root.findAllByProps({ testID: 'room-roster-add-members' })).toHaveLength(0);
     }
   });
 
-  it('shows no + on either section head to a viewer who cannot manage members', () => {
+  it('shows no + on the Members head to a viewer who cannot manage members', () => {
     const renderer = render(sheet({ canManage: false }));
-    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-members' })).toHaveLength(0);
   });
 
   it('shows no add or remove controls in a direct message', () => {
     const renderer = render(sheet({ isDirectMessage: true }));
-    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-members' })).toHaveLength(0);
 
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    expect(agentRow.props.disabled).toBe(true);
     act(() => agentRow.props.onPress());
     expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: `room-roster-${OX}-detail` }).findByType('Text' as any)
+        .props.children,
+    ).toBe('A direct message keeps both members.');
   });
 
-  it('gives a row no chevron and no detail when the viewer may not remove it', () => {
-    const renderer = render(sheet({ canManage: false }));
-    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    expect(agentRow.props.disabled).toBe(true);
-    expect(
-      agentRow.findAllByType('Text' as any).map((node: any) => node.props.children),
-    ).not.toContain('›');
-    act(() => agentRow.props.onPress());
-    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+  it('gives a row a chevron and a reason, never a dead mark, when it cannot be removed', () => {
+    for (const [scope, reason] of [
+      [{ canManage: false }, 'Only a manager can remove members from this Room.'],
+      [{ parentChannelId: 'parent' }, "A corner follows its Room's members."],
+    ] as const) {
+      const renderer = render(sheet(scope));
+      const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+      expect(rowTrailing(renderer, `room-roster-agent-${OX}`)).toBeTruthy();
+      act(() => agentRow.props.onPress());
+      expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+      expect(
+        renderer.root.findByProps({ testID: `room-roster-${OX}-detail` }).findByType('Text' as any)
+          .props.children,
+      ).toBe(reason);
+    }
   });
 
   it('lets a workspace manager remove a member with a stale Room-owner role', () => {
@@ -331,7 +387,6 @@ describe('RoomRosterSheet', () => {
       }),
     );
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    expect(agentRow.props.disabled).toBe(false);
     act(() => agentRow.props.onPress());
     const remove = renderer.root.findByProps({ testID: `remove-room-member-${OX}` });
     act(() => remove.props.onPress());

@@ -134,9 +134,9 @@ import {
   formatRoomParticipantTotal,
   isChannelMentionHandle,
   mentionedAgentPubkey,
+  orderRoomRoster,
   replaceActiveMention,
   resolveComposerMentions,
-  sectionRoomParticipants,
   selectedMentionAgentPubkey,
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
@@ -160,7 +160,6 @@ import {
 } from '@/buzz/community-invite';
 import {
   MemberPickerSheet,
-  shouldOpenPeoplePicker,
   type MemberPickerCandidate,
 } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
@@ -1475,11 +1474,11 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterSections = useMemo(() => {
+  const visibleRosterMembers = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return sectionRoomParticipants(
+    return orderRoomRoster(
       roomParticipants.map((participant) => {
         if (participant.kind !== 'agent') return participant;
         const workspaceAgent = workspaceAgents.get(participant.pubkey);
@@ -5388,25 +5387,13 @@ export function BuzzChatSurface({
         memberByPubkey={roomMemberByPubkey}
         membershipActionPubkey={membershipActionPubkey}
         membershipError={membershipError}
-        onAddAgents={() => {
+        members={visibleRosterMembers}
+        onAddMembers={() => {
           setMembershipError(null);
-          setParticipantPickerKind('agent');
-          setParticipantPickerVisible(true);
-        }}
-        onAddPeople={() => {
-          setMembershipError(null);
-          // Nobody left to add: skip the "Add people or agents" sheet and
-          // reach for the exact same invite-link share its "Invite a
-          // person…" row already opens (captain report: the intermediate
-          // sheet only restated that fact and handed back the same next step).
-          const addablePersonCount = (participantPickerCandidates ?? []).filter(
-            (candidate) => candidate.kind === 'person',
-          ).length;
-          if (workspaceRoster && !shouldOpenPeoplePicker(addablePersonCount)) {
-            void handleInvitePerson();
-            return;
-          }
-          setParticipantPickerKind('person');
+          // One counted Members section owns one add control, so the picker it
+          // opens lists both kinds and carries its own invite-a-person and
+          // connect-an-agent rows.
+          setParticipantPickerKind(null);
           setParticipantPickerVisible(true);
         }}
         onClose={closeRoster}
@@ -5415,8 +5402,6 @@ export function BuzzChatSurface({
         workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}
         personProfileByPubkey={personProfileByPubkey}
-        rosterSections={visibleRosterSections}
-        total={roomParticipantTotal}
         userPubkey={userPubkey}
         visible={memberManagement.rosterVisible}
       />

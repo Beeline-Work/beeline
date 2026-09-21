@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
-import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import {
+  notifyConnectorAssignment,
+  POSTGRES_LIVE_CHANNEL,
+  PostgresLiveListener,
+  type LivePgClient,
+} from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 
 const AUTHOR = 'a'.repeat(64);
@@ -224,6 +229,140 @@ describe('Postgres live fanout', () => {
           event.targetAgentId === AUTHOR &&
           event.roomId === freshRoom,
       ),
+    );
+  });
+
+  it('names the parent Room and the corner opener on a corner membership invalidate', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    const corner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, corner, AUTHOR],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === AUTHOR &&
+          event.roomId === corner &&
+          event.parentRoomId === ROOM &&
+          event.openedBy === AUTHOR &&
+          event.removed !== true,
+      ),
+    );
+
+    // `openCorner` writes the corner's memberships before `corner_facts`, so
+    // the opener is read the way the corner list reads it: the recorded owner
+    // once it exists, and the room's creator until then.
+    const opener = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      [corner, opener],
+    );
+    received.length = 0;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+      [WORKSPACE, corner, opener],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === opener &&
+          event.openedBy === opener &&
+          event.archived !== true,
+      ),
+    );
+
+    // Inheriting a Room membership writes one row per corner under it, archived
+    // ones included; the helper must be able to drop those without a read.
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
+    const latecomer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Cee')`, [
+      latecomer,
+    ]);
+    received.length = 0;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, corner, latecomer],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === latecomer &&
+          event.archived === true,
+      ),
+    );
+  });
+
+  it('leaves a top-level Room membership without a corner opener', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, AUTHOR],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) => event.type === 'invalidate' && event.reason === 'postgres:memberships',
+      ),
+    );
+    expect(
+      received.filter((event) => event.type === 'invalidate' && event.openedBy !== undefined),
+    ).toEqual([]);
+  });
+
+  it('delivers a connector-assignment wake without a catalog', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    await notifyConnectorAssignment(database, AUTHOR);
+
+    await eventually(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'invalidate' &&
+            event.reason === 'connector-assignment' &&
+            event.targetAgentId === AUTHOR,
+        ),
     );
   });
 

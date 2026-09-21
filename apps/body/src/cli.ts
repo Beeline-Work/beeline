@@ -430,14 +430,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         void readMachineId(process.env).then(({ machineId, machineName }) =>
           daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
         );
-        // The connector work queue (pair/revoke/sync) drains on the same
-        // cadence; one loop per daemon process, started idempotently so a
-        // reconnect never stacks a second timer.
+        // The connector work queue drains on the live Connect push; the
+        // interval is only recovery. One loop per daemon process, started
+        // idempotently so a reconnect never stacks a second timer.
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,
           log: (message) => console.log(`[body] connector: ${message}`),
         });
+        daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
       },
       onProgress: async (status) => {

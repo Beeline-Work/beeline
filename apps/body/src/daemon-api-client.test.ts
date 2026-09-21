@@ -291,4 +291,80 @@ describe('DaemonApiClient', () => {
     release();
     vi.useRealTimers();
   });
+
+  it('delivers scoped membership, corner-complete and connector wakes without a catalog', async () => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const memberships: unknown[] = [];
+    const connectors: unknown[] = [];
+    const completes: string[] = [];
+    const inbox: string[] = [];
+    client.setRoomsChangedListener((event) => memberships.push(event));
+    client.setConnectorAssignmentListener(() => connectors.push(true));
+    client.setCornerCompleteListener((roomId) => completes.push(roomId));
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      (items) => inbox.push(...items.map((item) => item.id)),
+      () => undefined,
+    );
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.message({ type: 'subscribed', roomId: 'room-1' });
+    // A frame published while this socket was down is never replayed, so the
+    // open itself drains both queues.
+    expect(connectors).toHaveLength(1);
+
+    socket.message({
+      type: 'rooms-changed',
+      roomId: 'corner-1',
+      parentRoomId: 'room-1',
+      openedBy: 'opener-agent',
+    });
+    socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
+    socket.message({ type: 'rooms-changed' });
+    socket.message({ type: 'corner-complete', roomId: 'corner-1' });
+    socket.message({ type: 'connector-assignment' });
+    socket.message({
+      type: 'inbox',
+      roomId: 'room-1',
+      items: [
+        {
+          id: 'open',
+          authorId: 'a',
+          createdAt: 1,
+          type: 'card',
+          body: 'opened',
+          attachments: [],
+          systemEvent: {
+            subject: { kind: 'agent', name: 'Bee' },
+            verb: 'opened a corner',
+            kind: 'corner-opened',
+            object: { text: 'Fix it', id: 'corner-2' },
+          },
+        },
+      ],
+    });
+
+    // A corner-opened card is a message, not a membership fact: the scoped
+    // `rooms-changed` built from the membership row is the one corner-open
+    // authority, so the card must not synthesize a second one.
+    expect(memberships).toEqual([
+      // Socket open: the unscoped wake that still arms the recovery reconcile.
+      undefined,
+      { roomId: 'corner-1', parentRoomId: 'room-1', openedBy: 'opener-agent' },
+      { roomId: 'corner-1', removed: true },
+      {},
+    ]);
+    expect(inbox).toEqual(['open']);
+    expect(completes).toEqual(['corner-1']);
+    expect(connectors).toEqual([true, true]);
+    release();
+  });
 });

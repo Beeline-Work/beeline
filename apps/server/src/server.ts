@@ -267,12 +267,26 @@ export function createBeelineServer(options: ServerOptions): Server {
         principal.kind === 'daemon'
           ? options.live.subscribeAll((event) => {
               if (
-                event.type === 'invalidate' &&
-                event.reason === 'postgres:memberships' &&
-                event.targetAgentId === principal.identityId &&
-                client.readyState === client.OPEN
+                event.type !== 'invalidate' ||
+                event.targetAgentId !== principal.identityId ||
+                client.readyState !== client.OPEN
               )
-                client.send(JSON.stringify({ type: 'rooms-changed' }));
+                return;
+              if (event.reason === 'connector-assignment') {
+                client.send(JSON.stringify({ type: 'connector-assignment' }));
+                return;
+              }
+              if (event.reason !== 'postgres:memberships') return;
+              client.send(
+                JSON.stringify({
+                  type: 'rooms-changed',
+                  ...(event.roomId ? { roomId: event.roomId } : {}),
+                  ...(event.parentRoomId ? { parentRoomId: event.parentRoomId } : {}),
+                  ...(event.openedBy ? { openedBy: event.openedBy } : {}),
+                  ...(event.archived ? { archived: true } : {}),
+                  ...(event.removed ? { removed: true } : {}),
+                }),
+              );
             })
           : undefined;
       const pendingPaintTraces = new Map<
@@ -485,6 +499,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                   }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
+                    return;
+                  }
+                  if (event.closeRequested && event.reason === 'postgres:corner_facts') {
+                    if (client.readyState === client.OPEN)
+                      client.send(JSON.stringify({ type: 'corner-complete', roomId }));
                     return;
                   }
                   void replay(trigger);

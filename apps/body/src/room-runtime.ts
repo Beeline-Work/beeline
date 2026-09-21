@@ -5,7 +5,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient, RoomMembershipChange } from './daemon-api-client.js';
 import {
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
@@ -35,21 +35,22 @@ export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
 export const REMOVAL_CONFIRMATION_READS = 2;
 export const ROOM_JOIN_CONCURRENCY = 4;
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
-export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
+export const DEFAULT_RECONCILE_HEARTBEAT_MS = 10 * 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 /**
  * The #1369 discovery latch, counted instead of flagged.
  *
- * The server's agent-directed `rooms-changed` wake (a fresh Room or corner
- * membership) re-arms fast reconcile. A boolean cleared unconditionally by the
- * next reconcile swallowed any wake that landed while that reconcile was
- * already running — a corner opened mid-reconcile then waited a heartbeat for
- * a wake the daemon had already received. A reconcile covers exactly the wakes
- * that arrived before it started (its reads happen after that point); anything
- * landing during it re-arms. A reconcile that THROWS covers nothing, so a
- * failed discovery keeps retrying fast.
+ * The unscoped agent-directed `rooms-changed` wake (reconnect, or a membership
+ * change that named no Room) re-arms fast reconcile. A scoped membership
+ * event applies incrementally and does not use this latch. A boolean cleared
+ * unconditionally by the next reconcile swallowed any wake that landed while
+ * that reconcile was already running — a reconnect mid-reconcile then waited
+ * a heartbeat for a wake the daemon had already received. A reconcile covers
+ * exactly the wakes that arrived before it started (its reads happen after
+ * that point); anything landing during it re-arms. A reconcile that THROWS
+ * covers nothing, so a failed discovery keeps retrying fast.
  */
 export class DiscoveryWakes {
   private arrived = 0;
@@ -270,7 +271,9 @@ type RoomLeaf = Pick<
   | 'requestReconciliation'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
->;
+> & {
+  requestClose?(): void;
+};
 
 interface RunningRoom {
   body: RoomLeaf;
@@ -378,6 +381,19 @@ export class RoomRuntimeCoordinator {
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
   private readonly startingCorners = new Set<string>();
+  /**
+   * Rooms whose start is in flight. `running` is not set until the checkout
+   * clone finishes, and three callers race for it — the membership push, the
+   * reconcile sweep, and the watchdog restart — so without this two checkouts
+   * run in the same shared directory and the second start orphans the first
+   * loop's AbortController.
+   */
+  private readonly startingRooms = new Set<string>();
+  /** Pushed membership changes awaiting a bounded apply, latest per Room. */
+  private readonly pendingMembershipEvents = new Map<string, RoomMembershipChange>();
+  private membershipDrain: Promise<void> | undefined;
+  /** Set by `shutdown`: a pushed event may no longer start anything. */
+  private stopped = false;
   /** Corners whose start failure has already been said out loud, once each. */
   private readonly reportedCornerStartFailures = new Set<string>();
   /** Standing workspace-configuration faults, keyed by the config that failed. */
@@ -394,10 +410,11 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
-  /** Agent-directed discovery wakes (#1369), counted instead of flagged: a
-   *  wake that arrives while a reconcile is already running must survive its
-   *  start-pass clearing, or a corner opened mid-reconcile waits a heartbeat
-   *  for a wake the daemon already received. */
+  /** Unscoped agent-directed discovery wakes (#1369), counted instead of
+   *  flagged: a wake that arrives while a reconcile is already running must
+   *  survive its start-pass clearing, or a reconnect mid-reconcile waits a
+   *  heartbeat for a wake the daemon already received. A scoped membership
+   *  event applies incrementally and never touches this latch. */
   private readonly discoveryWakes = new DiscoveryWakes();
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
@@ -433,8 +450,18 @@ export class RoomRuntimeCoordinator {
     // Optional on purpose: test stubs of the API surface predate the wake, and
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
-    this.options.daemonApi.setRoomsChangedListener?.(() => {
-      this.discoveryWakes.wake();
+    this.options.daemonApi.setRoomsChangedListener?.((event) => {
+      const roomId = event?.roomId;
+      if (!roomId) {
+        this.discoveryWakes.wake();
+        return;
+      }
+      this.queueMembershipEvent({ ...event, roomId });
+    });
+    this.options.daemonApi.setCornerCompleteListener?.((roomId) => {
+      void this.applyCornerComplete(roomId).catch((error) =>
+        console.error('[thin-core] live corner-complete apply failed', error),
+      );
     });
     // Hot-restart on a phone-side model/effort selection change: retire every
     // retained session now so the next turn cold-activates against the saved
@@ -590,15 +617,7 @@ export class RoomRuntimeCoordinator {
         this.confirmationPending = true;
         continue;
       }
-      running.controller.abort();
-      await running.promise.catch(() => undefined);
-      try {
-        if (running.worktree) await this.reapCornerWorktree(running.worktree);
-        else if (running.scratch) await this.reapCornerScratch(running.scratch);
-      } catch (error) {
-        console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
-        this.confirmationPending = true;
-      }
+      await this.stopRunning(channelId, running);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
@@ -623,6 +642,99 @@ export class RoomRuntimeCoordinator {
     for (const running of this.running.values()) running.body.requestReconciliation();
     this.discoveryWakes.completeReconcile(coveredWakes);
     return 'member';
+  }
+
+  /**
+   * Pushed membership changes are applied at the same bound the reconcile pass
+   * uses. One `rooms-changed` per row means a single human action (adding an
+   * agent to a Room inherits a membership per corner under it) arrives as a
+   * burst; unbounded, that burst is exactly the concurrent restore reads and
+   * worktree checkouts this change exists to stop.
+   */
+  private queueMembershipEvent(event: RoomMembershipChange & { roomId: string }): void {
+    if (this.stopped) return;
+    this.pendingMembershipEvents.set(event.roomId, event);
+    this.membershipDrain ??= this.drainMembershipEvents().finally(() => {
+      this.membershipDrain = undefined;
+    });
+  }
+
+  private async drainMembershipEvents(): Promise<void> {
+    while (this.pendingMembershipEvents.size) {
+      const batch = [...this.pendingMembershipEvents.values()];
+      this.pendingMembershipEvents.clear();
+      await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
+        this.applyMembershipEvent(event).catch((error) => {
+          console.error('[thin-core] live membership apply failed', error);
+          this.discoveryWakes.wake();
+        }),
+      );
+    }
+  }
+
+  /**
+   * Incremental apply of one scoped membership push.
+   * An unscoped wake still uses the slow reconcile as recovery.
+   */
+  async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
+    const roomId = event.roomId;
+    if (!roomId) {
+      this.discoveryWakes.wake();
+      return;
+    }
+    if (event.removed === true) {
+      const running = this.running.get(roomId);
+      if (running) await this.stopRunning(roomId, running);
+      this.monolithCornerParents.delete(roomId);
+      return;
+    }
+    // Inheriting a Room membership writes one row per corner under it, archived
+    // ones included, and the reviewer projection rewrites every row again. An
+    // archived Room or corner is nothing to start, so the event is dropped here
+    // rather than after a restore read per row.
+    if (event.archived === true) return;
+    this.roomRemovalConfirmations.delete(roomId);
+    if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
+    if (event.parentRoomId) {
+      this.monolithCornerParents.set(roomId, event.parentRoomId);
+      // The opener rides the same row that announces the corner. Without it
+      // nobody is the opener, so the initial `working` state — the only write
+      // of `corner_facts.feature_branch`, which every corner GitHub webhook is
+      // resolved by — would never happen. Fall back to the reconcile read that
+      // carries the corner's recorded opener rather than starting it blind.
+      if (!event.openedBy) {
+        this.discoveryWakes.wake();
+        return;
+      }
+      await this.startCorner({
+        cornerId: roomId,
+        parentRoomId: event.parentRoomId,
+        openedBy: event.openedBy,
+      });
+      // `startCorner` reports its own failures and resolves either way, so a
+      // transient token or clone fault leaves nothing running and nothing
+      // scheduled. Arm the fast reconcile the pushed Room path already gets
+      // from its throw, so the retry is now rather than a heartbeat away.
+      if (!this.running.has(roomId)) this.discoveryWakes.wake();
+      return;
+    }
+    await this.startRoom(roomId);
+  }
+
+  async applyCornerComplete(cornerId: string): Promise<void> {
+    this.running.get(cornerId)?.body.requestClose?.();
+  }
+
+  private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
+    running.controller.abort();
+    await running.promise.catch(() => undefined);
+    try {
+      if (running.worktree) await this.reapCornerWorktree(running.worktree);
+      else if (running.scratch) await this.reapCornerScratch(running.scratch);
+    } catch (error) {
+      console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
+      this.confirmationPending = true;
+    }
   }
 
   private roomRecord(roomId: string): RoomRuntimeRecord | undefined {
@@ -681,6 +793,16 @@ export class RoomRuntimeCoordinator {
   }
 
   private async startRoom(roomId: string): Promise<void> {
+    if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    this.startingRooms.add(roomId);
+    try {
+      await this.startRoomOnce(roomId);
+    } finally {
+      this.startingRooms.delete(roomId);
+    }
+  }
+
+  private async startRoomOnce(roomId: string): Promise<void> {
     const controller = new AbortController();
     const cwd = await this.materializeRoomCheckout(roomId);
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
@@ -714,6 +836,14 @@ export class RoomRuntimeCoordinator {
       .finally(() => {
         if (this.running.get(roomId)?.body === loop) this.running.delete(roomId);
       });
+    // Shutdown snapshots `running` once. A start that was still in flight then
+    // must drop what it just built rather than join the map behind the abort
+    // pass, or its live subscription outlives the daemon.
+    if (this.stopped) {
+      controller.abort();
+      await promise;
+      return;
+    }
     this.running.set(roomId, {
       body: loop,
       controller,
@@ -830,7 +960,7 @@ export class RoomRuntimeCoordinator {
         : undefined;
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
-      const isOpener = !corner.openedBy || corner.openedBy === this.agent.publicKey;
+      const isOpener = corner.openedBy === this.agent.publicKey;
       if (worktree && shouldPostInitialCornerWorkingState(restore, isOpener)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,
@@ -894,6 +1024,11 @@ export class RoomRuntimeCoordinator {
             this.running.delete(corner.cornerId);
           }
         });
+      if (this.stopped) {
+        controller.abort();
+        await promise;
+        return;
+      }
       this.running.set(corner.cornerId, {
         body: loop,
         controller,
@@ -1064,19 +1199,38 @@ export class RoomRuntimeCoordinator {
   }
 
   async shutdown(): Promise<void> {
-    const rooms = [...this.running.values()];
-    for (const room of rooms) room.controller.abort();
-    const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
+    // A pushed membership apply runs outside the run loop's signal, so a Room
+    // whose start is in flight here would land in `running` after the abort
+    // pass and never be stopped — its live subscription outlives the daemon.
+    // Refuse further pushes, then wait — to the deadline, never past it — for
+    // the in-flight apply, so whatever it started is in the snapshot below.
+    this.stopped = true;
+    this.pendingMembershipEvents.clear();
     const deadlineAt = Math.min(
       this.now() + this.drainDeadlineMs,
       this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,
     );
-    let timer: NodeJS.Timeout | undefined;
-    const deadline = new Promise<'deadline'>((resolveDeadline) => {
-      timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
-    });
-    const result = await Promise.race([drained.then(() => 'drained' as const), deadline]);
-    if (timer) clearTimeout(timer);
+    // A checkout can clone for minutes or stall on a black-holed fetch, so the
+    // wait for it rides the same deadline the Room drain does — the managed
+    // update's absolute convergence contract owns this process. Past the
+    // deadline the apply is on its own: `startRoomOnce`/`startCorner` see
+    // `stopped` and abort what they built instead of joining `running`.
+    const untilDeadline = async <T>(work: Promise<T>): Promise<T | 'deadline'> => {
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<'deadline'>((resolveDeadline) => {
+        timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
+      });
+      try {
+        return await Promise.race([work, deadline]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    const rooms = [...this.running.values()];
+    for (const room of rooms) room.controller.abort();
+    const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
+    const result = await untilDeadline(drained.then(() => 'drained' as const));
     if (result === 'deadline') {
       await Promise.allSettled(rooms.map((room) => room.body.forceRecoverRoom()));
       await drained;

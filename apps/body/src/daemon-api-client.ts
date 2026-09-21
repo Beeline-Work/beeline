@@ -17,6 +17,17 @@ type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['in
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 export type InboxItem = Output<'getRoomInbox'>['items'][number];
 
+/** Membership / corner set change pushed on the daemon live socket. */
+export type RoomMembershipChange = {
+  readonly roomId?: string;
+  readonly parentRoomId?: string;
+  /** The corner's opener, carried by the same row that announces the corner. */
+  readonly openedBy?: string;
+  /** The named Room/corner is already archived, so nothing is started for it. */
+  readonly archived?: boolean;
+  readonly removed?: boolean;
+};
+
 export type DaemonFetch = typeof fetch;
 export type DaemonWebSocketFactory = (url: string, protocols: string[]) => WebSocket;
 
@@ -81,6 +92,16 @@ export function isAgentRemovedError(error: unknown): boolean {
   );
 }
 
+function membershipChange(event: Record<string, unknown>): RoomMembershipChange {
+  return {
+    ...(typeof event.roomId === 'string' && event.roomId ? { roomId: event.roomId } : {}),
+    ...(typeof event.parentRoomId === 'string' ? { parentRoomId: event.parentRoomId } : {}),
+    ...(typeof event.openedBy === 'string' ? { openedBy: event.openedBy } : {}),
+    ...(event.archived === true ? { archived: true } : {}),
+    ...(event.removed === true ? { removed: true } : {}),
+  };
+}
+
 function endpoint(origin: string, path: string): string {
   return new URL(path, `${origin}/`).toString();
 }
@@ -122,9 +143,11 @@ export class DaemonApiClient {
       presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
     }
   >();
-  private roomsChangedListener?: () => void;
+  private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private hiccupRestartListener?: (attempt: number) => void;
+  private connectorAssignmentListener?: () => void;
+  private cornerCompleteListener?: (roomId: string) => void;
 
   constructor(
     readonly baseUrl: string,
@@ -186,9 +209,9 @@ export class DaemonApiClient {
   }
 
   /** Register the one listener invoked when the server reports this agent's
-   * Room/corner memberships changed — the wake that discovers a freshly
-   * created Room without waiting for the reconciliation heartbeat. */
-  setRoomsChangedListener(listener: () => void): void {
+   * Room/corner memberships changed — a scoped event applies incrementally;
+   * an unscoped wake (reconnect) still runs the recovery reconcile. */
+  setRoomsChangedListener(listener: (event?: RoomMembershipChange) => void): void {
     this.roomsChangedListener = listener;
   }
 
@@ -202,6 +225,16 @@ export class DaemonApiClient {
   /** systemd restart for a transient hiccup. Attempt is 1-indexed. */
   setHiccupRestartListener(listener: (attempt: number) => void): void {
     this.hiccupRestartListener = listener;
+  }
+
+  /** Connect / pending_ops drain wake. Never a catalog. */
+  setConnectorAssignmentListener(listener: () => void): void {
+    this.connectorAssignmentListener = listener;
+  }
+
+  /** corner-complete on the subscribed corner — close now, poll is recovery. */
+  setCornerCompleteListener(listener: (roomId: string) => void): void {
+    this.cornerCompleteListener = listener;
   }
 
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
@@ -250,11 +283,12 @@ export class DaemonApiClient {
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;
       for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
-      // The membership wake is fire-and-forget: a Room created while this
-      // socket was connecting (or between reconnects) never replays its
-      // frame. Treat every open as a wake, so a membership written before the
-      // socket existed is still discovered by the next reconciliation.
+      // Every wake on this socket is fire-and-forget: a membership written, or
+      // a Connect tapped, while this socket was connecting (or between
+      // reconnects) never replays its frame. Treat every open as both wakes, so
+      // the reconciliation and the pending_ops drain still reach them.
       this.roomsChangedListener?.();
+      this.connectorAssignmentListener?.();
     };
     socket.onmessage = (message) => {
       let value: unknown;
@@ -266,7 +300,15 @@ export class DaemonApiClient {
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
       if (event.type === 'rooms-changed') {
-        this.roomsChangedListener?.();
+        this.roomsChangedListener?.(membershipChange(event));
+        return;
+      }
+      if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
+        this.cornerCompleteListener?.(event.roomId);
+        return;
+      }
+      if (event.type === 'connector-assignment') {
+        this.connectorAssignmentListener?.();
         return;
       }
       if (event.type === 'config-changed') {

@@ -225,7 +225,14 @@ export default function BookmarksScreen() {
           <View style={styles.emptyBlock} testID="bookmarks-empty">
             <Ionicons color={styles.emptyIcon.color} name="bookmark-outline" size={22} />
             <Text style={styles.emptyTitle}>No bookmarks yet</Text>
-            <Text style={styles.empty}>Long press a message, or use its desktop action strip.</Text>
+            {/* One instruction, for the surface doing the reading: the desktop
+                strip needs a pointer over the row, and there is no long press
+                to offer there. */}
+            <Text style={styles.empty}>
+              {desktop
+                ? 'Hover a message and press its bookmark mark.'
+                : 'Long press a message and pick Bookmark.'}
+            </Text>
           </View>
         )
       }

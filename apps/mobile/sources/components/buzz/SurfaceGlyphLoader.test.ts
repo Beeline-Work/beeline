@@ -28,7 +28,7 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'room-deck', file: 'components/buzz/RoomDeckLoadingView.tsx', treatment: 'glyph' },
   { id: 'room-deck-corners', file: 'app/(app)/beeline/channels.tsx', treatment: 'glyph' },
   { id: 'changes-list', file: 'app/(app)/beeline/corners/[roomId].tsx', treatment: 'glyph' },
-  { id: 'members', file: 'app/(app)/beeline/MembersScreen.tsx', treatment: 'glyph' },
+  { id: 'members', file: 'app/(app)/beeline/members.tsx', treatment: 'glyph' },
   { id: 'workspace-settings', file: 'app/(app)/beeline/settings/workspace.tsx', treatment: 'glyph' },
   { id: 'community', file: 'app/(app)/beeline/community.tsx', treatment: 'glyph' },
   { id: 'schedules', file: 'app/(app)/beeline/settings/schedules.tsx', treatment: 'glyph' },

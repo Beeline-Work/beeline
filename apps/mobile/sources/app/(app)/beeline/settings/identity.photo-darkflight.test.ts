@@ -293,7 +293,7 @@ describe('photo-override darkflight on the settings surfaces', () => {
     const root = new URL('../../../../../', import.meta.url).pathname;
     const surfaces = [
       'sources/app/(app)/beeline/settings/identity.tsx',
-      'sources/app/(app)/beeline/MembersScreen.tsx',
+      'sources/app/(app)/beeline/members.tsx',
     ];
     const identitySource = readFileSync(`${root}${surfaces[0]}`, 'utf8');
     expect(identitySource).not.toContain('pickAndUploadAvatar');

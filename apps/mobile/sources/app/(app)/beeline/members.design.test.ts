@@ -81,6 +81,18 @@ describe('Members page layout contract', () => {
     expect(afterAgents).not.toContain('model-config');
   });
 
+  it('shows only the handle in the expanded identity copy and has no close icon', () => {
+    const headingStart = source.indexOf('<View style={styles.detailHeading}>');
+    const heading = source.slice(
+      headingStart,
+      source.indexOf('{ownsSelectedAgent && (', headingStart),
+    );
+    expect(heading).toContain('testID="agent-handle"');
+    expect(heading).not.toContain('selectedAgent.agent.identity.name');
+    expect(source).not.toContain('testID="close-agent-settings"');
+    expect(source).not.toContain('accessibilityLabel="Close agent settings"');
+  });
+
   it('removes an agent from one compact red control beside its identity copy', () => {
     // The old danger zone — a red rule, a paragraph of warning copy and a
     // full-width destructive button at the foot of the panel — is gone. The
@@ -92,7 +104,7 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('Ban this agent from every Room');
     const heading = source.slice(
       source.indexOf('<View style={styles.detailHeading}>'),
-      source.indexOf('testID="close-agent-settings"'),
+      source.indexOf('{ownsSelectedAgent && (', source.indexOf('testID="remove-agent"')),
     );
     expect(heading).toContain('testID="agent-handle"');
     expect(heading).toContain('testID="agent-owner"');

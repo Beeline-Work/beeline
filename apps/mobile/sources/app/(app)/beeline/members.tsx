@@ -1144,12 +1144,6 @@ export default function BuzzMembers() {
                     {ownsSelectedAgent ? 'Agent settings' : 'Agent'}
                   </Text>
                   <View style={styles.agentTitleRow}>
-                    <Text numberOfLines={1} style={styles.name}>
-                      {selectedAgent.agent.identity.name}
-                    </Text>
-                    {/* The handle is the string you type to summon this agent,
-                        so the panel names it the way the roster row above does
-                        rather than leaving it to the row alone. */}
                     <Text numberOfLines={1} style={styles.detail} testID="agent-handle">
                       {memberRosterTitle(selectedAgent.agent.identity)}
                     </Text>
@@ -1189,14 +1183,6 @@ export default function BuzzMembers() {
                     </Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  accessibilityLabel="Close agent settings"
-                  onPress={closeAgentSettings}
-                  style={styles.glyphControl}
-                  testID="close-agent-settings"
-                >
-                  <Text style={styles.glyphControlText}>×</Text>
-                </TouchableOpacity>
               </View>
               {ownsSelectedAgent && (
                 <View style={styles.soulSection}>
@@ -1499,8 +1485,6 @@ const styles = StyleSheet.create((theme) => {
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     rowCopy: { flex: 1, minWidth: 0 },
-    // A long display name truncates before it can crowd the handle beside it.
-    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flexShrink: 1 },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
     personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },

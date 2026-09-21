@@ -41,7 +41,7 @@ type WorkspaceRoomSetting = {
   name: string;
   visibility: 'public' | 'invite-only';
   canManage: boolean;
-  createdAt: number;
+  createdAt?: number;
 };
 
 const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
@@ -58,7 +58,8 @@ const IDENTITY_TILE = 76;
 const IDENTITY_TILE_RADIUS = 20;
 const IDENTITY_MARK = 64;
 
-function roomCreatedQualifier(createdAt: number): string {
+function roomCreatedQualifier(createdAt: number | undefined): string | undefined {
+  if (createdAt === undefined) return undefined;
   const created = new Date(createdAt * 1_000);
   return `Created ${ROOM_DATE_FORMATTER.format(created)} · ${created.toISOString().slice(11, 19)} UTC`;
 }
@@ -482,7 +483,7 @@ export default function WorkspaceSettings() {
                 value={
                   workspace?.visibility
                     ? WORKSPACE_VISIBILITY_LABELS[workspace.visibility]
-                    : 'Invite-only'
+                    : undefined
                 }
               />
             </View>

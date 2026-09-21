@@ -4,7 +4,7 @@
 
 ## Durable reads
 
-RoomView DTOs and guards cover the `workspaces`, `workspace`, `agent`, `chats`, `room`, `corners`, `history`, `invite`, and `claimAgentPairing` reads in `packages/buzz-client/src/room-view.ts`. Live invalidation arrives separately over `/v1/phone/live`; server-indexed RoomView responses remain the read authority.
+RoomView DTOs and the `read*` surface readers (`src/phone-guards.ts`, which owns their tolerance rule) cover the `workspaces`, `workspace`, `agent`, `chats`, `room`, `corners`, `history`, `invite`, and `claimAgentPairing` reads in `packages/buzz-client/src/room-view.ts`. Live invalidation arrives separately over `/v1/phone/live`; server-indexed RoomView responses remain the read authority.
 
 ## Writes, authentication, media, and GitHub
 

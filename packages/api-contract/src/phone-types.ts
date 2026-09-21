@@ -138,7 +138,8 @@ export type WorkspaceAgentView = RoomViewMember & {
 
 export type RoomViewHeader = {
   readonly id: string;
-  readonly workspaceId: string;
+  /** Absent when this bundle could not read it; callers fall back to their own workspace context. */
+  readonly workspaceId?: string;
   readonly parentId?: string;
   readonly name: string;
   readonly about?: string;
@@ -146,9 +147,13 @@ export type RoomViewHeader = {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent configured to review repository corners opened from this Room. */
   readonly reviewerAgentId?: string;
-  readonly archived: boolean;
-  readonly createdAt: number;
-  readonly updatedAt: number;
+  /** Absent when this bundle could not read it: a Room whose live/closed state
+   *  is unknown is never painted as live. */
+  readonly archived?: boolean;
+  readonly createdAt?: number;
+  /** Absent when this bundle could not read it; a surface omits the age rather
+   *  than dating the Room from the epoch. */
+  readonly updatedAt?: number;
 };
 
 export type RoomViewActivity = {
@@ -504,8 +509,14 @@ export type ChatListItem = {
     /** Present so attachment-only latest messages remain visible in compact previews. */
     readonly attachments?: readonly AttachmentReference[];
   };
-  readonly memberCount: number;
-  readonly cornerCount: number;
+  /** Absent when the server omitted it: the count is unknown, never zero. */
+  readonly memberCount?: number;
+  /**
+   * Unarchived corners on this Room. Absent when the server omitted it: the
+   * deck row then shows neither the count nor its expansion toggle, and the
+   * Room header's brass mark stays the way into the corners list.
+   */
+  readonly cornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;
@@ -536,7 +547,8 @@ export type ChatListWorkspace = {
   readonly id: string;
   readonly name: string;
   readonly avatar?: string;
-  readonly visibility: 'public' | 'invite-only';
+  /** Absent when the server omitted it or named a value this bundle does not know. */
+  readonly visibility?: 'public' | 'invite-only';
   readonly role: 'owner' | 'admin' | 'member';
   readonly updatedAt: number;
 };

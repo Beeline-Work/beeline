@@ -108,8 +108,12 @@ export default function BuzzCorners() {
 
   return (
     <BuzzCommunityShell
-      communities={[{ communityId: surface.room.workspaceId, name: WORKSPACE_LABEL }]}
-      activeCommunityId={surface.room.workspaceId}
+      communities={
+        surface.room.workspaceId
+          ? [{ communityId: surface.room.workspaceId, name: WORKSPACE_LABEL }]
+          : []
+      }
+      activeCommunityId={surface.room.workspaceId ?? null}
       onSelect={(communityId) =>
         communityId &&
         router.replace({ pathname: '/beeline/channels', params: { communityId } } as never)

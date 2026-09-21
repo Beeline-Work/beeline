@@ -608,6 +608,7 @@ export function mergeDisplayPages(
 
 export function cornerSummaries(corners: readonly CornerListItem[]): CornerSummary[] {
   return corners.map((item) => {
+    const stateAt = item.stateAt ?? item.corner.updatedAt;
     return {
       id: item.corner.id,
       // Every consumer of a corner summary — the Room row's fact line, the
@@ -615,7 +616,7 @@ export function cornerSummaries(corners: readonly CornerListItem[]): CornerSumma
       name: cornerName(item.corner.name, item.corner.id),
       state: item.state,
       ...(item.reason ? { reason: item.reason } : {}),
-      stateAt: item.stateAt ?? item.corner.updatedAt,
+      ...(stateAt === undefined ? {} : { stateAt }),
       openerPubkey: item.agent?.pubkey ?? '',
       ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
     } as CornerSummary;
@@ -649,6 +650,6 @@ export function workspacePeople(view: WorkspaceView): CommunityMember[] {
     .map((member) => ({ pubkey: member.identity.pubkey, role: member.role }));
 }
 
-export function chatListItemUpdatedAt(item: ChatListItem): number {
+export function chatListItemUpdatedAt(item: ChatListItem): number | undefined {
   return item.latestMessage?.createdAt ?? item.room.updatedAt;
 }

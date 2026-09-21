@@ -11,6 +11,10 @@ import {
   isWorkspaceListView,
   isWorkspaceMemberListView,
   isWorkspaceView,
+  readCornerListView,
+  readInviteView,
+  readRoomView,
+  readWorkspaceView,
   isPushLevel,
   WORKSPACE_MEMBER_PAGE_SIZE,
   type PhoneOperationMap,
@@ -55,9 +59,13 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
-    expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })).toBe(false);
+    expect(readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages).toEqual([
+      { ...message, presentation: 'card', relay },
+    ]);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
-    expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })).toBe(false);
+    expect(
+      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]?.bookmarked,
+    ).toBeUndefined();
     const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
     expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
     expect(
@@ -67,29 +75,34 @@ describe('phone contract', () => {
       }),
     ).toBe(true);
     expect(
-      isRoomView({
+      readRoomView({
         ...room,
         messages: [{ ...message, reactions: [{ ...reaction, count: 2 }] }],
-      }),
-    ).toBe(false);
-    for (const invalid of [
-      { direction: 'sideways' },
-      { received: 'yes' },
-      { fromName: 1 },
-      { anchorMessageId: 42 },
-    ])
+      })?.messages[0]?.reactions?.[0]?.count,
+    ).toBe(2);
+    for (const invalid of [{ direction: 'sideways' }, { received: 'yes' }, { fromName: 1 }])
       expect(
-        isRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] }),
-      ).toBe(false);
+        readRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] })
+          ?.messages[0]?.relay,
+      ).toBeUndefined();
+    expect(
+      readRoomView({
+        ...room,
+        messages: [{ ...message, relay: { ...relay, anchorMessageId: 42 } }],
+      })?.messages[0]?.relay,
+    ).toEqual(relay);
 
     // The face ceremony: an optional face id on every identity, never a non-string.
     expect(
       isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 'owl' } } }),
     ).toBe(true);
     expect(
-      isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } }),
-    ).toBe(false);
-    expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
+      readRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } })
+        ?.viewer.identity.face,
+    ).toBeUndefined();
+    expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
+      [],
+    );
 
     const agent = { pubkey: 'c'.repeat(64), kind: 'agent' as const, name: 'Bee' };
     const choice = {
@@ -126,8 +139,9 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [{ ...message, choice }] })).toBe(true);
     expect(
-      isRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] }),
-    ).toBe(false);
+      readRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] })
+        ?.messages[0]?.choice,
+    ).toBeUndefined();
   });
 
   it('keeps list guards and named operations type-visible', () => {
@@ -158,7 +172,7 @@ describe('phone contract', () => {
     expect(
       isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined }),
     ).toBe(true);
-    expect(isWorkspaceView({ ...workspace, peopleTotal: '21' })).toBe(false);
+    expect(readWorkspaceView({ ...workspace, peopleTotal: '21' })?.peopleTotal).toBeUndefined();
     expect(
       isWorkspaceMemberListView({
         members: [],
@@ -189,7 +203,7 @@ describe('phone contract', () => {
         membersTruncated: true,
         agentsTruncated: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['output']>().toHaveProperty(
@@ -234,57 +248,46 @@ describe('phone contract', () => {
       viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
       watchFilters: [],
     };
+    const cornersFor = (corner: Record<string, unknown>) =>
+      readCornerListView({ ...base, corners: [corner] })?.corners;
+    const lifecycle = { lifecycle: 'unknown', checks: 'unknown' };
+
     for (const state of ['working', 'waiting', 'review', 'archived'] as const) {
-      expect(
-        isCornerListView({
-          ...base,
-          corners: [
-            {
-              corner: header,
-              lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-              state,
-              initiator: identity,
-            },
-          ],
-        }),
-      ).toBe(true);
+      expect(cornersFor({ corner: header, lifecycle, state, initiator: identity })).toEqual([
+        { corner: header, lifecycle, state, initiator: identity },
+      ]);
     }
-    expect(
-      isCornerListView({
-        ...base,
-        corners: [
-          {
-            corner: header,
-            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-            state: 'working',
-            initiator: { pubkey: 'missing identity fields' },
-          },
-        ],
-      }),
-    ).toBe(false);
-    expect(
-      isCornerListView({
-        ...base,
-        corners: [
-          {
-            corner: header,
-            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-            state: 'working',
-            initiator: { ...identity, kind: 'agent' },
-          },
-        ],
-      }),
-    ).toBe(false);
+    // The four retired state words are not the contract: the corner is dropped,
+    // and the list it sits in survives.
     for (const state of ['open', 'idle', 'concluded', 'closed']) {
-      expect(
-        isCornerListView({
-          ...base,
-          corners: [
-            { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
-          ],
-        }),
-      ).toBe(false);
+      expect(cornersFor({ corner: header, lifecycle, state })).toEqual([]);
     }
+    // A malformed or non-human initiator is omitted; the corner itself stays.
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle,
+        state: 'working',
+        initiator: { pubkey: 'missing identity fields' },
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'working' }]);
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle,
+        state: 'working',
+        initiator: { ...identity, kind: 'agent' },
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'working' }]);
+    // A lifecycle word this bundle does not know reads as unknown rather than
+    // dropping the corner out of the list.
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle: { lifecycle: 'APPROVED', checks: 'flaky' },
+        state: 'review',
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'review' }]);
   });
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {
@@ -300,12 +303,14 @@ describe('phone contract', () => {
     const invite = { name: 'Builders', expiresAt: 2_000_000_000 };
     expect(isInviteView(invite)).toBe(true);
     expect(
-      isInviteView({
+      readInviteView({
         ...invite,
         joinedWorkspaceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      }),
-    ).toBe(true);
-    expect(isInviteView({ ...invite, joinedWorkspaceId: false })).toBe(false);
+      })?.joinedWorkspaceId,
+    ).toBe('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(
+      readInviteView({ ...invite, joinedWorkspaceId: false })?.joinedWorkspaceId,
+    ).toBeUndefined();
   });
 
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {

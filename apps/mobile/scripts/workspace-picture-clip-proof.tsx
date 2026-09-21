@@ -82,6 +82,7 @@ root.render(
         activeWorkspaceId="alpha"
         onAdd={() => undefined}
         onClose={() => undefined}
+        onOpenAccount={() => undefined}
         onSelect={() => undefined}
         open
         workspaces={workspaces}

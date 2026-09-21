@@ -452,6 +452,8 @@ export class MonolithCornerTurnLoop {
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
+  /** Whether CodeGraph preparation succeeded for the live session. */
+  private sessionCodegraphReady = false;
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript = new WarmTranscript();
   /** The live session's environment, read back for pi's own turn record. */
@@ -583,6 +585,7 @@ export class MonolithCornerTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     if (client?.isAlive) await client.stop();
   }
@@ -617,7 +620,7 @@ export class MonolithCornerTurnLoop {
           agentKind: this.options.config.agentKind,
           grantedHostRoutes,
         }),
-        Boolean(this.options.repository),
+        this.sessionCodegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
     });
@@ -941,6 +944,7 @@ export class MonolithCornerTurnLoop {
     });
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
+    this.sessionCodegraphReady = codegraphReady;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -1009,6 +1013,7 @@ export class MonolithCornerTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     if (client?.isAlive) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());

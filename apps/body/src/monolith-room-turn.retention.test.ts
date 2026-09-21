@@ -1,7 +1,9 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
@@ -14,6 +16,7 @@ import { parse as parseToml } from 'smol-toml';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
+const execFileAsync = promisify(execFile);
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -42,7 +45,13 @@ async function twoTurns(
   hooks?: {
     thirdTurn?: boolean;
     agentKind?: BodyConfig['agentKind'];
-    beforeTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
+    codegraphCommand?: string;
+    repositoryBacked?: boolean;
+    beforeTurns?: (paths: {
+      operatorHome: string;
+      agentHomeRoot: string;
+      workspaceRoot: string;
+    }) => Promise<void>;
     betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
   },
 ): Promise<{
@@ -80,10 +89,12 @@ async function twoTurns(
     agentHomeRoot: join(root, 'agent-home'),
     operatorHome: join(root, 'operator-home'),
     turnTraceDir: traceDir,
+    ...(hooks?.codegraphCommand ? { codegraphCommand: hooks.codegraphCommand } : {}),
   } as BodyConfig;
   const paths = {
     operatorHome: join(root, 'operator-home'),
     agentHomeRoot: join(root, 'agent-home'),
+    workspaceRoot: config.workspaceRoot,
   };
 
   await hooks?.beforeTurns?.(paths);
@@ -99,7 +110,8 @@ async function twoTurns(
   let delivered = 0;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     if (name === 'getAgentConfiguration') return configurations[Math.min(delivered, 2) - 1 || 0];
-    if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+    if (name === 'getRoomRepositoryState')
+      return hooks?.repositoryBacked ? { resolution: 'repository' } : { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
       return {
         members: [
@@ -223,6 +235,24 @@ describe('retained Room session', () => {
   it('answers a follow-up on the process the first turn spawned', async () => {
     const { activations, traces } = await twoTurns([unchanged, unchanged]);
 
+    expect(activations).toBe(1);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'warm']);
+  });
+
+  it('retains the fallback session after CodeGraph preparation fails', async () => {
+    const { activations, traces, mountedInventories } = await twoTurns(
+      [unchanged, unchanged],
+      [],
+      {
+        codegraphCommand: '/usr/bin/false',
+        repositoryBacked: true,
+        beforeTurns: async ({ workspaceRoot }) => {
+          await execFileAsync('git', ['init', workspaceRoot]);
+        },
+      },
+    );
+
+    expect(mountedInventories).toEqual([[]]);
     expect(activations).toBe(1);
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'warm']);
   });

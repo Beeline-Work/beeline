@@ -331,6 +331,8 @@ export class MonolithRoomTurnLoop {
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
+  /** Whether CodeGraph preparation succeeded for the live session. */
+  private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
@@ -497,6 +499,7 @@ export class MonolithRoomTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     if (client?.isAlive) await client.stop();
   }
@@ -515,13 +518,12 @@ export class MonolithRoomTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, repositoryState, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
-      this.repositoryState(),
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -537,7 +539,7 @@ export class MonolithRoomTurnLoop {
           agentKind: this.options.config.agentKind,
           grantedHostRoutes,
         }),
-        repositoryState.resolution === 'repository',
+        this.sessionCodegraphReady,
       ),
     });
   }
@@ -809,6 +811,7 @@ export class MonolithRoomTurnLoop {
     });
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
+    this.sessionCodegraphReady = codegraphReady;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -884,6 +887,7 @@ export class MonolithRoomTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     if (client?.isAlive) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());

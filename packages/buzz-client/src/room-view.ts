@@ -61,7 +61,7 @@ export class RoomViewClient {
   constructor(private readonly options: RoomViewClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.authorizationBaseUrl = options.publicOrigin?.replace(/\/$/, '') ?? this.baseUrl;
-    this.fetchImpl = options.fetch ?? fetch;
+    this.fetchImpl = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   }
 
   workspaces(): Promise<WorkspaceListView> {

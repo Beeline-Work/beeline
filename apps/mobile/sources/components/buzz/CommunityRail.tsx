@@ -21,14 +21,24 @@ const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
 
 /**
- * The Workspace tile bezel. The picture inside is square, so the tile has to
- * clip it or its corners paint outside the bezel. A border eats into the
- * curve, so the radius the content is clipped at is the outer radius LESS the
- * border width, not the outer radius.
+ * The Workspace tile bezel. A border eats into the curve, so the radius inside
+ * the bezel is the outer radius LESS the border width. Same numbers as the
+ * desktop rail (`DesktopWorkspaceRail`), which wears this same tile.
  */
+const TILE_SIZE = 48;
 const TILE_RADIUS = 14;
 const TILE_BORDER_WIDTH = 2;
 const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
+/**
+ * The picture is seated in the bezel like a picture in a frame, not clipped
+ * against it: the whole picture stays visible with slab showing all the way
+ * round, and no corner of it touches the brass. Its own radius is the inner
+ * radius less that margin, which keeps its curve parallel to the bezel's the
+ * whole way round instead of tightening into the corners.
+ */
+const TILE_PICTURE_SIZE = 34;
+const TILE_PICTURE_MARGIN = (TILE_SIZE - TILE_BORDER_WIDTH * 2 - TILE_PICTURE_SIZE) / 2;
+const TILE_PICTURE_RADIUS = TILE_INNER_RADIUS - TILE_PICTURE_MARGIN;
 
 export type CommunityRailItem = {
   communityId: string;
@@ -230,26 +240,26 @@ export function CommunityRail({
                   style={[styles.columnLogoPlate, active && styles.columnLogoPlateSelected]}
                   testID={`workspace-tile-plate-${community.communityId}`}
                 >
-                  <View style={styles.tileClip}>
+                  <View style={styles.tilePictureSeat}>
                     <IdentityMark
                       kind="workspace"
                       seed={community?.communityId ?? 'workspace-loading'}
                       avatarUrl={community?.avatar}
                       name={community?.name}
-                      size={40}
+                      size={TILE_PICTURE_SIZE}
                       selected={active}
                       testID={`workspace-avatar-${community.communityId}`}
                     />
                   </View>
                 </View>
               ) : (
-                <View style={styles.tileClip}>
+                <View style={styles.tilePictureSeat}>
                   <IdentityMark
                     kind="workspace"
                     seed={community?.communityId ?? 'workspace-loading'}
                     avatarUrl={community?.avatar}
                     name={community?.name}
-                    size={40}
+                    size={TILE_PICTURE_SIZE}
                     selected={active}
                     testID={`workspace-avatar-${community.communityId}`}
                   />
@@ -572,23 +582,24 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'flex-start',
     },
     railButton: {
-      width: 48,
-      height: 48,
+      width: TILE_SIZE,
+      height: TILE_SIZE,
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: TILE_RADIUS,
       borderWidth: TILE_BORDER_WIDTH,
       borderColor: 'transparent',
     },
-    /* The bezel's content box. A Workspace picture is square, so without this
-     * its corners paint outside the tile. The clip follows the border's INNER
-     * curve, which is the outer radius less the border width. */
-    tileClip: {
-      alignSelf: 'stretch',
-      flex: 1,
+    /* The picture's seat: square, centred, and rounded parallel to the bezel.
+     * It rounds the picture's own corners; the generated Workspace cypher draws
+     * well inside this box, so it keeps the square silhouette it is meant to
+     * have. */
+    tilePictureSeat: {
+      width: TILE_PICTURE_SIZE,
+      height: TILE_PICTURE_SIZE,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: TILE_INNER_RADIUS,
+      borderRadius: TILE_PICTURE_RADIUS,
       overflow: 'hidden',
     },
     columnButton: {

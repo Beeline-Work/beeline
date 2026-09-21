@@ -6,12 +6,16 @@
  * read them. This paints the same run in the corner of the Room, small enough
  * to ignore and legible enough to screenshot.
  *
- * It renders nothing unless the build opted in with EXPO_PUBLIC_ROOM_OPEN_TRACE,
- * which is off in every build we ship by default.
+ * It renders nothing unless the build opted in with EXPO_PUBLIC_ROOM_OPEN_TRACE
+ * AND the device's Settings debug toggle (roomOpenTraceOverlay) is on, which
+ * is off by default on every device. The measurement keeps running when the
+ * build carries the flag; nothing paints until the toggle is switched on, and
+ * the flip takes effect immediately without a restart.
  */
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { useLocalSetting } from '@/sync/storage';
 import {
   observeRoomOpenTrace,
   roomOpenElapsed,
@@ -19,7 +23,9 @@ import {
 } from '@/buzz/room-open-trace';
 
 export function RoomOpenTraceOverlay({ testID }: { testID?: string }) {
-  const enabled = roomOpenTraceEnabled();
+  const buildEnabled = roomOpenTraceEnabled();
+  const debugToggle = useLocalSetting('roomOpenTraceOverlay');
+  const enabled = buildEnabled && debugToggle;
   const [rows, setRows] = React.useState<Array<{ phase: string; ms: number }>>([]);
 
   React.useEffect(() => {

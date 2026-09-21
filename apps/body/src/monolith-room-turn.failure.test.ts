@@ -547,4 +547,39 @@ describe('Room turn failure receipt', () => {
     expect(posted.map((message) => message.text)).toEqual(['All good.']);
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
   });
+
+  it('keeps pi-recorded text when a corner opens with an empty ACP stream', async () => {
+    const { receipts, posted } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: async ({ agentHomeRoot }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, '2026_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'All good.' }],
+                stopReason: 'stop',
+              },
+            }),
+          ].join('\n'),
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: '',
+          toolCalls: [
+            { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+          ],
+        };
+      },
+    });
+    expect(posted.map((message) => message.text)).toEqual(['All good.']);
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  });
 });

@@ -1100,8 +1100,8 @@ export class MonolithRoomTurnLoop {
               trace.promptSettled();
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
-              let explained = cornerOpened ? undefined : await this.explainEmpty(result);
-              if (explained && shouldRetryEmptyTurn(explained)) {
+              let explained = await this.explainEmpty(result);
+              if (!cornerOpened && explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
@@ -1113,7 +1113,7 @@ export class MonolithRoomTurnLoop {
                   trace.promptSettled();
                   openCornerCall = openCornerToolCall(result.toolCalls);
                   cornerOpened = openedACorner(openCornerCall);
-                  explained = cornerOpened ? undefined : await this.explainEmpty(result);
+                  explained = await this.explainEmpty(result);
                 }
               }
               // The requester stopped this turn while it ran. A stopped turn
@@ -1153,29 +1153,29 @@ export class MonolithRoomTurnLoop {
               // reply must never queue behind a draft nobody will read.
               stream.close();
               let reply = durableReplyText(result.agentText);
-              if (!reply && explained) {
-                // Either text the harness recorded but never streamed, or a named
-                // reason (pi's provider refusal, an empty model answer, the stream's
-                // shape) carrying the provider that served the turn — never the bare
-                // "no reply" as the only fact.
-                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
-                if (!reply) {
-                  throw new Error(
-                    turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
-                  );
-                }
+              if (!reply && explained?.recoveredText) {
+                // Text the harness recorded but never streamed. Kept on a
+                // corner-open turn too: it is the same reply the live lane
+                // would have shown, arriving only at settle.
+                reply = durableReplyText(explained.recoveredText);
                 console.warn(
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );
+              } else if (!reply && explained && !cornerOpened) {
+                // A named reason (pi's provider refusal, an empty model answer,
+                // the stream's shape) carrying the provider that served the
+                // turn — never the bare "no reply" as the only fact. A corner
+                // that already opened is the Room's completion even without
+                // prose; do not fail that turn for emptiness.
+                throw new Error(
+                  turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
+                );
               }
-              // A successful corner open completes this Room turn silently.
-              // The server's corner-open card is the complete handoff; publishing
-              // any model text here would create a second, competing completion.
-              // Silence is only correct once that card is a fact, which is why
-              // this waits for `completed` and never merely for "not failed".
-              if (cornerOpened) {
-                reply = '';
-              }
+              // The server's corner-open card and this reply are one
+              // completion: live prefixes of the same text, then that text
+              // written durably. An empty last run still settles through the
+              // card alone. Silence waits for `completed`, never merely for
+              // "not failed".
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,

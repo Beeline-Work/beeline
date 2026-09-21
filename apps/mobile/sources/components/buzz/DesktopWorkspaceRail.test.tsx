@@ -137,26 +137,33 @@ describe('desktop Workspace rail', () => {
     ).toBe('Bravo, 1 Rooms, needs you');
   });
 
-  it('clips the Workspace picture to the tile bezel at the inner radius', () => {
+  it('seats the whole Workspace picture inside the bezel, cropping nothing', () => {
     const tree = renderRail();
     const mark = tree.root.findByProps({ testID: 'desktop-workspace-mark-alpha' });
-    const clip = tree.root
+    const seat = tree.root
       .findAllByType('View' as any)
       .find((node: any) =>
         node.props.style?.overflow === 'hidden' &&
         node.findAllByProps({ testID: 'desktop-workspace-mark-alpha' }).length > 0,
       );
 
-    // 48px tile, 2px bezel: the content box is 44 and its curve is 14 - 2.
-    // A picture that stopped short of that curve would be clipped by nothing,
-    // so the mark has to fill the box for the clip to mean anything.
-    expect(clip?.props.style).toMatchObject({
-      width: 44,
-      height: 44,
-      borderRadius: 12,
+    // 48px tile, 2px bezel: the box inside the bezel is 44. A 34px picture
+    // centred there leaves 5px of slab on every side, and its own 12 - 5 = 7px
+    // radius keeps its curve parallel to the bezel's rather than cut by it.
+    const tileSize = 48;
+    const bezelWidth = 2;
+    const innerBox = tileSize - bezelWidth * 2;
+    const margin = (innerBox - (seat?.props.style.width ?? 0)) / 2;
+
+    expect(seat?.props.style).toMatchObject({
+      width: 34,
+      height: 34,
+      borderRadius: 7,
       overflow: 'hidden',
     });
-    expect(mark.props.size).toBe(40);
+    expect(margin).toBe(5);
+    expect(margin).toBeGreaterThan(0); // no corner of the picture touches brass
+    expect(mark.props.size).toBe(34);
   });
 
   it('reveals the name and Room count on hover or focus', () => {

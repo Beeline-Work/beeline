@@ -294,15 +294,40 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
  * update between them was interleaved metadata rather than a message
  * boundary. A run already closed by whitespace is a boundary on its own.
  *
- * An uppercase head is deliberately NOT read as a continuation. `Using Git` +
- * `Hub works.` and `Checking Docker` + `Found it.` are the same text and the
- * same update stream, so no rule can tell a split name from the harness
- * opening a new message; every reading of capitalization tried here — the
- * word's own case, a prefix allowlist, its length, whether it had already
- * turned over — resolved one of that pair by corrupting the other. The
- * ambiguity is therefore left standing: an uppercase resume ends the run, as
- * it always did. That keeps a split name's head out of the final message,
- * which is the cost of never gluing two real messages into one.
+ * Only an unambiguous continuation joins. An uppercase head does not — see
+ * UNRESOLVED PROTOCOL AMBIGUITY below before changing that.
+ *
+ * ── UNRESOLVED PROTOCOL AMBIGUITY: the uppercase resume ───────────────────
+ *
+ * A run that stops part-way through a word and is resumed by an uppercase
+ * delta has two readings, and ACP carries nothing that tells them apart:
+ *
+ *     "Using Git"       + tool_call + "Hub works."   → one name, split
+ *     "Checking Docker" + tool_call + "Found it."    → two messages
+ *
+ * Same text; from a harness that emits a bare `tool_call`, the same update
+ * stream. A single string-valued final message therefore has exactly three
+ * possible values at that seam, and all three were built and run end to end
+ * on the branch that added this guard:
+ *
+ *   1. join with no separator — fuses two real messages ("DockerFound it.")
+ *   2. end the run — the split name loses its head ("Hub works.")   ← chosen
+ *   3. join across a paragraph break — keeps both, but promotes unpunctuated
+ *      interim narration into the reply, changing the final-message contract
+ *
+ * Reading 2 is in force by decision, to hold that contract: interim
+ * narration stays in the live draft and only the final post-tool message is
+ * the reply. The cost is real and is asserted in `leaves an uppercase resume
+ * ambiguous instead of guessing at it` — a name split across an uppercase
+ * seam still loses its head, exactly as before this guard existed.
+ *
+ * Resolving it needs a signal that does not exist yet: a harness message id
+ * or stop marker on `agent_message_chunk` would end the ambiguity outright,
+ * since two deltas of one message would be identifiable as such. Until then,
+ * do not reach for capitalization — the word's own case, a prefix allowlist,
+ * the fragment's length and whether the word had already turned over were
+ * each tried, and each resolved one of the pair above by corrupting the
+ * other.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;

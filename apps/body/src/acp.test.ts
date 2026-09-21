@@ -188,12 +188,13 @@ describe('ACP streaming lane classifier', () => {
   });
 
   it('leaves an uppercase resume ambiguous instead of guessing at it', () => {
+    // The unresolved protocol ambiguity recorded on `continuesPreviousWord`.
     // `Using Git` + `Hub works.` and `Checking Docker` + `Found it.` are the
-    // same text and the same update stream. Nothing can tell a split name
-    // from the harness opening a new message, so neither is joined: the run
-    // ends, exactly as it did before this guard existed. A split name's head
-    // stays out of the final message; the alternative is gluing two real
-    // messages together, which is the worse of the two.
+    // same text and the same update stream, so neither is joined: the run
+    // ends, exactly as it did before this guard existed. That holds the
+    // final-message contract — interim narration stays out of the reply —
+    // and the price is asserted here rather than left to be discovered: a
+    // name split across an uppercase seam still loses its head.
     for (const [head, tail] of [
       ['Using Git', 'Hub works.'],
       ['Checking Docker', 'Found it.'],

@@ -724,28 +724,33 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
-  it('shows a manually closed corner as settled without an Open action', () => {
+  it.each([
+    { type: 'corner-complete' as const, outcome: 'abandoned' as const },
+    { type: 'worktree-cleaned' as const, outcome: undefined },
+  ])('keeps a $type corner navigable after it closes without a pull request', (fact) => {
+    const onOpenCorner = vi.fn();
     const renderer = render(
       <DaemonFactCard
         message={message({
           daemonFact: {
-            type: 'corner-complete',
+            type: fact.type,
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
             name: 'flaky auth',
             objective: 'Fix the flaky auth test',
-            outcome: 'abandoned',
+            outcome: fact.outcome,
           },
         })}
-        onOpenCorner={() => undefined}
+        onOpenCorner={onOpenCorner}
         onOpenUrl={() => undefined}
       />,
     );
     expect(JSON.stringify(renderer.toJSON())).toContain('closed');
-    expect(
-      renderer.root.findAllByProps({
-        testID: 'daemon-fact-card-corner-complete-primary-action',
-      }),
-    ).toHaveLength(0);
+    const action = renderer.root.findByProps({
+      testID: `daemon-fact-card-${fact.type}-primary-action`,
+    });
+    expect(JSON.stringify(renderer.toJSON())).toContain('Corner →');
+    act(() => action.props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
   it('names the agent that OPENED the corner, never one that owns it', () => {

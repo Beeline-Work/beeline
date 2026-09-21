@@ -113,13 +113,18 @@ describe('monolith Room send path', () => {
     const sockets: Array<{
       sent: string[];
       closed: boolean;
+      readyState: number;
       onopen?: () => void;
       onmessage?: (event: { data: string }) => void;
       onclose?: () => void;
     }> = [];
     class TestWebSocket {
+      static readonly OPEN = 1;
       sent: string[] = [];
       closed = false;
+      // A real socket is already OPEN when it calls onopen; the connection only
+      // writes to a socket in that state.
+      readyState = TestWebSocket.OPEN;
       onopen?: () => void;
       onmessage?: (event: { data: string }) => void;
       onclose?: () => void;
@@ -134,6 +139,7 @@ describe('monolith Room send path', () => {
       }
       close() {
         this.closed = true;
+        this.readyState = 3;
       }
     }
     vi.stubGlobal('WebSocket', TestWebSocket);

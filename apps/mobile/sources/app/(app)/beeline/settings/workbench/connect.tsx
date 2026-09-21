@@ -11,7 +11,11 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { type ConnectorInstallState, type WorkbenchHelper } from '@/buzz/workbench';
+import {
+  connectorSignInLocationLine,
+  type ConnectorInstallState,
+  type WorkbenchHelper,
+} from '@/buzz/workbench';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -335,31 +339,38 @@ export default function ConnectTrustySquireScreen() {
                 <Text style={styles.retryText}>Retry</Text>
               </TouchableOpacity>
             ) : install.signIn ? (
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => {
-                  const { signIn } = install;
-                  if (!signIn) return;
-                  router.push({
-                    pathname: '/beeline/settings/workbench/connect-signin' as never,
-                    params: {
-                      workspaceId,
-                      viewerId,
-                      // The paired ROW id, so the overlay polls this
-                      // machine's connector — not any row of the type.
-                      connectorId: install.connectorId,
-                      url: signIn.url,
-                      method: signIn.method,
-                      ...(offerId ? { offerId } : {}),
-                      ...(roomId ? { roomId } : {}),
-                    },
-                  });
-                }}
-                style={styles.signInButton}
-                testID="connect-sign-in"
-              >
-                <Text style={styles.signInText}>Sign in to Squire</Text>
-              </TouchableOpacity>
+              <View style={styles.signInBlock}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => {
+                    const { signIn } = install;
+                    if (!signIn) return;
+                    router.push({
+                      pathname: '/beeline/settings/workbench/connect-signin' as never,
+                      params: {
+                        workspaceId,
+                        viewerId,
+                        // The paired ROW id, so the overlay polls this
+                        // machine's connector — not any row of the type.
+                        connectorId: install.connectorId,
+                        url: signIn.url,
+                        method: signIn.method,
+                        ...(offerId ? { offerId } : {}),
+                        ...(roomId ? { roomId } : {}),
+                      },
+                    });
+                  }}
+                  style={styles.signInButton}
+                  testID="connect-sign-in"
+                >
+                  <Text style={styles.signInText}>Sign in to Squire</Text>
+                </TouchableOpacity>
+                {connectorSignInLocationLine(install.signIn.browserLocation) ? (
+                  <Text style={styles.signInLocation} testID="connect-sign-in-location">
+                    {connectorSignInLocationLine(install.signIn.browserLocation)}
+                  </Text>
+                ) : null}
+              </View>
             ) : null}
           </View>
         ) : null}
@@ -442,6 +453,13 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
+    },
+    signInBlock: { gap: hull.space.xs },
+    signInLocation: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      textAlign: 'center',
     },
     signInText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     retryButton: {

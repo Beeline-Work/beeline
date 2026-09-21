@@ -13,6 +13,26 @@ import {
   type VaultConnectionMeta,
 } from './connector-squire.js';
 
+/**
+ * A live stand-in for the connect process: it prints one `--json` report and
+ * stays alive, exactly as Squire does while a human signs in.
+ */
+function spawnReportedConnect() {
+  const line = JSON.stringify({
+    state: 'needs-sign-in',
+    terminal: false,
+    reason: null,
+    sign_in_url: 'https://tunnel.test/#p=hunter22',
+    account: null,
+    holder: { kind: 'none' },
+    browser_location: { kind: 'virtual', url: 'https://tunnel.test/#p=hunter22' },
+  });
+  return defaultStreamedRunner(process.execPath, [
+    '-e',
+    `process.stdout.write(${JSON.stringify(`${line}\n`)}); setInterval(() => {}, 30_000);`,
+  ]);
+}
+
 type ExecuteCall = { op: string; input: Record<string, unknown> };
 
 function apiMock(
@@ -58,8 +78,6 @@ const connectedInstall =
       status: 'connected',
       steps,
       squireVersion: '1.4.2',
-      signedInAs: 'dana@example.test',
-      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
     };
   };
 
@@ -118,7 +136,6 @@ describe('ConnectorAssignmentLoop', () => {
     expect(api.calls[2].input).toMatchObject({
       connectorId: 'conn-1',
       squireVersion: '1.4.2',
-      signedInAs: 'dana@example.test',
     });
     expect(api.calls[3].input).toMatchObject({
       agentId: 'agent-1',
@@ -207,12 +224,8 @@ describe('ConnectorAssignmentLoop', () => {
     // `installing`, which is the whole sign-in. Starting a second connect
     // releases this helper's claim, and that SIGTERMs the process group the
     // noVNC tunnel on the phone is running in.
-    const connect = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
-        'setInterval(() => {}, 30_000);',
-    ]);
-    expect(connect.signIn?.url).toBe('https://tunnel.test/#p=hunter22');
+    const connect = await spawnReportedConnect();
+    expect(connect.report?.sign_in_url).toBe('https://tunnel.test/#p=hunter22');
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
     let started = 0;
     const loop = new ConnectorAssignmentLoop({
@@ -244,11 +257,7 @@ describe('ConnectorAssignmentLoop', () => {
     // `installing`. A published ceremony nobody used must end the row, or the
     // helper brings up a fresh Xvfb/x11vnc/websockify/cloudflared rig every
     // five minutes for the daemon's lifetime.
-    const connect = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
-        'setInterval(() => {}, 30_000);',
-    ]);
+    const connect = await spawnReportedConnect();
     const claimed = squireConnectSession();
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
       connectorId: 'conn-1',
@@ -288,11 +297,7 @@ describe('ConnectorAssignmentLoop', () => {
     // `installing` until a LATER run reaches Squire's already-connected
     // short-circuit. The connect process exiting is that signal, so the phone
     // must not wait out the five-minute recovery interval for it.
-    const connect = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
-        'setInterval(() => {}, 30_000);',
-    ]);
+    const connect = await spawnReportedConnect();
     const claimed = squireConnectSession();
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
     const armed: (() => void)[] = [];
@@ -342,11 +347,7 @@ describe('ConnectorAssignmentLoop', () => {
     // `pairConnector` re-arms the row to its default all-pending steps, which
     // is the only thing that tells a fresh human request from the poll the
     // server re-issues every ten seconds while the row is `installing`.
-    const connect = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
-        'setInterval(() => {}, 30_000);',
-    ]);
+    const connect = await spawnReportedConnect();
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
       connectorId: 'conn-1',
       steps: [
@@ -389,11 +390,7 @@ describe('ConnectorAssignmentLoop', () => {
     // A human who never finishes leaves connect — and the Xvfb/x11vnc/
     // websockify/cloudflared rig under it — alive. Past the ceremony's life the
     // tunnel is no use to anybody, so the next install reclaims the display.
-    const connect = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
-        'setInterval(() => {}, 30_000);',
-    ]);
+    const connect = await spawnReportedConnect();
     const claimed = squireConnectSession();
     expect(claimed?.pid).toBeDefined();
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);

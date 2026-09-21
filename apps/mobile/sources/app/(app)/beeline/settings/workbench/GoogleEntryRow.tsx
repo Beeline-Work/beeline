@@ -4,9 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import {
   googleEntryConnector,
-  googleEntryDescription,
-  googleEntryState,
-  googleBlockedOnSquireBrowser,
   googleToolRows,
   connectorInstrument,
   type WorkbenchConnector,
@@ -31,23 +28,19 @@ export function GoogleEntryRow({
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const state = googleEntryState(connectors);
   const instrument = connectorInstrument(entry.status);
-  const blockedOnSquire = googleBlockedOnSquireBrowser(connectors);
-  const canConnect = instrument.connect && entry.available && !blockedOnSquire;
+  const canConnect = instrument.connect && entry.available;
   const errorText =
-    !blockedOnSquire && entry.status === 'error'
+    entry.status === 'error'
       ? (entry.errorMessage ?? 'Connection failed')
-      : blockedOnSquire
-        ? googleEntryDescription(connectors, state)
-        : undefined;
+      : undefined;
 
   return (
     <View testID="google-entry">
       <SettingsRow
         action={canConnect ? 'Connect' : undefined}
         description={errorText}
-        descriptionTone={!blockedOnSquire && entry.status === 'error' ? 'danger' : undefined}
+        descriptionTone={entry.status === 'error' ? 'danger' : undefined}
         onPress={() => setExpanded((value) => !value)}
         testID="google-entry-row"
         title={entry.name}

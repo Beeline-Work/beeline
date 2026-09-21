@@ -270,7 +270,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.descriptionTone).toBe('danger');
   });
 
-  it('does not paint the Trusty Squire browser-session failure on Google Workspace', async () => {
+  it('paints a failed Google tool as its own breakage with its own error', async () => {
     const source = new MockWorkbenchSource();
     source.failNextPair('trusty-squire');
     source.failNextPair('google-gmail');
@@ -283,14 +283,11 @@ describe('Workbench settings screen', () => {
     expect(squire.props.action).toBe('Connect');
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
-    expect(google.props.action).toBeUndefined();
-    expect(google.props.trailingPress).toBeUndefined();
-    expect(google.props.descriptionTone).not.toBe('danger');
-    expect(google.props.description).toBe(
-      'Connect Trusty Squire first — its browser session is busy',
-    );
-    expect(google.props.description).not.toMatch(
-      /another Trusty Squire session is already using the browser/i,
+    expect(google.props.action).toBe('Connect');
+    expect(google.props.trailingPress).toBeDefined();
+    expect(google.props.descriptionTone).toBe('danger');
+    expect(google.props.description).toContain(
+      'another Trusty Squire session is already using the browser',
     );
   });
 

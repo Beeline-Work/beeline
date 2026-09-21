@@ -2,37 +2,35 @@
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
  * One helper shares the host Squire broker and its one Chrome. The install
- * runs Squire's own `connect` through a STREAMING runner that captures the
- * sign-in URL from live stdout as soon as it appears (a noVNC URL on a
- * headless helper, or the confirm page in the shared Chrome). Squire
- * announces "Opening the Trusty Squire install page" seconds BEFORE it
- * prints that URL, so the runner waits for the URL itself — the phone has
- * no sign-in surface until one arrives. Connect is not given
- * `--skip-browser` or `--force-relogin`: skip-browser signs the human in
- * outside the bot profile so the shared Chrome never gains the session, and
- * force-relogin clears provider cookies and asserts a single-session
- * precondition the broker does not have. Dropping force-relogin also makes
- * Squire's already-provisioned short-circuit reachable: the shared profile
- * already holds the session, connect refreshes the config and exits with no
- * ceremony at all, which is a CONNECTED outcome, never a failed install.
- * The connect process stays alive in the background while the human
- * completes sign-in.
+ * runs Squire's own `connect --json` through a STREAMING runner that reads
+ * the newline-delimited typed reports on stdout and hands the phone the
+ * sign-in page the moment a `needs-sign-in` report carries one. Connect is
+ * not given `--skip-browser` or `--force-relogin`: skip-browser signs the
+ * human in outside the bot profile so the shared Chrome never gains the
+ * session, and force-relogin clears provider cookies and asserts a
+ * single-session precondition the broker does not have. Not passing
+ * force-relogin also makes Squire's already-provisioned short-circuit
+ * reachable: the shared profile already holds the session, connect refreshes
+ * the config and exits reporting `connected` with no ceremony at all, which
+ * is a CONNECTED outcome, never a failed install. The connect process stays
+ * alive in the background while the human completes sign-in.
  *
  * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
  * version probe and other quick commands. A new `StreamedShellRunner`
  * (`defaultStreamedRunner`) handles the connect command: it spawns the
- * process, reads stdout line by line, and resolves the promise as soon as the
- * sign-in URL is found (or the process exits without one).
+ * process, reads stdout line by line, and resolves the promise as soon as a
+ * `needs-sign-in` report publishes its page (or the process exits).
  *
  * Two guards keep a fresh connect attempt working (captain, 2026-09-17):
  *
- * - VERSION: the connect package spec is `@trusty-squire/mcp@latest` — never a
- *   source-level pin. Before connect runs, the version npx actually resolves
- *   is verified against the current published release (`npm view`). A stale
- *   local copy (an npx cache or local node_modules shadow serving, say,
- *   `1.1.14-rc.34` while `1.1.14` is current) is re-resolved with
- *   `--prefer-online`, and if the cache still refuses to move, connect runs
- *   the exact current release resolved at runtime — never a stale copy.
+ * - VERSION: the connect package spec is pinned to the release whose `--json`
+ *   report this reader consumes (`SQUIRE_CONNECT_VERSION`; `@latest` still
+ *   prints prose). Before connect runs, the version npx actually resolves is
+ *   verified against that spec on the registry (`npm view`). A stale local
+ *   copy (an npx cache or local node_modules shadow serving, say, an older
+ *   RC) is re-resolved with `--prefer-online`, and if the cache still refuses
+ *   to move, connect runs the exact release resolved at runtime — never a
+ *   stale copy.
  *
  * - SESSION: two claims, one authority. The spawned connect process owns the
  *   helper's in-memory claim (`activeConnectSession`). Squire itself records
@@ -62,6 +60,7 @@ import type {
   ConnectionDetail,
   ConnectionGrant,
   ConnectionLedgerEntry,
+  ConnectorBrowserLocation,
   ConnectorSignIn,
   ConnectorStep,
   VaultConnectionMeta,
@@ -72,15 +71,18 @@ export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
-/** The one Squire connect package, always the current release (captain). */
+/** The one Squire connect package, pinned to the release that carries the
+ *  machine-readable `--json` connect report the helper reads. */
 export const SQUIRE_MCP_NAME = '@trusty-squire/mcp';
 
 /**
- * Where Squire installs the agent's own sign-in surface: the `@latest` dist
- * tag, never a source-level version pin (captain). A stale npx-resolved copy
- * is caught by `resolveSquireConnectSpec` before connect runs, not by a pin.
+ * The Squire release whose `connect --json` writes the typed report this
+ * helper consumes. Pinned on purpose: `@latest` still resolves a release
+ * that prints prose, and this reader no longer reads prose. A stale npx
+ * cache is still caught by `resolveSquireConnectSpec` before connect runs.
  */
-export const SQUIRE_CONNECT_PACKAGE = `${SQUIRE_MCP_NAME}@latest`;
+export const SQUIRE_CONNECT_VERSION = '1.1.16-rc.4';
+export const SQUIRE_CONNECT_PACKAGE = `${SQUIRE_MCP_NAME}@${SQUIRE_CONNECT_VERSION}`;
 
 /**
  * The helper's one Squire connect browser-session claim. The connect process
@@ -178,20 +180,6 @@ export type SquireProfileLockOwner = {
   readonly pid: number;
   readonly startTime: string | null;
 };
-
-/** Helper copy when a Google tool is blocked on Squire's one browser claim. */
-export const SQUIRE_BROWSER_BUSY_GOOGLE_REASON =
-  'Trusty Squire is still using the browser — connect Trusty Squire first';
-
-/** True for Squire's PROFILE_BUSY_MESSAGE (hyphen or em dash) and the
- *  helper's remapped "connect Trusty Squire first" spellings. */
-export function isSquireBrowserSessionFailure(text: string | undefined | null): boolean {
-  if (typeof text !== 'string' || text.length === 0) return false;
-  return (
-    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
-    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
-  );
-}
 
 export function squireForeignClaimAction(owner: SquireProfileLockOwner): string {
   return (
@@ -318,18 +306,21 @@ export const defaultShellRunner: ShellRunner = (command, args) =>
   });
 
 /**
- * The result of a streamed shell command that resolves when a sign-in URL
- * appears in the output (not when the process exits). The process stays alive
- * so the human can complete sign-in; call `abort()` to kill it.
+ * The result of a streamed shell command that resolves when a sign-in report
+ * appears (not when the process exits). The process stays alive so the human
+ * can complete sign-in; call `abort()` to kill it.
  */
 export type StreamedCommandResult = {
   readonly stdout: string;
   readonly stderr: string;
   /** The spawned process's pid, when it has one (session-claim ownership). */
   readonly pid?: number;
-  /** The sign-in surface, captured from live output. Undefined when the process
-   * exited or errored before printing a URL. */
-  readonly signIn?: ConnectorSignIn;
+  /**
+   * The LAST connect report this run emitted — the only report this helper
+   * keeps, and nothing else is derived from it. Undefined when the process
+   * printed no report before it exited or errored.
+   */
+  readonly report?: SquireConnectReport;
   /** Kill the background process and clean up. Safe to call even if the
    * process has already exited. */
   readonly abort: () => void;
@@ -358,10 +349,10 @@ export type StreamedShellRunner = (
 export const CONNECT_TIMEOUT_MS = 300_000;
 
 /**
- * Default streamed runner: spawns the process, reads stdout line by line,
- * resolves as soon as `parseConnectOutput` finds a sign-in URL (or when the
- * process exits without one). Keeps the process alive until the safety
- * timeout or an explicit `abort()`.
+ * Default streamed runner: spawns the process, reads its NEWLINE-DELIMITED
+ * `--json` reports line by line, and resolves as soon as a `needs-sign-in`
+ * report hands over the sign-in page (or when the process exits). Keeps the
+ * process alive until the safety timeout or an explicit `abort()`.
  */
 function killConnectTree(child: { pid?: number; kill: () => boolean }): void {
   const pid = child.pid;
@@ -386,6 +377,10 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     let stdout = '';
     let stderr = '';
     let resolved = false;
+    let consumed = 0;
+    // The one copy of the run's answer: the last report received. Nothing
+    // else is remembered and nothing is inferred from it.
+    let report: SquireConnectReport | undefined;
 
     // This timer bounds the ceremony itself, not just the wait for its URL: it
     // stays armed after the surface is published, because nothing downstream
@@ -395,7 +390,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     const safetyTimer = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        resolve({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
+        resolve({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
       }
       killConnectTree(child);
     }, CONNECT_TIMEOUT_MS);
@@ -429,43 +424,55 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       finish(result);
     };
 
-    // Each stream is parsed on its OWN bytes: joining them appends a newline
-    // to whatever partial stdout has arrived, and that synthetic terminator is
-    // exactly what lets a URL split across two chunks look whole.
-    const checkOutput = () => {
-      const signIn = parseConnectOutput(stdout) ?? parseConnectOutput(stderr);
-      if (signIn) {
-        finish({ stdout, stderr, signIn, abort });
+    // Only COMPLETE lines that have been read so far: a chunk can end in the
+    // middle of a report, and half a JSON line must never be parsed (or
+    // remembered) as one.
+    const consumeReports = (final: boolean) => {
+      const pending = stdout.slice(consumed);
+      const lastNewline = pending.lastIndexOf('\n');
+      if (lastNewline < 0 && !final) return;
+      const complete = lastNewline < 0 ? pending : pending.slice(0, lastNewline);
+      for (const line of complete.split('\n')) {
+        if (line.trim() === '') continue;
+        const parsed = parseConnectReport(line);
+        if (parsed) report = parsed;
+      }
+      consumed += lastNewline < 0 ? pending.length : lastNewline + 1;
+    };
+
+    const publishSignIn = () => {
+      consumeReports(false);
+      // A `needs-sign-in` report carries the page by contract. Hand it to the
+      // phone while the connect process is still alive, then keep waiting.
+      if (report?.state === 'needs-sign-in' && report.sign_in_url) {
+        finish({ stdout, stderr, pid: child.pid ?? undefined, report, abort });
       }
     };
 
-    // The child is gone, so its buffers ARE complete: a last line with no
-    // trailing newline is now a whole one.
-    const finalSignIn = (): ConnectorSignIn | undefined =>
-      parseConnectOutput(`${stdout}\n`) ?? parseConnectOutput(`${stderr}\n`);
-
     child.stdout?.on('data', (chunk: Buffer | string) => {
       stdout += String(chunk);
-      checkOutput();
+      publishSignIn();
     });
 
+    // stderr is captured for diagnostics only. Under `--json` Squire keeps
+    // human copy there, and none of it ever reaches the person.
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderr += String(chunk);
-      checkOutput();
     });
 
     child.on('close', () => {
+      consumeReports(true);
       settle({
         stdout,
         stderr,
         pid: child.pid ?? undefined,
-        signIn: finalSignIn(),
+        report,
         abort: () => {},
       });
     });
 
     child.on('error', () => {
-      settle({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
+      settle({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
     });
   });
 
@@ -476,153 +483,140 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
 });
 
 /**
- * PREFERENCE, not a gate. Squire today serves its ceremony from exactly two
- * known surfaces: the headless noVNC tunnel (`https://<host>/#p=<password>`)
- * and the hosted install confirm page (`https://<host>/install…`). A URL
- * matching either wins outright — but when Squire serves the ceremony from a
- * surface nobody anticipated (a new tunnel host, a renamed confirm path), the
- * picker still has to hand the person a page instead of failing closed.
- */
-function isKnownCeremonySurface(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return false;
-    return parsed.hash.startsWith('#p=') || /(^|\/)install(\/|$)/.test(parsed.pathname);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * NEGATIVE rules, which fail open: only URLs that provably belong to somebody
- * other than Squire are excluded. npm's update notifier writes its changelog
- * link to stderr, and a failed tunnel rig carries Cloudflare's docs link in
- * the stderr tail Squire quotes back. Anything else is a legitimate fallback
- * candidate when no known surface matched.
- */
-function isForeignUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    if (host === 'developers.cloudflare.com') return true;
-    // npm's update notifier link specifically, not every github.com URL.
-    if (host === 'github.com' && parsed.pathname.toLowerCase().startsWith('/npm/cli')) return true;
-    return host === 'npmjs.com' || host === 'www.npmjs.com';
-  } catch {
-    return true;
-  }
-}
-
-const BOXED_ROW = /^\s*\u2502(.*)\u2502\s*$/;
-/** A frame's closing border: box-drawing glyphs alone (the TOP border carries
- *  the title, so only the bottom one can match). */
-const BOX_BORDER = /^\s*[\u2500-\u257F]+\s*$/;
-
-/**
- * Rejoin ONE box's rows. Every row of a box is rendered to the same inner
- * width over the same horizontal padding, so the padding is the narrowest
- * leading and trailing run of spaces its non-blank rows carry — never a
- * constant, because boxen's `padding: 1` shorthand is three columns and
- * Squire's explicit `{left:1,right:1}` is one. A row whose content reaches
- * that content area's right edge was hard-wrapped, so the next row continues
- * it rather than starting a line of its own.
- */
-function rejoinBoxRows(cells: readonly string[]): string[] {
-  const written = cells.filter((cell) => cell.trim() !== '');
-  const pad = (measure: (cell: string) => number): number =>
-    written.length === 0 ? 0 : Math.min(...written.map(measure));
-  const left = pad((cell) => cell.length - cell.trimStart().length);
-  const right = pad((cell) => cell.length - cell.trimEnd().length);
-  const lines: string[] = [];
-  let carry: string | undefined;
-  for (const cell of cells) {
-    const content = cell.slice(left, cell.length - right);
-    const text = content.replace(/\s+$/, '');
-    carry = (carry ?? '') + text;
-    if (text.length < content.length) {
-      lines.push(carry);
-      carry = undefined;
-    }
-  }
-  if (carry !== undefined) lines.push(carry);
-  return lines;
-}
-
-/**
- * Squire prints the ceremony URL inside a fixed-width boxen frame, and boxen
- * HARD-WRAPS a token wider than the frame — a long quick-tunnel host splits
- * the URL across two rows. Rejoin each frame's rows before reading a URL out
- * of it, or the phone is handed the first 74 characters of a live link.
+ * The connect report fields this helper reads. Re-declared here because the
+ * helper cannot import Squire's CLI; the contract lives in Squire's
+ * `apps/mcp/src/install/connect-report.ts` and this is a consumer of it.
  *
- * Only a frame whose CLOSING BORDER has arrived is rejoined. The streamed
- * runner re-reads the whole buffer on every chunk, so a frame still being
- * delivered yields nothing at all and is read whole on the next chunk —
- * emitting its rows early would publish that same 74-character fragment,
- * which parses as a perfectly good tunnel URL.
+ * `state` is a plain string because an unrecognised state stays unrecognised
+ * and is never coerced into a Beeline lifecycle. `holder` and
+ * `browser_location` are kept as read and rendered by kind.
  */
-export function unframeBoxedOutput(output: string): string {
-  const lines: string[] = [];
-  let box: string[] = [];
-  for (const row of output.split('\n')) {
-    const framed = BOXED_ROW.exec(row);
-    if (framed) {
-      box.push(framed[1] ?? '');
-      continue;
-    }
-    if (box.length > 0 && BOX_BORDER.test(row)) lines.push(...rejoinBoxRows(box));
-    box = [];
-    lines.push(row);
-  }
-  return lines.join('\n');
+export interface SquireConnectAccount {
+  readonly id: string;
+  /** What Squire's probe actually saw: `[]` = looked and found nothing;
+   *  `null` = could not read the profile at all. These are different
+   *  answers, so null is never flattened into an empty list. */
+  readonly providers: readonly string[] | null;
+}
+
+export interface SquireConnectReport {
+  readonly state: string;
+  readonly terminal: boolean;
+  readonly reason: string | null;
+  readonly sign_in_url: string | null;
+  readonly account: SquireConnectAccount | null;
+  readonly holder: unknown;
+  readonly browser_location: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function connectAccount(raw: unknown): SquireConnectAccount | null {
+  if (!isRecord(raw) || typeof raw.id !== 'string') return null;
+  return {
+    id: raw.id,
+    // An absent or unreadable `providers` is `null` (could not look), never
+    // `[]` (looked and found nothing).
+    providers: Array.isArray(raw.providers)
+      ? raw.providers.filter((provider): provider is string => typeof provider === 'string')
+      : null,
+  };
 }
 
 /**
- * Read the sign-in surface out of Squire's own connect output. Both surfaces
- * it prints are pages the in-app webview shows, so the method is the same for
- * either. A URL is taken only once a terminator proves it is whole — the
- * streamed runner reads partial chunks, and half a tunnel host parses as a
- * perfectly valid URL.
+ * One line of Squire's `connect --json` stream, or undefined when the line is
+ * not a connect report. The last report received is the run's answer.
  */
-export function parseConnectOutput(output: string): ConnectorSignIn | undefined {
-  const urls = unframeBoxedOutput(output).match(/https:\/\/[^\s"'<>]+(?=[\s"'<>])/g) ?? [];
-  const preferred = urls.find(isKnownCeremonySurface);
-  if (preferred) return { method: 'streamed-page', url: preferred };
-  // No known Squire surface matched. Fail OPEN: take the best remaining
-  // candidate rather than returning nothing and stranding the sign-in, and
-  // say in the log which URL was chosen and why.
-  const fallback = urls.find((url) => !isForeignUrl(url));
-  if (fallback) {
-    console.log(
-      `[body] squire connect: no known ceremony surface matched; using fallback URL ${fallback}`,
-    );
-    return { method: 'streamed-page', url: fallback };
+export function parseConnectReport(line: string): SquireConnectReport | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
   }
+  if (!isRecord(parsed) || typeof parsed.state !== 'string') return undefined;
+  return {
+    state: parsed.state,
+    terminal: parsed.terminal === true,
+    reason: typeof parsed.reason === 'string' ? parsed.reason : null,
+    sign_in_url: typeof parsed.sign_in_url === 'string' ? parsed.sign_in_url : null,
+    account: connectAccount(parsed.account),
+    holder: parsed.holder,
+    browser_location: parsed.browser_location,
+  };
+}
+
+/** Squire's reason codes, in the words a person reads. The code is the
+ *  contract; this map is only its wording. */
+const CONNECT_REASON_LINES: Record<string, string> = {
+  provider_session_missing: "the bot's Chrome profile has no live provider session",
+  requested_provider_missing: 'the provider sign-in you asked to refresh did not complete',
+  account_mismatch: 'this machine is bound to a different account',
+  profile_unverifiable: "the bot's Chrome profile could not be verified",
+  install_expired: 'the sign-in page expired before it was used',
+  cached_cookie_evidence: 'the shared profile already carried the session',
+  run_failed: 'the connect run failed before it could finish',
+};
+
+/** Who holds the bot profile, as the report named them. */
+function holderLine(raw: unknown): string | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (raw.kind === 'other') {
+    const pid = typeof raw.pid === 'number' ? raw.pid : undefined;
+    return pid === undefined
+      ? 'another Trusty Squire session is using the browser'
+      : squireForeignClaimAction({ host: hostname(), pid, startTime: null });
+  }
+  if (raw.kind === 'unknown') return 'another process may be using the browser';
   return undefined;
 }
 
 /**
- * True when connect short-circuited on Squire's preflight having VERIFIED the
- * live provider session: the shared profile already carries it, so connect
- * refreshed the agent config and exited with no ceremony. Squire's sibling
- * outcome — config refreshed but the session unverifiable — says in its own
- * words that it will not call that connected, and neither may we: reporting
- * it green would leave an expired session with no way back to a ceremony.
+ * What blocks a connect, in one line for the person, from the typed report
+ * alone. `undefined` for a run that connected or is waiting on a human.
  */
-export function parseConnectAlreadyConnected(output: string): boolean {
-  return /Already connected \(/i.test(output) && /config refreshed/i.test(output);
+export function connectBlockedLine(report: SquireConnectReport): string | undefined {
+  if (report.state === 'connected' || report.state === 'needs-sign-in') return undefined;
+  const holder = holderLine(report.holder);
+  if (holder) return holder;
+  if (report.reason && CONNECT_REASON_LINES[report.reason]) {
+    return CONNECT_REASON_LINES[report.reason]!;
+  }
+  const location = isRecord(report.browser_location) ? report.browser_location : undefined;
+  if (location?.kind === 'unreachable') {
+    return 'the sign-in page could not be shown on this machine';
+  }
+  // An unrecognised state is named verbatim, never coerced into one of
+  // Squire's four.
+  return `Trusty Squire reported the connect state "${report.state}"`;
 }
 
 /**
- * Squire's preflight hint tells the owner to close other sessions and re-run
- * with `--force-relogin`. The broker is multi-session, so that precondition
- * is not true and the line must never reach the Workbench as a failed step.
+ * Where the report says the sign-in page opened, as the wire carries it. The
+ * helper reads Squire's own placement answer; it never detects a display.
  */
-export function withoutForceReloginHint(output: string): string {
-  return output
-    .split('\n')
-    .filter((line) => !/--force-relogin/.test(line))
-    .join('\n')
-    .trim();
+export function connectBrowserLocation(raw: unknown): ConnectorBrowserLocation | undefined {
+  if (!isRecord(raw)) return undefined;
+  switch (raw.kind) {
+    case 'host_screen':
+      return { kind: 'host_screen' };
+    case 'virtual':
+      return typeof raw.url === 'string' ? { kind: 'virtual', url: raw.url } : undefined;
+    case 'unreachable':
+      return {
+        kind: 'unreachable',
+        reason:
+          typeof raw.reason === 'string' ? raw.reason : 'the sign-in page could not be shown',
+      };
+    case 'none':
+      return { kind: 'none' };
+    case 'unknown':
+      return typeof raw.reason === 'string' ? { kind: 'unknown', reason: raw.reason } : undefined;
+    default:
+      return undefined;
+  }
 }
 
 export type InstallSquireOptions = {
@@ -630,10 +624,10 @@ export type InstallSquireOptions = {
   /** Runs short-lived commands (the trusty-squire version probe). */
   readonly run?: ShellRunner;
   /**
-   * Streamed runner for Squire's `connect` command. Captures the sign-in URL
-   * from live stdout as soon as it is printed (before the process exits).
-   * The connect process stays alive in the background for the human to
-   * complete sign-in.
+   * Streamed runner for Squire's `connect --json` command. Reads the typed
+   * reports from live stdout and hands over the sign-in page as soon as one
+   * carries it (before the process exits). The connect process stays alive in
+   * the background for the human to complete sign-in.
    */
   readonly streamRun?: StreamedShellRunner;
   /** The Squire MCP used for the post-install pairing probe. */
@@ -659,7 +653,6 @@ export type InstallSquireResult = {
   readonly steps: readonly ConnectorStep[];
   readonly signIn?: ConnectorSignIn;
   readonly squireVersion?: string;
-  readonly signedInAs?: string;
   readonly errorMessage?: string;
 };
 
@@ -684,30 +677,28 @@ export async function installedSquireVersion(
 }
 
 /**
- * The current published release, straight from the registry. Undefined when
- * the registry is unreachable — verification is then skipped (never block a
- * connect on a probe we cannot make).
+ * The registry's version for the connect spec this helper runs. Undefined
+ * when the registry is unreachable — verification is then skipped (never
+ * block a connect on a probe we cannot make).
  */
 export async function currentSquireRelease(run: ShellRunner): Promise<string | undefined> {
-  const probe = await run('npm', ['view', SQUIRE_MCP_NAME, 'version']);
+  const probe = await run('npm', ['view', SQUIRE_CONNECT_PACKAGE, 'version']);
   if (probe.code !== 0) return undefined;
   return probe.stdout.match(/\d+\.\d+\.\d+[^\s]*/)?.[0];
 }
 
 /**
- * What `npx` must be told to run a CURRENT Squire copy. The plain `@latest`
- * spec is used when the resolved version already matches the current release
- * (or the registry could not be asked); a stale copy is re-resolved with
- * `--prefer-online`, and if the cache still refuses to move, connect runs the
- * exact current release — resolved at RUNTIME from the registry, never pinned
- * in source.
+ * What `npx` must be told to run the pinned Squire release whose `--json`
+ * connect report this helper reads. The plain spec is used when the resolved
+ * version already matches the registry (or the registry could not be asked);
+ * a stale npx copy is re-resolved with `--prefer-online`.
  */
 export type SquireConnectResolution = {
   /** The npx arguments selecting the package (spec and cache flags). */
   readonly npxArgs: readonly string[];
   /** The version npx resolved during verification, when it answered. */
   readonly resolvedVersion?: string;
-  /** The current published release, when the registry answered. */
+  /** The registry's version for this spec, when it answered. */
   readonly currentRelease?: string;
   /** True when the first probe resolved a stale copy and we re-resolved. */
   readonly reResolved: boolean;
@@ -735,8 +726,8 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
       reResolved: true,
     };
   }
-  // The cache will not move: run the exact current release, resolved from the
-  // registry just now — still @latest semantics, never a source-level pin.
+  // The cache will not move: run the exact release, resolved from the
+  // registry just now.
   return {
     npxArgs: ['-y', `${SQUIRE_MCP_NAME}@${currentRelease}`],
     ...(fresh !== undefined ? { resolvedVersion: fresh } : {}),
@@ -745,24 +736,22 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
-/** The account line Squire prints once a human completes sign-in. */
-export function parseSignedInAs(output: string): string | undefined {
-  return output.match(/signed in as ([^\s,;]+)/i)?.[1];
-}
-
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
  * Order: helper reached → trusty-squire installed → waiting for sign-in →
  * paired to the workspace. The connect command runs through a STREAMING
- * runner that captures the ceremony URL from live stdout as soon as it is
- * printed (before the process exits), or continues with no ceremony at all
- * when Squire reports the shared profile is already connected. The connect
- * process stays alive in the background for the human to complete sign-in.
- * The post-install `pairSquire` probe confirms the account is live.
+ * runner that reads Squire's newline-delimited `--json` reports and hands the
+ * phone the sign-in page the moment a `needs-sign-in` report carries one, or
+ * continues with no page at all when the last report says the shared profile
+ * is already connected. The connect process stays alive in the background for
+ * the human to complete sign-in. The post-install `pairSquire` probe confirms
+ * the account is live.
  *
- * A failed step ends the report with a clear reason and everything after it
- * stays pending.
+ * A run that reports neither `connected` nor `needs-sign-in` is blocked: the
+ * step and the error carry the typed report's own reason, never Squire's
+ * stderr. A failed step ends the report with that reason and everything after
+ * it stays pending.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const profileDir = options.profileDir ?? squireChromeProfileDir();
@@ -801,7 +790,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   }
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
-  // one against the current published release.
+  // one against the release this reader is written for.
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
     log(
@@ -811,43 +800,56 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
 
   // Connect uses the shared host Chrome (or its headless noVNC URL). Do not
   // pass --skip-browser or --force-relogin: those sign the human in outside
-  // the bot profile and clear cookies the broker can already share.
+  // the bot profile and clear cookies the broker can already share. `--json`
+  // is what puts the typed report on stdout.
   const install = await streamRun(
     'npx',
-    [...resolution.npxArgs, 'connect', '--target=codex'],
+    [...resolution.npxArgs, 'connect', '--target=codex', '--json'],
     squireConnectProcessEnv(profileDir),
   );
-  const alreadyConnected =
-    !install.signIn && parseConnectAlreadyConnected(`${install.stdout}\n${install.stderr}`);
-  if (!install.signIn && !alreadyConnected) {
-    const stderr = withoutForceReloginHint(install.stderr);
-    let stepReason = stderr || 'connect printed no sign-in URL';
-    let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';
-    if (isSquireBrowserSessionFailure(stderr)) {
-      const again = reclaimSquireProfileClaim({ log, profileDir, lockRoot });
-      if (again.kind === 'blocked-foreign') {
-        stepReason = again.action;
-        failReason = again.action;
-      }
-    }
-    push(step('trusty-squire installed', 'failed', stepReason));
-    return fail(failReason);
+  const report = install.report;
+  const version = resolution.resolvedVersion;
+
+  // Nothing to render: a run that printed no report at all. Never Squire's
+  // stderr — that is a command-line error, not something a person can act on.
+  if (!report) {
+    const reason = 'Trusty Squire did not report a connect result';
+    push(step('trusty-squire installed', 'failed', reason));
+    return fail(reason);
+  }
+  // A `needs-sign-in` report promises a page. Anything else that is not
+  // `connected` is blocked, and its own reason is what the person reads.
+  if (report.state === 'needs-sign-in' && !report.sign_in_url) {
+    const reason = 'Trusty Squire reported a sign-in without a page';
+    push(step('trusty-squire installed', 'failed', reason));
+    return fail(reason);
+  }
+  if (report.state !== 'connected' && report.state !== 'needs-sign-in') {
+    const reason = connectBlockedLine(report) ?? 'Trusty Squire could not connect';
+    push(step('trusty-squire installed', 'failed', reason));
+    return fail(reason);
   }
   // The connect process stays alive in the background for the human to sign in.
   // `install.abort()` can kill it (safety timeout also fires after 5 min).
 
   // The version was verified before connect ran; the step records what is
   // actually installed, not what a stale cache would have served.
-  const version = resolution.resolvedVersion;
   push(step(`trusty-squire${version ? ` ${version}` : ''} installed`, 'done'));
 
-  const signIn = install.signIn;
-  const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
+  const location = connectBrowserLocation(report.browser_location);
+  const signIn: ConnectorSignIn | undefined =
+    report.state === 'needs-sign-in' && report.sign_in_url
+      ? {
+          method: 'streamed-page',
+          url: report.sign_in_url,
+          ...(location ? { browserLocation: location } : {}),
+        }
+      : undefined;
 
   // Surface the sign-in URL immediately so the phone paints the noVNC page.
   // The step settles only when there is nothing left to press: a run that
   // printed a ceremony is still waiting on the human, while the already-
-  // connected short-circuit has nobody to wait for.
+  // connected report has nobody to wait for.
   push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
@@ -856,9 +858,8 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     return {
       status: 'installing',
       steps,
-      signIn,
+      ...(signIn ? { signIn } : {}),
       ...(version ? { squireVersion: version } : {}),
-      ...(signedInAs ? { signedInAs } : {}),
     };
   }
   push(step('paired to workspace', 'done'));
@@ -867,22 +868,19 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // Chrome carries a provider session — and `installConnector` completes the
   // row in one write, which navigates the connect screen off the surface the
   // human still has to press. This run stays `installing` and hands the phone
-  // its ceremony; a LATER run reaches Squire's verified short-circuit, prints
-  // no URL, and only then is this connector connected.
+  // its ceremony; a LATER run whose report says `connected` completes it.
   if (signIn) {
     return {
       status: 'installing',
       steps,
       signIn,
       ...(version ? { squireVersion: version } : {}),
-      ...(signedInAs ? { signedInAs } : {}),
     };
   }
   return {
     status: 'connected',
     steps,
     ...(version ? { squireVersion: version } : {}),
-    ...(signedInAs ? { signedInAs } : {}),
   };
 }
 

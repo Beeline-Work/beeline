@@ -13,14 +13,11 @@ import {
   connectorIdentityHandle,
   connectorIdentityId,
   connectorInstrument,
-  GOOGLE_BLOCKED_ON_SQUIRE_LINE,
-  googleBlockedOnSquireBrowser,
   googleEntryConnector,
   googleEntryDescription,
   googleEntryState,
   isConnectorIdentityId,
   isGoogleToolConnectorId,
-  isSquireBrowserSessionFailure,
   ledgerBytes,
   ledgerStamp,
   resolveGoogleConnectTarget,
@@ -370,28 +367,7 @@ describe('the ONE Google entry', () => {
     ).toBe('google-gmail');
   });
 
-  it('does not treat a Trusty Squire browser-session failure as Google’s own breakage', () => {
-    const busy =
-      'another Trusty Squire session is already using the browser - close it first';
-    expect(isSquireBrowserSessionFailure(busy)).toBe(true);
-    const bled = [
-      { ...tool('trusty-squire'), status: 'error' as const, errorMessage: busy },
-      { ...tool('google-gmail'), status: 'error' as const, errorMessage: busy },
-      tool('google-calendar'),
-      tool('google-drive'),
-      tool('google-youtube'),
-    ];
-    expect(googleEntryState(bled)).toBe('connect');
-    expect(googleBlockedOnSquireBrowser(bled)).toBe(true);
-    expect(googleEntryDescription(bled, googleEntryState(bled))).toBe(
-      GOOGLE_BLOCKED_ON_SQUIRE_LINE,
-    );
-    const entry = googleEntryConnector(bled);
-    expect(entry?.status).toBe('disconnected');
-    expect(entry?.errorMessage).toBeUndefined();
-  });
-
-  it('still reports a genuine Google error as Google’s own', () => {
+  it('reports a failed Google tool as Google’s own, whatever its text', () => {
     const failed = [
       tool('trusty-squire', 'connected'),
       { ...tool('google-gmail'), status: 'error' as const, errorMessage: 'scope refused' },
@@ -400,7 +376,6 @@ describe('the ONE Google entry', () => {
       tool('google-youtube'),
     ];
     expect(googleEntryState(failed)).toBe('error');
-    expect(googleBlockedOnSquireBrowser(failed)).toBe(false);
     expect(googleEntryConnector(failed)?.errorMessage).toBe('scope refused');
   });
 });

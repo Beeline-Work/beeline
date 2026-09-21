@@ -30,11 +30,7 @@ import {
   refreshableTokenSource,
   type GoogleCredentials,
 } from './google-workspace-client.js';
-import {
-  isSquireBrowserSessionFailure,
-  SQUIRE_BROWSER_BUSY_GOOGLE_REASON,
-  type SquireMcpClient,
-} from './connector-squire.js';
+import type { SquireMcpClient } from './connector-squire.js';
 
 /** The Google scopes each tool connector needs (scope minimization per tool). */
 export const GOOGLE_TOOL_SCOPES: Record<string, readonly string[]> = {
@@ -82,12 +78,6 @@ export async function readGoogleCredentialsFromVault(
     raw = await mcp.call('google_oauth_credentials', {});
   } catch (error) {
     const detail = describe(error);
-    if (isSquireBrowserSessionFailure(detail)) {
-      return {
-        source: 'unavailable',
-        reason: SQUIRE_BROWSER_BUSY_GOOGLE_REASON,
-      };
-    }
     return {
       source: 'unavailable',
       reason:
@@ -269,9 +259,6 @@ export async function installGoogleTool(
       : await (async () => {
           const oneClick = await readGoogleCredentialsFromVault(options.squire);
           if (oneClick.source === 'squire') return oneClick;
-          // A busy Squire browser is not "no credentials" — do not fall
-          // through to the manual file and do not keep Squire's own error.
-          if (isSquireBrowserSessionFailure(oneClick.reason)) return oneClick;
           return loadManualGoogleCredentials(options.home, options.env);
         })();
   if (!('credentials' in resolved)) {

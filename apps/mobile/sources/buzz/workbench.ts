@@ -20,21 +20,6 @@ export type WorkbenchConnectorId =
   | 'google-drive'
   | 'google-youtube';
 
-/** True for Squire's busy-browser refusal (hyphen or em dash). A Google
- *  tool row that carries this text is blocked on Trusty Squire, not broken
- *  in its own right. */
-export function isSquireBrowserSessionFailure(text: string | undefined | null): boolean {
-  if (typeof text !== 'string' || text.length === 0) return false;
-  return (
-    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
-    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
-  );
-}
-
-/** The quiet line when Google cannot proceed because Squire's browser is busy. */
-export const GOOGLE_BLOCKED_ON_SQUIRE_LINE =
-  'Connect Trusty Squire first — its browser session is busy';
-
 export function isGoogleToolConnectorId(
   id: string,
 ): id is 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' {
@@ -176,23 +161,15 @@ function googleEntryTools(
 
 /** The single Google entry's state across its four tool connectors: fully
  * connected → `connected`; any install in flight → `installing`; any tool
- * error that is Google's own → `error`; a Trusty Squire browser-session
- * failure on a Google row is not Google's breakage (see
- * `googleBlockedOnSquireBrowser`); SOME connected (a top-up is available) →
- * `repair`; none connected → `connect`. */
+ * error → `error`; SOME connected (a top-up is available) → `repair`; none
+ * connected → `connect`. */
 export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' | 'connect';
 
 export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
   if (tools.some((tool) => tool.status === 'installing')) return 'installing';
-  if (
-    tools.some(
-      (tool) => tool.status === 'error' && !isSquireBrowserSessionFailure(tool.errorMessage),
-    )
-  ) {
-    return 'error';
-  }
+  if (tools.some((tool) => tool.status === 'error')) return 'error';
   if (tools.some((tool) => tool.status === 'connected')) return 'repair';
   return 'connect';
 }
@@ -207,9 +184,7 @@ export function googleEntryConnector(
   if (!tools.length) return undefined;
   const state = googleEntryState(connectors);
   const connected = tools.find((tool) => tool.status === 'connected');
-  const failed = tools.find(
-    (tool) => tool.status === 'error' && !isSquireBrowserSessionFailure(tool.errorMessage),
-  );
+  const failed = tools.find((tool) => tool.status === 'error');
   return {
     id: GOOGLE_ENTRY_ID,
     name: 'Google Workspace',
@@ -230,25 +205,10 @@ export function googleEntryConnector(
   };
 }
 
-export function googleBlockedOnSquireBrowser(
-  connectors: readonly WorkbenchConnector[],
-): boolean {
-  const squire = connectors.find((connector) => connector.id === 'trusty-squire');
-  if (isSquireBrowserSessionFailure(squire?.errorMessage)) return true;
-  return googleEntryTools(connectors).some(
-    (tool) => tool.status === 'error' && isSquireBrowserSessionFailure(tool.errorMessage),
-  );
-}
-
-/** The quiet line under the single Google entry row. A partially connected
- * set names how much of the one grant is live; a shared Squire browser
- * failure points at Trusty Squire once; otherwise the connected
- * helper/sign-in facts, or the catalog description before anything pairs. */
 export function googleEntryDescription(
   connectors: readonly WorkbenchConnector[],
   state: GoogleEntryState,
 ): string {
-  if (googleBlockedOnSquireBrowser(connectors)) return GOOGLE_BLOCKED_ON_SQUIRE_LINE;
   if (state === 'repair') {
     const tools = googleEntryTools(connectors);
     const connected = tools.filter((tool) => tool.status === 'connected').length;
@@ -301,11 +261,42 @@ export type ConnectorInstallStep = {
 
 export type ConnectorSignInMethod = 'streamed' | 'oauth';
 
+/**
+ * Where Squire's connect report says the sign-in page opened, carried
+ * verbatim from the helper — the app never detects a display. `none` means
+ * the run opened no browser; `unknown` means it could not say.
+ */
+export type ConnectorBrowserLocation =
+  | { kind: 'host_screen' }
+  | { kind: 'virtual'; url: string }
+  | { kind: 'unreachable'; reason: string }
+  | { kind: 'none' }
+  | { kind: 'unknown'; reason: string };
+
 export type ConnectorSignIn = {
   method: ConnectorSignInMethod;
   /** Exactly the URL the server relays — the app opens what it is told. */
   url: string;
+  /** Where the page opened, when the helper's report said. */
+  browserLocation?: ConnectorBrowserLocation;
 };
+
+/** One quiet line naming where the sign-in page opened; '' when the report
+ *  did not say. */
+export function connectorSignInLocationLine(
+  location: ConnectorBrowserLocation | undefined,
+): string {
+  switch (location?.kind) {
+    case 'host_screen':
+      return "Sign-in page opened on this machine's screen";
+    case 'virtual':
+      return 'Sign-in page opened on a virtual display';
+    case 'unreachable':
+      return 'Sign-in page could not be shown here';
+    default:
+      return '';
+  }
+}
 
 export type ConnectorInstallState = {
   connectorId: string;

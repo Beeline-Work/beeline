@@ -45,7 +45,6 @@ import {
   installSquire,
   isProcessAlive,
   releaseSquireConnectSession,
-  isSquireBrowserSessionFailure,
   readVault,
   revokeGrants,
   squireConnectSession,
@@ -302,7 +301,6 @@ export class ConnectorAssignmentLoop {
       try {
         const oneClick = await readGoogleCredentialsFromVault(this.squire());
         if (oneClick.source === 'squire') return oneClick;
-        if (isSquireBrowserSessionFailure(oneClick.reason)) return oneClick;
       } catch (error) {
         this.log(`google one-click grant lookup failed: ${describe(error)}`);
       }
@@ -424,7 +422,6 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
-        ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
       });
       await this.reportVault(connectorId);
       return;
@@ -438,7 +435,6 @@ export class ConnectorAssignmentLoop {
       steps: result.steps,
       signIn: result.signIn ?? null,
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
-      ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
     });
     this.watchConnectSignIn();
   }

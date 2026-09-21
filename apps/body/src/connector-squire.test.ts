@@ -33,7 +33,12 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
-import { publishSquireVisibility, resetSquireConnectFacts } from './squire-connect-state.js';
+import {
+  credentialFromSession,
+  noteSquireVaultAuth,
+  publishSquireVisibility,
+  resetSquireConnectFacts,
+} from './squire-connect-state.js';
 
 // The host home owns the shared profile, the connect claim, and the session
 // file, so every default path in this file is re-rooted at a scratch home.
@@ -65,6 +70,14 @@ function writeHostSession(accountId = 'acct_9'): void {
       agent_session_token: 'tok',
     }),
   );
+}
+
+/** The account vault's answer for the session token (never a real host). */
+function vaultAnswers(status = 200): typeof fetch {
+  return (async () =>
+    new Response(status === 200 ? JSON.stringify({ credentials: [] }) : '', {
+      status,
+    })) as unknown as typeof fetch;
 }
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
@@ -561,6 +574,7 @@ describe('installSquire', () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
+      fetch: vaultAnswers(),
       streamRun: async (...args: Parameters<StreamedShellRunner>) => {
         writeHostSession();
         return fakeStreamRunner({
@@ -602,6 +616,7 @@ describe('installSquire', () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
+      fetch: vaultAnswers(),
       // The human finished on the tunnel the previous run published, so this
       // run prints no URL and leaves a signed-in session behind.
       streamRun: async (...args: Parameters<StreamedShellRunner>) => {
@@ -615,6 +630,32 @@ describe('installSquire', () => {
     expect(result.status).toBe('connected');
     expect(result.signIn).toBeUndefined();
     expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
+  it('sends an expired session back to a fresh ceremony, not to connected', async () => {
+    // The session file is still on disk but the account refuses its token,
+    // so pressing Connect must raise a new ceremony rather than report a
+    // dead account as connected forever.
+    writeHostSession();
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: vaultAnswers(401),
+      streamRun: async () => {
+        started += 1;
+        return {
+          stdout: '',
+          stderr: '',
+          signIn: { method: 'streamed-page' as const, url: 'https://tunnel.test/#p=again' },
+          abort: () => {},
+        };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(started).toBe(1);
+    expect(result.status).toBe('installing');
+    expect(result.signIn?.url).toBe('https://tunnel.test/#p=again');
   });
 
   it('does not call a helper connected on Squire\u2019s sentence alone', async () => {
@@ -908,6 +949,9 @@ describe('on-disk profile claim reclaim', () => {
     const dir = claimDir();
     const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
     writeLock(dir.lockPath, holder.pid!);
+    // This helper printed a ceremony once; the browser is somebody else's
+    // now, so that surface is over and must not be served again.
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=mine' });
     let streamed = false;
     const result = await installSquire({
       workspaceId: 'ws-1',
@@ -924,6 +968,7 @@ describe('on-disk profile claim reclaim', () => {
     // row stays installing rather than erroring on every poll until it ends.
     expect(result.status).toBe('installing');
     expect(result.errorMessage).toBeUndefined();
+    expect(result.signIn).toBeUndefined();
     const waiting = result.steps.find((step) => step.label === 'waiting for sign-in');
     expect(waiting?.status).toBe('running');
     expect(waiting?.reason).toContain(String(holder.pid));
@@ -1144,6 +1189,27 @@ describe('vault reads from the session file', () => {
         createdAt: Math.floor(Date.parse('2026-09-20T03:24:15.020Z') / 1000),
       }),
     ]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('treats a refused vault read as an expired credential', async () => {
+    const home = sessionHome();
+    for (const status of [401, 403]) {
+      noteSquireVaultAuth('ok');
+      expect(
+        await readVaultFromSession({
+          configHome: home,
+          fetch: async () => new Response('', { status }),
+        }),
+      ).toBeUndefined();
+      expect(
+        credentialFromSession({
+          apiBaseUrl: 'https://vault.test',
+          accountId: 'acct_9',
+          agentSessionToken: 'tok',
+        }),
+      ).toEqual({ kind: 'expired' });
+    }
     rmSync(home, { recursive: true, force: true });
   });
 

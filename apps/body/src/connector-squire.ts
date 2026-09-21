@@ -61,7 +61,6 @@ import {
   publishSquireVisibility,
   readSquireSession,
   shouldStartSquireConnect,
-  visibilitySignIn,
   type SquireConnectFacts,
   type SquireProcessFact,
 } from './squire-connect-state.js';
@@ -800,6 +799,8 @@ export type InstallSquireOptions = {
    */
   readonly profileDir?: string;
   readonly lockRoot?: string;
+  /** The account-vault read that proves this session's token (test seam). */
+  readonly fetch?: typeof fetch;
 };
 
 export type InstallSquireResult = {
@@ -901,10 +902,12 @@ export function parseSignedInAs(output: string): string | undefined {
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
- * Process, visibility, and credential are observed first. A valid session
- * is connected. A browser another helper holds is waited on, never failed.
- * Connect runs otherwise, and the verdict afterwards is the session this
- * helper owns — never the sentence Squire printed.
+ * Process, visibility, and credential are observed first, and the
+ * credential is the session token the account vault answered for — a file
+ * nobody has proved is expired, not connected. A browser another helper
+ * holds is waited on, never failed. Connect runs otherwise, and the verdict
+ * afterwards is that same proven session, never the sentence Squire
+ * printed.
  *
  * Connect inherits this process's env as it stands, screen and all, and
  * Squire picks the host screen or its own virtual display from that.
@@ -933,14 +936,21 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     facts.credential.kind === 'valid' ? facts.credential.accountId : undefined;
   emit();
 
+  // Somebody else holds the browser, so this helper owns no live ceremony:
+  // whatever surface it published belongs to a connect that is over.
   const wait = (reason?: string): InstallSquireResult => {
+    publishSquireVisibility({ kind: 'none' });
     push(step('trusty-squire installed', 'done'));
     push(step('waiting for sign-in', 'running', reason));
-    const sign = visibilitySignIn(publishedSquireVisibility());
-    return { status: 'installing', steps, ...(sign ? { signIn: sign } : {}) };
+    return { status: 'installing', steps };
   };
 
-  const observed = observeSquireConnectFacts({ profileDir, lockRoot });
+  const provenFacts = async (): Promise<SquireConnectFacts> => {
+    await readVaultFromSession(options.fetch ? { fetch: options.fetch } : undefined);
+    return observeSquireConnectFacts({ profileDir, lockRoot });
+  };
+
+  const observed = await provenFacts();
   if (connectStatusFromFacts(observed) === 'connected') {
     publishSquireVisibility({ kind: 'none' });
     push(step('trusty-squire installed', 'done'));
@@ -958,16 +968,12 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
 
   const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
-  const claim = reclaimSquireProfileClaim({
+  reclaimSquireProfileClaim({
     log,
     profileDir,
     lockRoot,
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
-  if (claim.kind === 'blocked-foreign') {
-    push(step('trusty-squire installed', 'failed', claim.action));
-    return fail(claim.action);
-  }
   const shared = takeSquireConnectClaim({
     log,
     profileDir,
@@ -1041,7 +1047,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(signedInAs ? { signedInAs } : {}),
     };
   }
-  const settled = observeSquireConnectFacts({ profileDir, lockRoot });
+  const settled = await provenFacts();
   return {
     status: connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
     steps,
@@ -1132,7 +1138,7 @@ export async function readVaultFromSession(options?: {
         ...(session.accountId ? { 'x-account-id': session.accountId } : {}),
       },
     });
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       noteSquireVaultAuth('expired');
       return undefined;
     }

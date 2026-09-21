@@ -45,7 +45,7 @@ export type SquireSessionRecord = {
 };
 
 let publishedVisibility: SquireVisibilityFact = { kind: 'none' };
-let vaultAuth: 'unknown' | 'expired' = 'unknown';
+let vaultAuth: 'unknown' | 'ok' | 'expired' = 'unknown';
 
 export function publishedSquireVisibility(): SquireVisibilityFact {
   return publishedVisibility;
@@ -55,8 +55,10 @@ export function publishSquireVisibility(next: SquireVisibilityFact): void {
   publishedVisibility = next;
 }
 
+/** The account vault's own answer for this session's token — the one
+ *  liveness fact behind a `valid` credential. */
 export function noteSquireVaultAuth(outcome: 'ok' | 'expired'): void {
-  vaultAuth = outcome === 'expired' ? 'expired' : 'unknown';
+  vaultAuth = outcome;
 }
 
 export function resetSquireConnectFacts(): void {
@@ -99,13 +101,21 @@ export function readSquireSession(configHome?: string): SquireSessionRecord | un
   }
 }
 
+/**
+ * A session file on disk is not a signed-in account. The token is `valid`
+ * only once the account vault has answered for it (`noteSquireVaultAuth`);
+ * a token that is refused, or that nothing has proved this run, is
+ * `expired` — which is what sends Connect/Retry to a fresh ceremony
+ * instead of reporting a dead account as connected.
+ */
 export function credentialFromSession(
   session: SquireSessionRecord | undefined,
   visibility: SquireVisibilityFact = publishedVisibility,
 ): SquireCredentialFact {
-  if (vaultAuth === 'expired' && session?.agentSessionToken) return { kind: 'expired' };
-  if (session?.agentSessionToken && session.accountId) {
-    return { kind: 'valid', accountId: session.accountId };
+  if (session?.agentSessionToken) {
+    return vaultAuth === 'ok' && session.accountId
+      ? { kind: 'valid', accountId: session.accountId }
+      : { kind: 'expired' };
   }
   if (visibility.kind !== 'none' && visibility.held) return { kind: 'challenge' };
   return { kind: 'none' };
@@ -132,10 +142,4 @@ export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
   if (facts.credential.kind === 'valid') return false;
   if (facts.process.kind === 'foreign') return false;
   return true;
-}
-
-export function visibilitySignIn(
-  visibility: SquireVisibilityFact,
-): { method: 'streamed-page'; url: string } | undefined {
-  return visibility.kind === 'remote' ? { method: 'streamed-page', url: visibility.url } : undefined;
 }

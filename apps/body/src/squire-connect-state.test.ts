@@ -142,7 +142,7 @@ describe('credential and connect status', () => {
     expect(credentialFromSession(undefined)).toEqual({ kind: 'challenge' });
   });
 
-  it('marks the credential expired after a 401 vault read', () => {
+  it('marks the credential expired after a refused vault read', () => {
     noteSquireVaultAuth('expired');
     expect(
       credentialFromSession({
@@ -151,5 +151,23 @@ describe('credential and connect status', () => {
         agentSessionToken: 'dead',
       }),
     ).toEqual({ kind: 'expired' });
+  });
+
+  it('calls a session valid only once the vault has answered for its token', () => {
+    const session = {
+      apiBaseUrl: 'https://vault.test',
+      accountId: 'acct_9',
+      agentSessionToken: 'tok',
+    };
+    // A file nobody has proved this run is not a signed-in account.
+    expect(credentialFromSession(session)).toEqual({ kind: 'expired' });
+    expect(shouldStartSquireConnect(facts({ credential: credentialFromSession(session) }))).toBe(
+      true,
+    );
+    noteSquireVaultAuth('ok');
+    expect(credentialFromSession(session)).toEqual({ kind: 'valid', accountId: 'acct_9' });
+    expect(
+      connectStatusFromFacts(facts({ credential: credentialFromSession(session) })),
+    ).toBe('connected');
   });
 });

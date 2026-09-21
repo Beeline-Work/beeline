@@ -13,7 +13,7 @@ import { LAYOUT_BREAKPOINTS } from './utils/layoutClass';
 import type { LocalSettings } from './sync/localSettings';
 import { loadLocalSettings } from './sync/persistence';
 import {
-    applyPersistedAndroidLaunchAppearance,
+    applyEffectiveAndroidLaunchAppearance,
     pinAndroidLaunchAppearance,
 } from './buzz/android-launch-appearance';
 
@@ -73,7 +73,7 @@ function applyRootBackground(themeName: AppThemeName): void {
 }
 
 applyRootBackground(initialThemeName);
-applyPersistedAndroidLaunchAppearance();
+applyEffectiveAndroidLaunchAppearance();
 
 /** The Settings → Appearance toggle's write path: switches the live Unistyles
  *  theme and carries the native root/system chrome along with it, the same
@@ -95,7 +95,7 @@ export function setAppAppearance(
 }
 
 /** Settings → Appearance only. Text-size changes keep using setAppDisplay so
- *  a never-touched Appearance stays system-following for the next splash. */
+ *  the live theme and root chrome move without re-pinning the splash. */
 export function applyAppearanceChoice(
     appearance: LocalSettings['appearance'],
     uiSize: LocalSettings['uiSize'],

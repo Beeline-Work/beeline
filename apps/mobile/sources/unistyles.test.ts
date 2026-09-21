@@ -84,6 +84,7 @@ describe('the appearance toggle wired into Unistyles', () => {
   it('setAppAppearance flips the live Unistyles theme and the native root color', async () => {
     const { boneTheme } = await import('./theme');
     const { setAppAppearance } = await import('./unistyles');
+    setAndroidNightMode.mockClear();
 
     setAppAppearance('light', 'large');
 
@@ -93,14 +94,20 @@ describe('the appearance toggle wired into Unistyles', () => {
     expect(setAndroidNightMode).not.toHaveBeenCalled();
   });
 
-  it('pins the next Android splash only when Appearance is chosen', async () => {
+  it('pins the cold-start splash from the effective appearance', async () => {
+    await import('./unistyles');
+
+    expect(setAndroidNightMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('re-pins the next Android splash when Appearance is chosen', async () => {
     const { applyAppearanceChoice, setAppDisplay } = await import('./unistyles');
+    setAndroidNightMode.mockClear();
 
     setAppDisplay('light', 'medium');
     expect(setAndroidNightMode).not.toHaveBeenCalled();
 
     applyAppearanceChoice('light', 'medium');
     expect(setAndroidNightMode).toHaveBeenCalledWith('light');
-    expect(mmkvValues.get('appearance-launch')).toBe('light');
   });
 });

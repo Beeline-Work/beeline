@@ -13,8 +13,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *
  * Official guidance: UiModeManager.setApplicationNightMode on API 31+.
  * Never call MODE_NIGHT_AUTO here — that is time-of-day, not follow-system.
- * Leaving the mode unset is what keeps a never-touched Appearance
- * system-following.
+ * The app's effective appearance is always light or dark (default dark) and
+ * is never follow-system, so every cold start pins this mode; the only
+ * unpinned window is before the first JS start after a fresh install.
  */
 class AndroidLaunchAppearanceModule : Module() {
   override fun definition() = ModuleDefinition {

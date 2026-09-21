@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { beelineThemes } from '@/buzz/groknight';
 
-const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
 const memberRow = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',

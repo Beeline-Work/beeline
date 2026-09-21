@@ -211,6 +211,43 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
+  it('arms the recovery reconcile when a pushed corner start fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-corner-fail-'));
+    roots.push(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getCornerRestoreState') throw new Error('corner restore read failed');
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      expect(coordinator.needsFastReconcile()).toBe(false);
+      await coordinator.applyMembershipEvent({
+        roomId: 'corner-1',
+        parentRoomId: 'room-1',
+        openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
+      });
+      expect(coordinator.activeRoomIds()).not.toContain('corner-1');
+      expect(coordinator.needsFastReconcile()).toBe(true);
+    } finally {
+      await coordinator.shutdown();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('arms the recovery reconcile when a pushed apply fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-failed-apply-'));
     roots.push(root);

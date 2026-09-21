@@ -710,19 +710,18 @@ export class RoomRuntimeCoordinator {
         parentRoomId: event.parentRoomId,
         openedBy: event.openedBy,
       });
+      // `startCorner` reports its own failures and resolves either way, so a
+      // transient token or clone fault leaves nothing running and nothing
+      // scheduled. Arm the fast reconcile the pushed Room path already gets
+      // from its throw, so the retry is now rather than a heartbeat away.
+      if (!this.running.has(roomId)) this.discoveryWakes.wake();
       return;
     }
     await this.startRoom(roomId);
   }
 
   async applyCornerComplete(cornerId: string): Promise<void> {
-    const running = this.running.get(cornerId);
-    if (!running) return;
-    if (running.body.requestClose) {
-      running.body.requestClose();
-      return;
-    }
-    await this.stopRunning(cornerId, running);
+    this.running.get(cornerId)?.body.requestClose?.();
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {

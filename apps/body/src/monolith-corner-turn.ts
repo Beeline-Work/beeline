@@ -429,13 +429,18 @@ export class MonolithCornerTurnLoop {
   private wakeIntake?: () => void;
 
   /**
-   * Called by the daemon's one slow workspace reconciliation sweep. The wake
-   * is the intake loop's own stable notify and is handed back exactly once, so
-   * it is kept: clearing it here left `requestClose` waking nothing after the
-   * first sweep, and a pushed `corner-complete` then waited out the idle timer.
-   * Intake clears it itself when it exits.
+   * Called by the daemon's one slow workspace reconciliation sweep, and by the
+   * fast reconcile a socket reconnect arms. A `corner-complete` published while
+   * that socket was down is never replayed, so the sweep clears the close
+   * throttle too: the durable read is what recovers the frame nobody heard.
+   *
+   * The wake is the intake loop's own stable notify and is handed back exactly
+   * once, so it is kept: clearing it here left `requestClose` waking nothing
+   * after the first sweep, and a pushed `corner-complete` then waited out the
+   * idle timer. Intake clears it itself when it exits.
    */
   requestReconciliation(): void {
+    this.lastCloseCheck = 0;
     this.wakeIntake?.();
   }
   private client?: AcpClient;

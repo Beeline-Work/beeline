@@ -1727,7 +1727,46 @@ describe('corner close-request polling cadence', () => {
     loop.requestClose();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(1);
+    // One read at intake start and one the sweep asked for; neither reports a
+    // close, so only the pushed close can have ended the loop.
+    expect(closeReads).toBe(2);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('runs the throttled close read again when the reconcile sweep asks', async () => {
+    let closeReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation')
+        return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) return { items: [], cursor: 'latest' };
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const liveSubscribe = vi.fn((_roomId, _cursor, _onItems, onState) => {
+      onState?.(true, { pushIntake: true, connectionPresence: true });
+      return () => undefined;
+    }) as unknown as DaemonApiClient['liveSubscribe'];
+    // A close published while the socket was down reaches nobody, and the
+    // throttle would otherwise hold the durable read for the whole interval.
+    const { loop, scheduler, onPoll } = await cornerHarness(
+      execute,
+      60_000,
+      liveSubscribe,
+      10 * 60_000,
+    );
+    const started = Date.now();
+    const running = loop.run();
+    await vi.waitFor(() => expect(onPoll).toHaveBeenCalledTimes(1));
+    loop.requestReconciliation();
+    await running;
+    await scheduler.dispose();
+    expect(closeReads).toBe(2);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 

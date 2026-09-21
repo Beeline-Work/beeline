@@ -9,8 +9,9 @@ type SurfaceFilters = readonly {
 }[];
 type SurfaceListener = (event: NostrEvent | MonolithSurfaceEvent) => void;
 
-type DraftEvent = Extract<LiveWireEvent, { type: 'draft' }>;
-type ThoughtEvent = Extract<LiveWireEvent, { type: 'thought' }>;
+// Draft and thought share one wire member, so they narrow to the same type.
+type DraftEvent = Extract<LiveWireEvent, { type: 'draft' | 'thought' }>;
+type ThoughtEvent = DraftEvent;
 type PresenceEvent = Extract<LiveWireEvent, { type: 'presence' }>;
 
 type CachedOverlay<Event> = { readonly event: Event; readonly receivedAt: number };
@@ -37,6 +38,10 @@ type LiveConnectionDeps = {
 };
 
 const FALLBACK_INTERVAL_MS = 30_000;
+/** The same window the server's own `liveDraftSnapshot` is gated on: past it a
+ *  cached draft is no longer live text, so a late join must not paint it. A
+ *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
+ *  and the terminal `turn-delta` eviction are what retire such a draft here. */
 const LIVE_OVERLAY_TTL_MS = 90_000;
 
 function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
@@ -242,12 +247,10 @@ export class LiveConnection {
     const cache = this.overlays.get(roomId);
     if (!cache) return;
     dropExpiredOverlays(cache, Date.now());
-    for (const entry of cache.drafts.values())
-      registration.listener({ monolithLive: entry.event });
+    for (const entry of cache.drafts.values()) registration.listener({ monolithLive: entry.event });
     for (const entry of cache.thoughts.values())
       registration.listener({ monolithLive: entry.event });
-    for (const event of cache.presence.values())
-      registration.listener({ monolithLive: event });
+    for (const event of cache.presence.values()) registration.listener({ monolithLive: event });
   }
 
   private dispatch(live: LiveWireEvent, generation: WebSocket): void {
@@ -278,11 +281,7 @@ export class LiveConnection {
         ...(typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock'
           ? {
               acknowledgePaint: () => {
-                if (
-                  registration.closed ||
-                  this.socket !== generation ||
-                  !isSocketOpen(generation)
-                )
+                if (registration.closed || this.socket !== generation || !isSocketOpen(generation))
                   return;
                 this.traceOwners.set(trace.id, registration);
                 generation.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));

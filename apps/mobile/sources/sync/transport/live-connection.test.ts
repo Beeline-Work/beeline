@@ -370,7 +370,9 @@ describe('LiveConnection', () => {
     sockets[0]!.open();
 
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(first).toEqual([{ monolithLive: { type: 'invalidate', roomId: ROOM_A, reason: 'poll' } }]);
+    expect(first).toEqual([
+      { monolithLive: { type: 'invalidate', roomId: ROOM_A, reason: 'poll' } },
+    ]);
     expect(second).toEqual([
       { monolithLive: { type: 'invalidate', roomId: ROOM_B, reason: 'poll' } },
     ]);
@@ -509,8 +511,10 @@ describe('LiveConnection', () => {
 
   it('routes trace-painted to the registration that sent trace-paint', async () => {
     const { connection } = createConnection();
-    const first: Array<{ acknowledgePaint?: () => void; monolithLive: { type: string; id?: string } }> =
-      [];
+    const first: Array<{
+      acknowledgePaint?: () => void;
+      monolithLive: { type: string; id?: string };
+    }> = [];
     const second: Array<{ monolithLive: { type: string; id?: string } }> = [];
     await connection.register([{ '#h': [ROOM_A] }], (event) =>
       first.push(event as (typeof first)[number]),
@@ -527,7 +531,9 @@ describe('LiveConnection', () => {
     });
 
     first[0]!.acknowledgePaint?.();
-    expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'trace-paint', id: 'trace-direct' }));
+    expect(sockets[0]!.sent.at(-1)).toBe(
+      JSON.stringify({ type: 'trace-paint', id: 'trace-direct' }),
+    );
 
     sockets[0]!.emit({
       type: 'trace-painted',

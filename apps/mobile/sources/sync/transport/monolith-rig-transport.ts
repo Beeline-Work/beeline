@@ -27,7 +27,7 @@ export type LiveWireTrace = {
   paintAck?: 'database-clock';
 };
 
-type LiveWireEvent =
+export type LiveWireEvent =
   | {
       type: 'invalidate';
       roomId: string;

@@ -1,8 +1,23 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { typeRoles } from '@/buzz/groknight';
 import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { CodeHighlighter } from './CodeHighlighter';
+
+/** The source line every machine body is written to. */
+const OUTPUT_COLUMNS = 80;
+/** IBM Plex Mono advances 600/1000 of its em, so a column is 0.6 of the size. */
+const MACHINE_ADVANCE = 0.6;
+/**
+ * A centred desktop sheet otherwise inherits the confirm dialog's cap, which
+ * is narrower than the same sheet on a phone — so the one surface that exists
+ * to show machine lines wrapped them soonest on the widest screen. It is
+ * measured in columns of the text it holds instead.
+ */
+export const TOOL_OUTPUT_SHEET_MAX_WIDTH = Math.round(
+  OUTPUT_COLUMNS * MACHINE_ADVANCE * typeRoles.machine.fontSize + HULL_SHEET_INSET * 2,
+);
 
 export type ToolOutputSheetProps = {
   title: string;
@@ -15,7 +30,6 @@ export type ToolOutputSheetProps = {
   language?: string | null;
   visible: boolean;
   onClose: () => void;
-  copyMetadata?: string;
   testID?: string;
 };
 
@@ -31,7 +45,6 @@ export function ToolOutputSheet({
   language,
   visible,
   onClose,
-  copyMetadata,
   testID = 'tool-output-sheet',
 }: ToolOutputSheetProps) {
   const [copied, setCopied] = useState(false);
@@ -56,6 +69,7 @@ export function ToolOutputSheet({
   const highlight = language !== undefined;
   return (
     <HullActionSheetModal
+      contentStyle={styles.sheetModal}
       onClose={onClose}
       subtitle={subtitle}
       testID={testID}
@@ -71,9 +85,11 @@ export function ToolOutputSheet({
           </Text>
         )}
       </ScrollView>
+      {/* The subtitle already carries the byte size; the row reports only
+          whether the press landed. */}
       <HullActionSheetRow
         label="Copy output"
-        metadata={copied ? 'Copied' : copyMetadata}
+        metadata={copied ? 'Copied' : undefined}
         onPress={copy}
         testID="tool-output-copy"
       />
@@ -84,6 +100,7 @@ export function ToolOutputSheet({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    sheetModal: { maxWidth: TOOL_OUTPUT_SHEET_MAX_WIDTH },
     sheetScroll: { flexGrow: 0, flexShrink: 1 },
     sheetContent: { paddingHorizontal: HULL_SHEET_INSET },
     sheetOutput: {

@@ -270,6 +270,9 @@ export function HullActionSheetCancel({
 type HullActionSheetModalProps = {
   children: React.ReactNode;
   accessibilityLabel?: string;
+  /** Widens the centred desktop sheet past the dialog cap. Only a sheet whose
+   *  body is sized by its content — machine output — asks for this. */
+  contentStyle?: StyleProp<ViewStyle>;
   /** Held false while a row's inline editor has unsaved work in flight. */
   dismissOnBackdrop?: boolean;
   /** Pinned under the title. */
@@ -288,6 +291,7 @@ type HullActionSheetModalProps = {
 export function HullActionSheetModal({
   accessibilityLabel,
   children,
+  contentStyle,
   dismissOnBackdrop,
   footer,
   modalTestID,
@@ -304,7 +308,7 @@ export function HullActionSheetModal({
   return (
     <HullModal
       accessibilityLabel={accessibilityLabel ?? 'Close action sheet'}
-      contentStyle={styles.modalContent}
+      contentStyle={[styles.modalContent, contentStyle]}
       dismissOnBackdrop={dismissOnBackdrop}
       onRequestClose={onClose}
       placement={isDesktop ? 'center' : 'bottom'}

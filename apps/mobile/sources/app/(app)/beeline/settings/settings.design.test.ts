@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8');
-const members = readFileSync(new URL('../MembersScreen.tsx', import.meta.url), 'utf8');
+const members = readFileSync(new URL('../members.tsx', import.meta.url), 'utf8');
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);

@@ -47,7 +47,10 @@
         "scripts/{ota-delivery-index,ota-release}.mjs",
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
         "scripts/emoji-clip-proof.tsx",
+        "scripts/workspace-picture-clip-proof.tsx",
         "scripts/transcript-dates-proof.tsx",
+        "scripts/tool-output-sheet-proof.tsx",
+        "scripts/bookmarks-empty-proof.tsx",
         "scripts/android-splash-theme-proof.js",
       ],
       "project": [

@@ -45,8 +45,11 @@ export class SurfaceRefreshScheduler<T> {
     this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
     this.now = options.now ?? Date.now;
-    this.setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
-    this.clearTimer = options.clearTimer ?? clearTimeout;
+    this.setTimer =
+      options.setTimer ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
+    // Never store the host `clearTimeout` on `this` — `this.clearTimer(id)`
+    // would bind the scheduler as the receiver and throw Illegal invocation.
+    this.clearTimer = options.clearTimer ?? ((timer) => globalThis.clearTimeout(timer));
   }
 
   /** Install/confirm relay filters first, then close the gap with the first GET. */

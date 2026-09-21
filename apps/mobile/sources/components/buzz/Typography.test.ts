@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sources = [
-  '../../app/(app)/beeline/MembersScreen.tsx',
+  '../../app/(app)/beeline/members.tsx',
   '../../app/(app)/beeline/channels.tsx',
   '../../app/(app)/beeline/chat/_chat-surface.tsx',
   '../../app/(app)/beeline/corners/[roomId].tsx',

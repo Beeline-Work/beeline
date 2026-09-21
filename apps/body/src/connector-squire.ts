@@ -476,20 +476,40 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
 });
 
 /**
- * Squire prints exactly two sign-in surfaces: the headless noVNC tunnel
- * (`https://<host>/#p=<password>`) and the hosted install confirm page
- * (`https://<host>/install…`). Everything else on connect's streams belongs
- * to somebody else — npm's update notifier writes its changelog link to
- * stderr, and a failed tunnel rig carries Cloudflare's docs link in the
- * stderr tail Squire quotes back. Neither is a page the phone may open.
+ * PREFERENCE, not a gate. Squire today serves its ceremony from exactly two
+ * known surfaces: the headless noVNC tunnel (`https://<host>/#p=<password>`)
+ * and the hosted install confirm page (`https://<host>/install…`). A URL
+ * matching either wins outright — but when Squire serves the ceremony from a
+ * surface nobody anticipated (a new tunnel host, a renamed confirm path), the
+ * picker still has to hand the person a page instead of failing closed.
  */
-function isConnectCeremonyUrl(url: string): boolean {
+function isKnownCeremonySurface(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
     return parsed.hash.startsWith('#p=') || /(^|\/)install(\/|$)/.test(parsed.pathname);
   } catch {
     return false;
+  }
+}
+
+/**
+ * NEGATIVE rules, which fail open: only URLs that provably belong to somebody
+ * other than Squire are excluded. npm's update notifier writes its changelog
+ * link to stderr, and a failed tunnel rig carries Cloudflare's docs link in
+ * the stderr tail Squire quotes back. Anything else is a legitimate fallback
+ * candidate when no known surface matched.
+ */
+function isForeignUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'developers.cloudflare.com') return true;
+    // npm's update notifier link specifically, not every github.com URL.
+    if (host === 'github.com' && parsed.pathname.toLowerCase().startsWith('/npm/cli')) return true;
+    return host === 'npmjs.com' || host === 'www.npmjs.com';
+  } catch {
+    return true;
   }
 }
 
@@ -565,8 +585,19 @@ export function unframeBoxedOutput(output: string): string {
  */
 export function parseConnectOutput(output: string): ConnectorSignIn | undefined {
   const urls = unframeBoxedOutput(output).match(/https:\/\/[^\s"'<>]+(?=[\s"'<>])/g) ?? [];
-  const url = urls.find(isConnectCeremonyUrl);
-  return url ? { method: 'streamed-page', url } : undefined;
+  const preferred = urls.find(isKnownCeremonySurface);
+  if (preferred) return { method: 'streamed-page', url: preferred };
+  // No known Squire surface matched. Fail OPEN: take the best remaining
+  // candidate rather than returning nothing and stranding the sign-in, and
+  // say in the log which URL was chosen and why.
+  const fallback = urls.find((url) => !isForeignUrl(url));
+  if (fallback) {
+    console.log(
+      `[body] squire connect: no known ceremony surface matched; using fallback URL ${fallback}`,
+    );
+    return { method: 'streamed-page', url: fallback };
+  }
+  return undefined;
 }
 
 /**

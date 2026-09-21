@@ -2,10 +2,13 @@
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
  * Connect is three ordinary facts (`squire-connect-state.ts`): process,
- * visibility, and credential. The install starts a browser only when all
- * three are empty. Connect inherits the env this process already has, so
- * Squire itself chooses the host screen or its own virtual display.
- * Connected is the session file this helper owns, never a phrase Squire
+ * visibility, and credential. The install starts a connect unless another
+ * process holds the browser or nothing has ever answered for this session's
+ * token — Squire alone decides whether the profile still needs a ceremony,
+ * so a live token never makes Connect/Retry inert. Connect inherits the env
+ * this process already has, so Squire itself chooses the host screen or its
+ * own virtual display. Connected is the session file this helper owns proven
+ * by the vault, plus this helper's own pair probe — never a phrase Squire
  * printed.
  *
  * One helper shares the host Squire broker and its one Chrome. The install

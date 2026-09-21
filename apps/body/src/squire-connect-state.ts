@@ -127,7 +127,9 @@ export function credentialFromSession(
  * connected; a published or held surface is still installing; process
  * waiters stay installing. Nothing here reads Squire's prose.
  */
-export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' | 'installing' | 'disconnected' {
+export function connectStatusFromFacts(
+  facts: SquireConnectFacts,
+): 'connected' | 'installing' | 'disconnected' {
   if (facts.credential.kind === 'valid') return 'connected';
   if (facts.credential.kind === 'challenge' || facts.credential.kind === 'unproven') {
     return 'installing';

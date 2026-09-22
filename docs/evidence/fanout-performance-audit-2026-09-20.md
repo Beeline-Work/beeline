@@ -8,6 +8,11 @@ interaction, 450 ms page load), plus every phone GET surface it had not swept.
 
 ## Status
 
+**Extended by
+[`fanout-performance-audit-2026-09-22.md`](./fanout-performance-audit-2026-09-22.md),**
+which measures the scroll interaction after #1609 put a server write behind it
+and adds G6 and G7 to the ranking below. Nothing there displaces G1–G5.
+
 **Both gaps are now numbers rather than estimates.**
 
 - **450 ms page load — met on the server and transport half.** A cold 200-Room

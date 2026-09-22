@@ -161,6 +161,17 @@ describe('live fanout cost sweep', () => {
     return messageId;
   }
 
+  /**
+   * Every id this socket has been told about, recorded from the moment it
+   * subscribes.
+   *
+   * The recorder has to be installed BEFORE the write, not after it. #1584 made
+   * a phone write's invalidation go out on the socket immediately, ahead of any
+   * row resolution, so a listener attached once `send()` has already resolved
+   * can miss the only frame the reader is ever sent.
+   */
+  const deliveries = new WeakMap<WebSocket, Set<string>>();
+
   async function attachReaders(count: number): Promise<WebSocket[]> {
     const sockets: WebSocket[] = [];
     for (let index = 0; index < count; index += 1) {
@@ -171,10 +182,21 @@ describe('live fanout cost sweep', () => {
         socket.once('open', () => resolve());
         socket.once('error', reject);
       });
+      const seen = new Set<string>();
+      deliveries.set(socket, seen);
       const subscribed = new Promise<void>((resolve) => {
         socket.on('message', (raw) => {
-          const event = JSON.parse(String(raw)) as { type?: string };
+          const event = JSON.parse(String(raw)) as {
+            type?: string;
+            message?: { id?: string };
+            messageId?: string;
+          };
           if (event.type === 'subscribed') resolve();
+          // Both shapes count as the reader being told: the id-only
+          // invalidation #1584 sends first, and a resolved row delta. A phone
+          // write frequently produces only the former.
+          const id = event.message?.id ?? event.messageId;
+          if (id) seen.add(id);
         });
       });
       socket.send(JSON.stringify({ type: 'subscribe', roomIds: [ROOM] }));
@@ -184,25 +206,16 @@ describe('live fanout cost sweep', () => {
     return sockets;
   }
 
-  /** Every attached reader must hold the row before the statements are counted. */
+  /** Every attached reader must have been told about the row before the statements are counted. */
   async function deliveredTo(sockets: readonly WebSocket[], messageId: string): Promise<void> {
-    await Promise.all(
-      sockets.map(
-        (socket) =>
-          new Promise<void>((resolve) => {
-            const listener = (raw: WebSocket.RawData) => {
-              const event = JSON.parse(String(raw)) as {
-                type?: string;
-                message?: { id?: string };
-              };
-              if (event.type !== 'message-delta' || event.message?.id !== messageId) return;
-              socket.off('message', listener);
-              resolve();
-            };
-            socket.on('message', listener);
-          }),
-      ),
-    );
+    const deadline = Date.now() + 30_000;
+    for (const socket of sockets) {
+      while (!deliveries.get(socket)?.has(messageId)) {
+        if (Date.now() > deadline)
+          throw new Error(`socket never heard about ${messageId} within 30s`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
   }
 
   it('charges one extra Room read per attached reader for a human message', async () => {

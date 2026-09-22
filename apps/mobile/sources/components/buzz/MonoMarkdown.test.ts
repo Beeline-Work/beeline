@@ -19,6 +19,8 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('./HullActionSheet', () => {
   const ReactModule = require('react');
   return {
@@ -96,6 +98,30 @@ const NUMBERED_LIST_INPUT = `REDESIGN (drill-down, three depths):
 1. Transcript = mostly the agent's NATURAL-LANGUAGE updates (what it is doing / found), not raw tool telemetry.
 2. Per turn, collapse ALL tool calls + file edits into ONE clickable summary line (e.g. "Edited 4 files, ran tests").
 3. Tap that line -> SECONDARY view: the list of edited files + tool calls for that turn.`;
+
+describe('MonoMarkdown code navigation', () => {
+  it('routes the selected code-block ordinal with its Room message coordinates', async () => {
+    navigation.push.mockClear();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(MonoMarkdown, {
+          markdown: '```ts\na\nb\nc\nd\ne\n```\ntext\n```json\n1\n2\n3\n4\n5\n```',
+          textStyle: {},
+          codeSource: { roomId: 'room-7', messageId: 'message-42' },
+        }),
+      );
+    });
+    const openSecond = renderer.root
+      .findAllByProps({ testID: 'code-open' })
+      .find((node) => String(node.props.accessibilityLabel).startsWith('Open json'))!;
+    await act(async () => openSecond.props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/artifact-viewer',
+      params: { roomId: 'room-7', messageId: 'message-42', blockIndex: '1' },
+    });
+  });
+});
 
 describe('MonoMarkdown lists', () => {
   it('renders prose as selectable native text', () => {

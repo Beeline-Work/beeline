@@ -203,8 +203,8 @@ the same vocabulary tool readouts use — never a panel.
 Fences of up to four source lines stay inline with a Copy control and no inscription.
 A longer fence is one inscribed line (language, line count, and byte size)
 plus a four-line peek labelled with what it hides, and opens as a full-page
-in-app reader (`CodeBlock.tsx`, `code-reader.tsx`) where long lines wrap. The
-reader carries the originating message id; Back restores the transcript and
+in-app ArtifactViewer route (`CodeBlock.tsx`, `artifact-viewer.tsx`) where long lines wrap. The
+route carries the Room id, originating message id, and code-block index; Back restores the transcript and
 re-centres that exact message even if new rows arrived while the code was open.
 The byte size reads on the peek inscription and once at the top of the reader.
 Copy copies the complete block, including lines hidden by the peek;

@@ -4,57 +4,38 @@ import type { Href } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import {
+  fenceInscription,
+  hiddenLineLabel,
+  isLongFence,
+  isPlainTextFence,
+  PEEK_LINE_COUNT,
+} from '@/buzz/code-fence';
+export {
+  fenceByteLength,
+  fenceInscription,
+  formatFenceBytes,
+  hiddenLineLabel,
+  isLongFence,
+  isPlainTextFence,
+  PEEK_LINE_COUNT,
+} from '@/buzz/code-fence';
 
-export const PEEK_LINE_COUNT = 4;
-const PLAIN_TEXT_LANGUAGES = new Set(['text', 'txt', 'plaintext', 'markdown', 'md']);
-
-export function isPlainTextFence(language: string | null) {
-  const normalized = language?.trim().toLowerCase();
-  return !normalized || PLAIN_TEXT_LANGUAGES.has(normalized);
-}
-
-export function fenceByteLength(code: string): number {
-  return new TextEncoder().encode(code).length;
-}
-
-export function formatFenceBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 10) return `${Math.round(kb * 10) / 10} KB`;
-  return `${Math.round(kb)} KB`;
-}
-
-export function fenceInscription(language: string | null, code: string): string {
-  const lines = code.split('\n').length;
-  const lang = (language?.trim() || 'text').toLowerCase();
-  const lineLabel = lines === 1 ? '1 line' : `${lines} lines`;
-  return `${lang} · ${lineLabel} · ${formatFenceBytes(fenceByteLength(code))}`;
-}
-
-export function isLongFence(code: string): boolean {
-  return code.split('\n').length > PEEK_LINE_COUNT;
-}
-
-export function hiddenLineLabel(lineCount: number): string {
-  const hidden = Math.max(0, lineCount - PEEK_LINE_COUNT);
-  return hidden === 1 ? '1 more line' : `${hidden} more lines`;
-}
-
-export function codeReaderHref({
-  textId,
-  language,
-  originMessageId,
+export function codeArtifactHref({
+  roomId,
+  messageId,
+  blockIndex,
 }: {
-  textId: string;
-  language: string | null;
-  originMessageId?: string;
+  roomId: string;
+  messageId: string;
+  blockIndex: number;
 }): Href {
   return {
-    pathname: '/code-reader',
+    pathname: '/artifact-viewer',
     params: {
-      textId,
-      ...(language?.trim() ? { language: language.trim().toLowerCase() } : {}),
-      ...(originMessageId ? { originMessageId } : {}),
+      roomId,
+      messageId,
+      blockIndex: String(blockIndex),
     },
   } as Href;
 }
@@ -62,23 +43,28 @@ export function codeReaderHref({
 export function CodeBlock({
   code,
   language,
-  originMessageId,
+  roomId,
+  messageId,
+  blockIndex,
   onOpen,
 }: {
   code: string;
   language: string | null;
-  originMessageId?: string;
-  onOpen?: (originMessageId: string) => void;
+  roomId?: string;
+  messageId?: string;
+  blockIndex?: number;
+  onOpen?: (messageId: string) => void;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lines = useMemo(() => code.split('\n'), [code]);
   const plainText = isPlainTextFence(language);
   const long = isLongFence(code);
+  const routed = Boolean(roomId && messageId && blockIndex !== undefined);
   const inscription = useMemo(() => fenceInscription(language, code), [language, code]);
   const peek = useMemo(
-    () => (long ? lines.slice(0, PEEK_LINE_COUNT).join('\n') : code),
-    [code, lines, long],
+    () => (long && routed ? lines.slice(0, PEEK_LINE_COUNT).join('\n') : code),
+    [code, lines, long, routed],
   );
   const hidden = hiddenLineLabel(lines.length);
   const sheetTitle = (language?.trim() || (plainText ? 'text' : 'code')).toLowerCase();
@@ -105,14 +91,11 @@ export function CodeBlock({
     copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'copy';
 
   const openReader = useCallback(async () => {
-    if (originMessageId) onOpen?.(originMessageId);
-    const [{ router }, { storeTempText }] = await Promise.all([
-      import('expo-router'),
-      import('@/sync/persistence'),
-    ]);
-    const textId = storeTempText(code);
-    router.push(codeReaderHref({ textId, language, originMessageId }));
-  }, [code, language, onOpen, originMessageId]);
+    if (!roomId || !messageId || blockIndex === undefined) return;
+    onOpen?.(messageId);
+    const { router } = await import('expo-router');
+    router.push(codeArtifactHref({ roomId, messageId, blockIndex }));
+  }, [blockIndex, messageId, onOpen, roomId]);
 
   const body = plainText ? (
     <Text selectable style={styles.plainText} testID="plain-text-fence">
@@ -124,7 +107,7 @@ export function CodeBlock({
 
   return (
     <View style={styles.frame}>
-      {long ? (
+      {long && routed ? (
         <View style={styles.inscription}>
           <Text numberOfLines={1} style={styles.inscriptionText} testID="code-inscription">
             {inscription}
@@ -156,7 +139,7 @@ export function CodeBlock({
           </Pressable>
         </View>
       )}
-      {long ? (
+      {long && routed ? (
         <Pressable
           accessibilityLabel={`Open ${sheetTitle}, ${hidden}`}
           accessibilityRole="button"

@@ -134,10 +134,10 @@ type MonoMarkdownProps = {
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
-  /** The transcript row that owns a code fence, used to restore it after reading. */
-  codeOriginMessageId?: string;
+  /** Stable Room/message coordinates used to resolve code after navigation. */
+  codeSource?: { roomId: string; messageId: string };
   /** Arms the transcript return anchor before the full-page reader opens. */
-  onOpenCode?: (originMessageId: string) => void;
+  onOpenCode?: (messageId: string) => void;
   /**
    * The trailing characters that have only just arrived on a streaming draft
    * (`components/buzz/StreamingProse.tsx`, C98). They take `style` on top of
@@ -311,7 +311,8 @@ export function monoMarkdownPropsAreEqual(
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
-    previous.codeOriginMessageId === next.codeOriginMessageId &&
+    previous.codeSource?.roomId === next.codeSource?.roomId &&
+    previous.codeSource?.messageId === next.codeSource?.messageId &&
     previous.onOpenCode === next.onOpenCode &&
     previous.onMention === next.onMention &&
     previous.testID === next.testID &&
@@ -373,7 +374,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   onMention,
   channelIndex,
   onChannelReference,
-  codeOriginMessageId,
+  codeSource,
   onOpenCode,
   tail,
   testID,
@@ -474,12 +475,19 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         if (block.type === 'code-block' || block.type === 'mermaid') {
           const code = block.content;
           const language = 'language' in block ? (block.language ?? null) : null;
+          const blockIndex = blocks
+            .slice(0, index)
+            .filter(
+              (candidate) => candidate.type === 'code-block' || candidate.type === 'mermaid',
+            ).length;
           return (
             <View key={index} style={blockStyle}>
               <CodeBlock
                 code={code}
                 language={language}
-                originMessageId={codeOriginMessageId}
+                roomId={codeSource?.roomId}
+                messageId={codeSource?.messageId}
+                blockIndex={blockIndex}
                 onOpen={onOpenCode}
               />
             </View>

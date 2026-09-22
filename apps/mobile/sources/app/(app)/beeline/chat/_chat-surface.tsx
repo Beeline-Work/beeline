@@ -504,7 +504,7 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
-  const codeReaderReturnMessageIdRef = useRef<string | null>(null);
+  const artifactReturnMessageIdRef = useRef<string | null>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -1977,13 +1977,13 @@ export function BuzzChatSurface({
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   useFocusEffect(
     useCallback(() => {
-      const messageId = codeReaderReturnMessageIdRef.current;
+      const messageId = artifactReturnMessageIdRef.current;
       if (!messageId) return;
       const index = transcriptMessages.findIndex(
         (message) => message.id === messageId || message.relayId === messageId,
       );
       if (index < 0) return;
-      codeReaderReturnMessageIdRef.current = null;
+      artifactReturnMessageIdRef.current = null;
       scheduleAnimationFrame(() =>
         flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false }),
       );
@@ -4019,8 +4019,8 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
-  const handleOpenCode = useCallback((originMessageId: string) => {
-    codeReaderReturnMessageIdRef.current = originMessageId;
+  const handleOpenCode = useCallback((messageId: string) => {
+    artifactReturnMessageIdRef.current = messageId;
   }, []);
 
   const renderMessage = useCallback(
@@ -4233,6 +4233,7 @@ export function BuzzChatSurface({
           channelIndex={channelReferenceIndex}
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
+          codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
           onMention={handleOpenMention}
           onTapOutsideComposer={dismissComposerKeyboard}
@@ -4308,6 +4309,7 @@ export function BuzzChatSurface({
       isReadOnlyDirectMessage,
       isArchived,
       isCorner,
+      decodedId,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

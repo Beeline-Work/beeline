@@ -132,7 +132,8 @@ type LedgerBodyProps = {
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
   /** Opens a long code block and restores this row when the reader closes. */
-  onOpenCode?: (originMessageId: string) => void;
+  codeRoomId?: string;
+  onOpenCode?: (messageId: string) => void;
 };
 
 /**
@@ -191,6 +192,7 @@ function TypewriterMarkdown({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
   onOpenCode,
 }: {
   markdown: string;
@@ -207,7 +209,8 @@ function TypewriterMarkdown({
   onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
-  onOpenCode?: (originMessageId: string) => void;
+  codeRoomId?: string;
+  onOpenCode?: (messageId: string) => void;
 }) {
   const reducedMotion = useReducedMotion();
   // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
@@ -254,7 +257,7 @@ function TypewriterMarkdown({
       onMention={onMention}
       channelIndex={channelIndex}
       onChannelReference={onChannelReference}
-      codeOriginMessageId={revealId}
+      codeSource={codeRoomId && revealId ? { roomId: codeRoomId, messageId: revealId } : undefined}
       onOpenCode={onOpenCode}
       testID={testID}
       textStyle={textStyle}
@@ -466,6 +469,7 @@ export function LedgerEntry({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
   onOpenCode,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
   const [leadText, remainingText] =
@@ -483,7 +487,7 @@ export function LedgerEntry({
           onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
-          codeOriginMessageId={itemId}
+          codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
           onOpenCode={onOpenCode}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
           textStyle={styles.ledgerLead}
@@ -500,6 +504,7 @@ export function LedgerEntry({
             onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
+            codeRoomId={codeRoomId}
             onOpenCode={onOpenCode}
           />
         ) : (
@@ -509,7 +514,7 @@ export function LedgerEntry({
             onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
-            codeOriginMessageId={itemId}
+            codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
             onOpenCode={onOpenCode}
             testID={bodyTestID}
             textStyle={bodyTextStyle}
@@ -562,6 +567,7 @@ export function LedgerSteer({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
   onOpenCode,
 }: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'>) {
   // Deliberately NO lead split here: a human message never takes the
@@ -585,7 +591,7 @@ export function LedgerSteer({
           onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
-          codeOriginMessageId={itemId}
+          codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
           onOpenCode={onOpenCode}
           textStyle={styles.steerText}
           testID={bodyTestID}

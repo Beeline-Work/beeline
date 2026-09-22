@@ -3,15 +3,13 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-const { copy, push, storeTempText } = vi.hoisted(() => ({
+const { copy, push } = vi.hoisted(() => ({
   copy: vi.fn(async () => undefined),
   push: vi.fn(),
-  storeTempText: vi.fn(() => 'staged-code'),
 }));
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: copy }));
 vi.mock('expo-router', () => ({ router: { push } }));
-vi.mock('@/sync/persistence', () => ({ storeTempText }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -71,7 +69,15 @@ function collectHostText(node: { props?: { children?: unknown } }): string {
 function render(code: string, language: string | null = 'typescript'): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(React.createElement(CodeBlock, { code, language }));
+    renderer = create(
+      React.createElement(CodeBlock, {
+        code,
+        language,
+        roomId: 'room-7',
+        messageId: 'message-42',
+        blockIndex: 0,
+      }),
+    );
   });
   return renderer;
 }
@@ -163,7 +169,6 @@ describe('CodeBlock', () => {
 
   it('opens the full-page reader with the complete block and originating message', async () => {
     push.mockClear();
-    storeTempText.mockClear();
     const onOpen = vi.fn();
     let renderer!: ReactTestRenderer;
     act(() => {
@@ -171,7 +176,9 @@ describe('CodeBlock', () => {
         React.createElement(CodeBlock, {
           code: FRAME_JSON,
           language: 'json',
-          originMessageId: 'message-42',
+          roomId: 'room-7',
+          messageId: 'message-42',
+          blockIndex: 2,
           onOpen,
         }),
       );
@@ -181,13 +188,12 @@ describe('CodeBlock', () => {
     });
     await act(async () => open.props.onPress());
     expect(onOpen).toHaveBeenCalledWith('message-42');
-    expect(storeTempText).toHaveBeenCalledWith(FRAME_JSON);
     expect(push).toHaveBeenCalledWith({
-      pathname: '/code-reader',
+      pathname: '/artifact-viewer',
       params: {
-        textId: 'staged-code',
-        language: 'json',
-        originMessageId: 'message-42',
+        roomId: 'room-7',
+        messageId: 'message-42',
+        blockIndex: '2',
       },
     });
     expect(renderer.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);

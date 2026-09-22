@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   copyPicture: vi.fn(),
   sharePicture: vi.fn(),
   showPictureActions: vi.fn(),
+  copyText: vi.fn(async () => true),
   onClose: vi.fn(),
 }));
 
@@ -73,14 +74,22 @@ vi.mock('@/buzz/picture-actions', () => ({
   sharePicture: mocks.sharePicture,
   showPictureActions: mocks.showPictureActions,
 }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: mocks.copyText }));
 vi.mock('@/components/buzz/MonoMarkdown', () => ({
-  MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
+  MonoMarkdown: (props: Record<string, unknown>) =>
+    React.createElement('MonoMarkdown', props, null),
+}));
+vi.mock('@/components/buzz/CodeHighlighter', () => ({
+  CodeHighlighter: (props: Record<string, unknown>) =>
+    React.createElement('CodeHighlighter', props, null),
 }));
 // The media views have their own suites; here the viewer is on trial for which
 // view it reaches for and what it hands it.
 vi.mock('@/components/buzz/ArtifactMedia', () => ({
-  ArtifactImage: (props: Record<string, unknown>) => React.createElement('ArtifactImage', props, null),
-  ArtifactText: (props: Record<string, unknown>) => React.createElement('ArtifactText', props, null),
+  ArtifactImage: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactImage', props, null),
+  ArtifactText: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactText', props, null),
 }));
 vi.mock('@/components/buzz/ArtifactPdfView', () => ({
   ArtifactPdfView: (props: Record<string, unknown>) =>
@@ -92,9 +101,12 @@ import { ArtifactViewerSandbox, ArtifactViewerScreen } from './ArtifactViewer';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -132,9 +144,36 @@ async function flush(): Promise<void> {
 }
 
 describe('the full-screen artifact viewer (mock 1c)', () => {
+  it('renders code in the existing viewer shell and copies the complete document', async () => {
+    mocks.copyText.mockClear();
+    const document = {
+      type: 'code' as const,
+      title: 'typescript',
+      inscription: 'typescript · 2 lines · 24 B',
+      code: 'const first = 1;\nsecond();',
+      language: 'typescript',
+    };
+    const renderer = render(<ArtifactViewerScreen document={document} onClose={mocks.onClose} />);
+
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-code' })).toBeDefined();
+    expect(renderer.root.findByType('CodeHighlighter').props).toMatchObject({
+      code: document.code,
+      language: 'typescript',
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(mocks.copyText).toHaveBeenCalledWith(document.code);
+  });
+
   it('renders HTML in the sandboxed WebView: script off, guarded, no message bridge', async () => {
-    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body><p>mock</p></body></html>'));
-    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body><p>mock</p></body></html>'),
+    );
+    const renderer = render(
+      <ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />,
+    );
     await flush();
     const webview = renderer.root.findByType('WebView');
     expect(webview.props.javaScriptEnabled).toBe(false);
@@ -155,8 +194,12 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
 
   it('the header clears the Android status tray: top inset over its own spacing', async () => {
     mocks.safeAreaTop.value = 42;
-    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body></body></html>'));
-    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body></body></html>'),
+    );
+    const renderer = render(
+      <ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />,
+    );
     await flush();
     // The header row is the parent of the ✕ control that closes the viewer.
     const header = renderer.root.findByProps({ testID: 'artifact-viewer-close' }).parent;
@@ -170,7 +213,9 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
 
   it('renders an SVG attachment on the browser-default canvas in the sandbox', async () => {
     mocks.fetchArtifactBytes.mockResolvedValue(
-      new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>'),
+      new TextEncoder().encode(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>',
+      ),
     );
     const renderer = render(
       <ArtifactViewerScreen
@@ -244,7 +289,9 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
   });
 
   it('every navigation after the initial load is denied', async () => {
-    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body></body></html>'));
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body></body></html>'),
+    );
     const renderer = render(<ArtifactViewerSandbox attachment={attachment()} format="html" />);
     await flush();
     const webview = renderer.root.findByType('WebView');
@@ -304,7 +351,9 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
 
   it('a failed fetch is a spoken state, never a blank screen', async () => {
     mocks.fetchArtifactBytes.mockRejectedValue(new Error('404'));
-    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    const renderer = render(
+      <ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />,
+    );
     await flush();
     expect(renderer.root.findByProps({ testID: 'artifact-viewer-failed' })).toBeDefined();
   });

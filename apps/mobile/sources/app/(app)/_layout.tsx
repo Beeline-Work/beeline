@@ -210,14 +210,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        <Stack.Screen
-          name="code-reader"
-          options={{
-            headerShown: true,
-            headerTitle: 'Code',
-            headerBackTitle: t('common.back'),
-          }}
-        />
+        <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen
           name="text-selection"
           options={{

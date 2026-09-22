@@ -367,6 +367,41 @@ describe('chat attachment display metadata', () => {
     });
   });
 
+  it('converts an unnamed HEIC picker asset despite its fallback JPEG name', async () => {
+    mocks.manipulateAsync
+      .mockResolvedValueOnce({ uri: 'file:///converted.jpg', width: 100, height: 80 })
+      .mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    mocks.readFileBytes.mockResolvedValue(jpegWithMetadata());
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/photo.jpg',
+      sha256: 'photo-hash',
+      size: 123,
+      type: 'image/jpeg',
+    });
+    const [attachment] = pickedPhotoAttachments(
+      [
+        {
+          uri: 'content://gallery/unnamed-heic',
+          fileName: null,
+          mimeType: 'image/heic',
+          fileSize: 123,
+          width: 100,
+          height: 80,
+        },
+      ],
+      1234,
+    );
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, attachment!);
+
+    expect(attachment!.name).toBe('photo-1234-1.jpg');
+    expect(mocks.manipulateAsync).toHaveBeenNthCalledWith(1, 'content://gallery/unnamed-heic', [], {
+      compress: 0.9,
+      format: 'jpeg',
+    });
+    expect(uploaded).toMatchObject({ name: 'photo-1234-1.jpg', mimeType: 'image/jpeg' });
+  });
+
   it('preserves a compatible WebP photo format and original bytes', async () => {
     const original = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
     mocks.readFileBytes.mockResolvedValueOnce(original);

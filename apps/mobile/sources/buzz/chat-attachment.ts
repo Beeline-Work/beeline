@@ -150,8 +150,12 @@ async function prepareImageForUpload(attachment: PickedChatAttachment): Promise<
   const extension = attachment.name.split('.').pop()?.toLowerCase();
   const raw = RAW_PHOTO_MIME_TYPES.has(mimeType) || RAW_PHOTO_EXTENSIONS.has(extension ?? '');
   const preservedFormat =
-    (extension ? PRESERVED_PHOTO_EXTENSIONS[extension] : undefined) ??
-    PRESERVED_PHOTO_MIME_TYPES[mimeType];
+    PRESERVED_PHOTO_MIME_TYPES[mimeType] ??
+    (mimeType.startsWith('image/')
+      ? undefined
+      : extension
+        ? PRESERVED_PHOTO_EXTENSIONS[extension]
+        : undefined);
   if (!raw && preservedFormat) {
     const bytes = await readFileBytes(attachment.uri);
     return {

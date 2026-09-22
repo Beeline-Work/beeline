@@ -27,6 +27,8 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     ActivityIndicator: host('ActivityIndicator'),
+    Platform: { OS: 'ios' },
+    Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
@@ -84,6 +86,6 @@ describe('ConnectorSignInScreen', () => {
       'Sign in to ',
       'Tailscale',
     ]);
-    renderer.unmount();
+    await act(async () => renderer.unmount());
   });
 });

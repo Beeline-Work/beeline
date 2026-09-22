@@ -35,6 +35,12 @@ describe('beeline-agent request_grant', () => {
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('request_grant');
   });
 
+  it('suppresses command execution when the daemon has no usable runner boundary', () => {
+    const names = agentToolsFor(true, false, false, false, false).map((tool) => tool.name);
+    expect(names).toContain('request_grant');
+    expect(names).not.toContain('run_granted_command');
+  });
+
   it('offers every grant kind the contract defines, and names each one where the agent reads it', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'request_grant');
     const kinds = (tool?.inputSchema as { properties: { kind: { enum: string[] } } }).properties.kind
@@ -257,5 +263,23 @@ describe('run_granted_command reports the Room boundary', () => {
     );
     expect(reply).toContain('read-only outside your scratch directory');
     expect(reply).toContain('open_corner');
+  });
+
+  it('distinguishes a sandbox startup failure from the command exit status', async () => {
+    const reply = await runGrantedCommand(
+      { argv: ['git', 'status'] },
+      {
+        roomId: 'room-1',
+        run: async () => ({
+          grantId: 'g-2',
+          exitCode: 1,
+          timedOut: false,
+          output: 'bwrap: No permissions to create a new namespace',
+          sandboxFailure: true,
+        }),
+      },
+    );
+    expect(reply).toContain('sandbox failed before command start');
+    expect(reply).not.toContain('exit 1');
   });
 });

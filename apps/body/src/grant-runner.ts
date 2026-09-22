@@ -116,10 +116,14 @@ export interface GrantRunResult {
   output: string;
   /** True when the read-only Room filesystem refused a write this command tried. */
   writeRefused?: boolean;
+  /** True when bubblewrap failed before the granted command could start. */
+  sandboxFailure?: boolean;
 }
 
 /** The kernel's own words when the read-only bind refuses a write. */
 const WRITE_REFUSED = /Read-only file system|EROFS/;
+const BWRAP_START_FAILURE =
+  /bwrap:.*(?:namespace|uid map|mount|operation not permitted|permission denied)|bubblewrap.*(?:namespace|permission)|No permissions to create (?:a )?new namespace/i;
 
 export const ROOM_SANDBOX_UNAVAILABLE =
   'this Room cannot run granted commands: a Room promises a read-only filesystem and that ' +
@@ -330,6 +334,9 @@ export class GrantCommandRunner {
     // its job, and the agent is told where the work belongs instead.
     const writeRefused =
       !surfaceAllows(policy.surface, 'run-host-command') && WRITE_REFUSED.test(outcome.output);
+    const sandboxFailure =
+      !surfaceAllows(policy.surface, 'run-host-command') &&
+      (outcome.exitCode === null || BWRAP_START_FAILURE.test(outcome.output));
     const output = capOutput(
       scrubSecrets(
         writeRefused ? `${outcome.output.trimEnd()}\n${ROOM_WRITE_REFUSED_NOTE}` : outcome.output,
@@ -342,11 +349,13 @@ export class GrantCommandRunner {
       pubkey: grant.requestedBy,
       ...(grant.requestedByName ? { name: grant.requestedByName } : {}),
     };
-    const status = outcome.timedOut
-      ? 'timed out'
-      : outcome.exitCode === null
-        ? 'error'
-        : `exit ${outcome.exitCode}`;
+    const status = sandboxFailure
+      ? 'sandbox failed'
+      : outcome.timedOut
+        ? 'timed out'
+        : outcome.exitCode === null
+          ? 'error'
+          : `exit ${outcome.exitCode}`;
     await this.options.api.execute('postAgentActivity', {
       agentId: this.options.agentId,
       roomId: input.roomId,
@@ -373,6 +382,7 @@ export class GrantCommandRunner {
       timedOut: outcome.timedOut,
       output,
       ...(writeRefused ? { writeRefused: true } : {}),
+      ...(sandboxFailure ? { sandboxFailure: true } : {}),
     };
   }
 

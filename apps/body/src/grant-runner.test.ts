@@ -369,6 +369,20 @@ describe('a Room with no usable sandbox', () => {
     );
     expect(calls.some((call) => call.name === 'postAgentActivity')).toBe(false);
   });
+
+  it('reports a disappeared bubblewrap executable as a sandbox failure, not a command exit', async () => {
+    const { runner, calls } = await harness(
+      [grant({ target: `${process.execPath} one.mjs` })],
+      undefined,
+      () => ({ surface: 'room', bwrapPath: '/definitely/missing/bwrap' }),
+    );
+    const result = await runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] });
+    expect(result.exitCode).toBeNull();
+    expect(result.sandboxFailure).toBe(true);
+    expect(result.output).toContain('ENOENT');
+    const row = calls.find((call) => call.name === 'postAgentActivity')!;
+    expect((row.input.activity as Array<{ status: string }>)[0]!.status).toBe('sandbox failed');
+  });
 });
 
 describe('the two hard stops', () => {

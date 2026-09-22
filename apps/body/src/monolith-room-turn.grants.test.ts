@@ -86,6 +86,7 @@ describe('Room turn paused on a grant card', () => {
       accessPolicy: 'everyone',
       agentHomeRoot: join(root, 'agent-home'),
       operatorHome: join(root, 'operator-home'),
+      bwrapPath: '/usr/bin/bwrap',
     } as BodyConfig;
     const decision = formatGrantDecisionLine({
       deciderName: 'Captain',

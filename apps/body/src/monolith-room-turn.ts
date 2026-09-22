@@ -699,7 +699,7 @@ export class MonolithRoomTurnLoop {
         attachScratchRoot,
         turnContextPath: this.commandContext.path,
         directMessage,
-        ...(this.options.grantRunnerEndpoint
+        ...(this.options.grantRunnerEndpoint && this.options.config.bwrapPath
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),
       }),

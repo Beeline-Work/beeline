@@ -222,7 +222,21 @@ describe('PR-scoped check gate', () => {
 
   it('does not promote a head with no rollup', async () => {
     rollupState = null;
-    expect(await gate()).toMatchObject({ checks: 'pending' });
+    expect(await gate()).toMatchObject({ checks: 'pending', checkCount: 0 });
+  });
+
+  it('treats a zero-check head as complete after the worker handoff records it', async () => {
+    rollupState = null;
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        checksSummary: { status: 'passing', total: 0, failing: [], checks: [], updatedAt: 1 },
+        pr: { number: 614, url: URL, headSha: SHA, title: 'Work', targetBranch: 'main' },
+      }),
+    ]);
+    expect(await gate()).toMatchObject({ checks: 'passed', checkCount: 0 });
   });
 
   it('lifts the self-review deadlock for the configured reviewer who opened the corner', async () => {

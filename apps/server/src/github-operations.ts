@@ -607,9 +607,20 @@ export class GitHubOperations {
       throw new Error('invalid pull request number');
     // Always resolve the head: a force-push must never inherit a green predecessor.
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
-    const checks = (
-      await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha)
-    ).state;
+    const rollup = await this.app.readCommitCheckRollup(
+      target.token,
+      target.repository,
+      pr.headSha,
+    );
+    // A completed worker handoff can establish that this head genuinely has no
+    // checks. Before that point a null rollup is only the ordinary race between
+    // opening a PR and GitHub registering its workflows, so it remains pending.
+    const completedWithoutChecks =
+      rollup.total === 0 &&
+      corner.lifecycle.checks === 'passing' &&
+      corner.lifecycle.checksSummary?.total === 0 &&
+      corner.lifecycle.pr?.headSha === pr.headSha;
+    const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
     const configuredReviewerId = corner.configured_reviewer_id;
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
@@ -654,6 +665,7 @@ export class GitHubOperations {
         : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true.';
     return {
       checks,
+      checkCount: rollup.total,
       pullRequest: pr.url,
       headSha: pr.headSha,
       approvalPending,

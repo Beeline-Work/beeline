@@ -130,6 +130,8 @@ export type DaemonOperationMap = {
     CornerInput & { pullRequest?: number | string },
     {
       checks: 'passed' | 'failed' | 'pending';
+      /** Number of check-run and commit-status contexts GitHub reports for the current head. */
+      checkCount: number;
       pullRequest: string;
       headSha: string;
       /** True when the configured reviewer's exact-head outcome has not passed. */

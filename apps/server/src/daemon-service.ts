@@ -7,6 +7,7 @@ import {
   queueCornerWorkerAfterReview,
   readAgentCommands,
   routeAgentResult,
+  routeSystemCommand,
   turnRootMessageSql,
   type CommandRow,
 } from './agent-command.js';
@@ -217,12 +218,19 @@ export class DaemonService {
       // reviewer takes the transactional path below, where the verdict and the
       // handoff commit together or not at all.
       !cornerReviewer
-    )
-      return (await this.postRoomMessage(
+    ) {
+      const output = await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
         authenticatedAgentId,
         true,
-      )) as Output<Name>;
+      );
+      if (
+        typeof candidate.text === 'string' &&
+        /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?\s*$/.test(candidate.text)
+      )
+        await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId, output.id);
+      return output as Output<Name>;
+    }
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
@@ -390,6 +398,18 @@ export class DaemonService {
             startedAt: event.committedRow.startedAt ?? writeStartedAt,
           },
         });
+      }
+      if (
+        name === 'postRoomMessage' &&
+        candidate.relay === undefined &&
+        typeof candidate.text === 'string' &&
+        /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?\s*$/.test(candidate.text)
+      ) {
+        await this.reconcileZeroCheckWorkerCompletion(
+          scopedRoom!,
+          authenticatedAgentId,
+          (output as { id: string }).id,
+        );
       }
       return output;
     }
@@ -771,6 +791,94 @@ export class DaemonService {
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
+  }
+
+  /**
+   * A repository with no checks emits no check webhook, so its configured
+   * reviewer otherwise waits forever. Resolve that absence only after the
+   * worker has finished its PR turn; at PR-open time the same empty rollup is
+   * merely a race with GitHub registering workflows.
+   */
+  private async reconcileZeroCheckWorkerCompletion(
+    cornerId: string,
+    workerAgentId: string,
+    sourceMessageId: string,
+  ): Promise<void> {
+    if (!this.prChecksStatus) return;
+    const candidate = (
+      await this.database.query<{
+        reviewer_agent_id: string;
+        owner_agent_id: string;
+      }>(
+        `SELECT parent.reviewer_agent_id,fact.owner_agent_id
+         FROM rooms corner
+         JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.id=$1 AND parent.reviewer_agent_id IS NOT NULL
+           AND parent.reviewer_agent_id<>$2 AND fact.owner_agent_id=$2
+           AND fact.lifecycle ? 'pr'`,
+        [cornerId, workerAgentId],
+      )
+    ).rows[0];
+    // Preserve the established no-reviewer path exactly: it does not pay for a
+    // GitHub read and does not receive a synthetic completion turn.
+    if (!candidate) return;
+
+    let verdict: Output<'getPrChecksStatus'>;
+    try {
+      verdict = await this.prChecksStatus({ cornerId });
+    } catch (error) {
+      console.error(`[server] zero-check completion read failed for corner ${cornerId}:`, error);
+      return;
+    }
+    if (verdict.checks !== 'pending' || verdict.checkCount !== 0) return;
+
+    await this.database.transaction(async (db) => {
+      const current = (
+        await db.query<{
+          reviewer_agent_id: string | null;
+          owner_agent_id: string;
+          lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
+        }>(
+          `SELECT parent.reviewer_agent_id,fact.owner_agent_id,fact.lifecycle
+           FROM rooms corner
+           JOIN rooms parent ON parent.id=corner.parent_id
+           JOIN corner_facts fact ON fact.corner_id=corner.id
+           WHERE corner.id=$1 FOR UPDATE OF fact`,
+          [cornerId],
+        )
+      ).rows[0];
+      if (
+        !current ||
+        current.owner_agent_id !== workerAgentId ||
+        current.reviewer_agent_id !== candidate.reviewer_agent_id ||
+        current.lifecycle.pr?.headSha !== verdict.headSha ||
+        current.lifecycle.checks === 'passing'
+      )
+        return;
+      const lifecycle = {
+        ...current.lifecycle,
+        checks: 'passing' as const,
+        checksSummary: {
+          status: 'passing' as const,
+          total: 0,
+          failing: [],
+          checks: [],
+          updatedAt: Math.floor(Date.now() / 1_000),
+        },
+      };
+      await db.query(
+        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL,updated_at=now()
+         WHERE corner_id=$1`,
+        [cornerId, JSON.stringify(lifecycle)],
+      );
+      await routeSystemCommand(db, {
+        roomId: cornerId,
+        sourceMessageId,
+        kind: 'check-passed',
+        targets: [],
+      });
+    });
   }
 
   // --- Workbench: connector helper operations --------------------------------

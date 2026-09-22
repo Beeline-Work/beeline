@@ -59,7 +59,7 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 `getPrChecksStatus({ cornerId, pullRequest? })` is authorized by current corner membership.
 `pullRequest` is a positive PR number in the parent Room repository or its full GitHub URL;
 omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`, or `pending`),
-`pullRequest` (URL), `headSha`, `approvalPending`, `reviewer` (the parent Room's currently
+`pullRequest` (URL), `headSha`, `checkCount`, `approvalPending`, `reviewer` (the parent Room's currently
 configured reviewer as `@handle`, or null), `reviewerExists` (the configuration fact independent
 of whether the identity has a handle), `reviewerIsAuthor` (true when that reviewer is also
 this corner's opener), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched`,

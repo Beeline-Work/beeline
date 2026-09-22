@@ -111,6 +111,21 @@ describe('MembersGlyph', () => {
     expect(right.x).toBeGreaterThan(left.x);
   });
 
+  it('can render as a solid destination mark without an outline', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(MembersGlyph, { color: '#b08a4a', filled: true }),
+      );
+    });
+    const circle = renderer.root.findByType('Circle' as never);
+    const body = renderer.root.findByType('Polygon' as never);
+    expect(circle.props.fill).toBe('#b08a4a');
+    expect(circle.props.stroke).toBe('none');
+    expect(body.props.fill).toBe('#b08a4a');
+    expect(body.props.stroke).toBe('none');
+  });
+
   it('accepts the 28px Room-list size and keeps the 16px stroke weight', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {

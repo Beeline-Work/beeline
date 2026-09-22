@@ -33,15 +33,18 @@ const LEG = 7.6;
 const BODY_POINTS = `${APEX_X} ${APEX_Y} ${APEX_X + LEG} ${APEX_Y + LEG} ${APEX_X - LEG} ${APEX_Y + LEG}`;
 
 /**
- * The shared Members type mark: an open head circle on a right-isosceles
- * body triangle. Stroke-only, no fill, no second person.
+ * The shared Members type mark: a head circle on a right-isosceles body
+ * triangle. Consumers can fill the mark when it needs the same solid weight
+ * as neighbouring destination glyphs; the default remains outline chrome.
  */
 export function MembersGlyph({
   color = brand.mark,
+  filled = false,
   size = 24,
   testID,
 }: {
   color?: string;
+  filled?: boolean;
   size?: number;
   testID?: string;
 }) {
@@ -56,15 +59,15 @@ export function MembersGlyph({
       <Circle
         cx={HEAD_CX}
         cy={HEAD_CY}
-        fill="none"
+        fill={filled ? color : 'none'}
         r={HEAD_R}
-        stroke={color}
+        stroke={filled ? 'none' : color}
         strokeWidth={chromeStrokeWidth(size)}
       />
       <Polygon
-        fill="none"
+        fill={filled ? color : 'none'}
         points={BODY_POINTS}
-        stroke={color}
+        stroke={filled ? 'none' : color}
         strokeLinejoin="round"
         strokeWidth={chromeStrokeWidth(size)}
       />

@@ -97,14 +97,8 @@ const HEADER_TARGET_SIZE = 44;
 /** The Room-row corners toggle keeps the 16 it already drew; the header
  *  resize must not enlarge row chrome. */
 const CORNER_TOGGLE_MARK_SIZE = 16;
-/**
- * The trailing edge the Members mark shares with the compose FAB (`right: 16`)
- * and the expanded-corner tray. The header's own padding subtracts the air
- * inside the 44pt target so the mark, rather than its target, meets the shared
- * edge. Targets are spaced; ink is aligned; neither pays for the other.
- */
-const HEADER_EDGE_INSET = 16;
-const HEADER_TARGET_AIR = (HEADER_TARGET_SIZE - HEADER_MARK_SIZE) / 2;
+/** Match the fixed trailing inset used by Room and corner conversation headers. */
+const HEADER_RIGHT_SPACING = 12;
 
 type EmptyRoomActionsProps = {
   canAddRoom: boolean;
@@ -838,6 +832,7 @@ export default function BuzzChannels() {
               >
                 <MembersGlyph
                   color={styles.headerActionGlyph.color}
+                  filled
                   size={HEADER_MARK_SIZE}
                   testID="workspace-members-glyph"
                 />
@@ -1213,10 +1208,9 @@ const styles = StyleSheet.create((theme) => {
     header: {
       minHeight: 62,
       paddingLeft: hull.space.lg,
-      // Match the compose FAB (`right: 16`) and the expanded-corner tray
-      // (`paddingRight: 16`) so the Members mark sits on that shared trailing
-      // edge rather than inset by the header's left gutter.
-      paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR,
+      // Fixed target spacing matches the Room and corner conversation headers;
+      // action centres stay aligned even when their drawn marks differ in size.
+      paddingRight: HEADER_RIGHT_SPACING,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',

@@ -68,7 +68,12 @@ async function daemonDoor(
 async function callTool(
   origin: string,
   args: Record<string, unknown>,
-  options: { name?: string; cornerId?: string; agentMayCloseCorner?: boolean } = {},
+  options: {
+    name?: string;
+    cornerId?: string;
+    agentMayCloseCorner?: boolean;
+    toolCallId?: string;
+  } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
   const entrypoint = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url));
   const root = await mkdtemp(join(tmpdir(), 'command-mcp-test-'));
@@ -133,7 +138,10 @@ async function callTool(
       id: 2,
       method: 'tools/call',
       params: {
-        _meta: { progressToken: 1 },
+        _meta: {
+          progressToken: 1,
+          ...(options.toolCallId ? { beelineToolCallId: options.toolCallId } : {}),
+        },
         name: options.name ?? 'open_corner',
         arguments: args,
       },
@@ -148,6 +156,34 @@ async function callTool(
 }
 
 describe('open_corner over the grok wire', () => {
+  it('gives separate calls in one turn independent idempotency keys', async () => {
+    const door = await daemonDoor();
+    await callTool(
+      door.origin,
+      { name: 'First fix', objective: 'Fix the first independent problem' },
+      { toolCallId: 'call-first' },
+    );
+    await callTool(
+      door.origin,
+      { name: 'Second fix', objective: 'Fix the second independent problem' },
+      { toolCallId: 'call-second' },
+    );
+    await callTool(
+      door.origin,
+      { name: 'First fix', objective: 'Fix the first independent problem' },
+      { toolCallId: 'call-first' },
+    );
+
+    const creates = door.calls.filter((call) => call.operation === 'createCorner');
+    expect(creates).toHaveLength(3);
+    expect(creates[0]?.requestId).toBe('command-request');
+    expect(creates[1]?.requestId).toBe('command-request');
+    expect(creates[0]?.idempotencyKey).toEqual(expect.any(String));
+    expect(creates[1]?.idempotencyKey).toEqual(expect.any(String));
+    expect(creates[1]?.idempotencyKey).not.toBe(creates[0]?.idempotencyKey);
+    expect(creates[2]?.idempotencyKey).toBe(creates[0]?.idempotencyKey);
+  }, 30_000);
+
   it('opens a corner from the multi-line brief that used to be refused', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {

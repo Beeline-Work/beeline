@@ -3915,6 +3915,10 @@ export class DaemonService {
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
     if (refusal) throw new Error(refusal);
+    const idempotencyKey = input.idempotencyKey ?? input.requestId;
+    if (!idempotencyKey || idempotencyKey.length > 128) {
+      throw new Error('invalid corner idempotency key');
+    }
     await this.access(input.roomId, agentId);
     const parent = (
       await this.database.query<{ workspace_id: string }>(
@@ -3925,7 +3929,7 @@ export class DaemonService {
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
-      // Opening a corner is idempotent for the originating task while that
+      // Opening a corner is idempotent for one confirmed tool call while that
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
@@ -3935,10 +3939,12 @@ export class DaemonService {
           `SELECT child.id::text corner_id
            FROM rooms child
            JOIN corner_facts fact ON fact.corner_id=child.id
-           WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL
+           WHERE child.parent_id=$1
+             AND COALESCE(fact.open_idempotency_key,fact.request_id)=$2
+             AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,
-          [input.roomId, input.requestId],
+          [input.roomId, idempotencyKey],
         )
       ).rows[0];
       if (existing) {
@@ -3989,9 +3995,17 @@ export class DaemonService {
       // later reader of `corner_facts` that a pull request was possible here.
       const lane = input.repository ? (input.lane ?? 'code') : 'no_code';
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,lane,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, agentId, commissionedBy ?? null, objective, input.requestId, lane],
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,lane,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
+        [
+          cornerId,
+          agentId,
+          commissionedBy ?? null,
+          objective,
+          input.requestId,
+          idempotencyKey,
+          lane,
+        ],
       );
       // The objective is the OPENER's work. Every other agent is copied in as a
       // member so it can read the corner and answer when tagged, but it gets no

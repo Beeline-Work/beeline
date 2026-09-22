@@ -930,6 +930,34 @@ describe('Room message variant components', () => {
     expect(onForward).toHaveBeenCalledWith(row);
   });
 
+  it('shows the original poster beside the source Room on a forwarded message', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'forwarded',
+          text: '> ship it\n\nFORWARDED FROM #general · @alice',
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(renderer.root.findByProps({ testID: 'forward-caption-forwarded' }).props.children).toBe(
+      'FORWARDED FROM #general · @alice',
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe('> ship it');
+  });
+
   it('renders reaction chips on mobile and toggles the viewer reaction', () => {
     const onReact = vi.fn();
     const row = message({

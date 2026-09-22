@@ -937,12 +937,13 @@ export class MonolithCornerTurnLoop {
               'This is a no-code corner with no repository checkout and no GitHub workflow.',
               "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
               'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
-              // This lane has no pull request URL and no merge card, so the
-              // artifacts and the tag ARE the completion signal. Without the
-              // tag the person who asked is never told the work finished.
+              // This lane has no pull request URL and no merge card, so its
+              // attached final reply is the requester-facing completion
+              // signal. close_corner is still the lifecycle completion: it
+              // archives the corner and reaps this scratch workspace.
               this.options.requesterHandle
-                ? `Deliver the result as artifacts: post_artifact everything the objective asked for, then finish by replying with @${this.options.requesterHandle} and one line on what you posted. That reply is this corner's only completion signal.`
-                : `Deliver the result as artifacts: post_artifact everything the objective asked for, then finish by replying with one line on what you posted. That reply is this corner's only completion signal.`,
+                ? `Deliver the result as artifacts: post_artifact everything the objective asked for, then call close_corner. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted; that attached reply is the requester-facing completion signal.`
+                : `Deliver the result as artifacts: post_artifact everything the objective asked for, then call close_corner. Finish the turn by replying with one line on what you posted; that attached reply is the requester-facing completion signal.`,
             ]),
       ]
         .filter(Boolean)

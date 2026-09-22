@@ -838,7 +838,9 @@ export function agentToolsFor(
     // A connector is offered where a person is answering — a Room or a DM —
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
-    if (tool.name === 'open_corner' || tool.name === 'open_poll') return !directMessage;
+    if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
+    if (tool.name === 'close_corner') return cornerTurn;
+    if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
   });

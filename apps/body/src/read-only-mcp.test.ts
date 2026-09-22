@@ -30,6 +30,27 @@ describe('direct message helper surface', () => {
   });
 });
 
+describe('corner lifecycle tool surfaces', () => {
+  it('advertises open and close only where each operation can succeed', () => {
+    const room = agentToolsFor(true, false);
+    const directMessage = agentToolsFor(true, true);
+    const corner = agentToolsFor(true, false, true);
+    const reviewerCorner = agentToolsFor(true, false, true, true);
+
+    for (const tools of [room, directMessage]) {
+      expect(tools.map((tool) => tool.name)).not.toContain('close_corner');
+    }
+    expect(room.map((tool) => tool.name)).toContain('open_corner');
+    expect(directMessage.map((tool) => tool.name)).not.toContain('open_corner');
+
+    for (const tools of [corner, reviewerCorner]) {
+      const names = tools.map((tool) => tool.name);
+      expect(names).toContain('close_corner');
+      expect(names).not.toContain('open_corner');
+    }
+  });
+});
+
 describe('open_corner arguments', () => {
   const openCorner = () => agentToolsFor(true, false).find((tool) => tool.name === 'open_corner')!;
 

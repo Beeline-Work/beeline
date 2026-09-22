@@ -257,6 +257,9 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
   expect(prompt).toContain('post_artifact everything the objective asked for');
+  expect(prompt).toContain('then call close_corner');
+  expect(prompt).toContain('that attached reply is the requester-facing completion signal');
+  expect(prompt).not.toContain("That reply is this corner's only completion signal");
   // The tag is the completion signal, so the handle has to reach the prompt.
   expect(prompt).toContain('@ada');
   expect(prompt).toContain('Do not initialize a repository, create a branch, commit, push');

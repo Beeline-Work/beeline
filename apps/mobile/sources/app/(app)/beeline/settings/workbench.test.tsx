@@ -133,8 +133,8 @@ describe('Workbench settings screen', () => {
     expect(wallet.props.action).toBe('Connect');
     expect(wallet.props.value).toBeUndefined();
     const tailscale = renderer.root.findByProps({ testID: 'workbench-connector-tailscale-head' });
-    expect(tailscale.props.value).toBe('soon');
-    expect(tailscale.props.action).toBeUndefined();
+    expect(tailscale.props.value).toBeUndefined();
+    expect(tailscale.props.action).toBe('Connect');
   });
 
   it('connects a tool from its row and keeps the accordion for the facts', async () => {

@@ -102,7 +102,7 @@ export function connectorPurpose(kind: ConnectorKind): string {
     case 'wallet':
       return 'An on-chain wallet bound to a person; created only from the Workbench page itself.';
     case 'tailscale':
-      return 'Private network access between machines (not available yet).';
+      return 'Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.';
     case 'google-gmail':
       return 'Read and send mail through the person’s own Google sign-in.';
     case 'google-calendar':

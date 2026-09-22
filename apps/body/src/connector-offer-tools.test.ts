@@ -40,7 +40,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(kinds).toContain('trusty-squire');
     expect(kinds).toContain('google-gmail');
     expect(kinds).not.toContain('wallet');
-    expect(kinds).not.toContain('tailscale');
+    expect(kinds).toContain('tailscale');
   });
 
   it('describes the offer as a paused turn on one addressed card, research-first, never authority', () => {
@@ -86,8 +86,8 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
               connectorType: 'tailscale',
               name: 'Tailscale',
               purpose: 'Network.',
-              available: false,
-              offerable: false,
+              available: true,
+              offerable: true,
             },
           ],
           connections: [
@@ -105,7 +105,9 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     );
     expect(text).toContain('- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.');
     expect(text).toContain('- wallet (Wallet): not added — added only from the Workbench page.');
-    expect(text).toContain('- tailscale (Tailscale): not available yet.');
+    expect(text).toContain(
+      '- tailscale (Tailscale): not added — you may offer it with offer_connector. Network.',
+    );
     expect(text).toContain('- 1inch API key (1inch) via trusty-squire');
     // Names only: nothing in the view carries a value, and the text prints nothing but names.
     expect(text).not.toMatch(/secret|password|token=/i);

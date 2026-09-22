@@ -17,7 +17,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 const SIGN_IN_POLL_MS = 1500;
 
 /**
- * Squire sign-in — an in-app browser OVERLAY (captain rulings, steer-2 and
+ * Connector sign-in — an in-app browser OVERLAY (captain rulings, steer-2 and
  * the post-connect steer): the complete sign-in sequence (Google's own
  * windows, redirects, email checks) runs inside a JavaScript-enabled
  * WebView rendered over the connect screen in a card that occupies most —
@@ -32,6 +32,7 @@ export default function ConnectorSignInScreen() {
     workspaceId?: string | string[];
     viewerId?: string | string[];
     connectorId?: string | string[];
+    connectorName?: string | string[];
     url?: string | string[];
     method?: string | string[];
     offerId?: string | string[];
@@ -39,6 +40,7 @@ export default function ConnectorSignInScreen() {
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const connectorId = firstParam(params.connectorId) ?? 'trusty-squire';
+  const connectorName = firstParam(params.connectorName) ?? 'Trusty Squire';
   const url = firstParam(params.url) ?? '';
   const method = firstParam(params.method) ?? 'streamed';
   const roomId = firstParam(params.roomId);
@@ -101,7 +103,9 @@ export default function ConnectorSignInScreen() {
           <Text style={styles.backButtonText}>✕</Text>
         </TouchableOpacity>
         <View style={styles.titleBlock}>
-          <Text style={styles.title}>Sign in to Squire</Text>
+          <Text style={styles.title} testID="signin-title">
+            Sign in to {connectorName}
+          </Text>
           {host ? <Text style={styles.subtitle}>{host}</Text> : null}
         </View>
       </View>

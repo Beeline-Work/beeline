@@ -52,6 +52,7 @@ import {
   type InstallSquireResult,
   type SquireMcpClient,
 } from './connector-squire.js';
+import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 
 export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
@@ -91,6 +92,11 @@ export type ConnectorAssignmentLoopOptions = {
     onProgress: (steps: readonly ConnectorStep[]) => void,
     sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
   ) => Promise<InstallGoogleToolResult>;
+  /** Override the Tailscale install/sign-in routine. */
+  readonly installTailscale?: (options: {
+    onProgress: (steps: readonly ConnectorStep[]) => void;
+    signIn?: ConnectorStatus['signIn'];
+  }) => Promise<InstallTailscaleResult>;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
   /** Override the vault reader. */
@@ -116,6 +122,10 @@ export class ConnectorAssignmentLoop {
     onProgress: (steps: readonly ConnectorStep[]) => void,
     sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
   ) => Promise<InstallGoogleToolResult>;
+  private readonly installTailscale: (options: {
+    onProgress: (steps: readonly ConnectorStep[]) => void;
+    signIn?: ConnectorStatus['signIn'];
+  }) => Promise<InstallTailscaleResult>;
   private readonly googleHomeDir: string;
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
@@ -127,6 +137,8 @@ export class ConnectorAssignmentLoop {
   private timer?: unknown;
   /** Armed only while this helper owns a live sign-in ceremony. */
   private connectWatch?: unknown;
+  /** Armed only while a Tailscale browser login is waiting for its callback. */
+  private tailscaleWatch?: unknown;
   private started = false;
   private stopped = false;
   /** One install at a time per connector; other polls skip it. */
@@ -148,6 +160,7 @@ export class ConnectorAssignmentLoop {
           ? sharedCredentials()
           : this.resolveGoogleCredentials(),
       }));
+    this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
@@ -183,6 +196,10 @@ export class ConnectorAssignmentLoop {
     if (this.connectWatch !== undefined) {
       this.cancel(this.connectWatch);
       this.connectWatch = undefined;
+    }
+    if (this.tailscaleWatch !== undefined) {
+      this.cancel(this.tailscaleWatch);
+      this.tailscaleWatch = undefined;
     }
   }
 
@@ -315,10 +332,56 @@ export class ConnectorAssignmentLoop {
 
   private async handle(assignment: ConnectorAssignment): Promise<void> {
     if (assignment.kind === 'install') {
-      await this.runInstall(assignment.connectorId);
-    } else if (assignment.kind === 'sync') await this.runSync();
-    else if (assignment.kind === 'revoke-grants')
+      if (assignment.connectorType === 'tailscale') {
+        await this.runTailscaleInstall(assignment.connectorId);
+      } else {
+        await this.runInstall(assignment.connectorId);
+      }
+    } else if (assignment.kind === 'sync' && assignment.connectorType !== 'tailscale') {
+      await this.runSync();
+    } else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
+  }
+
+  /** Install Tailscale and publish its browser login URL until the tailnet is connected. */
+  private async runTailscaleInstall(connectorId: string): Promise<void> {
+    const report = async (steps: readonly ConnectorStep[]) => {
+      try {
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
+      } catch (error) {
+        this.log(`step report failed: ${describe(error)}`);
+      }
+    };
+    const existing = await this.connectorRow(connectorId);
+    const result = await this.installTailscale({
+      onProgress: report,
+      ...(existing?.signIn ? { signIn: existing.signIn } : {}),
+    });
+    if (result.status === 'connected') {
+      if (this.tailscaleWatch !== undefined) {
+        this.cancel(this.tailscaleWatch);
+        this.tailscaleWatch = undefined;
+      }
+      await this.api.execute('installConnector', {
+        agentId: this.agentId,
+        connectorId,
+        ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
+      });
+      return;
+    }
+    await this.api.execute('postConnectorStatus', {
+      agentId: this.agentId,
+      connectorId,
+      steps: result.steps,
+      signIn: result.status === 'installing' ? result.signIn : null,
+      ...(result.status === 'error' ? { errorMessage: result.errorMessage } : {}),
+    });
+    if (result.status === 'installing' && this.tailscaleWatch === undefined) {
+      this.tailscaleWatch = this.schedule(() => {
+        this.tailscaleWatch = undefined;
+        if (!this.stopped) void this.runOnce();
+      }, CONNECT_WATCH_INTERVAL_MS);
+    }
   }
 
   /** Google tool connectors keep their manual credentials next to the runtime. */

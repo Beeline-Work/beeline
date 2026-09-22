@@ -82,6 +82,49 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('routes a Tailscale assignment through its own sign-in ceremony', async () => {
+    const api = apiMock([{ kind: 'install', connectorId: 'tail-1', connectorType: 'tailscale' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      install: async () => {
+        throw new Error('must not run the Squire installer');
+      },
+      installTailscale: async ({ onProgress }) => {
+        await onProgress([{ label: 'Tailnet signed in', status: 'running' }]);
+        return {
+          status: 'installing',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+          signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/test' },
+        };
+      },
+    });
+
+    await loop.runOnce();
+    await settle();
+
+    expect(api.calls.filter((call) => call.op === 'postConnectorStatus')).toEqual([
+      {
+        op: 'postConnectorStatus',
+        input: {
+          agentId: 'agent-1',
+          connectorId: 'tail-1',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+        },
+      },
+      {
+        op: 'postConnectorStatus',
+        input: {
+          agentId: 'agent-1',
+          connectorId: 'tail-1',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+          signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/test' },
+        },
+      },
+    ]);
+    loop.stop();
+  });
+
   it('drains immediately on wake without waiting for the recovery poll', async () => {
     const api = apiMock([]);
     let scheduled = 0;

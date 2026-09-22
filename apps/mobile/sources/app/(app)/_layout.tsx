@@ -142,6 +142,10 @@ export default function RootLayout() {
             headerTitle: 'Workbench',
           }}
         />
+        <Stack.Screen
+          name="beeline/settings/workbench/connection"
+          options={{ headerTitle: 'Key' }}
+        />
         {/* The connect flow draws its own header with the connector name, so the
             stack header would double it. Wallet uses the same in-page header. */}
         <Stack.Screen name="beeline/settings/workbench/wallet" options={{ headerShown: false }} />

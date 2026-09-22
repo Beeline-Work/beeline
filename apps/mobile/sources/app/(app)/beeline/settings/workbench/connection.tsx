@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { StateDot } from '@/components/buzz/StateDot';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
   connectionCompany,
   connectionCreatedByLine,
@@ -41,6 +41,7 @@ export default function ConnectionDetailScreen() {
   const workspaceId = singleParam(params.workspaceId) ?? '';
   const viewerId = singleParam(params.viewerId) ?? '';
   const ref = singleParam(params.ref) ?? '';
+  const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<ConnectionDetailView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
@@ -102,24 +103,15 @@ export default function ConnectionDetailScreen() {
   );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="connection-back"
-        >
-          <ChevronGlyph
-            color={styles.backButtonText.color}
-            direction="left"
-            size={CHEVRON_BACK_SIZE}
-          />
-        </TouchableOpacity>
-        <Text style={styles.title}>Key</Text>
-      </View>
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+    <View
+      style={[styles.container, { paddingBottom: insets.bottom }]}
+      testID="connection-detail-screen"
+    >
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentInner}
+        testID="connection-detail-scroll"
+      >
         {!detail && !error ? (
           <View style={styles.centered} testID="connection-loading">
             <SurfaceGlyphLoader testID="connection-loader" />
@@ -319,17 +311,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { color: hull.textPrimary },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary, flex: 1 },
     content: { flex: 1 },
     contentInner: {
       padding: hull.space.md,

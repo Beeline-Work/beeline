@@ -14,8 +14,8 @@ import {
  * way Slack keeps them apart:
  *
  * - the NEW MESSAGES divider says where the reader's unread run began when
- *   they opened this Room. The server's opening cursor owns it for the whole
- *   visit and a live arrival may never move it;
+ *   they opened this Room. The server's opening cursor owns it until the
+ *   reader reaches the newest row, and a live arrival may never move it;
  * - the jump control says a newer message exists that the reader cannot see.
  *   Actual viewport visibility decides it, and reaching the newest row settles
  *   it exactly as a tap on it would.
@@ -41,7 +41,7 @@ export function useNewMessageControl({
   /** Tail distance, which decides auto-follow and nothing this control shows. */
   isPinnedToTail: () => boolean;
 }): {
-  /** The one row allowed to paint the divider, or null when the visit opened read. */
+  /** The opening unread row until the newest row is seen, otherwise null. */
   dividerMessageId: string | null;
   queue: NewMessageQueue;
   controlVisible: boolean;
@@ -53,15 +53,19 @@ export function useNewMessageControl({
   // reports it. False until that pass has run, which costs nothing: an empty
   // queue draws no control either way.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
+  const [dismissedDividerMessageId, setDismissedDividerMessageId] = useState<string | null>(null);
   const visibleMessagesRef = useRef<readonly ChatDisplayMessage[]>([]);
   const newestMessageIdRef = useRef(newestMessageId);
   newestMessageIdRef.current = newestMessageId;
+  const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
+  firstUnreadMessageIdRef.current = firstUnreadMessageId;
   const isPinnedToTailRef = useRef(isPinnedToTail);
   isPinnedToTailRef.current = isPinnedToTail;
 
   useEffect(() => {
     setQueue(EMPTY_NEW_MESSAGE_QUEUE);
     setNewestMessageVisible(false);
+    setDismissedDividerMessageId(null);
     visibleMessagesRef.current = [];
   }, [roomId]);
 
@@ -98,9 +102,14 @@ export function useNewMessageControl({
     );
     setNewestMessageVisible(newestVisible);
     // Reaching the newest message is what the control asks for; arriving there
-    // under the reader's own finger settles the queue exactly as a tap would.
-    // Without this the count survived every scroll back to the tail.
-    if (newestVisible) setQueue(acknowledgeNewMessageQueue);
+    // under the reader's own finger settles the queue exactly as a tap would,
+    // and retires the opening divider now that its unread run has been read.
+    if (newestVisible) {
+      setQueue(acknowledgeNewMessageQueue);
+      if (firstUnreadMessageIdRef.current) {
+        setDismissedDividerMessageId(firstUnreadMessageIdRef.current);
+      }
+    }
   }, []);
 
   const settleQueueAtBoundary = useCallback((boundaryId: string) => {
@@ -110,8 +119,11 @@ export function useNewMessageControl({
   }, []);
 
   return {
-    // The divider is the server's cursor and only ever the server's cursor.
-    dividerMessageId: firstUnreadMessageId,
+    // The divider is the server's cursor and only ever the server's cursor. It
+    // retires after the reader reaches the newest row and stays retired when a
+    // later live batch arms the independent jump control.
+    dividerMessageId:
+      dismissedDividerMessageId === firstUnreadMessageId ? null : firstUnreadMessageId,
     queue,
     controlVisible: newMessageControlVisible(queue, newestMessageVisible),
     observeVisibleMessages,

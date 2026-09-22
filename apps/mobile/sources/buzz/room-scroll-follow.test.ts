@@ -229,7 +229,7 @@ describe('native variable-height history anchoring', () => {
     expect(completion).toContain('visibleTranscriptMessagesRef.current.some');
     expect(completion).toContain('messageContainsBoundary(message, pending.boundaryId)');
     expect(completion).toContain('pendingNewMessageLandingRef.current = null');
-    expect(completion).toContain('acknowledgeNewMessageQueue(current)');
+    expect(completion).toContain('settleQueueAtBoundary(pending.boundaryId)');
     expect(landing).toContain('Keep the durable boundary armed');
     expect(landing).not.toContain('pendingNewMessageLandingRef.current = null');
   });

@@ -1,5 +1,6 @@
 import { groknight } from './groknight';
 import { composerBottomPadding } from './composer-keyboard';
+import { COMPOSER_TOP_GAP } from './room-bottom-chrome';
 
 /**
  * Thin Room-open paint reserves the same bottom stack chrome will mount, so
@@ -11,10 +12,11 @@ import { composerBottomPadding } from './composer-keyboard';
  */
 
 /** `phoneTranscriptTailPadding` — the inverted phone list's visual tail.
- *  A speaker-change margin is 24px; the newest row contributes 6px of its own
- *  bottom padding, so the tail carries the other 18. See
+ *  A speaker-change margin is 24px and the fixed composer-top gap is 9px; the
+ *  newest row contributes 6px of its own bottom padding, so the tail carries
+ *  the other 27. See
  *  `buzz/room-scroll-follow.ts` for why this never steps with the turn line. */
-export const ROOM_OPEN_LIST_TAIL_PADDING = 18;
+export const ROOM_OPEN_LIST_TAIL_PADDING = 18 + COMPOSER_TOP_GAP;
 /** `inputBar.paddingTop`. */
 export const ROOM_OPEN_INPUT_BAR_PADDING_TOP = 8;
 /** `inputBar.borderTopWidth`. */
@@ -29,7 +31,7 @@ export const ROOM_OPEN_COMPOSER_BOX_BORDER = 1;
  * bottom padding. The speaker-change air now sits on the incoming row's
  * visual TOP (`entryWithByline.paddingTop`), so every row's tail edge is the
  * ordinary compact 6px and the list's tail padding supplies the rest of the
- * 24px speaker-change margin.
+ * 24px speaker-change margin plus the 9px composer-top gap.
  */
 export function roomOpenMessagePadding(): number {
   return groknight.messagePaddingVertical;

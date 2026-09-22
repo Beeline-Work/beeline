@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  COMPOSER_TOP_GAP,
+  TURN_LABEL_LINE_HEIGHT,
+  TURN_LINE_BOX_HEIGHT,
+  TURN_LINE_ROW_MIN_HEIGHT,
+} from '@/buzz/room-bottom-chrome';
 
 const source = readFileSync(new URL('./chat/_chat-surface.tsx', import.meta.url), 'utf8');
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
@@ -9,6 +15,10 @@ const ledger = readFileSync(
 );
 const composerSource = readFileSync(
   new URL('../../../components/buzz/ConversationComposer.tsx', import.meta.url),
+  'utf8',
+);
+const desktopInspectorSource = readFileSync(
+  new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
   'utf8',
 );
 
@@ -76,6 +86,34 @@ describe('Room composer status layout', () => {
     expect(source).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
     expect(source).toContain('pushedChromeVisible: agentsOffline');
     expect(source).not.toContain('CornerLiveBar');
+  });
+
+  it('holds the complete thinking-line box above the desktop composer in every state', () => {
+    const desktopStatusStyle = source.slice(
+      source.indexOf('    desktopStatusSlot: {'),
+      source.indexOf('    desktopStatusText: {'),
+    );
+
+    expect(COMPOSER_TOP_GAP).toBe(TURN_LABEL_LINE_HEIGHT / 2);
+    expect(TURN_LINE_BOX_HEIGHT).toBe(TURN_LINE_ROW_MIN_HEIGHT + COMPOSER_TOP_GAP);
+    expect(TURN_LINE_BOX_HEIGHT).toBe(33);
+    expect(desktopStatusStyle).toContain('minHeight: TURN_LINE_BOX_HEIGHT');
+    expect(desktopStatusStyle).not.toContain('minHeight: 28');
+
+    const inspectorComposer = desktopInspectorSource.slice(
+      desktopInspectorSource.indexOf('<View style={styles.cockpitComposer}>'),
+      desktopInspectorSource.indexOf(
+        '<ConversationComposer',
+        desktopInspectorSource.indexOf('<View style={styles.cockpitComposer}>'),
+      ),
+    );
+    expect(inspectorComposer).toContain('testID="desktop-work-corner-status-slot"');
+    expect(inspectorComposer.indexOf('desktop-work-corner-status-slot')).toBeLessThan(
+      inspectorComposer.indexOf('{ack &&'),
+    );
+    expect(desktopInspectorSource).toContain(
+      "cockpitStatusSlot: { minHeight: TURN_LINE_BOX_HEIGHT, justifyContent: 'center' }",
+    );
   });
 
   it('keeps the Room header outside the Android keyboard translation surface', () => {

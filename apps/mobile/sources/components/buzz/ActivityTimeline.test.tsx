@@ -460,7 +460,12 @@ describe('agent prose and drafts', () => {
       {},
       ...hostNodes(speaker, /^activity$/)[0].props.style.filter(Boolean),
     );
-    expect(speakerStyle.paddingBottom).toBe(groknight.messagePaddingVertical * 3);
+    // The speaker-change air sits on the incoming visual top edge on BOTH
+    // lists: a phone activity row is upright inside its cell, so the extra
+    // 12px belongs on `paddingTop` here too, never on the tail edge (which
+    // would leave a 30px gap under the newest row and 12px above the next).
+    expect(speakerStyle.paddingTop).toBe(groknight.messagePaddingVertical * 3);
+    expect(speakerStyle.paddingBottom).toBe(groknight.messagePaddingVertical);
     expect(speakerStyle).not.toHaveProperty('marginTop');
   });
 

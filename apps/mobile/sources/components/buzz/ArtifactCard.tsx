@@ -36,6 +36,7 @@ import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { Modal } from '@/modal';
 
@@ -56,37 +57,51 @@ export const ArtifactCard = React.memo(function ArtifactCard({
   attachment,
   authorHandle,
   isDesktop = false,
+  photoAttachments,
 }: {
   attachment: AttachmentReference;
   authorHandle?: string;
   isDesktop?: boolean;
+  /** Live image artifacts carried by the same message. Omitted for one photo. */
+  photoAttachments?: readonly AttachmentReference[];
 }) {
-  const format = artifactFormat(attachment.mimeType);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const isPhotoGroup = Boolean(photoAttachments && photoAttachments.length > 1);
+  useEffect(() => {
+    setPhotoIndex((index) => Math.min(index, Math.max(0, (photoAttachments?.length ?? 1) - 1)));
+  }, [photoAttachments?.length]);
+  const activeAttachment =
+    (isPhotoGroup ? photoAttachments?.[photoIndex] : undefined) ?? attachment;
+  const activeAuthorHandle = activeAttachment.author ?? authorHandle;
+  const format = artifactFormat(activeAttachment.mimeType);
   const capabilities = artifactCapabilities(
-    attachment.mimeType,
+    activeAttachment.mimeType,
     isDesktop ? 'desktop' : Platform.OS === 'ios' ? 'ios' : 'android',
   );
-  const title = attachment.title ?? attachment.name;
-  const kindWord = format === 'document' ? attachment.mimeType.toLowerCase() : format;
-  const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${kindWord} · ${formatAttachmentSize(attachment.size)}`;
+  const title = activeAttachment.title ?? activeAttachment.name;
+  const kindWord = format === 'document' ? activeAttachment.mimeType.toLowerCase() : format;
+  const kindLine = `${activeAuthorHandle ? `@${activeAuthorHandle.replace(/^@/, '')} · ` : ''}${kindWord} · ${formatAttachmentSize(activeAttachment.size)}`;
   const openInBrowser = useCallback(
-    () => void openArtifactInBrowserOrExplain(attachment),
-    [attachment],
+    () => void openArtifactInBrowserOrExplain(activeAttachment),
+    [activeAttachment],
   );
   const openFull = useCallback(() => {
     if (isDesktop) {
-      openArtifactInDesktopWorkPane({ attachment, authorHandle });
+      openArtifactInDesktopWorkPane({
+        attachment: activeAttachment,
+        authorHandle: activeAuthorHandle,
+      });
       return;
     }
     Modal.show({
       component: ArtifactViewerScreen,
-      props: { attachment, authorHandle },
+      props: { attachment: activeAttachment, authorHandle: activeAuthorHandle },
       // The viewer is a full-screen surface: the default centered placement
       // constrains width to 460 and no height, collapsing its flex:1 root to
       // nothing — a dimmed room with an invisible viewer.
       placement: 'fill',
     });
-  }, [attachment, authorHandle, isDesktop]);
+  }, [activeAttachment, activeAuthorHandle, isDesktop]);
 
   // What is left external is what nothing on the device can paint — a ZIP, an
   // octet-stream, anything unrecognized. Those keep the file-style row and the
@@ -101,12 +116,12 @@ export const ArtifactCard = React.memo(function ArtifactCard({
         actions={actions}
         onOpenInBrowser={openInBrowser}
         onOpenFull={openFull}
-        testID={`artifact-document-${attachment.name}`}
+        testID={`artifact-document-${activeAttachment.name}`}
       >
         <View style={styles.docRow} testID="artifact-document-body">
           <Text style={styles.docGlyph}>▧</Text>
           <Text numberOfLines={1} style={styles.docName}>
-            {attachment.name} · {formatAttachmentSize(attachment.size)}
+            {activeAttachment.name} · {formatAttachmentSize(activeAttachment.size)}
           </Text>
         </View>
       </ArtifactCardShell>
@@ -119,37 +134,83 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       actions={['browser', 'open']}
       onOpenInBrowser={openInBrowser}
       onOpenFull={openFull}
-      testID={`artifact-${format}-${attachment.name}`}
+      testID={isPhotoGroup ? 'artifact-photo-group' : `artifact-${format}-${activeAttachment.name}`}
     >
       <Pressable
         accessibilityLabel={`Open ${title} full screen`}
         accessibilityRole="button"
         onPress={openFull}
         style={styles.previewPress}
-        testID={`artifact-preview-${attachment.name}`}
+        testID={`artifact-preview-${activeAttachment.name}`}
       >
         {format === 'markdown' ? (
-          <ArtifactMarkdownPreview attachment={attachment} />
+          <ArtifactMarkdownPreview attachment={activeAttachment} />
         ) : format === 'text' ? (
           <View style={styles.preview}>
-            <ArtifactText attachment={attachment} crop testID="artifact-preview-text" />
+            <ArtifactText attachment={activeAttachment} crop testID="artifact-preview-text" />
             <View style={styles.previewFade} pointerEvents="none" />
           </View>
         ) : format === 'image' ? (
           <View style={styles.preview}>
             <ArtifactImage
-              attachment={attachment}
+              attachment={activeAttachment}
               fit="cover"
               style={styles.previewImage}
               testID="artifact-preview-image"
             />
+            {isPhotoGroup ? (
+              <View pointerEvents="box-none" style={styles.photoNavigation}>
+                <Pressable
+                  accessibilityLabel="Previous photo"
+                  accessibilityRole="button"
+                  onPress={(event) => {
+                    event?.stopPropagation();
+                    setPhotoIndex((index) =>
+                      index === 0 ? photoAttachments!.length - 1 : index - 1,
+                    );
+                  }}
+                  style={styles.photoNavigationButton}
+                  testID="artifact-photo-previous"
+                >
+                  <ChevronGlyph
+                    color={styles.photoNavigationMark.color}
+                    direction="left"
+                    size={CHEVRON_ROW_SIZE}
+                  />
+                </Pressable>
+                <Text
+                  accessibilityLabel={`Photo ${photoIndex + 1} of ${photoAttachments!.length}`}
+                  accessibilityLiveRegion="polite"
+                  style={styles.photoPosition}
+                  testID="artifact-photo-position"
+                >
+                  {photoIndex + 1} of {photoAttachments!.length}
+                </Text>
+                <Pressable
+                  accessibilityLabel="Next photo"
+                  accessibilityRole="button"
+                  onPress={(event) => {
+                    event?.stopPropagation();
+                    setPhotoIndex((index) => (index + 1) % photoAttachments!.length);
+                  }}
+                  style={styles.photoNavigationButton}
+                  testID="artifact-photo-next"
+                >
+                  <ChevronGlyph
+                    color={styles.photoNavigationMark.color}
+                    direction="right"
+                    size={CHEVRON_ROW_SIZE}
+                  />
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ) : format === 'pdf' && Platform.OS === 'web' ? (
           // The work pane's host has no WebView to snapshot, so the desktop
           // card paints page one in the frame itself.
           <View style={styles.preview}>
             <ArtifactPdfView
-              attachment={attachment}
+              attachment={activeAttachment}
               mode="preview"
               testID="artifact-preview-pdf"
             />
@@ -157,7 +218,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
           </View>
         ) : (
           <ArtifactSandboxPreview
-            attachment={attachment}
+            attachment={activeAttachment}
             format={format === 'pdf' ? 'pdf' : format === 'svg' ? 'svg' : 'html'}
           />
         )}
@@ -292,7 +353,9 @@ export function ArtifactSandboxPreview({
     if (!rendering) return;
     const timer = setTimeout(
       () => void capture(),
-      pdfDocument ? ARTIFACT_PDF_RENDER_TIMEOUT_MS + PREVIEW_SNAPSHOT_DELAY_MS : PREVIEW_SNAPSHOT_DELAY_MS,
+      pdfDocument
+        ? ARTIFACT_PDF_RENDER_TIMEOUT_MS + PREVIEW_SNAPSHOT_DELAY_MS
+        : PREVIEW_SNAPSHOT_DELAY_MS,
     );
     return () => clearTimeout(timer);
   }, [capture, pdfDocument, rendering]);
@@ -372,7 +435,11 @@ export function ArtifactMarkdownPreview({ attachment }: { attachment: Attachment
     );
   }
   return (
-    <View pointerEvents="none" style={[styles.preview, styles.markdownCrop]} testID="artifact-preview-markdown">
+    <View
+      pointerEvents="none"
+      style={[styles.preview, styles.markdownCrop]}
+      testID="artifact-preview-markdown"
+    >
       <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
       <View style={styles.previewFade} />
     </View>
@@ -396,6 +463,34 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgHighlight,
   },
   previewImage: { width: '100%', height: '100%' },
+  photoNavigation: {
+    position: 'absolute',
+    left: theme.buzz.space.sm,
+    right: theme.buzz.space.sm,
+    bottom: theme.buzz.space.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  photoNavigationButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.transcriptCard.cornerRadius,
+    backgroundColor: `${theme.buzz.bgBase}E6`,
+  },
+  photoNavigationMark: { color: theme.buzz.textPrimary },
+  photoPosition: {
+    ...theme.buzz.type.machine,
+    color: theme.buzz.textPrimary,
+    backgroundColor: `${theme.buzz.bgBase}E6`,
+    borderRadius: theme.buzz.transcriptCard.cornerRadius,
+    paddingHorizontal: theme.buzz.space.sm,
+    paddingVertical: 4,
+  },
   previewWeb: { width: '100%', height: '100%', backgroundColor: 'transparent' },
   previewFade: {
     position: 'absolute',

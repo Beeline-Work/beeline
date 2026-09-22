@@ -1373,6 +1373,111 @@ describe('Room message variant components', () => {
     expect(modal.show).not.toHaveBeenCalled();
   });
 
+  it('groups photo artifacts from one message into one card while leaving other artifacts alone', () => {
+    const firstPhoto = {
+      url: 'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+      name: 'first.jpg',
+      mimeType: 'image/jpeg',
+      size: 13,
+      kind: 'artifact' as const,
+      title: 'First',
+    };
+    const document = {
+      url: 'https://server.example/v1/media/22222222-2222-4222-8222-222222222222',
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: 21,
+      kind: 'artifact' as const,
+      title: 'Notes',
+    };
+    const svg = {
+      url: 'https://server.example/v1/media/44444444-4444-4444-8444-444444444444',
+      name: 'diagram.svg',
+      mimeType: 'image/svg+xml',
+      size: 25,
+      kind: 'artifact' as const,
+      title: 'Diagram',
+    };
+    const secondPhoto = {
+      url: 'https://server.example/v1/media/33333333-3333-4333-8333-333333333333',
+      name: 'second.png',
+      mimeType: 'image/png',
+      size: 34,
+      kind: 'artifact' as const,
+      title: 'Second',
+    };
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'photo-set',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          attachments: [firstPhoto, document, svg, secondPhoto],
+        })}
+        agent={{ pubkey: 'agent', displayName: 'BBC' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const cards = render(
+      React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
+    ).root.findAllByType('ArtifactCard' as never);
+    expect(cards).toHaveLength(3);
+    expect(cards[0]!.props.attachment).toBe(firstPhoto);
+    expect(cards[0]!.props.photoAttachments).toEqual([firstPhoto, secondPhoto]);
+    expect(cards[1]!.props.attachment).toBe(document);
+    expect(cards[1]!.props.photoAttachments).toBeUndefined();
+    expect(cards[2]!.props.attachment).toBe(svg);
+    expect(cards[2]!.props.photoAttachments).toBeUndefined();
+  });
+
+  it('keeps a single photo artifact on the existing single-card path', () => {
+    const photo = {
+      url: 'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+      name: 'only.jpg',
+      mimeType: 'image/jpeg',
+      size: 13,
+      kind: 'artifact' as const,
+      title: 'Only',
+    };
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'one-photo', pubkey: 'agent', attachments: [photo] })}
+        agent={{ pubkey: 'agent', displayName: 'BBC' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const cards = render(
+      React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
+    ).root.findAllByType('ArtifactCard' as never);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.props.attachment).toBe(photo);
+    expect(cards[0]!.props.photoAttachments).toBeUndefined();
+  });
+
   it("gives the live draft lane the settled row's identity mark", () => {
     // Captain report C42: while the agent streams, the draft row's byline is
     // the same byline component as a settled agent message — IdentityMark

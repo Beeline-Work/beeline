@@ -17,7 +17,7 @@
  *
  * All three were solving a shortage that did not exist. The gap between the
  * newest message and the composer is already the ordinary speaker-change
- * margin plus the fixed composer-top gap, and the line's box is exactly that
+ * margin plus the fixed composer-top gap (24 + 12 = 36), and the line's box is exactly that
  * space. Painting into room that is already reserved costs nothing, so there
  * is no conditional height and no shift to compensate for.
  */
@@ -34,8 +34,12 @@ export const TURN_LINE_ROW_MIN_HEIGHT = 24;
  *  on this one measurement so the relationship cannot drift. */
 export const TURN_LABEL_LINE_HEIGHT = 18;
 
-/** Fixed air above the composer, whether the thinking line is mounted or not. */
-export const COMPOSER_TOP_GAP = TURN_LABEL_LINE_HEIGHT / 2;
+/** Fixed air above the composer, whether the thinking line is mounted or not.
+ *  Authored by eye (captain, 2026-09-22) rather than derived from the label:
+ *  with 12 here the whole gap under the newest message reads 36px. It only
+ *  has to leave the label's ink clear of the composer, which any value at or
+ *  below `TURN_LINE_ROW_MIN_HEIGHT` does. */
+export const COMPOSER_TOP_GAP = 12;
 
 /** The thinking line keeps the fixed composer-top gap below its row. */
 export const TURN_LINE_BAR_MARGIN_BOTTOM = COMPOSER_TOP_GAP;

@@ -1,32 +1,37 @@
 import { applyLiveOverlay, type LiveOverlay } from '@beeline/buzz-client';
 import { provisionalDraftKey, rememberProvisionalDraft } from './draft-settle';
 
-export const LIVE_DRAFT_TICK_MS = 32;
-export const LIVE_DRAFT_KEEP_LINES = 2;
-export const LIVE_DRAFT_PROMOTE_LINES = 4;
-export const LIVE_DRAFT_KEEP_CHARS = 240;
-
-const BASE_CHARACTERS_PER_SECOND = 900;
-const MAX_CHARACTERS_PER_SECOND = 4_800;
-const BACKLOG_RATE_GAIN = 1.5;
+/**
+ * The one scheduler for every live draft lane.
+ *
+ * This is the latest-value half of the streaming design: arrivals only replace
+ * the lane's pending snapshot, and each eligible frame commits the WHOLE latest
+ * value — never a rate-limited slice. There is no character budget and no
+ * reveal timer, so a lane stops painting the moment the producer stops. The
+ * fixed 33 ms tick is the gate; because every tick commits the entire pending
+ * snapshot, no value is ever held past the 50 ms deadline.
+ *
+ * The row-local invalidation boundary stays where it was: a cumulative arrival
+ * mutates only this keyed store, and React state changes once to open or close
+ * a lane, never for text (see `useRoomSurfaceSession.ts`).
+ */
+export const LIVE_DRAFT_TICK_MS = 33;
+/** A pending snapshot is never held longer than this; a full commit is catch-up. */
+export const LIVE_DRAFT_DEADLINE_MS = 50;
 const MAX_RETAINED_LANES = 32;
 
 export type LiveDraftPresentation = {
-  readonly blocks: readonly string[];
-  readonly liveText: string;
+  readonly text: string;
 };
 
 export type LiveDraftMetrics = {
   readonly arrivals: number;
   readonly paints: number;
-  readonly promotions: number;
   readonly rewrites: number;
   readonly paintedCharacters: number;
 };
 
-export type LiveDraftPaint = LiveDraftPresentation & {
-  readonly promoted: readonly string[];
-};
+export type LiveDraftPaint = LiveDraftPresentation;
 
 export interface LiveDraftSink {
   paint(update: LiveDraftPaint): void;
@@ -54,29 +59,26 @@ const defaultClock: LiveDraftClock = {
 type MutableMetrics = {
   arrivals: number;
   paints: number;
-  promotions: number;
   rewrites: number;
   paintedCharacters: number;
 };
 
 type Lane = {
+  /** Every character the producer has sent so far. */
   received: string;
-  queued: string;
-  blocks: string[];
-  liveText: string;
+  /** The whole value currently on the row: text React has already painted. */
+  committed: string;
+  /** When the pending value first arrived, for the 50 ms catch-up bound. */
+  pendingSince: number;
   sink?: LiveDraftSink;
-  lastTickAt?: number;
-  characterBudget: number;
-  instant: boolean;
   metrics: MutableMetrics;
   touchedAt: number;
 };
 
-const EMPTY_PRESENTATION: LiveDraftPresentation = { blocks: [], liveText: '' };
+const EMPTY_PRESENTATION: LiveDraftPresentation = { text: '' };
 const EMPTY_METRICS: LiveDraftMetrics = {
   arrivals: 0,
   paints: 0,
-  promotions: 0,
   rewrites: 0,
   paintedCharacters: 0,
 };
@@ -85,101 +87,35 @@ function snapshotMetrics(metrics: MutableMetrics): LiveDraftMetrics {
   return { ...metrics };
 }
 
-function splitRewrite(text: string): LiveDraftPresentation {
-  const lines = text.split(/(?<=\n)/u);
-  const keep = Math.min(LIVE_DRAFT_KEEP_LINES, lines.length);
-  const splitAt = Math.max(0, lines.length - keep);
-  const settled = lines.slice(0, splitAt).join('');
-  return capLiveChars({
-    blocks: settled ? [settled] : [],
-    liveText: lines.slice(splitAt).join(''),
-  });
-}
-
-function capLiveChars(presentation: LiveDraftPresentation): LiveDraftPresentation {
-  if (presentation.liveText.length <= LIVE_DRAFT_KEEP_CHARS) return presentation;
-  const target = presentation.liveText.length - LIVE_DRAFT_KEEP_CHARS;
-  let cut = presentation.liveText.lastIndexOf('\n', target);
-  if (cut < 0) cut = presentation.liveText.lastIndexOf(' ', target);
-  if (cut < 0) cut = target;
-  else cut += 1;
-  if (cut <= 0) return presentation;
-  const prefix = presentation.liveText.slice(0, cut);
-  return {
-    blocks: prefix ? [...presentation.blocks, prefix] : presentation.blocks,
-    liveText: presentation.liveText.slice(cut),
-  };
-}
-
-function newlineEnds(text: string): number[] {
-  const ends: number[] = [];
-  for (let index = 0; index < text.length; index += 1) {
-    if (text.charCodeAt(index) === 10) ends.push(index + 1);
-  }
-  return ends;
-}
-
-function promoteCompleteLines(lane: Lane): string[] {
-  const promoted: string[] = [];
-  while (true) {
-    const ends = newlineEnds(lane.liveText);
-    if (ends.length < LIVE_DRAFT_KEEP_LINES + LIVE_DRAFT_PROMOTE_LINES) break;
-    const cut = ends[LIVE_DRAFT_PROMOTE_LINES - 1]!;
-    const block = lane.liveText.slice(0, cut);
-    lane.liveText = lane.liveText.slice(cut);
-    lane.blocks.push(block);
-    promoted.push(block);
-  }
-  return promoted;
-}
-
-function promoteByChars(lane: Lane): string[] {
-  if (lane.liveText.length <= LIVE_DRAFT_KEEP_CHARS) return [];
-  const capped = capLiveChars({ blocks: [], liveText: lane.liveText });
-  if (!capped.blocks.length) return [];
-  lane.blocks.push(...capped.blocks);
-  lane.liveText = capped.liveText;
-  return [...capped.blocks];
-}
-
-function promoteLive(lane: Lane): string[] {
-  return [...promoteCompleteLines(lane), ...promoteByChars(lane)];
-}
-
 export interface LiveDraftDrainStore {
   publish(key: string, cumulativeText: string): void;
   stop(key: string): void;
   finalize(key: string): void;
   remove(key: string): void;
   attach(key: string, sink: LiveDraftSink): () => void;
-  setInstant(key: string, instant: boolean): void;
   /**
    * Pause the scheduler without flushing. A focused Room is active; leave and
    * unmount must flip this off synchronously so a mid-turn drain cannot occupy
    * the JS thread until the message is ready to paint.
    */
   setActive(active: boolean): void;
-  subscribePromotion(listener: (key: string) => void): () => void;
+  /**
+   * Called once per lane commit — the row just grew, so a pinned reader may
+   * need to follow it. Never called on an arrival that only queued.
+   */
+  subscribeCommit(listener: (key: string) => void): () => void;
   getPresentation(key: string): LiveDraftPresentation;
   getReceived(key: string): string;
   getMetrics(key: string): LiveDraftMetrics;
   reset(): void;
 }
 
-/**
- * One scheduler for every live draft lane.
- *
- * Network arrivals only append bytes to `queued`. The fixed tick spends a
- * character budget against that queue and mutates the row's narrow native text
- * surface through its sink. React hears only about an occasional immutable
- * block promotion; it never hears about an arrival or an ordinary paint.
- */
 export function createLiveDraftDrainStore({
   clock = defaultClock,
 }: { clock?: LiveDraftClock } = {}): LiveDraftDrainStore {
   const lanes = new Map<string, Lane>();
   const completedMetrics = new Map<string, LiveDraftMetrics>();
-  const promotionListeners = new Set<(key: string) => void>();
+  const commitListeners = new Set<(key: string) => void>();
   let timerId: number | undefined;
   let active = true;
 
@@ -191,11 +127,8 @@ export function createLiveDraftDrainStore({
     }
     const lane: Lane = {
       received: '',
-      queued: '',
-      blocks: [],
-      liveText: '',
-      characterBudget: 0,
-      instant: false,
+      committed: '',
+      pendingSince: clock.now(),
       metrics: { ...EMPTY_METRICS },
       touchedAt: clock.now(),
     };
@@ -203,12 +136,27 @@ export function createLiveDraftDrainStore({
     return lane;
   };
 
-  const hasPaintableWork = () =>
-    [...lanes.values()].some((lane) => lane.queued.length > 0 && lane.sink);
+  const hasPendingWork = () =>
+    [...lanes.values()].some((lane) => lane.sink && lane.received !== lane.committed);
+
+  /**
+   * The 33 ms gate, capped by the 50 ms deadline: a lane whose oldest pending
+   * snapshot has already waited most of its budget flushes on the next tick
+   * rather than waiting out the full gate.
+   */
+  const pendingDelay = () => {
+    const now = clock.now();
+    let delay = LIVE_DRAFT_TICK_MS;
+    for (const lane of lanes.values()) {
+      if (!lane.sink || lane.received === lane.committed) continue;
+      delay = Math.min(delay, Math.max(0, LIVE_DRAFT_DEADLINE_MS - (now - lane.pendingSince)));
+    }
+    return delay;
+  };
 
   const schedule = () => {
-    if (!active || timerId !== undefined || !hasPaintableWork()) return;
-    timerId = clock.setTimer(tick, LIVE_DRAFT_TICK_MS);
+    if (!active || timerId !== undefined || !hasPendingWork()) return;
+    timerId = clock.setTimer(tick, pendingDelay());
   };
 
   const stopTimer = () => {
@@ -217,61 +165,31 @@ export function createLiveDraftDrainStore({
     timerId = undefined;
   };
 
-  const catchUpQueued = () => {
-    for (const [key, lane] of lanes) {
-      if (!lane.sink || !lane.queued) continue;
-      const flushed = lane.queued.length;
-      lane.liveText += lane.queued;
-      lane.queued = '';
-      lane.characterBudget = 0;
-      const promoted = promoteLive(lane);
-      lane.metrics.promotions += promoted.length;
-      lane.metrics.paintedCharacters += flushed;
-      lane.sink.replace({ blocks: lane.blocks, liveText: lane.liveText });
-      if (promoted.length) notifyPromotion(key);
-    }
+  const notifyCommit = (key: string) => {
+    for (const listener of commitListeners) listener(key);
   };
 
-  const notifyPromotion = (key: string) => {
-    for (const listener of promotionListeners) listener(key);
-  };
-
-  const paintLane = (key: string, lane: Lane, at: number) => {
-    if (!lane.sink || !lane.queued) return;
-    const elapsed = Math.max(
-      LIVE_DRAFT_TICK_MS,
-      Math.min(100, at - (lane.lastTickAt ?? at - LIVE_DRAFT_TICK_MS)),
-    );
-    lane.lastTickAt = at;
-    const rate = Math.min(
-      MAX_CHARACTERS_PER_SECOND,
-      BASE_CHARACTERS_PER_SECOND + lane.queued.length * BACKLOG_RATE_GAIN,
-    );
-    lane.characterBudget += (rate * elapsed) / 1_000;
-    const take = Math.min(
-      lane.queued.length,
-      lane.instant ? lane.queued.length : Math.floor(lane.characterBudget),
-    );
-    if (take <= 0) return;
-
-    const append = lane.queued.slice(0, take);
-    lane.queued = lane.queued.slice(take);
-    if (!lane.instant) lane.characterBudget -= take;
-    else lane.characterBudget = 0;
-    lane.liveText += append;
-    const promoted = promoteLive(lane);
+  /** Commit the whole latest snapshot: the latest-value rule, never a slice. */
+  const commitLane = (key: string, lane: Lane, method: 'paint' | 'replace') => {
+    if (!lane.sink || lane.received === lane.committed) return;
+    const grew = lane.received.length - lane.committed.length;
+    lane.committed = lane.received;
+    lane.pendingSince = clock.now();
     lane.metrics.paints += 1;
-    lane.metrics.promotions += promoted.length;
-    lane.metrics.paintedCharacters += take;
-    lane.sink.paint({ blocks: lane.blocks, liveText: lane.liveText, promoted });
-    if (promoted.length > 0) notifyPromotion(key);
+    lane.metrics.paintedCharacters += grew;
+    if (method === 'replace') lane.sink.replace({ text: lane.received });
+    else lane.sink.paint({ text: lane.received });
+    notifyCommit(key);
+  };
+
+  const commitAll = (method: 'paint' | 'replace') => {
+    for (const [key, lane] of lanes) commitLane(key, lane, method);
   };
 
   function tick() {
     timerId = undefined;
     if (!active) return;
-    const at = clock.now();
-    for (const [key, lane] of lanes) paintLane(key, lane, at);
+    commitAll('paint');
     schedule();
   }
 
@@ -296,7 +214,7 @@ export function createLiveDraftDrainStore({
   };
 
   const cancelIdleTimer = () => {
-    if (timerId === undefined || hasPaintableWork()) return;
+    if (timerId === undefined || hasPendingWork()) return;
     stopTimer();
   };
 
@@ -308,49 +226,38 @@ export function createLiveDraftDrainStore({
       lane.touchedAt = clock.now();
 
       if (!cumulativeText.startsWith(lane.received)) {
+        // A harness rewrote what it had written. Honesty rule: commit the
+        // replacement immediately and whole, with no reveal.
         lane.received = cumulativeText;
-        lane.queued = '';
-        lane.characterBudget = 0;
-        lane.lastTickAt = undefined;
-        const replacement = splitRewrite(cumulativeText);
-        lane.blocks = [...replacement.blocks];
-        lane.liveText = replacement.liveText;
+        lane.committed = cumulativeText;
+        lane.pendingSince = clock.now();
         lane.metrics.paints += 1;
         lane.metrics.rewrites += 1;
         lane.metrics.paintedCharacters += cumulativeText.length;
-        lane.sink?.replace(replacement);
-        if (lane.sink) notifyPromotion(key);
+        lane.sink?.replace({ text: cumulativeText });
+        if (lane.sink) notifyCommit(key);
         cancelIdleTimer();
         prune();
         return;
       }
 
-      lane.queued += cumulativeText.slice(lane.received.length);
+      const wasPending = lane.received !== lane.committed;
       lane.received = cumulativeText;
+      if (!wasPending) lane.pendingSince = clock.now();
       schedule();
       prune();
     },
     stop(key) {
       const lane = lanes.get(key);
       if (!lane) return;
-      if (lane.queued) {
-        lane.liveText += lane.queued;
-        lane.queued = '';
-        const promoted = promoteLive(lane);
-        lane.metrics.promotions += promoted.length;
-        lane.sink?.replace({ blocks: lane.blocks, liveText: lane.liveText });
-        if (promoted.length && lane.sink) notifyPromotion(key);
-      }
+      commitLane(key, lane, 'paint');
       rememberProvisionalDraft(key, lane.received);
-      lane.characterBudget = 0;
-      lane.lastTickAt = undefined;
       cancelIdleTimer();
     },
     finalize(key) {
       const lane = lanes.get(key);
       if (!lane) return;
-      lane.queued = '';
-      lane.characterBudget = 0;
+      lane.committed = lane.received;
       archive(key, lane);
       cancelIdleTimer();
     },
@@ -364,20 +271,13 @@ export function createLiveDraftDrainStore({
     attach(key, sink) {
       const lane = laneFor(key);
       lane.sink = sink;
-      if (lane.blocks.length || lane.liveText) {
-        sink.replace({ blocks: lane.blocks, liveText: lane.liveText });
-      }
+      if (lane.committed) sink.replace({ text: lane.committed });
       schedule();
       return () => {
         const current = lanes.get(key);
         if (current?.sink === sink) current.sink = undefined;
         cancelIdleTimer();
       };
-    },
-    setInstant(key, instant) {
-      const lane = laneFor(key);
-      lane.instant = instant;
-      if (instant) schedule();
     },
     setActive(next) {
       if (active === next) return;
@@ -386,16 +286,16 @@ export function createLiveDraftDrainStore({
         stopTimer();
         return;
       }
-      catchUpQueued();
+      commitAll('replace');
       cancelIdleTimer();
     },
-    subscribePromotion(listener) {
-      promotionListeners.add(listener);
-      return () => promotionListeners.delete(listener);
+    subscribeCommit(listener) {
+      commitListeners.add(listener);
+      return () => commitListeners.delete(listener);
     },
     getPresentation(key) {
       const lane = lanes.get(key);
-      return lane ? { blocks: lane.blocks, liveText: lane.liveText } : EMPTY_PRESENTATION;
+      return lane ? { text: lane.committed } : EMPTY_PRESENTATION;
     },
     getReceived(key) {
       return lanes.get(key)?.received ?? '';
@@ -409,7 +309,7 @@ export function createLiveDraftDrainStore({
       active = true;
       lanes.clear();
       completedMetrics.clear();
-      promotionListeners.clear();
+      commitListeners.clear();
     },
   };
 }

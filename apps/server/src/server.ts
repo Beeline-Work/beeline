@@ -737,7 +737,11 @@ async function route(
     const diagnostics = options.healthDatabase ?? options.database;
     await diagnostics.query('SELECT 1');
     const pool = options.database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-    const oldestActiveQueryAgeMs = await diagnostics.oldestActiveQueryAgeMs?.();
+    // Read the age from the APP database, the same object the pool counts come
+    // from. The diagnostics handle has its own pool and its own in-flight set,
+    // so asking it would report the health check's own query rather than the
+    // work that can actually be stuck.
+    const oldestActiveQueryAgeMs = await options.database.oldestActiveQueryAgeMs?.();
     json(response, 200, {
       ok: true,
       database: {

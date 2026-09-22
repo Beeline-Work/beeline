@@ -46,6 +46,7 @@ import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
+const MODEL_CATALOG_CONFIRM_ATTEMPTS = 140;
 const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 
 async function copyText(value: string): Promise<void> {
@@ -61,6 +62,7 @@ type MembersAction =
   | 'save-agent-soul'
   | 'remove-agent'
   | 'model-config'
+  | 'model-catalog'
   | 'agent-yolo'
   | 'agent-access';
 
@@ -90,12 +92,13 @@ function countedKindLabel(
 async function waitForIndexedSurface<T>(
   read: () => Promise<T>,
   accepts: (value: T) => boolean,
+  attempts = INDEX_CONFIRM_ATTEMPTS,
 ): Promise<T> {
   let latest: T | undefined;
-  for (let attempt = 0; attempt < INDEX_CONFIRM_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     latest = await read();
     if (accepts(latest)) return latest;
-    if (attempt + 1 < INDEX_CONFIRM_ATTEMPTS) await delay(INDEX_CONFIRM_DELAY_MS);
+    if (attempt + 1 < attempts) await delay(INDEX_CONFIRM_DELAY_MS);
   }
   throw new Error('The change was published, but the indexed Workspace view did not confirm it.');
 }
@@ -249,6 +252,7 @@ export default function BuzzMembers() {
   const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
+  const [modelAxisError, setModelAxisError] = useState<ModelAxisKind | null>(null);
   const modelAppliesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
@@ -307,7 +311,10 @@ export default function BuzzMembers() {
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
-    return new BuzzRigTransport(identity).ensureClient();
+    const client = await new BuzzRigTransport(identity).ensureClient();
+    return client as typeof client & {
+      refreshAgentModelCatalog(workspaceId: string, agentId: string): Promise<unknown>;
+    };
   };
 
   const applyMemberPage = (
@@ -764,6 +771,55 @@ export default function BuzzMembers() {
       showModelAppliesNote(kind);
     } catch (reason) {
       setError(`Could not set ${kind}: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const toggleModelAxis = async (
+    kind: ModelAxisKind,
+    open: boolean,
+    axis: AgentModelConfigOption | undefined,
+  ) => {
+    setModelAxisError(null);
+    setModelSearchQuery('');
+    if (open) {
+      setOpenModelAxis(null);
+      return;
+    }
+    if (axis) {
+      setOpenModelAxis(kind);
+      return;
+    }
+    if (kind !== 'effort' || !selectedAgent || !ownsSelectedAgent) return;
+
+    setWorking('model-catalog');
+    try {
+      const pubkey = selectedAgent.agent.identity.pubkey;
+      const client = await writeClient();
+      await client.refreshAgentModelCatalog(selectedAgent.workspaceId, pubkey);
+      const refreshed = await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => {
+          const selectedModel = value.selected?.model ?? value.runtimeSelection?.model;
+          const catalogModel = value.catalog.find((candidate) => candidate.category === 'model');
+          return Boolean(catalogModel && (!selectedModel || catalogModel.currentValue === selectedModel));
+        },
+        MODEL_CATALOG_CONFIRM_ATTEMPTS,
+      );
+      const effort = refreshed.catalog.find(
+        (candidate) =>
+          candidate.category !== 'model' &&
+          isAllowedAgentModelConfigCategory(candidate.category) &&
+          candidate.options.length > 0,
+      );
+      if (!effort) {
+        setModelAxisError('effort');
+        return;
+      }
+      setOpenModelAxis('effort');
+    } catch {
+      setModelAxisError('effort');
     } finally {
       setWorking(null);
     }
@@ -1251,11 +1307,14 @@ export default function BuzzMembers() {
                     return (
                       <View key={kind} style={styles.axisBlock}>
                         <TouchableOpacity
-                          disabled={busy || !axis}
-                          onPress={() => {
-                            setOpenModelAxis(open ? null : kind);
-                            setModelSearchQuery('');
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            busy: working === 'model-catalog' && kind === 'effort',
+                            disabled: busy || (kind === 'model' && !axis),
+                            expanded: open,
                           }}
+                          disabled={busy || (kind === 'model' && !axis)}
+                          onPress={() => void toggleModelAxis(kind, open, axis)}
                           style={styles.axisRow}
                           testID={`model-axis-${kind}`}
                         >
@@ -1263,7 +1322,9 @@ export default function BuzzMembers() {
                             {kind === 'model' ? 'Model' : 'Effort'}
                           </Text>
                           <Text style={styles.axisValue} numberOfLines={1}>
-                            {current ?? UNSET_VALUE}
+                            {working === 'model-catalog' && kind === 'effort'
+                              ? 'Refreshing…'
+                              : (current ?? UNSET_VALUE)}
                           </Text>
                           {(selectedAgent.modelUnavailable === kind ||
                             selectedAgent.modelUnavailable === 'selection') && (
@@ -1310,6 +1371,13 @@ export default function BuzzMembers() {
                         {modelAppliesNote === kind && (
                           <Text style={styles.detail} testID={`model-applies-${kind}`}>
                             Applies at the next session
+                          </Text>
+                        )}
+                        {modelAxisError === kind && (
+                          <Text style={styles.axisError} testID={`model-axis-error-${kind}`}>
+                            {axis
+                              ? 'Could not open these choices. Try again.'
+                              : 'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.'}
                           </Text>
                         )}
                       </View>
@@ -1569,6 +1637,13 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
       textAlign: 'right',
+    },
+    axisError: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.danger,
+      paddingHorizontal: hull.space.sm,
+      paddingBottom: hull.space.sm,
     },
     switchSection: { gap: hull.space.xs },
     switchRow: {

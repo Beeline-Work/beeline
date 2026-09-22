@@ -435,6 +435,7 @@ export class RoomRuntimeCoordinator {
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onHiccupRestart?: (attempt: number) => void;
+      onConfigChanged?: () => void | Promise<void>;
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
@@ -472,6 +473,9 @@ export class RoomRuntimeCoordinator {
     this.options.daemonApi.setConfigChangedListener?.(() => {
       void this.scheduler.suspendIdle().catch((error) =>
         console.error('[body] config-change session restart failed', error),
+      );
+      void Promise.resolve(this.options.onConfigChanged?.()).catch((error) =>
+        console.error('[body] config-change catalog refresh failed', error),
       );
     });
     this.options.daemonApi.setHiccupRestartListener?.((attempt) => {

@@ -36,6 +36,7 @@ describe('RoomRuntimeCoordinator config-change wake', () => {
     } as unknown as AgentRuntimeRecord;
 
     let configChanged: (() => void) | undefined;
+    const onConfigChanged = vi.fn();
     const coordinator = new RoomRuntimeCoordinator(
       runtime,
       join(root, 'agent.json'),
@@ -48,6 +49,7 @@ describe('RoomRuntimeCoordinator config-change wake', () => {
             configChanged = listener;
           },
         } as unknown as DaemonApiClient,
+        onConfigChanged,
       },
     );
     try {
@@ -55,6 +57,7 @@ describe('RoomRuntimeCoordinator config-change wake', () => {
       // The wake must be safe with nothing live: an empty scheduler is the
       // ordinary case for a daemon that has not started any Room yet.
       expect(() => configChanged!()).not.toThrow();
+      expect(onConfigChanged).toHaveBeenCalledTimes(1);
       await vi.waitFor(() =>
         expect(coordinator.schedulerSnapshot().live).toBe(0),
       );

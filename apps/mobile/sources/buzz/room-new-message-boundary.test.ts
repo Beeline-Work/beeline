@@ -6,6 +6,8 @@ import {
   boundaryRowIndex,
   compactNewMessageCount,
   messageBoundaryIds,
+  newMessageControlVisible,
+  newestTranscriptRowId,
   queueIncomingMessages,
 } from './room-new-message-boundary';
 
@@ -75,6 +77,43 @@ describe('new-message boundary', () => {
     expect(compactNewMessageCount(1)).toBe('1');
     expect(compactNewMessageCount(9)).toBe('9');
     expect(compactNewMessageCount(10)).toBe('9+');
+  });
+
+  it('names the newest row from transcript order', () => {
+    expect(newestTranscriptRowId([message('old'), message('newest')])).toBe('newest');
+    expect(newestTranscriptRowId([])).toBeNull();
+  });
+
+  it('hides the jump control while any pixel of the newest message is on screen', () => {
+    // UDIV-02: the reader is a finger's width above the geometric tail, so
+    // the pin test says "not at the tail" and the batch queues — but they
+    // are looking straight at the newest message, so there is nothing to
+    // jump to and Slack shows no control.
+    const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: [message('read'), message('new-1')],
+      arrivingIds: new Set(['new-1']),
+      isPinnedToTail: false,
+    });
+    expect(queued).toEqual({ boundaryId: 'new-1', count: 1 });
+    expect(newMessageControlVisible(queued, true)).toBe(false);
+    expect(newMessageControlVisible(queued, false)).toBe(true);
+    expect(newMessageControlVisible(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(false);
+  });
+
+  it('settles the queue when the reader scrolls back to the newest message', () => {
+    // The control used to survive the reader's own scroll to the tail: only
+    // a tap on it cleared the count, so it sat there over a caught-up Room
+    // and armed again the moment they paged back into history.
+    const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: [message('read'), message('new-1'), message('new-2')],
+      arrivingIds: new Set(['new-1', 'new-2']),
+      isPinnedToTail: false,
+    });
+    const reachedTheTail = acknowledgeNewMessageQueue(queued);
+    expect(reachedTheTail.count).toBe(0);
+    expect(newMessageControlVisible(reachedTheTail, true)).toBe(false);
+    // Scrolling away from a settled queue cannot bring the old count back.
+    expect(newMessageControlVisible(reachedTheTail, false)).toBe(false);
   });
 
   it('keeps the visited divider but starts the next queue at its own earliest row', () => {

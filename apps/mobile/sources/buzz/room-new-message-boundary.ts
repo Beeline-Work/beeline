@@ -75,7 +75,31 @@ export function queueIncomingMessages(
   };
 }
 
-/** Hide the control after its landing while retaining that batch's divider. */
+/** Hide the control after its landing while retaining that batch's jump target. */
 export function acknowledgeNewMessageQueue(current: NewMessageQueue): NewMessageQueue {
   return current.count > 0 ? { ...current, count: 0 } : current;
+}
+
+/**
+ * The control is a way to reach a newer message the reader cannot see, so
+ * actual viewport visibility decides it — never tail distance. A reader
+ * parked a finger's width above the tail is still looking straight at the
+ * newest message, and Slack shows them nothing; any visible pixel of that
+ * row answers the only question this control exists to ask.
+ *
+ * `messages` is in transcript order, so the newest row is its last entry on
+ * both lists: the phone reverses that array for its inverted FlatList, but
+ * the durable id is the same either way.
+ */
+export function newestTranscriptRowId(
+  messages: readonly Pick<ChatDisplayMessage, 'id'>[],
+): string | null {
+  return messages.at(-1)?.id ?? null;
+}
+
+export function newMessageControlVisible(
+  queue: NewMessageQueue,
+  newestMessageVisible: boolean,
+): boolean {
+  return queue.count > 0 && queue.boundaryId !== null && !newestMessageVisible;
 }

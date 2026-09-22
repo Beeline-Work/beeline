@@ -208,13 +208,14 @@ describe('the Room turn line paints the transcript margin', () => {
     expect(working).toBe(idle);
   });
 
-  it('adds exactly half the thinking-label height above the composer', () => {
+  it('adds the authored fixed gap above the composer', () => {
     const gap = newestMessageToComposerGap({ lineShown: true });
-    // The ordinary speaker-change margin is 24px. The fixed 9px above the
-    // composer is half the thinking label's 18px line box, so the complete
-    // gap is 33px in both idle and working states.
+    // The ordinary speaker-change margin is 24px and the authored gap above
+    // the composer is 12px, so the complete gap is 36px in both idle and
+    // working states.
     const speakerChangeMargin = groknight.messagePaddingVertical * 4;
-    expect(COMPOSER_TOP_GAP).toBe(TURN_LABEL_LINE_HEIGHT / 2);
+    expect(COMPOSER_TOP_GAP).toBe(12);
+    expect(gap).toBe(36);
     expect(gap).toBe(speakerChangeMargin + COMPOSER_TOP_GAP);
     expect(gap).toBe(TURN_LINE_BOX_HEIGHT);
     expect(gap).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
@@ -230,7 +231,7 @@ describe('the Room turn line paints the transcript margin', () => {
     expect(box).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
     expect(TURN_LABEL_LINE_HEIGHT).toBeLessThanOrEqual(TURN_LINE_ROW_MIN_HEIGHT);
     // The ink clears the message within its 24px row, then keeps the authored
-    // 9px gap before the composer.
+    // 12px gap before the composer.
     expect((TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2).toBeGreaterThan(0);
     expect(TURN_LINE_BAR_MARGIN_BOTTOM).toBe(COMPOSER_TOP_GAP);
   });

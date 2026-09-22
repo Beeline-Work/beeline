@@ -54,4 +54,22 @@ describe('Corner App manifest', () => {
       }),
     ).toBeNull();
   });
+
+  it('rejects a native definition whose slug differs from its manifest', () => {
+    expect(
+      readCornerAppManifest({
+        ...manifest,
+        humanUi: {
+          kind: 'native',
+          definition: {
+            version: 1,
+            slug: 'deploy-board',
+            title: 'Deploy board',
+            command: 'deploy-board',
+            blocks: [],
+          },
+        },
+      }),
+    ).toBeNull();
+  });
 });

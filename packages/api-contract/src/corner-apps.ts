@@ -152,7 +152,7 @@ export function readCornerAppManifest(value: unknown): CornerAppManifest | null 
   let humanUi: CornerAppManifest['humanUi'];
   if (human?.kind === 'native') {
     const definition = readCornerAppDefinition(human.definition);
-    if (!definition) return null;
+    if (!definition || definition.slug !== manifest.slug) return null;
     humanUi = {
       kind: 'native',
       definition,

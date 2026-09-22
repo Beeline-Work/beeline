@@ -33,7 +33,7 @@
     "stack:down": "docker compose -f relay-stack/compose.yml down -v",
     "verify:local-room-indexer": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/verify-local-room-indexer.ts",
     "prove:private-pairing": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/prove-private-pairing.ts",
-    "prove:reviewer-dispatch": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-reviewer-dispatch.ts",
+    "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:review-handoff": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-review-handoff.ts",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
     "smoke": "node --import tsx scripts/smoke.ts",

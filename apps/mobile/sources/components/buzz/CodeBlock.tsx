@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import type { Href } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
-import { ToolOutputSheet } from '@/components/buzz/ToolOutputSheet';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export const PEEK_LINE_COUNT = 4;
@@ -40,8 +40,36 @@ export function hiddenLineLabel(lineCount: number): string {
   return hidden === 1 ? '1 more line' : `${hidden} more lines`;
 }
 
-export function CodeBlock({ code, language }: { code: string; language: string | null }) {
-  const [opened, setOpened] = useState(false);
+export function codeReaderHref({
+  textId,
+  language,
+  originMessageId,
+}: {
+  textId: string;
+  language: string | null;
+  originMessageId?: string;
+}): Href {
+  return {
+    pathname: '/code-reader',
+    params: {
+      textId,
+      ...(language?.trim() ? { language: language.trim().toLowerCase() } : {}),
+      ...(originMessageId ? { originMessageId } : {}),
+    },
+  } as Href;
+}
+
+export function CodeBlock({
+  code,
+  language,
+  originMessageId,
+  onOpen,
+}: {
+  code: string;
+  language: string | null;
+  originMessageId?: string;
+  onOpen?: (originMessageId: string) => void;
+}) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lines = useMemo(() => code.split('\n'), [code]);
@@ -75,6 +103,16 @@ export function CodeBlock({ code, language }: { code: string; language: string |
 
   const copyLabel =
     copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'copy';
+
+  const openReader = useCallback(async () => {
+    if (originMessageId) onOpen?.(originMessageId);
+    const [{ router }, { storeTempText }] = await Promise.all([
+      import('expo-router'),
+      import('@/sync/persistence'),
+    ]);
+    const textId = storeTempText(code);
+    router.push(codeReaderHref({ textId, language, originMessageId }));
+  }, [code, language, onOpen, originMessageId]);
 
   const body = plainText ? (
     <Text selectable style={styles.plainText} testID="plain-text-fence">
@@ -122,8 +160,7 @@ export function CodeBlock({ code, language }: { code: string; language: string |
         <Pressable
           accessibilityLabel={`Open ${sheetTitle}, ${hidden}`}
           accessibilityRole="button"
-          accessibilityState={{ expanded: opened }}
-          onPress={() => setOpened(true)}
+          onPress={openReader}
           style={({ pressed }) => [styles.peek, pressed && styles.peekPressed]}
           testID="code-open"
         >
@@ -141,14 +178,6 @@ export function CodeBlock({ code, language }: { code: string; language: string |
       ) : (
         body
       )}
-      <ToolOutputSheet
-        detail={code}
-        language={plainText ? undefined : language}
-        onClose={() => setOpened(false)}
-        subtitle={inscription}
-        title={sheetTitle}
-        visible={opened}
-      />
     </View>
   );
 }

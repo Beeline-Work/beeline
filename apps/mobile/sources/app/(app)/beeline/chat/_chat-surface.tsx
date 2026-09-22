@@ -504,6 +504,7 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
+  const codeReaderReturnMessageIdRef = useRef<string | null>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -1974,6 +1975,20 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
+  useFocusEffect(
+    useCallback(() => {
+      const messageId = codeReaderReturnMessageIdRef.current;
+      if (!messageId) return;
+      const index = transcriptMessages.findIndex(
+        (message) => message.id === messageId || message.relayId === messageId,
+      );
+      if (index < 0) return;
+      codeReaderReturnMessageIdRef.current = null;
+      scheduleAnimationFrame(() =>
+        flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false }),
+      );
+    }, [transcriptMessages]),
+  );
   // A live message/card change follows to the newest end. The decision is one
   // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
   // most once per arrival, off the render path.
@@ -4004,6 +4019,9 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
+  const handleOpenCode = useCallback((originMessageId: string) => {
+    codeReaderReturnMessageIdRef.current = originMessageId;
+  }, []);
 
   const renderMessage = useCallback(
     (
@@ -4215,6 +4233,7 @@ export function BuzzChatSurface({
           channelIndex={channelReferenceIndex}
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
+          onOpenCode={handleOpenCode}
           onMention={handleOpenMention}
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
@@ -4248,6 +4267,7 @@ export function BuzzChatSurface({
       handleChoiceAnswer,
       handleChoiceSkip,
       handleOpenSystemIdentity,
+      handleOpenCode,
       handleReactToMessage,
       handleBookmarkMessage,
       messageIsBookmarked,

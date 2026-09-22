@@ -211,6 +211,14 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="code-reader"
+          options={{
+            headerShown: true,
+            headerTitle: 'Code',
+            headerBackTitle: t('common.back'),
+          }}
+        />
+        <Stack.Screen
           name="text-selection"
           options={{
             headerShown: true,

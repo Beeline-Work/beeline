@@ -3,9 +3,15 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-const { copy } = vi.hoisted(() => ({ copy: vi.fn(async () => undefined) }));
+const { copy, push, storeTempText } = vi.hoisted(() => ({
+  copy: vi.fn(async () => undefined),
+  push: vi.fn(),
+  storeTempText: vi.fn(() => 'staged-code'),
+}));
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: copy }));
+vi.mock('expo-router', () => ({ router: { push } }));
+vi.mock('@/sync/persistence', () => ({ storeTempText }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -155,27 +161,36 @@ describe('CodeBlock', () => {
     expect(peekText).toBe(FRAME_JSON.split('\n').slice(0, PEEK_LINE_COUNT).join('\n'));
   });
 
-  it('opens the existing output sheet full-width with wrapping', () => {
-    const renderer = render(FRAME_JSON, 'json');
+  it('opens the full-page reader with the complete block and originating message', async () => {
+    push.mockClear();
+    storeTempText.mockClear();
+    const onOpen = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CodeBlock, {
+          code: FRAME_JSON,
+          language: 'json',
+          originMessageId: 'message-42',
+          onOpen,
+        }),
+      );
+    });
     const open = renderer.root.findByProps({
       accessibilityLabel: `Open json, ${hiddenLineLabel(13)}`,
     });
-    expect(open.props.accessibilityState).toEqual({ expanded: false });
-    expect(renderer.root.findByType('HullActionSheetModal' as any).props.visible).toBe(false);
-    act(() => open.props.onPress());
-    const sheet = renderer.root.findByType('HullActionSheetModal' as any);
-    expect(sheet.props.visible).toBe(true);
-    expect(sheet.props.title).toBe('json');
-    expect(sheet.props.subtitle).toBe(fenceInscription('json', FRAME_JSON));
-    expect(open.props.accessibilityState).toEqual({ expanded: true });
-    expect(renderer.root.findAllByType('ScrollView').some((node) => node.props.horizontal)).toBe(
-      false,
-    );
-    const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
-    const texts = highlighters.map((node) => collectHostText(node));
-    expect(texts.some((text) => text.includes('apiKey') && text.includes('200000'))).toBe(true);
-    expect(texts).toContain(FRAME_JSON);
-    expect(JSON.parse(texts.find((text) => text === FRAME_JSON)!)).toEqual(JSON.parse(FRAME_JSON));
+    await act(async () => open.props.onPress());
+    expect(onOpen).toHaveBeenCalledWith('message-42');
+    expect(storeTempText).toHaveBeenCalledWith(FRAME_JSON);
+    expect(push).toHaveBeenCalledWith({
+      pathname: '/code-reader',
+      params: {
+        textId: 'staged-code',
+        language: 'json',
+        originMessageId: 'message-42',
+      },
+    });
+    expect(renderer.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);
   });
 
   it('pins the length rule: more than a peek is long', () => {

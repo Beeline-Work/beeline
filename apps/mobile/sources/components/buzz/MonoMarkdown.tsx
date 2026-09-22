@@ -134,6 +134,10 @@ type MonoMarkdownProps = {
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  /** The transcript row that owns a code fence, used to restore it after reading. */
+  codeOriginMessageId?: string;
+  /** Arms the transcript return anchor before the full-page reader opens. */
+  onOpenCode?: (originMessageId: string) => void;
   /**
    * The trailing characters that have only just arrived on a streaming draft
    * (`components/buzz/StreamingProse.tsx`, C98). They take `style` on top of
@@ -307,6 +311,8 @@ export function monoMarkdownPropsAreEqual(
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
+    previous.codeOriginMessageId === next.codeOriginMessageId &&
+    previous.onOpenCode === next.onOpenCode &&
     previous.onMention === next.onMention &&
     previous.testID === next.testID &&
     previous.tail?.length === next.tail?.length &&
@@ -367,6 +373,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   onMention,
   channelIndex,
   onChannelReference,
+  codeOriginMessageId,
+  onOpenCode,
   tail,
   testID,
 }: MonoMarkdownProps) {
@@ -468,7 +476,12 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           const language = 'language' in block ? (block.language ?? null) : null;
           return (
             <View key={index} style={blockStyle}>
-              <CodeBlock code={code} language={language} />
+              <CodeBlock
+                code={code}
+                language={language}
+                originMessageId={codeOriginMessageId}
+                onOpen={onOpenCode}
+              />
             </View>
           );
         }

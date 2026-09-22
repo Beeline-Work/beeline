@@ -1657,6 +1657,7 @@ export interface OrdinaryLedgerMessageProps {
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
+  onOpenCode?(originMessageId: string): void;
   onMention?(participantId: string): void;
   /** A tap on the row — the composer's "outside" — puts the keyboard away. */
   onTapOutsideComposer?(): void;
@@ -1757,6 +1758,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   channelIndex,
   deliveryFailed,
   onChannelReference,
+  onOpenCode,
   onMention,
   onTapOutsideComposer,
   onReply,
@@ -2024,6 +2026,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             onMention={handleMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
+            onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
             replyReference={replyReference}
             attachments={attachments}
@@ -2043,6 +2046,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             onMention={handleMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
+            onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
             replyReference={replyReference}
             machineNoise={machineNoise}

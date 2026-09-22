@@ -74,6 +74,26 @@ function searchFor(renderer: ReactTestRenderer, query: string): void {
 }
 
 describe('RepoPicker', () => {
+  it('names every resource the GitHub installation action can add', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker
+          candidates={[]}
+          onAddAccount={() => {}}
+          onSelect={() => {}}
+          testIDPrefix="room-repo-picker"
+        />,
+      );
+    });
+
+    const action = renderer.root.findByProps({ testID: 'room-repo-picker-add-account' });
+    expect(action.findByType('Text').props.children).toBe(
+      '＋ Add repositories, accounts, or organizations',
+    );
+    act(() => renderer.unmount());
+  });
+
   it('offers unlink inside the picker only when a permitted bound repository is supplied', () => {
     const onUnlink = vi.fn();
     let renderer!: ReactTestRenderer;

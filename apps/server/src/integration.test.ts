@@ -4661,6 +4661,35 @@ describe('monolith integration', () => {
       corner: { name: 'Release notes' },
       initiator: { pubkey: HUMAN, kind: 'human' },
     });
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      cornerId,
+      objective: '',
+      title: 'Release notes',
+      kind: 'human',
+      lane: 'no_code',
+    });
+
+    const taggedMessageId = '4'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: taggedMessageId,
+          text: '@bee draft the release notes',
+          mentions: [AGENT],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ agent_id: string; reason: string; state: string }>(
+          `SELECT agent_id,reason,state FROM agent_commands WHERE source_message_id=$1`,
+          [taggedMessageId],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: AGENT, reason: 'human_tag', state: 'pending' }]);
 
     const otherLogin = 'human-corner-member';
     const otherId = createHash('sha256').update(`github:${otherLogin}`).digest('hex');
@@ -7082,6 +7111,20 @@ describe('monolith integration', () => {
       `UPDATE identities SET avatar='avatars/owner.png',face_id='fox' WHERE id=$1`,
       [HUMAN],
     );
+    expect(
+      (
+        await daemonOperation('postAgentCommands', {
+          agentId: AGENT,
+          workspaceId: WORKSPACE,
+          commands: [
+            { name: 'model', description: 'Show or change the agent model' },
+            { name: 'usage', description: 'Show usage status' },
+            { name: 'status', inputHint: 'model and account details' },
+            { name: 'permissions', description: 'Show permission rules' },
+          ],
+        })
+      ).status,
+    ).toBe(200);
     const phone = new PhoneService(database, 'http://placeholder');
     const view = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
     expect(view?.soul).toEqual({
@@ -7093,6 +7136,12 @@ describe('monolith integration', () => {
     // catalog: the MODEL / EFFORT rows show the current value regardless.
     expect(view?.catalog).toEqual([]);
     expect(view?.selected).toEqual({ model: 'gpt-5.6' });
+    expect(view?.commands).toEqual([
+      { name: 'model', description: 'Show or change the agent model' },
+      { name: 'usage', description: 'Show usage status' },
+      { name: 'status', inputHint: 'model and account details' },
+      { name: 'permissions', description: 'Show permission rules' },
+    ]);
     expect(view?.owner).toEqual({ pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' });
     const workspace = await phone.readWorkspace(WORKSPACE, HUMAN);
     expect(workspace?.agents).toEqual([

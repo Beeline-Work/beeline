@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { constants } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -118,14 +118,17 @@ async function serveBundle(platform) {
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
-function parseMcpTools(stdout) {
+function parseMcpResult(stdout, id) {
   for (const line of stdout.trim().split('\n')) {
     if (!line) continue;
     const message = JSON.parse(line);
-    if (message.id !== 2) continue;
-    return (message.result?.tools ?? []).map((tool) => tool.name);
+    if (message.id === id) return message.result;
   }
-  fail('installed beeline-readonly-mcp did not answer tools/list');
+  fail(`installed MCP did not answer request ${id}`);
+}
+
+function parseMcpTools(stdout) {
+  return (parseMcpResult(stdout, 2)?.tools ?? []).map((tool) => tool.name);
 }
 
 export function parseSquireAuthentication(received, proxyPath) {
@@ -204,6 +207,7 @@ async function main() {
     delete env.BEELINE_READONLY_MCP_SCRIPT;
     delete env.BUZZ_DEV_MCP_BIN;
     delete env.BUZZ_AGENT_BIN;
+    delete env.BEELINE_CODEGRAPH_BIN;
 
     const installed = await run('sh', [resolve(webRoot, 'install.sh')], {
       cwd: bareCwd,
@@ -211,7 +215,7 @@ async function main() {
     });
     if (
       !stripAnsi(installed.stdout).includes(
-        'beeline, buzz-agent, buzz-dev-mcp, and beeline-readonly-mcp',
+        'beeline, buzz-agent, buzz-dev-mcp, beeline-readonly-mcp, and codegraph',
       )
     ) {
       fail(`installer success line omitted the read-only helper:\n${installed.stdout}`);
@@ -249,7 +253,9 @@ async function main() {
     }
 
     const readonlyMcp = resolve(binDir, 'beeline-readonly-mcp');
+    const codegraph = resolve(binDir, 'codegraph');
     await access(readonlyMcp, constants.X_OK);
+    await access(codegraph, constants.X_OK);
     await access(resolve(libDir, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), constants.F_OK);
 
     const probe = await run(resolve(binDir, 'beeline-readonly-mcp'), [], {
@@ -273,6 +279,68 @@ async function main() {
     const tools = parseMcpTools(probe.stdout);
     if (JSON.stringify(tools) !== JSON.stringify(await expectedReadonlyTools())) {
       fail(`unexpected installed read-only tool inventory: ${tools.join(', ')}`);
+    }
+
+    // Probe the installed platform bundle, not node_modules: initialize a tiny
+    // repository, discover the MCP tool, and make one real indexed query.
+    const codegraphRepo = resolve(temporaryRoot, 'codegraph-repository');
+    await mkdir(codegraphRepo, { recursive: true });
+    await run('git', ['init', codegraphRepo], { cwd: bareCwd, env: runtimeEnv });
+    await writeFile(
+      resolve(codegraphRepo, 'flow.ts'),
+      'export function inner() { return 7; }\nexport function outer() { return inner(); }\n',
+    );
+    await run(codegraph, ['init', '--yes', codegraphRepo], {
+      cwd: codegraphRepo,
+      env: { ...runtimeEnv, CODEGRAPH_TELEMETRY: '0', CODEGRAPH_NO_DAEMON: '1' },
+      timeoutMs: 60_000,
+    });
+    const codegraphProbe = await run(
+      codegraph,
+      ['serve', '--mcp', '--path', codegraphRepo, '--no-watch'],
+      {
+        cwd: codegraphRepo,
+        env: { ...runtimeEnv, CODEGRAPH_TELEMETRY: '0', CODEGRAPH_NO_DAEMON: '1' },
+        input:
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2024-11-05',
+              capabilities: {},
+              clientInfo: { name: 'beeline-install-verifier', version: '1.0.0' },
+            },
+          }) +
+          '\n' +
+          JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) +
+          '\n' +
+          JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) +
+          '\n' +
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'tools/call',
+            params: {
+              name: 'codegraph_explore',
+              arguments: { query: 'How does outer call inner?', projectPath: codegraphRepo },
+            },
+          }) +
+          '\n',
+        timeoutMs: 60_000,
+      },
+    );
+    const codegraphTools = parseMcpTools(codegraphProbe.stdout);
+    if (!codegraphTools.includes('codegraph_explore')) {
+      fail(
+        `installed CodeGraph tool inventory omitted codegraph_explore: ${codegraphTools.join(', ')}`,
+      );
+    }
+    const codegraphText = (parseMcpResult(codegraphProbe.stdout, 3)?.content ?? [])
+      .map((entry) => entry.text ?? '')
+      .join('\n');
+    if (!codegraphText.includes('outer') || !codegraphText.includes('inner')) {
+      fail(`installed CodeGraph query did not return indexed symbols:\n${codegraphText}`);
     }
 
     // Start a real ACP read-only session using only the installed agent and
@@ -324,6 +392,7 @@ async function main() {
     console.log(`verify-beeline-install: installed into bare prefix ${dirname(binDir)}`);
     console.log(`verify-beeline-install: read-only mcp ${readonlyMcp}`);
     console.log(`verify-beeline-install: tools ${tools.join(', ')}`);
+    console.log(`verify-beeline-install: CodeGraph tools ${codegraphTools.join(', ')}`);
     console.log(`verify-beeline-install: ACP read-only session ${readonlySession.sessionId}`);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

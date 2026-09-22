@@ -353,6 +353,46 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('keeps the first unread boundary from the opening read for the whole visit', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    const opening = roomView('room-a');
+    await act(async () => {
+      controls.schedulers[0]!.apply({
+        ...opening,
+        viewer: {
+          ...opening.viewer,
+          readCursor: { messageId: 'read', firstUnreadMessageId: 'first-new' },
+        },
+      });
+    });
+    expect(current.firstUnreadMessageId).toBe('first-new');
+
+    await act(async () => {
+      controls.schedulers[0]!.apply({
+        ...opening,
+        viewer: {
+          ...opening.viewer,
+          readCursor: { messageId: 'latest', firstUnreadMessageId: null },
+        },
+      });
+    });
+    expect(current.firstUnreadMessageId).toBe('first-new');
+
+    await act(async () => renderer.unmount());
+  });
+
   it('routes presence snapshots outside transcript overlays', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;

@@ -4,6 +4,7 @@ import {
   availableSlashVerbs,
   slashVerbQuery,
   agentMentionSlashQuery,
+  insertAgentSlashCommand,
   matchesAgentCommand,
   type SlashVerbAvailability,
 } from './slash-verbs';
@@ -94,5 +95,21 @@ describe('agent-mention slash palette query', () => {
     expect(matchesAgentCommand(loop, 'LOOP')).toBe(true);
     expect(matchesAgentCommand(loop, 'repeat')).toBe(true);
     expect(matchesAgentCommand(loop, 'xyz')).toBe(false);
+  });
+
+  it('matches model and usage status metadata', () => {
+    const commands = [
+      { name: 'model', description: 'Show or change the agent model' },
+      { name: 'usage', description: 'Show usage status' },
+      { name: 'status', inputHint: 'model and account details' },
+    ];
+    expect(commands.filter((command) => matchesAgentCommand(command, 'mod')).map((c) => c.name))
+      .toEqual(['model', 'status']);
+    expect(commands.filter((command) => matchesAgentCommand(command, 'usage')).map((c) => c.name))
+      .toEqual(['usage']);
+  });
+
+  it('preserves the exact authorizing mention when inserting a command', () => {
+    expect(insertAgentSlashCommand('@agent-name /us', 'usage')).toBe('@agent-name /usage ');
   });
 });

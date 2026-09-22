@@ -125,18 +125,20 @@ export function ConversationComposer({
     commitInputChange(value + separator + transcript);
   });
   const isListening = speech.state === 'listening';
+  const isFinalizing = speech.state === 'finalizing';
+  const isCapturingSpeech = isListening || isFinalizing;
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
   const hasSomethingToSend = canSend ?? Boolean(value.trim());
   const hasLiveTranscript = Boolean(speech.partialText || value);
   const listeningWillSend = Boolean(value.trim() || speech.partialText.trim());
-  const sendDisabled = disabled || !hasSomethingToSend || isListening;
+  const sendDisabled = disabled || !hasSomethingToSend || isCapturingSpeech;
   // The trailing control is mic XOR send, in one slot: while dictation is live
   // the control stays the listening/stop control even as partial transcript
   // fills the input; without speech, or once there is something to send, the
   // send control shows (disabled when nothing is sendable), so the corner is
   // never empty — including while an agent is working, when a tap queues the
   // next instruction.
-  const showMic = speechAvailable && (isListening || !hasSomethingToSend);
+  const showMic = speechAvailable && (isCapturingSpeech || !hasSomethingToSend);
   const showSend = !showMic;
 
   // The live words belong in the input itself. The status line only names the
@@ -146,11 +148,13 @@ export function ConversationComposer({
       ? 'microphone off in settings \u00b7 tap to open settings'
       : speech.state === 'nothing-recognised'
         ? "didn't catch that \u00b7 tap mic to try again"
-        : speech.state === 'listening'
-          ? listeningWillSend
-            ? 'listening \u00b7 tap mic to send'
-            : 'listening \u00b7 tap mic to stop'
-          : '';
+        : speech.state === 'finalizing'
+          ? 'finishing transcription'
+          : speech.state === 'listening'
+            ? listeningWillSend
+              ? 'listening \u00b7 tap mic to send'
+              : 'listening \u00b7 tap mic to stop'
+            : '';
   const statusIsError =
     speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
 
@@ -258,7 +262,7 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
-              isListening && speech.partialText
+              isCapturingSpeech && speech.partialText
                 ? [
                     styles.inputTransparent,
                     Platform.OS === 'android' && styles.inputTransparentAndroid,
@@ -272,7 +276,7 @@ export function ConversationComposer({
             onBlur={onBlur}
             onKeyPress={onKeyPress}
             onSelectionChange={onSelectionChange}
-            placeholder={isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'}
+            placeholder={isCapturingSpeech ? (hasLiveTranscript ? '' : 'Listening') : 'Message'}
             placeholderTextColor={theme.buzz.dim}
             multiline
             // Android keyboards otherwise take the whole screen in landscape and
@@ -285,7 +289,7 @@ export function ConversationComposer({
             testID={`${testIDPrefix}-input`}
             accessibilityLabel="Message"
           />
-          {isListening && speech.partialText ? (
+          {isCapturingSpeech && speech.partialText ? (
             <View
               style={styles.interimOverlay}
               pointerEvents="none"
@@ -315,23 +319,29 @@ export function ConversationComposer({
         {showMic && speechAvailable ? (
           <TouchableOpacity
             accessibilityLabel={
-              isListening
-                ? listeningWillSend
-                  ? 'Stop listening and send'
-                  : 'Stop listening'
-                : speech.state === 'permission-denied'
-                  ? 'Open microphone settings'
-                  : 'Start speech input'
+              isFinalizing
+                ? 'Finishing speech input'
+                : isListening
+                  ? listeningWillSend
+                    ? 'Stop listening and send'
+                    : 'Stop listening'
+                  : speech.state === 'permission-denied'
+                    ? 'Open microphone settings'
+                    : 'Start speech input'
             }
             accessibilityRole="button"
             accessibilityHint={
-              isListening
-                ? listeningWillSend
-                  ? 'Stops dictation and sends'
-                  : 'Stops dictation'
-                : 'Dictates into the message field'
+              isFinalizing
+                ? 'Waits for the final transcription before sending'
+                : isListening
+                  ? listeningWillSend
+                    ? 'Stops dictation and sends'
+                    : 'Stops dictation'
+                  : 'Dictates into the message field'
             }
-            accessibilityState={{ selected: isListening }}
+            accessibilityState={
+              isFinalizing ? { selected: true, busy: true } : { selected: isListening }
+            }
             accessibilityValue={
               isListening && speech.partialText
                 ? { text: `Listening: ${speech.partialText}` }
@@ -343,10 +353,12 @@ export function ConversationComposer({
                 void Linking.openSettings();
                 return;
               }
+              if (isFinalizing) return;
               if (isListening) {
-                const shouldSend = listeningWillSend;
-                speech.stop();
-                if (shouldSend) onSend?.();
+                const hadCommittedText = Boolean(value.trim());
+                void speech.stop().then((captured) => {
+                  if (captured !== null && (hadCommittedText || captured)) onSend?.();
+                });
               } else {
                 speech.start();
               }

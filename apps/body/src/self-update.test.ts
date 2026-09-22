@@ -220,6 +220,12 @@ async function buildFixtureBundle(commit: string, version: string): Promise<Fixt
     'process.exit(0);\n',
   );
   await writeFile(join(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), 'export {};\n');
+  await mkdir(join(staging, 'lib', 'beeline', 'codegraph', 'bin'), { recursive: true });
+  await writeFile(
+    join(staging, 'lib', 'beeline', 'codegraph', 'bin', 'codegraph'),
+    '#!/bin/sh\nexit 0\n',
+    { mode: 0o755 },
+  );
   await writeFile(
     join(staging, 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,

@@ -1,12 +1,12 @@
 /**
  * Trusty Squire's host rewrite: one Chrome, one broker socket, many façades.
  *
- * Agent units run PrivateTmp=yes and every ACP child is bwrapped with
- * --tmpfs /tmp, so Squire's default /tmp socket is a different inode inside
- * each agent. That is the eight-brokers-at-100-percent-CPU incident. The
- * host rewrite points every façade at <host home>/.trusty-squire/broker.sock,
- * bind-mounts that directory read-write, and elects the daemon from a host
- * user unit with no PrivateTmp. A sandboxed façade never elects.
+ * Every ACP child is bwrapped with --tmpfs /tmp, so Squire's default /tmp
+ * socket is a different inode inside each agent. That is the
+ * eight-brokers-at-100-percent-CPU incident. The host rewrite points every
+ * façade at <host home>/.trusty-squire/broker.sock, bind-mounts that directory
+ * read-write, and elects the daemon from a host user unit outside that mount
+ * namespace. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';

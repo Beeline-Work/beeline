@@ -174,7 +174,7 @@ describe('desktop tail landing wiring', () => {
     expect(contentSizeChange).toContain('readerMovedUp');
     expect(contentSizeChange).toContain('landing.disarm');
     expect(contentSizeChange.indexOf('if (desktopTranscript) {')).toBeLessThan(
-      contentSizeChange.indexOf('preserveReaderOffsetUntilRef'),
+      contentSizeChange.indexOf('maintainVisibleContentPosition above'),
     );
   });
 

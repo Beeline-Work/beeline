@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View, type TextStyle } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -124,6 +132,28 @@ type LedgerBodyProps = {
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
 };
+
+/**
+ * The transcript's one paragraph and speaker rhythm. Activity rows share this
+ * with durable prose so crossing the streaming boundary cannot add a second
+ * margin system.
+ */
+export function ledgerEntryRhythm({
+  hasByline,
+  chronological = false,
+  precededByDayCaption = false,
+}: {
+  hasByline: boolean;
+  chronological?: boolean;
+  precededByDayCaption?: boolean;
+}): StyleProp<ViewStyle> {
+  return [
+    styles.entry,
+    hasByline &&
+      !precededByDayCaption &&
+      (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
+  ];
+}
 
 const TYPEWRITER_TICK_MS = 20;
 const TYPEWRITER_CHARS_PER_TICK = 2;
@@ -478,12 +508,11 @@ export function LedgerEntry({
   );
   return (
     <View
-      style={[
-        styles.entry,
-        byline &&
-          !precededByDayCaption &&
-          (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
-      ]}
+      style={ledgerEntryRhythm({
+        hasByline: Boolean(byline),
+        chronological,
+        precededByDayCaption,
+      })}
       testID={`chat-message-${itemId}`}
     >
       {byline ? <Byline byline={byline} /> : null}
@@ -527,12 +556,11 @@ export function LedgerSteer({
   // body's; ownership reads from the byline alone.
   return (
     <View
-      style={[
-        styles.entry,
-        byline &&
-          !precededByDayCaption &&
-          (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
-      ]}
+      style={ledgerEntryRhythm({
+        hasByline: Boolean(byline),
+        chronological,
+        precededByDayCaption,
+      })}
       testID={`chat-message-${itemId}`}
     >
       {byline ? <Byline byline={byline} /> : null}
@@ -751,10 +779,7 @@ export function LedgerDayCaption({ label }: { label: string }) {
   );
 }
 
-export function withLedgerDayCaption(
-  node: React.ReactNode,
-  label: string | null,
-): React.ReactNode {
+export function withLedgerDayCaption(node: React.ReactNode, label: string | null): React.ReactNode {
   if (!label) return node;
   const caption = <LedgerDayCaption label={label} />;
   return (

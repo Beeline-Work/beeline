@@ -147,9 +147,10 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {
+  it('boots a non-opener reviewer and retains its fallback after CodeGraph preparation fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);
+    await execFileAsync('git', ['init', root]);
     const agent = stored('11'.repeat(32), 'Echo');
     const runtime = {
       version: 2,
@@ -244,6 +245,7 @@ describe('corner merge instructions', () => {
         agentEnv: {},
         workspaceRoot: root,
         autoApprovePermissions: true,
+        codegraphCommand: '/usr/bin/false',
       },
       api,
       scheduler: new SessionScheduler({ maxLiveSessions: 1 }),
@@ -255,6 +257,10 @@ describe('corner merge instructions', () => {
 
     await (loop as unknown as { activate(): Promise<string> }).activate();
     const input = sessionNew.mock.calls[0]?.[0];
+    expect(input?.mcpServers.some((server) => server.name === 'codegraph')).toBe(false);
+    expect(
+      await (loop as unknown as { sessionIsCurrent(): Promise<boolean> }).sessionIsCurrent(),
+    ).toBe(true);
     expect(input?.systemPrompt).toContain(`Checks are green on PR #7 at ${'a'.repeat(40)}`);
     expect(input?.systemPrompt).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
     expect(input?.systemPrompt).not.toContain('reply only with its full URL');

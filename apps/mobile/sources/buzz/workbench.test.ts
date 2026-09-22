@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   connectionCompany,
   connectionCreatedByLine,
+  connectionDetailLabel,
+  connectionDetailState,
   connectionDomainsLine,
+  connectionFactDate,
+  connectionGrantLimits,
   connectionGrantsLine,
   connectionHostsLine,
   connectionInstrument,
@@ -262,6 +266,35 @@ describe('connection detail copy', () => {
   it('reports the tightest per-grant spend cap, or none', () => {
     expect(connectionSpendCap(detail.grants)).toBe('$25 cap');
     expect(connectionSpendCap([{ grantId: 'terra', createdAt: 2 }])).toBe('none');
+  });
+
+  it('shows only distinguishing labels and names stale cache reads honestly', () => {
+    expect(connectionDetailLabel(detail.connection)).toBeUndefined();
+    expect(connectionDetailLabel({ ...detail.connection, name: 'Production' })).toBe('Production');
+    expect(
+      connectionDetailLabel({ ...detail.connection, name: detail.connection.ref }),
+    ).toBeUndefined();
+    expect(connectionDetailState(detail.connection)).toEqual({ label: 'active', glyph: 'live' });
+    expect(connectionDetailState({ ...detail.connection, stale: true })).toEqual({
+      label: 'refreshing',
+      glyph: 'pulse',
+      tone: 'accent',
+    });
+    expect(connectionDetailState({ ...detail.connection, stale: true, state: 'error' })).toEqual({
+      label: 'error',
+      glyph: 'failed',
+      tone: 'danger',
+    });
+  });
+
+  it('formats complete grant limits and absent vault dates without guessing', () => {
+    expect(connectionGrantLimits({ grantId: 'agent', rateLimitPerHour: 60, spendCapUsd: 25 })).toBe(
+      '60/hour · $25 cap',
+    );
+    expect(connectionGrantLimits({ grantId: 'agent' })).toBe('no limits reported');
+    expect(connectionFactDate(undefined)).toBe('not reported');
+    expect(connectionFactDate(Number.NaN)).toBe('not reported');
+    expect(connectionFactDate(Date.parse('2026-09-15T12:00:00Z'))).toContain('2026');
   });
 
   it('stamps ledger rows today as a clock and older ones as a date', () => {

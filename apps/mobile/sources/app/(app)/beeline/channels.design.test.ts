@@ -94,7 +94,7 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'header')).toContain(
       'paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR',
     );
-    // Touching 44pt boxes: no gap, marks 28dp apart (44 - 16).
+    // Touching 44pt boxes: no gap, while the marks keep their own visual size.
     expect(styleBlock(source, 'headerActions')).toContain('gap: 0');
     expect(styleBlock(source, 'headerActions')).not.toContain('gap: hull.space');
     expect(styleBlock(source, 'headerAction')).toContain('minWidth: HEADER_TARGET_SIZE');
@@ -157,7 +157,7 @@ describe('Room list layout contract', () => {
     // neighbour's. Hit slop used to carry the target, so two marks a step
     // apart had targets that overlapped by 20pt while the ink read cramped.
     expect(source).toContain('const HEADER_TARGET_SIZE = 44');
-    expect(source).toContain('const HEADER_MARK_SIZE = 28');
+    expect(source).toContain('const HEADER_MARK_SIZE = 21');
     expect(styleBlock(source, 'headerAction')).toContain('minHeight: HEADER_TARGET_SIZE');
     expect(source.match(/style=\{styles\.headerAction\}/g)).toHaveLength(2);
     expect(source).not.toContain('HEADER_GLYPH_HIT_SLOP');
@@ -167,6 +167,13 @@ describe('Room list layout contract', () => {
     expect(source).toMatch(/<BookmarksGlyph\b/);
     expect(source).toMatch(/<MembersGlyph\b/);
     expect(source).toMatch(/<ChevronGlyph\b/);
+    expect(source).toContain('color={styles.headerBookmarkGlyph.color}');
+    expect(source).toMatch(
+      /<BookmarksGlyph[\s\S]*?\bfilled\b[\s\S]*?testID="workspace-bookmarks-glyph"/,
+    );
+    expect(styleBlock(source, 'headerBookmarkGlyph')).toContain('color: hull.accent');
+    expect(source).toContain('color={styles.headerActionGlyph.color}');
+    expect(styleBlock(source, 'headerActionGlyph')).toContain('color: hull.textMuted');
     expect(source).not.toMatch(/['"][‹›⌃⌄]['"]/u);
     expect(source).not.toMatch(/OPTICAL|NUDGE|optical|nudge/);
     expect(source).not.toContain('headerBookmarksGlyph');

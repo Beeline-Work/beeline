@@ -79,6 +79,12 @@ describe.skipIf(!existsSync(CHROME))('Workspace picture seat parity', () => {
       expect(result).not.toContain(`${surface}: NOT RENDERED`);
     }
     expect(result).not.toContain('NOT SEATED');
+    expect(result).toContain(
+      'desktop-rail: tile 48×48 radius 14 bezel 2, picture 36×36 seat radius 8 (derived 8), slab 4/4/4/4',
+    );
+    expect(result).toContain(
+      'settings-tile: tile 76×76 radius 20 bezel 2, picture 64×64 seat radius 14 (derived 14), slab 4/4/4/4',
+    );
     expect(result.startsWith('PASS'), result).toBe(true);
   }, 120_000);
 });

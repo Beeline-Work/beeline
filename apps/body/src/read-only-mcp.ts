@@ -829,6 +829,7 @@ export function agentToolsFor(
   directMessage: boolean,
   cornerTurn = false,
   reviewer = false,
+  commandRunnerAvailable = true,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -838,6 +839,7 @@ export function agentToolsFor(
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     if (tool.name === 'open_corner' || tool.name === 'open_poll') return !directMessage;
+    if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
   });
 }
@@ -849,6 +851,7 @@ const TOOLS = youtubeSurface
       process.env.BEELINE_AGENT_DM === '1',
       Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
       process.env.BEELINE_CORNER_REVIEWER === '1',
+      Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2489,11 +2492,13 @@ export async function runGrantedCommand(
   const result = await deps.run({ roomId: deps.roomId, argv: argv as string[] });
   const grantId = typeof result.grantId === 'string' ? result.grantId : 'unknown';
   const verdict =
-    result.timedOut === true
-      ? 'timed out after 10 minutes'
-      : typeof result.exitCode === 'number'
-        ? `exit ${result.exitCode}`
-        : `did not start${typeof result.signal === 'string' ? ` (${result.signal})` : ''}`;
+    result.sandboxFailure === true
+      ? 'sandbox failed before command start'
+      : result.timedOut === true
+        ? 'timed out after 10 minutes'
+        : typeof result.exitCode === 'number'
+          ? `exit ${result.exitCode}`
+          : `did not start${typeof result.signal === 'string' ? ` (${result.signal})` : ''}`;
   const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
   const refused =
     result.writeRefused === true

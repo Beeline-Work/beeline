@@ -33,6 +33,7 @@ import {
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
   attachmentPromptLines,
@@ -44,6 +45,12 @@ import {
 import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
+import {
+  codegraphFingerprintServers,
+  codegraphIndexDirectory,
+  codegraphMcpServer,
+  prepareCodegraphIndex,
+} from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
@@ -325,6 +332,8 @@ export class MonolithRoomTurnLoop {
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
+  /** Whether CodeGraph preparation succeeded for the live session. */
+  private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
@@ -491,6 +500,7 @@ export class MonolithRoomTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     if (client?.isAlive) await client.stop();
   }
@@ -523,11 +533,15 @@ export class MonolithRoomTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        this.sessionCodegraphReady,
+      ),
     });
   }
 
@@ -608,17 +622,6 @@ export class MonolithRoomTurnLoop {
       command,
     });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
-    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -639,6 +642,25 @@ export class MonolithRoomTurnLoop {
     // so the sandbox must leave this writable too.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    // Index before constructing the sandbox: a Room keeps the checkout
+    // read-only, but CodeGraph's SQLite WAL and connect-time reconciliation
+    // need its generated .codegraph directory writable while the MCP lives.
+    const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        codegraphReady,
+      ),
+    });
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -649,6 +671,7 @@ export class MonolithRoomTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
+          ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
@@ -676,11 +699,17 @@ export class MonolithRoomTurnLoop {
         attachScratchRoot,
         turnContextPath: this.commandContext.path,
         directMessage,
-        ...(this.options.grantRunnerEndpoint
+        ...(this.options.grantRunnerEndpoint && this.options.config.bwrapPath
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),
       }),
     ];
+    if (codegraphReady) {
+      const codegraph = codegraphMcpServer(this.options.config, this.options.cwd, {
+        readonly: true,
+      });
+      if (codegraph) servers.push(codegraph);
+    }
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
@@ -731,6 +760,11 @@ export class MonolithRoomTurnLoop {
       autoApprovePermissions: false,
       permissionAllowlist: (request) =>
         isRoomMcpPermissionRequest(request, mountedServers, hostServers),
+      onCommands: agentCommandCatalogPublisher({
+        api: this.options.api,
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+      }),
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,
@@ -783,6 +817,7 @@ export class MonolithRoomTurnLoop {
     });
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
+    this.sessionCodegraphReady = codegraphReady;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -858,6 +893,7 @@ export class MonolithRoomTurnLoop {
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
+    this.sessionCodegraphReady = false;
     if (client?.isAlive) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());

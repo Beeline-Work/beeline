@@ -161,8 +161,8 @@ describe('desktop Workspace rail', () => {
         node.findAllByProps({ testID: 'desktop-workspace-mark-alpha' }).length > 0,
       );
 
-    // 48px tile, 2px bezel: the box inside the bezel is 44. A 34px picture
-    // centred there leaves 5px of slab on every side, and its own 12 - 5 = 7px
+    // 48px tile, 2px bezel: the box inside the bezel is 44. A 36px picture
+    // centred there leaves 4px of slab on every side, and its own 12 - 4 = 8px
     // radius keeps its curve parallel to the bezel's rather than cut by it.
     const tileSize = 48;
     const bezelWidth = 2;
@@ -170,14 +170,14 @@ describe('desktop Workspace rail', () => {
     const margin = (innerBox - (seat?.props.style.width ?? 0)) / 2;
 
     expect(seat?.props.style).toMatchObject({
-      width: 34,
-      height: 34,
-      borderRadius: 7,
+      width: 36,
+      height: 36,
+      borderRadius: 8,
       overflow: 'hidden',
     });
-    expect(margin).toBe(5);
+    expect(margin).toBe(4);
     expect(margin).toBeGreaterThan(0); // no corner of the picture touches brass
-    expect(mark.props.size).toBe(34);
+    expect(mark.props.size).toBe(36);
   });
 
   it('reveals the name and Room count on hover or focus', () => {

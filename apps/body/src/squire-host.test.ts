@@ -126,14 +126,14 @@ describe('squire host rewrite env', () => {
 });
 
 describe('RED/GREEN broker election', () => {
-  it('RED: the operator launch line copied into two PrivateTmp agents elects two brokers', async () => {
+  it('RED: the operator launch line copied into two private-/tmp sessions elects two brokers', async () => {
     const root = await scratch('beeline-squire-red-');
     const ledger = join(root, 'brokers.jsonl');
     const shimDir = join(root, 'bin');
     installNpxShim(shimDir, ledger);
     const sockets: string[] = [];
     for (const agent of ['agent-a', 'agent-b']) {
-      // PrivateTmp=yes / --tmpfs /tmp: each agent's /tmp is its own inode.
+      // bwrap --tmpfs /tmp: each ACP session's /tmp is its own inode.
       const privateTmp = join(root, agent, 'tmp');
       mkdirSync(privateTmp, { recursive: true });
       const run = spawnSync(SQUIRE_LAUNCH.command, SQUIRE_LAUNCH.args, {

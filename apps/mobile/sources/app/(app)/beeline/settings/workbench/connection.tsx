@@ -1,14 +1,21 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { ServiceMark } from '@/components/buzz/ServiceMark';
+import { StateDot } from '@/components/buzz/StateDot';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
+  connectionCompany,
   connectionCreatedByLine,
-  connectionGrantsLine,
+  connectionDetailLabel,
+  connectionDetailState,
+  connectionFactDate,
+  connectionGrantLimits,
   connectionHostsLine,
   type ConnectionDetailView,
 } from '@/buzz/workbench';
@@ -39,9 +46,12 @@ export default function ConnectionDetailScreen() {
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [revokedLine, setRevokedLine] = useState<string | null>(null);
+  const [loadGeneration, setLoadGeneration] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setDetail(null);
+    setError(null);
     void getWorkbenchSource()
       .readConnectionDetail({ workspaceId, ref, viewerId })
       .then((result) => {
@@ -58,7 +68,7 @@ export default function ConnectionDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [ref, viewerId, workspaceId]);
+  }, [loadGeneration, ref, viewerId, workspaceId]);
 
   const revoke = useCallback(async () => {
     if (!detail) return;
@@ -79,6 +89,18 @@ export default function ConnectionDetailScreen() {
     }
   }, [detail, ref, workspaceId]);
 
+  const company = detail ? connectionCompany(detail.connection) : '';
+  const label = detail ? connectionDetailLabel(detail.connection) : undefined;
+  const state = detail ? connectionDetailState(detail.connection) : undefined;
+  const fieldNames = detail?.connection.fieldNames ?? [];
+  const grantCount = detail?.grants.length ?? 0;
+  const revokeQuestion = useMemo(
+    () =>
+      `Revoke ${grantCount === 1 ? 'this grant' : `all ${grantCount} grants`}? Agents using ` +
+      'them will lose access to this key immediately.',
+    [grantCount],
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -95,54 +117,161 @@ export default function ConnectionDetailScreen() {
             size={CHEVRON_BACK_SIZE}
           />
         </TouchableOpacity>
-        <Text style={styles.title}>{detail?.connection.name ?? 'Key'}</Text>
-        <Text style={styles.subtitle}>{detail?.connection.service ?? ''}</Text>
+        <Text style={styles.title}>Key</Text>
       </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+        {!detail && !error ? (
+          <View style={styles.centered} testID="connection-loading">
+            <SurfaceGlyphLoader testID="connection-loader" />
+          </View>
+        ) : null}
+        {detail ? (
+          <View style={styles.identity} testID="connection-detail-identity">
+            <ServiceMark
+              company={company}
+              domain={detail.connection.faviconDomain}
+              testID="connection-service-mark"
+            />
+            <View style={styles.identityCopy}>
+              <Text numberOfLines={1} style={styles.identityTitle} testID="connection-service-name">
+                {company}
+              </Text>
+              {label ? (
+                <Text numberOfLines={1} style={styles.identityLabel} testID="connection-key-label">
+                  {label}
+                </Text>
+              ) : null}
+            </View>
+            {state ? (
+              <View style={styles.state} testID="connection-detail-state">
+                <StateDot kind={state.glyph} />
+                <Text
+                  style={[
+                    styles.stateText,
+                    state.tone === 'danger' && styles.stateDanger,
+                    state.tone === 'accent' && styles.stateAccent,
+                  ]}
+                >
+                  {state.label}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         {detail ? (
           <View testID="connection-detail-metadata">
-            <SettingsRow disabled title="Hosts" value={connectionHostsLine(detail.connection)} />
-            {detail.createdBy ? (
-              <SettingsRow disabled title="Created by" value={connectionCreatedByLine(detail)} />
-            ) : null}
+            <Text style={styles.sectionLabel}>Vault</Text>
+            <SettingsRow disabled title="Reference" description={detail.connection.ref} />
             <SettingsRow
               disabled
-              testID="connection-detail-grants"
-              title="Grants"
-              value={connectionGrantsLine(detail)}
+              title="Hosts"
+              description={connectionHostsLine(detail.connection)}
             />
-            <SettingsRow disabled title="Spend cap" value={detail.spendCap} />
+            <SettingsRow
+              description={fieldNames.length ? fieldNames.join(', ') : 'none reported'}
+              disabled
+              testID="connection-detail-fields"
+              title="Fields"
+            />
+            <SettingsRow
+              disabled
+              title="Created"
+              value={connectionFactDate(detail.connection.createdAt)}
+            />
+            <SettingsRow
+              disabled
+              title="Last synced"
+              value={connectionFactDate(detail.connection.lastSyncedAt)}
+            />
+            {detail.createdBy ? (
+              <SettingsRow
+                disabled
+                title="Provisioned by"
+                value={connectionCreatedByLine(detail)}
+              />
+            ) : null}
+          </View>
+        ) : null}
+        {detail ? (
+          <View testID="connection-detail-grants">
+            <Text style={styles.sectionLabel}>Grants</Text>
+            {detail.grants.length ? (
+              detail.grants.map((grant) => (
+                <SettingsRow
+                  description={`Granted ${connectionFactDate(grant.createdAt)}`}
+                  disabled
+                  key={grant.grantId}
+                  testID={`connection-grant-${grant.grantId}`}
+                  title={grant.grantId}
+                  value={connectionGrantLimits(grant)}
+                />
+              ))
+            ) : (
+              <SettingsRow disabled testID="connection-grants-empty" title="None" tone="quiet" />
+            )}
           </View>
         ) : null}
         {detail ? (
           <View testID="connection-detail-ledger">
-            <Text style={styles.sectionLabel}>Ledger</Text>
-            {detail.ledger.map((row, index) => (
-              <View key={`${row.at}-${index}`} style={styles.ledgerRow} testID={`connection-ledger-${index}`}>
-                <Text style={styles.ledgerStamp}>{row.at}</Text>
-                <Text style={styles.ledgerText} numberOfLines={1}>
-                  {[row.actor, row.action].filter(Boolean).join(' ')}
-                  {row.status ? ` · ${row.status}` : ''}
-                  {row.bytes ? ` · ${row.bytes}` : ''}
-                </Text>
-              </View>
-            ))}
+            <Text style={styles.sectionLabel}>Activity</Text>
+            {detail.ledger.length ? (
+              detail.ledger.map((row, index) => (
+                <View
+                  key={`${row.at}-${index}`}
+                  style={styles.ledgerRow}
+                  testID={`connection-ledger-${index}`}
+                >
+                  <View style={styles.ledgerCopy}>
+                    <Text style={styles.ledgerText} numberOfLines={1}>
+                      {[row.actor, row.action].filter(Boolean).join(' ') || 'Key used'}
+                    </Text>
+                    {[row.grant ? `grant ${row.grant}` : undefined, row.status, row.bytes].filter(
+                      Boolean,
+                    ).length ? (
+                      <Text style={styles.ledgerMeta} numberOfLines={1}>
+                        {[row.grant ? `grant ${row.grant}` : undefined, row.status, row.bytes]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.ledgerStamp}>{row.at}</Text>
+                </View>
+              ))
+            ) : (
+              <SettingsRow
+                disabled
+                testID="connection-activity-empty"
+                title="No activity yet"
+                tone="quiet"
+              />
+            )}
           </View>
         ) : null}
-        {detail && !confirmRevoke ? (
-          <SettingsRow
-            disabled={revoking}
-            onPress={() => setConfirmRevoke(true)}
-            testID="connection-revoke-grants"
-            title="Revoke all grants"
-            tone="destructive"
-          />
+        {detail && grantCount > 0 ? (
+          <View testID="connection-management">
+            <Text style={styles.sectionLabel}>Manage</Text>
+            {!confirmRevoke ? (
+              <SettingsRow
+                disabled={revoking}
+                onPress={() => {
+                  setError(null);
+                  setConfirmRevoke(true);
+                }}
+                testID="connection-revoke-grants"
+                title={grantCount === 1 ? 'Revoke grant' : 'Revoke all grants'}
+                tone="destructive"
+              />
+            ) : null}
+          </View>
         ) : null}
         {confirmRevoke ? (
           <View style={styles.confirm} testID="connection-revoke-confirm">
-            <Text style={styles.confirmText}>Revoke every grant on this key?</Text>
+            <Text style={styles.confirmText}>{revokeQuestion}</Text>
             <TouchableOpacity
               accessibilityRole="button"
+              accessibilityState={{ busy: revoking, disabled: revoking }}
+              disabled={revoking}
               onPress={() => void revoke()}
               style={styles.confirmDanger}
               testID="connection-revoke-confirm-yes"
@@ -151,7 +280,10 @@ export default function ConnectionDetailScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               accessibilityRole="button"
+              accessibilityState={{ disabled: revoking }}
+              disabled={revoking}
               onPress={() => setConfirmRevoke(false)}
+              style={styles.confirmCancel}
               testID="connection-revoke-confirm-no"
             >
               <Text style={styles.confirmCancelText}>Cancel</Text>
@@ -164,9 +296,19 @@ export default function ConnectionDetailScreen() {
           </Text>
         ) : null}
         {error ? (
-          <Text accessibilityRole="alert" style={styles.errorText} testID="connection-error">
-            {error}
-          </Text>
+          <View style={styles.error} testID="connection-error-state">
+            <Text accessibilityRole="alert" style={styles.errorText} testID="connection-error">
+              {error}
+            </Text>
+            {!detail ? (
+              <SettingsRow
+                onPress={() => setLoadGeneration((generation) => generation + 1)}
+                testID="connection-retry"
+                title="Try again"
+                tone="action"
+              />
+            ) : null}
+          </View>
         ) : null}
       </ScrollView>
     </View>
@@ -188,21 +330,44 @@ const styles = StyleSheet.create((theme) => {
     backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     backButtonText: { color: hull.textPrimary },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary, flex: 1 },
-    subtitle: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
     content: { flex: 1 },
-    contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
+    contentInner: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
+    },
+    centered: { minHeight: 180, alignItems: 'center', justifyContent: 'center' },
+    identity: {
+      minHeight: hull.layout.row,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.sm,
+      paddingBottom: hull.space.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    identityCopy: { flex: 1, minWidth: 0 },
+    identityTitle: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    identityLabel: { ...Typography.mono(), ...hull.type.meta, color: hull.ledgerQuiet },
+    state: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
+    stateText: { ...Typography.mono(), ...hull.type.meta, color: hull.textSecondary },
+    stateDanger: { color: hull.dialogDanger },
+    stateAccent: { color: hull.accent },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     ledgerRow: {
       minHeight: hull.layout.row,
       paddingHorizontal: hull.space.sm,
+      paddingVertical: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: hull.space.md,
+      gap: hull.space.sm,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    ledgerCopy: { flex: 1, minWidth: 0 },
     ledgerStamp: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
-    ledgerText: { ...Typography.mono(), ...hull.type.meta, color: hull.textSecondary, flex: 1 },
+    ledgerText: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
+    ledgerMeta: { ...Typography.mono(), ...hull.type.meta, color: hull.ledgerQuiet },
     confirm: {
       borderWidth: 1,
       borderColor: hull.borderStrong,
@@ -218,8 +383,14 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.dialogDanger,
     },
     confirmDangerText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
+    confirmCancel: {
+      minHeight: hull.layout.row,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     confirmCancelText: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
     savedMark: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    error: { gap: hull.space.xs },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

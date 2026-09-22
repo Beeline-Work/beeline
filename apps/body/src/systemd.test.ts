@@ -36,6 +36,9 @@ describe('systemd supervision contract', () => {
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('ExecStart=%h/.local/bin/beeline daemon --agent %i');
     expect(unit).toContain('Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin');
+    expect(unit).toContain('AppArmorProfile=-unconfined');
+    expect(unit).not.toContain('NoNewPrivileges=');
+    expect(unit).not.toContain('PrivateTmp=');
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {

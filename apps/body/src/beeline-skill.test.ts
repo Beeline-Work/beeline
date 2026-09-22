@@ -25,6 +25,10 @@ describe('using-beeline Room guidance', () => {
     );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
+    expect(markdown).toContain('beeline-readonly-mcp.search_text');
+    expect(markdown).toContain('beeline-readonly-mcp.read_file');
+    expect(markdown).toContain('If shell access is blocked');
+    expect(markdown).toContain('Use CodeGraph first when it is available');
     expect(beelinePrimer()).toContain('beeline-agent fetch_image');
     expect(beelinePrimer()).toContain('embed as a data: URL');
     // The primer asks for the corner's NAME as well as its objective (C89).
@@ -269,7 +273,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
-    expect(markdown).toContain('YouTube Analytics answers only the channel owner account, not a manager');
+    expect(markdown).toContain(
+      'YouTube Analytics answers only the channel owner account, not a manager',
+    );
     expect(markdown).toContain('Tailscale is not available yet');
   });
 
@@ -279,7 +285,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('**Offer the tool at the moment you need it.**');
     expect(markdown).toContain('do not send them to a settings page');
     expect(markdown).toContain('Call workbench_status first');
-    expect(markdown).toContain('Then call offer_connector with the connectorType and one short reason');
+    expect(markdown).toContain(
+      'Then call offer_connector with the connectorType and one short reason',
+    );
     expect(markdown).toContain('Only that person or a Workspace admin can accept it');
     expect(markdown).toContain('Your turn pauses on the card');
     expect(markdown).not.toContain('Settings → Workbench → Tools');
@@ -301,7 +309,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
       'does not replace a grant, write permission, target-branch confirmation, or the merge gate',
     );
     expect(markdown).toContain('never needs a raw credential in chat');
-    expect(markdown).toContain('You never pair a tool yourself and never ask anyone for a key value');
+    expect(markdown).toContain(
+      'You never pair a tool yourself and never ask anyone for a key value',
+    );
     // The Workbench page survives as the place to MANAGE, reachable from Settings.
     expect(markdown).toContain('(Settings → Workbench)');
     expect(markdown).toContain('you point there to MANAGE what exists, not to add what you need');
@@ -341,7 +351,9 @@ describe('using-beeline "Showing a photograph" section', () => {
 
   it('teaches fetch_image next to Showing a mock, and keeps the validator closed', () => {
     expect(markdown).toContain('## Showing a photograph');
-    expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(markdown.indexOf('## Showing a mock'));
+    expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(
+      markdown.indexOf('## Showing a mock'),
+    );
     expect(markdown).toContain('beeline-agent fetch_image');
     expect(markdown).toContain('data:image/jpeg;base64');
     expect(markdown).toContain('do not draw an SVG stand-in');

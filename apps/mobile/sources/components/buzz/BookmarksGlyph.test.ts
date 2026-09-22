@@ -70,4 +70,16 @@ describe('BookmarksGlyph', () => {
     expect(svg.props.height).toBe(24);
     expect(outline.props.stroke).toBe(brand.mark);
   });
+
+  it('draws a solid silhouette when filled', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(BookmarksGlyph, { color: '#b08a4a', filled: true }),
+      );
+    });
+    const glyph = renderer.root.findByType('Polygon' as never);
+    expect(glyph.props.fill).toBe('#b08a4a');
+    expect(glyph.props.stroke).toBe('none');
+  });
 });

@@ -402,9 +402,6 @@ export class MonolithRigTransport {
       (value) => (value as { id: string }).id,
     );
   }
-  agentCommandsRead() {
-    return Promise.resolve(null);
-  }
   roomRepositorySet(roomId: string, input: RoomRepositoryInput): Promise<RoomRepository> {
     return this.operation('setRoomRepository', {
       roomId,

@@ -58,6 +58,8 @@ export type WorkbenchConnection = {
    */
   service?: string;
   hosts: readonly string[];
+  /** Names of fields in the vault entry. Values never leave the vault. */
+  fieldNames?: readonly string[];
   /**
    * The brand domain for the row's icon, derived by the SERVER from the
    * credential's first allowed host (`faviconDomain` in
@@ -67,6 +69,10 @@ export type WorkbenchConnection = {
    */
   faviconDomain?: string;
   state: 'active' | 'error';
+  /** The server is refreshing cached vault metadata older than its TTL. */
+  stale?: boolean;
+  lastSyncedAt?: number;
+  createdAt?: number;
   /** Which human provisioned the connection (sovereignty owner). */
   ownerId: string;
   /** Grant count for the connection list's quiet line. */
@@ -295,6 +301,7 @@ export type ConnectorInstallState = {
 export type ConnectionGrant = {
   grantId: string;
   createdAt?: number;
+  rateLimitPerHour?: number;
   spendCapUsd?: number;
 };
 
@@ -304,6 +311,7 @@ export type ConnectionLedgerRow = {
   action: string;
   status?: string;
   bytes?: string;
+  grant?: string;
 };
 
 export type ConnectionDetailView = {
@@ -439,7 +447,8 @@ function hostCompany(host: string | undefined): string | undefined {
   if (host.includes(':') || labels.every((label) => /^\d+$/.test(label))) return undefined;
   if (labels.length === 1) return labels[0];
   const penultimate = labels[labels.length - 2]!;
-  if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(penultimate)) return labels[labels.length - 3];
+  if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(penultimate))
+    return labels[labels.length - 3];
   return penultimate;
 }
 
@@ -466,6 +475,48 @@ export function connectionInstrument(state: WorkbenchConnection['state']): {
 } {
   if (state === 'error') return { value: 'error', glyph: 'failed', valueTone: 'danger' };
   return { value: 'active', glyph: 'live' };
+}
+
+export type ConnectionDetailState = {
+  label: 'active' | 'error' | 'refreshing';
+  glyph: 'live' | 'failed' | 'pulse';
+  tone?: 'danger' | 'accent';
+};
+
+/** Detail state never calls an old cache active while its refresh is pending. */
+export function connectionDetailState(connection: WorkbenchConnection): ConnectionDetailState {
+  if (connection.state === 'error') return { label: 'error', glyph: 'failed', tone: 'danger' };
+  if (connection.stale) return { label: 'refreshing', glyph: 'pulse', tone: 'accent' };
+  return { label: 'active', glyph: 'live' };
+}
+
+/** A vault label is useful only when it distinguishes the service or reference. */
+export function connectionDetailLabel(connection: WorkbenchConnection): string | undefined {
+  const label = connection.name.trim();
+  if (!label || label.toLowerCase() === 'default') return undefined;
+  if (label.toLowerCase() === connectionCompany(connection).trim().toLowerCase()) return undefined;
+  if (label === connection.ref) return undefined;
+  return label;
+}
+
+/** Human-readable date for vault facts and grant rows. */
+export function connectionFactDate(timestamp: number | undefined): string {
+  if (timestamp === undefined) return 'not reported';
+  const date = new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp);
+  if (Number.isNaN(date.getTime())) return 'not reported';
+  return date.toLocaleDateString('en', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** The limits that make a live grant judgeable at a glance. */
+export function connectionGrantLimits(grant: ConnectionGrant): string {
+  return (
+    [
+      grant.rateLimitPerHour === undefined ? undefined : `${grant.rateLimitPerHour}/hour`,
+      grant.spendCapUsd === undefined ? undefined : `$${grant.spendCapUsd} cap`,
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'no limits reported'
+  );
 }
 
 /** `@hoots · sign-up · 13 Sep`, or '' when the vault reports no such fact. */

@@ -72,8 +72,9 @@ if [[ ! "$mcp_source" -ef "$global_bin/buzz-dev-mcp" ]]; then
 fi
 
 npm link --workspace @beeline/body
+ln -sf "$repo_root/node_modules/.bin/codegraph" "$global_bin/codegraph"
 
-for installed_command in beeline buzz-agent buzz-dev-mcp beeline-readonly-mcp; do
+for installed_command in beeline buzz-agent buzz-dev-mcp beeline-readonly-mcp codegraph; do
   resolved="$(PATH="$global_bin:/usr/bin:/bin" command -v "$installed_command" || true)"
   if [[ -z "$resolved" ]]; then
     echo "install-beeline: $installed_command was installed in $global_bin, which is not on PATH" >&2

@@ -52,6 +52,26 @@ describe('pi MCP bridge', () => {
     expect(source).toContain('pi.registerTool');
   });
 
+  it('carries CodeGraph into pi while Codex, Claude, and Grok mount it from session/new', () => {
+    for (const harness of ['codex-acp', 'claude-agent-acp', 'grok']) {
+      expect(harnessMountsSessionMcpServers(harness)).toBe(true);
+    }
+    expect(harnessMountsSessionMcpServers('pi-acp')).toBe(false);
+    const source = piMcpBridgeSource([
+      {
+        name: 'codegraph',
+        command: '/opt/beeline/codegraph',
+        args: ['serve', '--mcp', '--path', '/repo'],
+        env: [{ name: 'CODEGRAPH_NO_DAEMON', value: '1' }],
+      },
+    ]);
+    expect(source).toContain('"name": "codegraph"');
+    expect(source).toContain('"command": "/opt/beeline/codegraph"');
+    expect(source).toContain('"CODEGRAPH_NO_DAEMON": "1"');
+    expect(source).toContain("method: 'tools/list'");
+    expect(source).toContain("method: 'tools/call'");
+  });
+
   it('writes the bridge into pi’s own extensions directory, privately', async () => {
     const piHome = await home();
     const path = await installPiMcpBridge({

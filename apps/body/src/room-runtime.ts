@@ -919,7 +919,10 @@ export class RoomRuntimeCoordinator {
           roomId: corner.parentRoomId,
         }),
       ]);
-      configKey = cornerStartConfigKey(repository, restore.objective ?? '');
+      const objective =
+        (restore.objective ?? '').trim() ||
+        (restore.kind === 'human' ? (restore.title ?? '').trim() : '');
+      configKey = cornerStartConfigKey(repository, objective);
       const previousStanding = this.standingCornerStartFaults.get(corner.cornerId);
       if (previousStanding === configKey) return;
       if (previousStanding) {
@@ -932,7 +935,6 @@ export class RoomRuntimeCoordinator {
       if (repository.resolution === 'repository' && (!repository.remote || !repository.key)) {
         throw new Error('corner parent Room has an incomplete repository binding');
       }
-      const objective = (restore.objective ?? '').trim();
       if (!objective) throw new Error('corner has no authoritative objective fact');
       // The lane is the corner's own durable fact, so a no-code corner in a
       // repository Room takes the same scratch workspace a chat-only corner

@@ -636,6 +636,13 @@ export type WorkspaceMemberListQuery = {
   readonly offset?: number;
 };
 
+/** One slash command the agent's live ACP harness advertises to composers. */
+export type AgentComposerCommand = {
+  readonly name: string;
+  readonly description?: string;
+  readonly inputHint?: string;
+};
+
 export type AgentDetailView = {
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
@@ -658,6 +665,8 @@ export type AgentDetailView = {
    */
   readonly seededSoul?: string;
   readonly catalog: readonly AgentModelConfigOption[];
+  /** Full latest ACP command snapshot. Empty means the harness advertises none. */
+  readonly commands?: readonly AgentComposerCommand[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;
   /** Which persisted selection axis failed the daemon's live startup validation. */

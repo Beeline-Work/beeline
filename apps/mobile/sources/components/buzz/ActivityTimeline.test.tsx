@@ -434,6 +434,54 @@ describe('the output sheet', () => {
 });
 
 describe('agent prose and drafts', () => {
+  it('uses the Ledger paragraph rhythm without a second activity margin', () => {
+    const continuation = render(
+      <ActivityTimeline items={[]} messageDraft="The answer keeps arriving." testID="activity" />,
+    );
+    const continuingStyle = Object.assign(
+      {},
+      ...hostNodes(continuation, /^activity$/)[0].props.style.filter(Boolean),
+    );
+    expect(continuingStyle).toMatchObject({
+      paddingTop: groknight.messagePaddingVertical,
+      paddingBottom: groknight.messagePaddingVertical,
+      marginBottom: groknight.messageGap,
+    });
+
+    const speaker = render(
+      <ActivityTimeline
+        handle="Clara"
+        items={[]}
+        messageDraft="A new speaker starts here."
+        testID="activity"
+      />,
+    );
+    const speakerStyle = Object.assign(
+      {},
+      ...hostNodes(speaker, /^activity$/)[0].props.style.filter(Boolean),
+    );
+    expect(speakerStyle.paddingBottom).toBe(groknight.messagePaddingVertical * 3);
+    expect(speakerStyle).not.toHaveProperty('marginTop');
+  });
+
+  it('puts chronological speaker space on the incoming top edge', () => {
+    const renderer = render(
+      <ActivityTimeline
+        chronological
+        handle="Clara"
+        items={[]}
+        messageDraft="Desktop follows the same rhythm."
+        testID="activity"
+      />,
+    );
+    const style = Object.assign(
+      {},
+      ...hostNodes(renderer, /^activity$/)[0].props.style.filter(Boolean),
+    );
+    expect(style.paddingTop).toBe(groknight.messagePaddingVertical * 3);
+    expect(style.paddingBottom).toBe(groknight.messagePaddingVertical);
+  });
+
   it('renders durable corner narration after the live draft is gone', () => {
     const renderer = render(
       <ActivityTimeline

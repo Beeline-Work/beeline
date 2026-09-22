@@ -37,6 +37,8 @@ export async function noteFirstSilence(
     readonly roomId: string;
     readonly requestId: string;
     readonly agentId: string;
+    /** Required once a command is claimed; stale executions produce no output. */
+    readonly generationId?: string | null;
     readonly reason?: string | null;
     readonly reasonKind?: string;
     /** Receipt path: the helper already has WriteResult.hiccupRestart. */
@@ -68,6 +70,7 @@ async function inscribeSilence(
     readonly roomId: string;
     readonly requestId: string;
     readonly agentId: string;
+    readonly generationId?: string | null;
     readonly reason?: string | null;
     readonly reasonKind?: string;
     readonly liveRestart?: boolean;
@@ -82,16 +85,25 @@ async function inscribeSilence(
   const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
   const command = (
-    await database.query<{ id: string; state: string; hiccup_attempts: number }>(
-      `SELECT id,state,hiccup_attempts FROM agent_commands
+    await database.query<{
+      id: string;
+      state: 'pending' | 'claimed';
+      hiccup_attempts: number;
+      generation_id: string | null;
+    }>(
+      `SELECT id,state,hiccup_attempts,generation_id FROM agent_commands
        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
+         AND ((state='pending' AND $4::text IS NULL) OR
+              (state='claimed' AND generation_id=$4))
        ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-      [input.roomId, input.agentId, input.requestId],
+      [input.roomId, input.agentId, input.requestId, input.generationId ?? null],
     )
   ).rows[0];
-  const canIncrement = Boolean(
-    command && command.state !== 'pending' && command.state !== 'cancelled',
-  );
+  // A watchdog belongs to one execution. Once that generation has completed,
+  // or a successor owns the command, its delayed callback is stale and must
+  // leave no failure line, turn transition, or retry behind.
+  if (!command && input.generationId != null) return NO_RESTART;
+  const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
   const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt));
   const phrase = phraseTurnSilence(agentName, classified, {
@@ -154,6 +166,7 @@ async function inscribeSilence(
       input.roomId,
       input.agentId,
       command.id,
+      command.generation_id,
       attempt,
     );
     hiccupRestart = reopened;
@@ -176,6 +189,7 @@ async function inscribeSilence(
       input.roomId,
       input.agentId,
       command.id,
+      command.generation_id,
       command.hiccup_attempts,
     );
   } else if (
@@ -200,14 +214,15 @@ async function reopenCommand(
   roomId: string,
   agentId: string,
   commandId: string,
+  generationId: string | null,
   hiccupAttempts: number,
 ): Promise<boolean> {
   const updated = await database.query(
     `UPDATE agent_commands SET
        state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
        completed_at=NULL,hiccup_attempts=$2
-     WHERE id=$1 AND state IN ('claimed','complete')`,
-    [commandId, hiccupAttempts],
+     WHERE id=$1 AND state='claimed' AND generation_id=$3`,
+    [commandId, hiccupAttempts, generationId],
   );
   if (!updated.rowCount) return false;
   live.publish({

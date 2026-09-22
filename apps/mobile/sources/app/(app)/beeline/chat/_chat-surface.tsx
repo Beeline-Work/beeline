@@ -248,6 +248,7 @@ import {
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import {
   markRoomOpen,
@@ -288,12 +289,14 @@ import {
 } from '@/buzz/transcript-motion';
 import {
   boundaryRowIndex,
-  compactNewMessageCount,
   messageContainsBoundary,
   messageBoundaryIds,
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
+import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
+import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -444,8 +447,6 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * 28 matches the Room-list pair so the two screens share one chrome.
  */
 const HEADER_MARK_SIZE = 28;
-const NEW_MESSAGE_CONTROL_HIT_SIZE = 44;
-const NEW_MESSAGE_CONTROL_PLATE_HEIGHT = 30;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -2092,7 +2093,10 @@ export function BuzzChatSurface({
   const {
     dividerMessageId: firstNewMessageId,
     queue: newMessageQueue,
-    controlVisible: newMessageControlShown,
+    discVisible: newestJumpDiscShown,
+    badgeCount: newMessageBadgeCount,
+    catchUpVisible: catchUpStripShown,
+    catchUpSummary,
     observeVisibleMessages,
     settleQueueAtBoundary,
   } = useNewMessageControl({
@@ -2103,6 +2107,41 @@ export function BuzzChatSurface({
     firstUnreadMessageId,
     isPinnedToTail: () => isPinnedToTailRef.current,
   });
+  // The catch-up sheet, reached from the strip and from a long-press on the
+  // badge. Both doors carry the same unread range — the boundary the reader
+  // fell behind at (the live queue's, or the server's opening cursor before
+  // anything has queued) through the newest row — into the one seam that
+  // builds the sheet's two blocks (`buzz/room-catch-up-report.ts`).
+  const [catchUpSheetVisible, setCatchUpSheetVisible] = useState(false);
+  // The server's cursor first: it is the one boundary that knows where the
+  // reader fell behind BEFORE this visit. The live queue only answers for a
+  // Room that opened read and gained arrivals while they sat in history.
+  const catchUpBoundaryId = firstUnreadMessageId ?? newMessageQueue.boundaryId;
+  const catchUpReport = useMemo(
+    () =>
+      catchUpSheetVisible
+        ? buildCatchUpReport({
+            messages: foldedMessages,
+            boundaryId: catchUpBoundaryId,
+            newestId: newestTranscriptMessageId,
+            viewerPubkey: userPubkey ?? null,
+            // The roster the bylines already resolve against, so an ask whose
+            // requester is not the row's author is still named correctly.
+            identities: conversationIdentities,
+          })
+        : null,
+    [
+      catchUpBoundaryId,
+      catchUpSheetVisible,
+      conversationIdentities,
+      foldedMessages,
+      newestTranscriptMessageId,
+      userPubkey,
+    ],
+  );
+  const openCatchUpSheet = useCallback(() => setCatchUpSheetVisible(true), []);
+  const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
+  useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2153,6 +2192,29 @@ export function BuzzChatSurface({
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
+  // The row a completed notification landing is pointing at, for as long as
+  // the pointer plays. Cleared on its own timer, so the next landing on the
+  // same row is a fresh false→true edge and a re-render is not.
+  const [arrivalFlashMessageId, setArrivalFlashMessageId] = useState<string | null>(null);
+  const arrivalFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageAnchorIdRef = useRef(messageAnchorId);
+  messageAnchorIdRef.current = messageAnchorId;
+  const raiseArrivalFlash = useCallback((messageId: string) => {
+    if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+    setArrivalFlashMessageId(messageId);
+    arrivalFlashTimerRef.current = setTimeout(() => {
+      arrivalFlashTimerRef.current = null;
+      setArrivalFlashMessageId(null);
+      // The cell reads the system setting itself; this timer only has to
+      // outlast the longer of the two shapes it can take.
+    }, arrivalFlashTiming(false).totalMs);
+  }, []);
+  useEffect(
+    () => () => {
+      if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+    },
+    [],
+  );
   useEffect(() => {
     dragEndSequenceRef.current += 1;
     pendingNewMessageLandingRef.current = null;
@@ -2231,8 +2293,20 @@ export function BuzzChatSurface({
     } else {
       completedUnreadLandingRef.current = pending.boundaryId;
     }
+    // The landing is COMPLETE here — the row is on screen, which is the same
+    // rule the badge runs on. A flash fired at row mount would burn off
+    // behind the fold while backward paging was still measuring, and the
+    // reader who followed the notification would arrive to nothing.
+    if (
+      landingFlashesArrival({
+        landedBoundaryId: pending.boundaryId,
+        messageAnchorId: messageAnchorIdRef.current,
+      })
+    ) {
+      raiseArrivalFlash(pending.boundaryId);
+    }
     return true;
-  }, [settleQueueAtBoundary]);
+  }, [raiseArrivalFlash, settleQueueAtBoundary]);
   const observeVisibleTranscriptMessages = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<ChatDisplayMessage>[] }) => {
       visibleTranscriptMessagesRef.current = viewableItems
@@ -2337,6 +2411,21 @@ export function BuzzChatSurface({
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
   }, [desktopTranscript]);
+  // The disc's one job. It lands on the tail itself rather than on a queued
+  // boundary row, so a reader who is merely re-reading history — no queue at
+  // all — gets back to the live end in one tap, and a reader with unread mail
+  // arrives where the next message will land. Any queue behind it is settled
+  // here: the tap is the reader saying they are done being behind.
+  const landAtNewestMessage = useCallback(() => {
+    pendingNewMessageLandingRef.current = null;
+    scrollToNewestMessage();
+    // The badge is NOT cleared here. A press is not visibility: this scroll
+    // can be clamped, interrupted by a drag, or land short while the extent
+    // is still measuring, and clearing on the press alone would tell the
+    // reader they had seen rows they never reached. The viewability pass
+    // clears it when the newest row is actually on screen — the same rule
+    // that clears it when they scroll there under their own finger.
+  }, [scrollToNewestMessage]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -4188,8 +4277,12 @@ export function BuzzChatSurface({
         case 'poll':
           if (latestOpenPoll) landAtNewMessageBoundary(latestOpenPoll.id, false);
           return;
+        // The third door into catch-up, and the same one: the verb opens the
+        // report over the same unread range the strip and the badge open it
+        // over, so the composer cannot say something different about a Room
+        // than the two controls sitting in it.
         case 'catch-up':
-          if (firstUnreadMessageId) landAtNewMessageBoundary(firstUnreadMessageId, false);
+          openCatchUpSheet();
           return;
         case 'schedule':
           if (!canManageWorkspace || !activeCommunityId) return;
@@ -4244,13 +4337,13 @@ export function BuzzChatSurface({
       activeCommunityId,
       canManageWorkspace,
       decodedId,
-      firstUnreadMessageId,
       handleCloseCorner,
       handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
       landAtNewMessageBoundary,
       latestOpenPoll,
+      openCatchUpSheet,
       pendingCornerRequest,
       pendingTargetBranchProposal,
       storedRoomName,
@@ -4629,6 +4722,7 @@ export function BuzzChatSurface({
     arrivingCardIds: transcriptArrivalObservation.arrivingIds,
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
+    arrivalFlashMessageId,
   });
 
   if (!roomSurface) {
@@ -5253,26 +5347,19 @@ export function BuzzChatSurface({
               desktopTranscript ? null : transcriptHistoryLine
             }
           />
-          {newMessageControlShown && (
-            <Pressable
-              accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
-              accessibilityRole="button"
-              onPress={() =>
-                landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
-              }
-              style={({ pressed }) => [
-                styles.newMessageControlHitTarget,
-                pressed && styles.newMessageControlPressed,
-              ]}
-              testID="new-message-control"
-            >
-              <View style={styles.newMessageControlPlate}>
-                <Text style={styles.newMessageControlText}>
-                  {compactNewMessageCount(newMessageQueue.count)} new
-                </Text>
-              </View>
-            </Pressable>
-          )}
+          <RoomCatchUpControls
+            badgeCount={newMessageBadgeCount}
+            catchUpSummary={catchUpSummary}
+            catchUpVisible={catchUpStripShown}
+            discVisible={newestJumpDiscShown}
+            onJumpToNewest={landAtNewestMessage}
+            onOpenCatchUp={openCatchUpSheet}
+          />
+          <RoomCatchUpSheet
+            onClose={closeCatchUpSheet}
+            report={catchUpReport}
+            visible={catchUpSheetVisible}
+          />
           </View>
 
           {/* P2: Archived channels are read-only */}
@@ -6342,39 +6429,6 @@ const styles = StyleSheet.create((theme) => {
     },
     messageListContentEmpty: {
       flexGrow: 1,
-    },
-    newMessageControlHitTarget: {
-      position: 'absolute',
-      right: 12,
-      // Clear of the turn line. Both are pinned to the right edge above the
-      // composer, and the line paints the transcript's bottom margin
-      // (`room-bottom-chrome`), so a pill sitting on the bottom has the
-      // line's STOP control drawn across it. Lifting by the line's own box
-      // keeps them apart whether or not an agent is working — an offset that
-      // changed with the line would move the pill under the reader.
-      bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,
-      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      height: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    newMessageControlPressed: {
-      opacity: 0.72,
-    },
-    newMessageControlPlate: {
-      height: NEW_MESSAGE_CONTROL_PLATE_HEIGHT,
-      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      paddingHorizontal: groknight.space.sm,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgHighlight,
-    },
-    newMessageControlText: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.meta,
-      color: groknight.ledgerQuiet,
-      fontVariant: ['tabular-nums'],
     },
     outboxFailure: {
       marginTop: 4,

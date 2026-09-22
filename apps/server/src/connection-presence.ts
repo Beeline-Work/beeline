@@ -386,15 +386,29 @@ export class ConnectionPresence {
   private async failStalledTurn(turn: CommittedTurnLiveRow): Promise<void> {
     if (this.#stopped) return;
     const current = (
-      await this.database.query<{ status: string; created_at: Date }>(
-        `SELECT status,created_at FROM agent_turns
+      await this.database.query<{
+        status: string;
+        created_at: Date;
+        generation_id: string | null;
+      }>(
+        `SELECT status,created_at,generation_id FROM agent_turns
          WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
         [turn.room_id, turn.request_id, turn.agent_id],
       )
     ).rows[0];
-    if (!current || current.status !== 'working') return;
+    if (
+      !current ||
+      current.status !== 'working' ||
+      current.generation_id !== turn.generation_id
+    )
+      return;
     if (current.created_at.getTime() + this.pickupWindowMs > Date.now()) {
-      this.watchTurn({ ...turn, status: 'working', created_at: current.created_at });
+      this.watchTurn({
+        ...turn,
+        status: 'working',
+        created_at: current.created_at,
+        generation_id: current.generation_id,
+      });
       return;
     }
     const announcedAt = this.#announcedAt.get(turn.agent_id) ?? 0;
@@ -402,6 +416,7 @@ export class ConnectionPresence {
       roomId: turn.room_id,
       requestId: turn.request_id,
       agentId: turn.agent_id,
+      generationId: current.generation_id,
       reason: 'the turn stalled',
       reasonKind: 'hiccup',
       liveRestart: true,

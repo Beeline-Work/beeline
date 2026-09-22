@@ -110,10 +110,9 @@ function TranscriptHarness({
         </Pressable>
       )}
       {control.discVisible && (
-        <Pressable
-          onPress={() => control.settleQueueAtBoundary(control.queue.boundaryId!)}
-          testID="newest-jump-disc"
-        >
+        // CHEV-21: the disc's press scrolls and settles NOTHING. The surface
+        // does the same: only reaching the newest row clears the badge.
+        <Pressable onPress={() => undefined} testID="newest-jump-disc">
           {control.badgeCount > 0 && (
             <Text testID="newest-jump-badge">{compactNewMessageCount(control.badgeCount)}</Text>
           )}

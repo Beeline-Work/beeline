@@ -2406,8 +2406,13 @@ export function BuzzChatSurface({
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
     scrollToNewestMessage();
-    if (newMessageQueue.boundaryId) settleQueueAtBoundary(newMessageQueue.boundaryId);
-  }, [newMessageQueue.boundaryId, scrollToNewestMessage, settleQueueAtBoundary]);
+    // The badge is NOT cleared here. A press is not visibility: this scroll
+    // can be clamped, interrupted by a drag, or land short while the extent
+    // is still measuring, and clearing on the press alone would tell the
+    // reader they had seen rows they never reached. The viewability pass
+    // clears it when the newest row is actually on screen — the same rule
+    // that clears it when they scroll there under their own finger.
+  }, [scrollToNewestMessage]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {

@@ -43,6 +43,13 @@ describe('the chat surface unread-divider wiring', () => {
     );
     expect(landing).toContain('scrollToNewestMessage()');
     expect(landing).not.toContain('landAtNewMessageBoundary');
+    // CHEV-21: the press must not clear the badge. A press is not visibility:
+    // this scroll can be clamped, interrupted by a drag, or land short while
+    // the extent is still measuring, and clearing on the press alone would
+    // tell the reader they had seen rows they never reached. Only the
+    // viewability pass clears it, which is the hook's own rule.
+    expect(landing).not.toContain('settleQueueAtBoundary');
+    expect(landing).not.toContain('acknowledgeNewMessageQueue');
   });
 
   it('CHEV-14: all three catch-up doors go through the one report', () => {

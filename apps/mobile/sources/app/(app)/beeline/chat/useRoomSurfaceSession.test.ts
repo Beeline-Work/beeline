@@ -17,6 +17,7 @@ const controls = vi.hoisted(() => ({
     disposed: boolean;
     expectations: Array<(view: RoomView) => boolean>;
     forceCalls: number;
+    refreshNowCalls: number;
     signalCalls: number;
     started: boolean;
   }>,
@@ -174,6 +175,7 @@ vi.mock('@beeline/buzz-client', async () => {
           disposed: false,
           expectations: [],
           forceCalls: 0,
+          refreshNowCalls: 0,
           signalCalls: 0,
           started: false,
         };
@@ -191,6 +193,9 @@ vi.mock('@beeline/buzz-client', async () => {
       }
       force() {
         this.control.forceCalls += 1;
+      }
+      refreshNow() {
+        this.control.refreshNowCalls += 1;
       }
       dispose() {
         this.control.disposed = true;
@@ -790,6 +795,148 @@ describe('useRoomSurfaceSession', () => {
       });
     });
 
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it.each([
+    [
+      'SYNC-01',
+      {
+        type: 'invalidate' as const,
+        roomId: 'room-a',
+        reason: 'postgres:messages',
+        messageId: 'message-stalled',
+        deliveryId: 'delivery-sync',
+      },
+    ],
+    [
+      'STOP-01',
+      {
+        type: 'invalidate' as const,
+        roomId: 'room-a',
+        reason: 'postgres:agent_turns',
+        agentId: 'agent-a',
+        requestId: 'request-a',
+        deliveryId: 'delivery-stop',
+      },
+    ],
+  ])('refreshes %s immediately from the committed-row event', async (_id, event) => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({ monolithLive: event });
+    });
+
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('STOP-01 clears the working turn from the event-triggered authoritative read', async () => {
+    controls.cached = {
+      ...roomView('room-a'),
+      latestAgentTurns: [
+        {
+          requestId: 'request-a',
+          agentPubkey: 'agent-a',
+          status: 'working',
+          createdAt: 1,
+        },
+      ],
+    };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'postgres:agent_turns',
+          agentId: 'agent-a',
+          requestId: 'request-a',
+          deliveryId: 'delivery-stop',
+        },
+      });
+      controls.schedulers[0]!.apply({
+        ...roomView('room-a'),
+        latestAgentTurns: [
+          {
+            requestId: 'request-a',
+            agentPubkey: 'agent-a',
+            status: 'cancelled',
+            createdAt: 1,
+          },
+        ],
+      });
+    });
+
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
+    expect(current.roomSurface?.latestAgentTurns).toEqual([
+      expect.objectContaining({ requestId: 'request-a', status: 'cancelled' }),
+    ]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('uses a paired delta as the fast paint without scheduling a second Room read', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'postgres:messages',
+          messageId: 'message-a',
+          deliveryId: 'delivery-a',
+        },
+      });
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          reconcilesDelivery: 'delivery-a',
+          message: {
+            id: 'message-a',
+            text: 'Done',
+            createdAt: 2,
+            author: { pubkey: 'agent-a', kind: 'agent', name: 'Greeter' },
+            presentation: 'message',
+          },
+        },
+      });
+    });
+
+    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['message-a']);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
     expect(controls.schedulers[0]!.signalCalls).toBe(0);
     await act(async () => renderer.unmount());
   });

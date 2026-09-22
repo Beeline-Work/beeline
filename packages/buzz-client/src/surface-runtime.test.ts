@@ -120,6 +120,22 @@ describe('surface liveness scheduler', () => {
     expect(applied).toEqual([2]);
   });
 
+  it('starts an event-driven refresh without scheduling a timer', async () => {
+    const fetch = vi.fn().mockResolvedValue(1);
+    const apply = vi.fn();
+    const setTimer = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>);
+    const scheduler = new SurfaceRefreshScheduler({ fetch, apply, setTimer });
+    await scheduler.startAfter(Promise.resolve());
+    setTimer.mockClear();
+
+    scheduler.refreshNow();
+    await Promise.resolve();
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(apply).toHaveBeenLastCalledWith(1);
+    expect(setTimer).not.toHaveBeenCalled();
+  });
+
   it('keeps reading after a live message signal until the authoritative surface contains it', async () => {
     vi.useFakeTimers();
     const fetch = vi

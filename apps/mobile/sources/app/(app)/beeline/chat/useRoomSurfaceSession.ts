@@ -591,7 +591,7 @@ export function useRoomSurfaceSession({
                   ...pendingPaintTracesRef.current.slice(-15),
                   received,
                 ];
-              deltaReconcilePendingRef.current = true;
+              if (!live.reconcilesDelivery) deltaReconcilePendingRef.current = true;
               setRoomSurface(next);
               if (live.type === 'message-delta') {
                 void outboxRef.current?.reconcile(
@@ -618,6 +618,10 @@ export function useRoomSurfaceSession({
                 };
                 pendingReadTraces = [...pendingReadTraces.slice(-15), received];
                 logLiveTrace('socket-receipt', [received], received.receivedAt);
+              }
+              if (live.deliveryId) {
+                scheduler?.refreshNow();
+                return;
               }
               // A claim has already committed its WORKING receipt before the
               // server emits this invalidation. Give that receipt an immediate

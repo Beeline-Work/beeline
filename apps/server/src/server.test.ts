@@ -665,7 +665,7 @@ describe('phone committed-row live delivery', () => {
     ['missing', vi.fn().mockResolvedValue(null)],
     ['failed', vi.fn().mockRejectedValue(new Error('row read failed'))],
   ])(
-    'falls back to an authoritative invalidation when the delta read is %s',
+    'keeps the immediate authoritative invalidation when the delta read is %s',
     async (_case, read) => {
       const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
       const fallback = nextSocketMessage(socket, 'invalidate');
@@ -681,7 +681,8 @@ describe('phone committed-row live delivery', () => {
         type: 'invalidate',
         roomId,
         messageId: 'message-fallback',
-        reason: 'delta-fallback:postgres:messages',
+        reason: 'postgres:messages',
+        deliveryId: expect.any(String),
       });
     },
   );
@@ -700,6 +701,7 @@ describe('phone committed-row live delivery', () => {
     };
     const read = vi.fn().mockResolvedValue(delta);
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const invalidated = nextSocketMessage(socket, 'invalidate');
     const painted = nextSocketMessage(socket, 'message-delta');
 
     live.publish({
@@ -709,7 +711,11 @@ describe('phone committed-row live delivery', () => {
       messageId: 'posted-message',
     });
 
-    await expect(painted).resolves.toEqual(delta);
+    const invalidation = await invalidated;
+    await expect(painted).resolves.toEqual({
+      ...delta,
+      reconcilesDelivery: invalidation.deliveryId,
+    });
     expect(read).toHaveBeenCalledWith(roomId, 'viewer', {
       type: 'message',
       messageId: 'posted-message',
@@ -765,7 +771,7 @@ describe('phone committed-row live delivery', () => {
       },
     );
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const received = nextSocketMessages(socket, 2);
+    const received = nextSocketMessages(socket, 5);
     const startedAt = Date.now();
 
     for (const messageId of ['message-1', 'message-2', 'message-3']) {
@@ -775,17 +781,58 @@ describe('phone committed-row live delivery', () => {
     const messages = await received;
     expect(Date.now() - startedAt).toBeLessThan(150);
     expect(
-      messages.map((message) =>
+      messages.slice(0, 3).map((message) =>
         message.type === 'message-delta'
           ? (message.message as { id: string }).id
           : message.messageId,
       ),
+    ).toEqual(['message-1', 'message-2', 'message-3']);
+    expect(messages.map((message) => message.type)).toEqual([
+      'invalidate',
+      'invalidate',
+      'invalidate',
+      'message-delta',
+      'message-delta',
+    ]);
+    expect(
+      messages
+        .slice(3)
+        .map((message) => (message.message as { id: string }).id),
     ).toEqual(['message-2', 'message-3']);
-    expect(messages.map((message) => message.type)).toEqual(['message-delta', 'message-delta']);
     expect(read).toHaveBeenCalledTimes(3);
   });
 
-  it('does not downgrade a slow committed row to the refetch scheduler', async () => {
+  it.each([
+    [
+      'SYNC-01',
+      {
+        reason: 'postgres:messages',
+        messageId: 'message-stalled',
+      },
+    ],
+    [
+      'STOP-01',
+      {
+        reason: 'postgres:agent_turns',
+        agentId: 'agent-stopped',
+        requestId: 'request-stopped',
+      },
+    ],
+  ])('delivers %s invalidation while its delta projection remains stalled', async (_id, row) => {
+    const read = vi.fn(() => new Promise<never>(() => undefined));
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const delivered = nextSocketMessage(socket, 'invalidate');
+
+    live.publish({ type: 'invalidate', roomId, ...row });
+
+    await expect(delivered).resolves.toMatchObject({
+      type: 'invalidate',
+      roomId,
+      ...row,
+    });
+  });
+
+  it('preserves the direct delta after the immediate invalidation for a slow projection', async () => {
     const delta = {
       type: 'message-delta' as const,
       roomId: 'room-live',
@@ -811,7 +858,10 @@ describe('phone committed-row live delivery', () => {
       messageId: 'message-slow',
     });
 
-    await expect(received).resolves.toEqual(delta);
+    await expect(received).resolves.toMatchObject({
+      ...delta,
+      reconcilesDelivery: expect.any(String),
+    });
   });
 
   it('diagnoses the same-process committed-row delivery boundary', async () => {

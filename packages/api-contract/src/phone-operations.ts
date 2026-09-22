@@ -45,7 +45,6 @@ export type PhoneOperationMap = {
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
-  createCornerAppBuild: { input: CreateCornerAppBuildInput; output: CornerAppBuildResult };
   requestCornerClose: { input: RoomInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
@@ -229,11 +228,6 @@ export type CancelAgentTurnInput = RoomInput & {
   readonly agentId: string;
 };
 export type CreateHumanCornerInput = RoomInput & { readonly title: string };
-export type CreateCornerAppBuildInput = RoomInput & {
-  readonly agentId: string;
-  readonly description: string;
-};
-export type CornerAppBuildResult = IdResult & { readonly title: string };
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;
   readonly requestId: string;

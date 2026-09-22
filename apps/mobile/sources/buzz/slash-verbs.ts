@@ -1,6 +1,5 @@
 export type BuiltInSlashVerbId =
   | 'build'
-  | 'make-app'
   | 'poll'
   | 'catch-up'
   | 'schedule'
@@ -21,7 +20,6 @@ export type BuiltInSlashVerb = {
 
 export type SlashVerbAvailability = {
   canBuild: boolean;
-  canMakeApp: boolean;
   canAnswerPoll: boolean;
   canCatchUp: boolean;
   canManageSchedules: boolean;
@@ -43,13 +41,6 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
     label: 'Build something',
     description: 'Start a new corner in this Room',
     available: 'canBuild',
-  },
-  {
-    id: 'make-app',
-    command: 'make-app',
-    label: 'Make a Corner App',
-    description: 'Choose an Agent and describe the app',
-    available: 'canMakeApp',
   },
   {
     id: 'poll',

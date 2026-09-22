@@ -4716,47 +4716,6 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
-  it('creates a dedicated corner and queues the selected Agent to publish and open an app', async () => {
-    const created = await operation('createCornerAppBuild', {
-      roomId: ROOM,
-      agentId: AGENT,
-      description: '  Track release readiness  ',
-    });
-    expect(created.status).toBe(200);
-    const result = (await created.json()) as { id: string; title: string };
-    expect(result.title).toBe('App · Track release readiness');
-    const stored = (
-      await database.query<{
-        created_by: string;
-        owner_agent_id: string;
-        commissioned_by: string;
-        objective: string;
-        lane: string;
-        reason: string;
-        text: string;
-      }>(
-        `SELECT room.created_by,fact.owner_agent_id,fact.commissioned_by,fact.objective,fact.lane,
-                command.reason,message.text
-         FROM rooms room
-         JOIN corner_facts fact ON fact.corner_id=room.id
-         JOIN agent_commands command ON command.room_id=room.id
-         JOIN messages message ON message.id=command.source_message_id
-         WHERE room.id=$1`,
-        [result.id],
-      )
-    ).rows[0];
-    expect(stored).toMatchObject({
-      created_by: AGENT,
-      owner_agent_id: AGENT,
-      commissioned_by: HUMAN,
-      objective: 'Track release readiness',
-      lane: 'no_code',
-      reason: 'corner_app_build',
-    });
-    expect(stored.text).toContain('publish_corner_app');
-    expect(stored.text).toContain('open_corner_app');
-  });
-
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,

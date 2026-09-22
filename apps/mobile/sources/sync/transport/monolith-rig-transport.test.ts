@@ -63,7 +63,6 @@ import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
-const AGENT = 'agent-id';
 const identity = { publicKey: 'monolith-viewer', secretKey: new Uint8Array() };
 
 function optimisticRow(event: NostrEvent, text: string): RoomViewMessage {
@@ -588,27 +587,6 @@ describe('monolith Room send path', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ roomId: ROOM, title: 'Release notes' }),
-      }),
-    );
-  });
-
-  it('starts a Corner App build with the selected Agent and description', async () => {
-    controls.fetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'app-corner-id', title: 'App · Release board' }), {
-        status: 200,
-      }),
-    );
-    const transport = new MonolithRigTransport(identity);
-
-    await expect(transport.createCornerAppBuild(ROOM, AGENT, 'Release board')).resolves.toEqual({
-      id: 'app-corner-id',
-      title: 'App · Release board',
-    });
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createCornerAppBuild',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ roomId: ROOM, agentId: AGENT, description: 'Release board' }),
       }),
     );
   });

@@ -7,12 +7,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { MonolithRigTransport } from '@/sync/transport/monolith-rig-transport';
 
 export default function CornerAppRoute() {
-  const { roomId, slug, returnParent, returnTitle } = useLocalSearchParams<{
-    roomId?: string;
-    slug?: string;
-    returnParent?: string;
-    returnTitle?: string;
-  }>();
+  const { roomId, slug } = useLocalSearchParams<{ roomId?: string; slug?: string }>();
   const [app, setApp] = React.useState<CornerAppView>();
   const [busyAction, setBusyAction] = React.useState<string>();
 
@@ -59,20 +54,7 @@ export default function CornerAppRoute() {
       app={app}
       busyAction={busyAction}
       onAction={(prompt) => void run(prompt)}
-      onBack={() => {
-        if (roomId && returnParent) {
-          router.replace({
-            pathname: '/beeline/chat/[channelId]',
-            params: {
-              channelId: roomId,
-              parent: returnParent,
-              ...(returnTitle ? { title: returnTitle } : {}),
-            },
-          });
-          return;
-        }
-        router.back();
-      }}
+      onBack={() => router.back()}
     />
   );
 }

@@ -109,9 +109,9 @@ export function canonicalizeJpeg(bytes: Uint8Array): Uint8Array {
       continue;
     }
     if (marker === 0xd9) {
-      if (offset !== bytes.byteLength) {
-        throw new Error('Image conversion produced a malformed JPEG image.');
-      }
+      // A real phone encoder can leave padding or a capture-info trailer after
+      // the EOI marker. The image ends at EOI, so keep the marker and drop
+      // whatever follows rather than refusing an otherwise valid photo.
       parts.push(bytes.slice(markerStart, offset));
       sawEnd = true;
       break;

@@ -71,13 +71,14 @@ scroll frame budget. Frame budget at 60 Hz is 16.67 ms.
 | 1,000 rows | 0.066 / 0.114 ms | 0.070 / 0.082 ms |
 | 5,000 rows | 0.155 / 0.350 ms | 0.343 / 0.419 ms |
 
-Worst measured p95 is 0.419 ms — **2.5% of one frame**, on V8, on the deepest
-transcript this product has.
+Worst measured p95 across every run is 0.676 ms — **4% of one frame**, on V8, on
+the deepest transcript this product has.
 
-Run-to-run variance is real and not hidden: the 5,000-row tail-seated p95 came
-back at 0.419 ms and 0.608 ms on two separate runs, p50 steady at 0.34 ms both
-times. Call it **0.4–0.6 ms p95**. These are three runs on a shared box, not a
-baseline — the same caveat the 2026-09-20 PGlite numbers carry.
+Run-to-run variance is real and not hidden: across five runs the 5,000-row
+tail-seated p95 came back at 0.383, 0.419, 0.469, 0.608 and 0.676 ms, with p50
+steady at 0.34–0.37 ms every time. Call it **0.4–0.7 ms p95**. These are five
+runs on a shared box, not a baseline — the same caveat the 2026-09-20 PGlite
+numbers carry. The table above is one recorded run.
 
 Two things worth naming anyway.
 
@@ -227,7 +228,7 @@ page-load target. The 737 ms cold first open (G5) stands as measured.
 ## What this does NOT explain
 
 The trigger placed this merge "squarely in the unproven 150 ms interaction gap."
-It is in the gap, and it is small: **0.4–0.6 ms at the worst measured p95** against
+It is in the gap, and it is small: **0.4–0.7 ms at the worst measured p95** against
 a miss of 517 ms on the open Room and 583 ms on the deck. The read cursor is not
 why the 150 ms target is missed, and fixing G6 and G7 would not move it.
 
@@ -270,7 +271,7 @@ Existing findings carried forward, the two new ones inserted by severity.
 | 3 | G2 | P2 | `routeHumanMention` runs serially inside the send transaction. | unchanged |
 | 4 | G3 | P2 | One extra Room read per attached reader, per human message. | unchanged |
 | 5 | G4 | P3 | `readAgent` scans the unbounded roster. | unchanged |
-| 6 | **G6** | **P3** | `ReadCursorAdvancer.observe` is O(visible × transcript) plus up to two allocating full-transcript scans, on the scroll path. 0.4–0.6 ms p95 at 5,000 rows on V8, worst for a reader at the tail, unmeasured on Hermes. Fix: rank by `ViewToken.index` instead of re-finding each row. | new |
+| 6 | **G6** | **P3** | `ReadCursorAdvancer.observe` is O(visible × transcript) plus up to two allocating full-transcript scans, on the scroll path. 0.4–0.7 ms p95 at 5,000 rows on V8, worst for a reader at the tail, unmeasured on Hermes. Fix: rank by `ViewToken.index` instead of re-finding each row. | new |
 | 7 | **G7** | **P3** | `PhoneService.markRead` costs 3 statements per write where 1 would do. Scroll now originates these. | new |
 
 G1 and G5 remain the two worth their own corners. G6 and G7 are small enough to

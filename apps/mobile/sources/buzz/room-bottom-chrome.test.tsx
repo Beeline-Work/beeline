@@ -69,6 +69,7 @@ import {
   COMPOSER_TOP_GAP,
   TURN_LINE_BAR_MARGIN_BOTTOM,
   TURN_LINE_BOX_HEIGHT,
+  TURN_LINE_INK_AIR,
   TURN_LINE_ROW_MIN_HEIGHT,
   TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
@@ -210,29 +211,46 @@ describe('the Room turn line paints the transcript margin', () => {
 
   it('adds the authored fixed gap above the composer', () => {
     const gap = newestMessageToComposerGap({ lineShown: true });
-    // The ordinary speaker-change margin is 24px and the authored gap above
-    // the composer is 12px, so the complete gap is 36px in both idle and
-    // working states.
+    // One speaker-change margin (24px) plus exactly one label line box (18px):
+    // 42px, in both idle and working states. The composer-top gap IS the label
+    // line box, which is what makes the rule state itself.
     const speakerChangeMargin = groknight.messagePaddingVertical * 4;
-    expect(COMPOSER_TOP_GAP).toBe(12);
-    expect(gap).toBe(36);
+    expect(speakerChangeMargin).toBe(TURN_LINE_ROW_MIN_HEIGHT);
+    expect(COMPOSER_TOP_GAP).toBe(TURN_LABEL_LINE_HEIGHT);
+    expect(gap).toBe(42);
     expect(gap).toBe(speakerChangeMargin + COMPOSER_TOP_GAP);
-    expect(gap).toBe(TURN_LINE_BOX_HEIGHT);
-    expect(gap).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
     expect(ROOM_OPEN_LIST_TAIL_PADDING + groknight.messagePaddingVertical).toBe(gap);
+  });
+
+  it('leaves exactly equal air above and below the thinking label', () => {
+    // The captain's rule (2026-09-22). The line hangs on the composer, so its
+    // box height plus the slab above it is the whole gap; measure the ink, not
+    // the box, because the ink is the only thing the reader sees.
+    const gap = newestMessageToComposerGap({ lineShown: true });
+    const inkInsetInRow = (TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2;
+    const belowInk = inkInsetInRow + TURN_LINE_BAR_MARGIN_BOTTOM;
+    const aboveInk = gap - TURN_LINE_BOX_HEIGHT + inkInsetInRow;
+    expect(aboveInk).toBe(belowInk);
+    expect(aboveInk).toBe(TURN_LINE_INK_AIR);
+    expect(TURN_LINE_INK_AIR).toBe(12);
+    // The gap is the ink with that air on both sides, and nothing else.
+    expect(gap).toBe(TURN_LABEL_LINE_HEIGHT + TURN_LINE_INK_AIR * 2);
+    // The regression that made this necessary: tying the bar margin to the
+    // composer-top gap pinned the ink low, at 3px above against 15px below.
+    expect(TURN_LINE_BAR_MARGIN_BOTTOM).not.toBe(COMPOSER_TOP_GAP);
   });
 
   it('fits the line inside the margin so it cannot paint over the message', () => {
     const { box } = measureTurnLine();
     const gap = newestMessageToComposerGap({ lineShown: true });
-    // The line's box is the gap: its top edge sits exactly on the message's
-    // own text box bottom, and its ink is inset 3px further.
-    expect(box).toBeLessThanOrEqual(gap);
+    // The line's box fits INSIDE the gap with slab left above it, so the ink
+    // can never reach the message's own text box bottom.
+    expect(box).toBeLessThan(gap);
     expect(box).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
     expect(TURN_LABEL_LINE_HEIGHT).toBeLessThanOrEqual(TURN_LINE_ROW_MIN_HEIGHT);
-    // The ink clears the message within its 24px row, then keeps the authored
-    // 12px gap before the composer.
+    // The ink clears the message within its 24px row, then keeps the rest of
+    // its equal air before the composer.
     expect((TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2).toBeGreaterThan(0);
-    expect(TURN_LINE_BAR_MARGIN_BOTTOM).toBe(COMPOSER_TOP_GAP);
+    expect(TURN_LINE_BAR_MARGIN_BOTTOM).toBeGreaterThan(0);
   });
 });

@@ -26,8 +26,8 @@ export type ScrollFollowDecision = 'scroll' | 'hold';
 
 /**
  * Ordinary inverted-list tail. It is the speaker-change margin (24px), plus
- * the fixed 12px composer-top gap, minus the newest row's own 6px bottom
- * padding. The visual gap under the newest message is therefore the same 36px
+ * the fixed 18px composer-top gap, minus the newest row's own 6px bottom
+ * padding. The visual gap under the newest message is therefore the same 42px
  * whether or not the turn line paints over it.
  */
 const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 18 + COMPOSER_TOP_GAP;

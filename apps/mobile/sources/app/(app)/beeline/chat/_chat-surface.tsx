@@ -285,17 +285,13 @@ import {
   observeTranscriptArrivals,
 } from '@/buzz/transcript-motion';
 import {
-  EMPTY_NEW_MESSAGE_QUEUE,
-  acknowledgeNewMessageQueue,
   boundaryRowIndex,
   compactNewMessageCount,
   messageContainsBoundary,
   messageBoundaryIds,
-  newMessageControlVisible,
   newestTranscriptRowId,
-  queueIncomingMessages,
-  type NewMessageQueue,
 } from '@/buzz/room-new-message-boundary';
+import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -1189,17 +1185,6 @@ export function BuzzChatSurface({
     () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
     [durableMessages, roomSendFrame.optimistic],
   );
-  const [newMessageQueue, setNewMessageQueue] = useState<NewMessageQueue>(
-    EMPTY_NEW_MESSAGE_QUEUE,
-  );
-  // Any visible pixel of the newest row, as the list's own viewability pass
-  // reports it. False until that pass has run, which costs nothing: an empty
-  // queue draws no control either way.
-  const [newestMessageVisible, setNewestMessageVisible] = useState(false);
-  useEffect(() => {
-    setNewMessageQueue(EMPTY_NEW_MESSAGE_QUEUE);
-    setNewestMessageVisible(false);
-  }, [decodedId]);
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
   const conversationIdentities = useMemo(
@@ -1238,16 +1223,6 @@ export function BuzzChatSurface({
     // live arrival before the card ever reaches the screen.
     transcriptArrivalStateRef.current = transcriptArrivalObservation.state;
   }, [transcriptArrivalObservation.state]);
-  useLayoutEffect(() => {
-    if (transcriptArrivalObservation.arrivingIds.size === 0) return;
-    setNewMessageQueue((current) =>
-      queueIncomingMessages(current, {
-        messages: foldedMessages,
-        arrivingIds: transcriptArrivalObservation.arrivingIds,
-        isPinnedToTail: isPinnedToTailRef.current,
-      }),
-    );
-  }, [foldedMessages, transcriptArrivalObservation.arrivingIds]);
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -2042,16 +2017,28 @@ export function BuzzChatSurface({
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
-  const newestTranscriptMessageIdRef = useRef(newestTranscriptMessageId);
-  newestTranscriptMessageIdRef.current = newestTranscriptMessageId;
-  // The divider answers one question: where the reader's unread run began
-  // when they opened this Room. That is the server's cursor, captured once
-  // per visit, and nothing else may move it — a message arriving while the
-  // reader is in history belongs to the jump control, not to this line.
-  // Binding the divider to the live queue instead dragged it off the unread
-  // run and pinned it to whichever row had just landed, which is the
-  // divider readers watched appear at the newest message out of nowhere.
-  const firstNewMessageId = firstUnreadMessageId;
+  // Divider and jump control, kept apart (`buzz/use-new-message-control.ts`).
+  // The divider answers one question: where the reader's unread run began when
+  // they opened this Room. That is the server's cursor, and nothing else may
+  // move it — a message arriving while the reader is in history belongs to the
+  // control, not to that line. Binding the divider to the live queue instead
+  // dragged it off the unread run and pinned it to whichever row had just
+  // landed, which is the divider readers watched appear at the newest message
+  // out of nowhere.
+  const {
+    dividerMessageId: firstNewMessageId,
+    queue: newMessageQueue,
+    controlVisible: newMessageControlShown,
+    observeVisibleMessages,
+    settleQueueAtBoundary,
+  } = useNewMessageControl({
+    roomId: decodedId,
+    queueableMessages: foldedMessages,
+    arrivingIds: transcriptArrivalObservation.arrivingIds,
+    newestMessageId: newestTranscriptMessageId,
+    firstUnreadMessageId,
+    isPinnedToTail: () => isPinnedToTailRef.current,
+  });
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2108,20 +2095,6 @@ export function BuzzChatSurface({
     visibleTranscriptMessagesRef.current = [];
     completedUnreadLandingRef.current = null;
   }, [decodedId]);
-  // A row arriving below the fold leaves the viewable set untouched, so the
-  // list has no reason to run its viewability pass, and the last report —
-  // taken while the row above was still the newest — would stand as if the
-  // arrival were on screen. Re-ask the same question against that report
-  // whenever the newest row changes: an arrival the reader cannot see answers
-  // false and the control appears without waiting for a scroll that may never
-  // come.
-  useEffect(() => {
-    setNewestMessageVisible(
-      visibleTranscriptMessagesRef.current.some((message) =>
-        messageContainsBoundary(message, newestTranscriptMessageIdRef.current),
-      ),
-    );
-  }, [newestTranscriptMessageId]);
   useEffect(() => {
     if (!desktopTranscript) return;
     const scrollNode = flatListRef.current?.getScrollableNode() as
@@ -2190,39 +2163,24 @@ export function BuzzChatSurface({
 
     pendingNewMessageLandingRef.current = null;
     if (pending.acknowledgeQueue) {
-      setNewMessageQueue((current) =>
-        current.boundaryId === pending.boundaryId
-          ? acknowledgeNewMessageQueue(current)
-          : current,
-      );
+      settleQueueAtBoundary(pending.boundaryId);
     } else {
       completedUnreadLandingRef.current = pending.boundaryId;
     }
     return true;
-  }, []);
+  }, [settleQueueAtBoundary]);
   const observeVisibleTranscriptMessages = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<ChatDisplayMessage>[] }) => {
       visibleTranscriptMessagesRef.current = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
       // The list recomputes viewability on scroll AND on every committed
-      // update, so an arrival that lands below the fold reports itself
-      // unseen without the reader touching anything.
-      const newestId = newestTranscriptMessageIdRef.current;
-      const newestVisible =
-        newestId !== null &&
-        visibleTranscriptMessagesRef.current.some((message) =>
-          messageContainsBoundary(message, newestId),
-        );
-      setNewestMessageVisible(newestVisible);
-      // Reaching the newest message is what the control asks for; arriving
-      // there under the reader's own finger settles the queue exactly as a
-      // tap would. Without this the count survived every scroll back to the
-      // tail and the control sat over a Room the reader had caught up on.
-      if (newestVisible) setNewMessageQueue(acknowledgeNewMessageQueue);
+      // update, so an arrival that lands below the fold reports itself unseen
+      // without the reader touching anything.
+      observeVisibleMessages(visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [completePendingNewMessageLanding],
+    [completePendingNewMessageLanding, observeVisibleMessages],
   );
   const landAtNewMessageBoundary = useCallback(
     (boundaryId: string, acknowledgeQueue: boolean) => {
@@ -5136,7 +5094,7 @@ export function BuzzChatSurface({
               desktopTranscript ? null : transcriptHistoryLine
             }
           />
-          {newMessageControlVisible(newMessageQueue, newestMessageVisible) && (
+          {newMessageControlShown && (
             <Pressable
               accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
               accessibilityRole="button"

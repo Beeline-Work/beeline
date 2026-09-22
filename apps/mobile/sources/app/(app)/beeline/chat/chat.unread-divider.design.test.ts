@@ -23,21 +23,19 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
     expect(chatSource).toContain('catchUpVisible={catchUpStripShown}');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
-    // The coupling this change removed, in either of the shapes it had.
-    expect(chatSource).not.toContain('newMessageQueue.boundaryId ?? firstUnreadMessageId');
+    // The coupling this change removed, in either of the shapes it had. The
+    // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
+    // catch-up sheet's range legitimately falls back to the server cursor
+    // when nothing has queued yet. What must never come back is the DIVIDER
+    // being drawn from the live queue.
+    expect(chatSource).not.toContain('firstNewMessageId = newMessageQueue');
+    expect(chatSource).not.toContain('dividerMessageId: newMessageQueue');
     expect(chatSource).not.toContain('{newMessageQueue.count > 0 && newMessageQueue.boundaryId &&');
     // The queue is the hook's to move. A setter here would be a way around it.
     expect(chatSource).not.toContain('setNewMessageQueue');
   });
 
   it('CHEV-01: the disc lands on the tail itself, never on a queued row', () => {
-    const controls = chatSource.slice(
-      chatSource.indexOf('<RoomCatchUpControls'),
-      chatSource.indexOf('onJumpToNewest='),
-    );
-    // The pill's own jump target belongs to the strip now, so the reader who
-    // wants the start of what they missed still has it.
-    expect(controls).toContain('landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)');
     expect(chatSource).toContain('onJumpToNewest={landAtNewestMessage}');
     const landing = chatSource.slice(
       chatSource.indexOf('const landAtNewestMessage'),
@@ -45,6 +43,11 @@ describe('the chat surface unread-divider wiring', () => {
     );
     expect(landing).toContain('scrollToNewestMessage()');
     expect(landing).not.toContain('landAtNewMessageBoundary');
+    // The strip is the sheet's door now, so the landing at the first unread
+    // row lives in the merged `/catch-up` composer verb and only there.
+    expect(chatSource).toContain(
+      "case 'catch-up':\n          if (firstUnreadMessageId) landAtNewMessageBoundary(firstUnreadMessageId, false);",
+    );
   });
 
   it('CHEV-02: the pill is gone from the surface, plate, label and all', () => {

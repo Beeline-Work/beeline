@@ -1,10 +1,11 @@
-# CHEV disc-chevron proof
+# CHEV disc-chevron and catch-up-sheet proof
 
 These frames are supporting evidence. The executable regressions are
-`sources/buzz/room-new-message-boundary.test.ts` (CHEV-01/02/03) and
+`sources/buzz/room-new-message-boundary.test.ts` (CHEV-01/02/03),
+`sources/buzz/room-catch-up-report.test.ts` (CHEV-04/05/06),
+`sources/components/buzz/RoomCatchUp.design.test.ts` (CHEV-07…11), and
 `sources/buzz/use-new-message-control.test.tsx`, which mounts the production
-hook and asserts the disc, the badge and the strip through the same
-transitions; start there.
+hook through the same transitions; start there.
 
 Captured on Android API 30 (`emulator-5554`) against this branch's JavaScript,
 loaded into the installed `app.usebeeline` development client over Metro
@@ -15,40 +16,52 @@ have, so the frames come from a temporary proof entry at
 removed after capture — the same method as `evidence/udiv`.
 
 The proof entry is not a re-implementation. It mounts the production hook
-(`buzz/use-new-message-control.ts`), the production control component
-(`components/buzz/RoomCatchUpControls.tsx`) that `_chat-surface.tsx` renders,
-and the production inverted `FlatList` settings. Only the row bodies and the
-RECEIVE button are stand-ins. The readout line at the top prints the hook's
-three outputs verbatim.
+(`buzz/use-new-message-control.ts`), the production controls and sheet
+(`components/buzz/RoomCatchUpControls.tsx`, `RoomCatchUpSheet.tsx`), the
+production report seam (`buzz/room-catch-up-report.ts`), and the production
+inverted `FlatList` settings. Only the row bodies and the RECEIVE button are
+stand-ins; the three arrivals carry a real open poll, a real pending
+repository-edit permission, and a real mention of the viewer, so Needs you is
+populated the way a Room populates it. The readout line prints the hook's
+outputs verbatim.
 
-| | pill (before) | disc (this branch) |
+| | pill (before) | disc + sheet (this branch) |
 | --- | --- | --- |
 | shows when | unread mail is off screen | the newest row is off screen |
-| lands at | the first unread message | the newest message |
-| count clears | on a tap, or at the newest row | at the newest row; the disc stays |
-| what you missed | `9+ new` | a strip naming the count and the authors |
+| press lands at | the first unread message | the newest message |
+| count clears | on a press | at the newest row; the disc stays |
+| what you missed | `9+ new` | a strip, and the sheet behind it |
 
 ## Frames
 
 `01-history-disc-no-badge.png` — the reader scrolls up into history with
-nothing new waiting. `disc: shown · badge: none · strip: hidden`, and the disc
-is on screen beside `Seed message 11`. The pill showed nothing here at all.
+nothing new waiting. `disc: shown · badge: none`, and the 44pt disc is on
+screen beside `Seed message 14`. The pill showed nothing here at all.
 
-`02-arrivals-badge-and-strip.png` — three messages arrive below the fold while
-the reader stays in history. The badge reads `3` on the disc's corner and the
-strip reads `3 new messages from Sol and Nerd` across the top of the
-transcript.
+`02-badge-and-strip-in-history.png` — three messages arrive below the fold
+while the reader stays in history. The badge reads `3` on the disc's corner
+and the strip under the Room header reads `3 new messages from Nerd, Hoots and
+1 other`.
 
 `03-badge-cleared-by-visibility.png` — the reader scrolls back to the tail
-under their own finger, no tap on anything. `Arrived message 2 from Sol` is on
-screen and the readout reads `badge: none · strip: hidden`.
+under their own finger, no press on anything. The three arrivals are on screen
+and the readout reads `badge: none`.
 
-`04-before-disc-tap.png` / `05-after-disc-tap-at-newest.png` — two more arrive
-while the reader is back in history (`badge: 2`), and one tap on the disc lands
-on the tail itself: `Arrived message 4 from Nerd` is the last row on screen,
-badge and strip both retired. The pill landed on the first unread row instead.
+`04-sheet-from-strip.png` — the strip is the visible door. One tap opens the
+bottom-anchored sheet: head `Catch up` / `3 msgs · 07:44–09:02`, then SUMMARY
+(`3 messages from Nerd, Hoots and 1 other. 1 poll opened, you were mentioned
+once.`), then NEEDS YOU as ONE list — `Ship Friday?` / `Niglet · 07:44`,
+`Repository edit waiting on you: beeline` / `Hoots · 08:00`, `can you take the
+disc offset one?` / `Sol · 09:02`. Two blocks, no third, no control but
+dismissal.
 
-`06-strip-tap-lands-at-first-missed.png` — the strip's own landing, which is
-the pill's old one: tapped after three further arrivals, it lands at the start
-of the run the reader missed. The whole tail of that run fits on screen after
-the landing, so the newest row is visible and the disc retires with it.
+`05-disc-tap-lands-at-newest.png` — a SHORT press on the disc still lands on
+the tail and opens nothing: the newest row is the last on screen and the sheet
+stays closed.
+
+`06-sheet-closed-before-long-press.png` / `07-sheet-from-badge-long-press.png`
+— the long-press door, shown against a verified-closed sheet first
+(`sheet: closed`, badge still `3`), then a 900ms press on the badge alone
+reopening the same sheet. The screen-reader equivalent is the registered
+`catchUp` accessibility action on the same control, which a screenshot cannot
+show; it is pinned in `RoomCatchUp.design.test.ts` (CHEV-09).

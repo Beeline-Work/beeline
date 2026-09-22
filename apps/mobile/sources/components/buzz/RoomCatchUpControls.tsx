@@ -10,18 +10,21 @@ import {
 } from '@/buzz/room-bottom-chrome';
 
 /**
- * The jump control is a disc — the one round box in the transcript, because it
- * is the one control that floats over the ledger rather than sitting in
- * chrome, and a circle is what reads as liftable there. Its 36pt plate is
- * centred in the standard 44pt hit box.
+ * The jump control is a 44pt disc — the one round box in the transcript,
+ * because it is the one control that floats over the ledger rather than
+ * sitting in chrome, and a circle is what reads as liftable there. The plate
+ * IS the hit box: 44 is the minimum touch target, so nothing is gained by
+ * drawing smaller inside it.
  */
-const DISC_SIZE = 36;
-const HIT_SIZE = 44;
-const CHEVRON_SIZE = 18;
+const DISC_SIZE = 44;
+const CHEVRON_SIZE = 20;
 const BADGE_SIZE = 18;
 
+/** The one way into the catch-up sheet for a reader on a screen reader. */
+const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
+
 /**
- * The two things a reader who is behind gets, drawn over the transcript by
+ * Everything a reader who is behind gets, drawn over the transcript by
  * `_chat-surface.tsx` from one hook (`buzz/use-new-message-control.ts`):
  *
  * - the disc, a way back to the newest message. It shows whenever that row is
@@ -29,33 +32,36 @@ const BADGE_SIZE = 18;
  *   the tail. The `N new` pill it replaces appeared only for unread mail and
  *   landed on the first unread row, so a reader who had scrolled up to re-read
  *   something had no way back down but their own thumb;
- * - the badge on that disc, which counts the unread run. Seeing the newest row
- *   clears it without a tap, and the disc outlives the badge;
- * - the catch-up strip, which says what that run is — how many and from whom —
- *   and keeps the pill's old landing: the first message the reader missed.
+ * - the badge on that disc, a counter capped at `9+`, cleared by reaching the
+ *   newest row rather than by a press. The disc outlives the badge;
+ * - the catch-up strip under the Room header, the visible door to the sheet.
+ *   A long-press on the badge is the shortcut to the same sheet, and the
+ *   registered accessibility action below is that shortcut for a reader who
+ *   cannot long-press.
  */
 export function RoomCatchUpControls({
   badgeCount,
   catchUpSummary,
   catchUpVisible,
   discVisible,
-  onJumpToFirstNew,
   onJumpToNewest,
+  onOpenCatchUp,
 }: {
   badgeCount: number;
   catchUpSummary: string;
   catchUpVisible: boolean;
   discVisible: boolean;
-  onJumpToFirstNew: () => void;
   onJumpToNewest: () => void;
+  onOpenCatchUp: () => void;
 }) {
+  const catchUpReachable = badgeCount > 0;
   return (
     <>
       {catchUpVisible && (
         <Pressable
-          accessibilityLabel={`${catchUpSummary}. Jump to the first one`}
+          accessibilityLabel={`${catchUpSummary}. Open catch up`}
           accessibilityRole="button"
-          onPress={onJumpToFirstNew}
+          onPress={onOpenCatchUp}
           style={({ pressed }) => [styles.strip, pressed && styles.pressed]}
           testID="catch-up-summary-strip"
         >
@@ -66,12 +72,21 @@ export function RoomCatchUpControls({
       )}
       {discVisible && (
         <Pressable
+          accessibilityActions={
+            catchUpReachable
+              ? [{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }]
+              : undefined
+          }
           accessibilityLabel={
-            badgeCount > 0
+            catchUpReachable
               ? `${badgeCount} new ${badgeCount === 1 ? 'message' : 'messages'}. Jump to newest message`
               : 'Jump to newest message'
           }
           accessibilityRole="button"
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === CATCH_UP_ACCESSIBILITY_ACTION) onOpenCatchUp();
+          }}
+          onLongPress={catchUpReachable ? onOpenCatchUp : undefined}
           onPress={onJumpToNewest}
           style={({ pressed }) => [styles.hitTarget, pressed && styles.pressed]}
           testID="newest-jump-disc"
@@ -79,7 +94,7 @@ export function RoomCatchUpControls({
           <View style={styles.disc}>
             <ChevronGlyph color={styles.chevron.color} direction="down" size={CHEVRON_SIZE} />
           </View>
-          {badgeCount > 0 && (
+          {catchUpReachable && (
             <View style={styles.badge} testID="newest-jump-badge">
               <Text style={styles.badgeText}>{compactNewMessageCount(badgeCount)}</Text>
             </View>
@@ -101,10 +116,12 @@ const styles = StyleSheet.create((theme) => {
       // (`room-bottom-chrome`), so a control sitting on the bottom has the
       // line's STOP control drawn across it. Lifting by the line's own box
       // keeps them apart whether or not an agent is working — an offset that
-      // changed with the line would move the disc under the reader.
+      // changed with the line would move the disc under the reader. Derived,
+      // never a literal: the lift moved from 37 to 40 the week the composer
+      // top gap became a literal 12 (a338a989), and nothing here had to change.
       bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,
-      width: HIT_SIZE,
-      height: HIT_SIZE,
+      width: DISC_SIZE,
+      height: DISC_SIZE,
       alignItems: 'center',
       justifyContent: 'center',
     },

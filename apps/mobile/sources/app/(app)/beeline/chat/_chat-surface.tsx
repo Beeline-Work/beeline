@@ -294,6 +294,8 @@ import {
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
+import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -2096,6 +2098,34 @@ export function BuzzChatSurface({
     firstUnreadMessageId,
     isPinnedToTail: () => isPinnedToTailRef.current,
   });
+  // The catch-up sheet, reached from the strip and from a long-press on the
+  // badge. Both doors carry the same unread range — the boundary the reader
+  // fell behind at (the live queue's, or the server's opening cursor before
+  // anything has queued) through the newest row — into the one seam that
+  // builds the sheet's two blocks (`buzz/room-catch-up-report.ts`).
+  const [catchUpSheetVisible, setCatchUpSheetVisible] = useState(false);
+  const catchUpBoundaryId = newMessageQueue.boundaryId ?? firstUnreadMessageId;
+  const catchUpReport = useMemo(
+    () =>
+      catchUpSheetVisible
+        ? buildCatchUpReport({
+            messages: foldedMessages,
+            boundaryId: catchUpBoundaryId,
+            newestId: newestTranscriptMessageId,
+            viewerPubkey: userPubkey ?? null,
+          })
+        : null,
+    [
+      catchUpBoundaryId,
+      catchUpSheetVisible,
+      foldedMessages,
+      newestTranscriptMessageId,
+      userPubkey,
+    ],
+  );
+  const openCatchUpSheet = useCallback(() => setCatchUpSheetVisible(true), []);
+  const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
+  useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -5238,10 +5268,13 @@ export function BuzzChatSurface({
             catchUpSummary={catchUpSummary}
             catchUpVisible={catchUpStripShown}
             discVisible={newestJumpDiscShown}
-            onJumpToFirstNew={() =>
-              landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
-            }
             onJumpToNewest={landAtNewestMessage}
+            onOpenCatchUp={openCatchUpSheet}
+          />
+          <RoomCatchUpSheet
+            onClose={closeCatchUpSheet}
+            report={catchUpReport}
+            visible={catchUpSheetVisible}
           />
           </View>
 

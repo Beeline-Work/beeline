@@ -52,6 +52,7 @@ describe('Workspace Members entry point', () => {
     );
     expect(members).toContain('size={HEADER_MARK_SIZE}');
     expect(members).toContain('color={styles.headerActionGlyph.color}');
+    expect(members).toMatch(/<MembersGlyph[\s\S]*?\bfilled\b/);
     expect(members).toContain('style={styles.headerAction}');
     expect(members).toContain('<MembersGlyph');
     expect(source.indexOf('workspace-bookmarks')).toBeLessThan(source.indexOf('workspace-members'));

@@ -4711,6 +4711,7 @@ export function BuzzChatSurface({
                 testID="room-corners-menu"
               >
                 <CornerGlyph
+                  color={styles.roomCornersGlyph.color}
                   size={HEADER_MARK_SIZE}
                   testID="room-corners-glyph"
                 />
@@ -6121,8 +6122,9 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // The corner mark paints brand gold from CornerGlyph itself. Overflow
-    // stays steel chrome.
+    // Destination marks use the same theme brass as Bookmarks. Overflow stays
+    // steel chrome.
+    roomCornersGlyph: { color: groknight.accent },
     roomActionsGlyph: { color: groknight.steel },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,

@@ -80,15 +80,26 @@ describe('CornerGlyph', () => {
     expect(CORNER_STATUS_SIZE).toBe(11);
   });
 
-  it('is not restained with chrome at the four production mounts', () => {
+  it('uses theme brass in the Room header and keeps the default at inline mounts', () => {
     const roots = path.resolve(__dirname, '../..');
-    const sites = [
-      'app/(app)/beeline/chat/_chat-surface.tsx',
+    const headerSource = readFileSync(
+      path.join(roots, 'app/(app)/beeline/chat/_chat-surface.tsx'),
+      'utf8',
+    );
+    const headerMounts = [...headerSource.matchAll(/<CornerGlyph\b[^>]*\/?>/g)].map(
+      (match) => match[0],
+    );
+    expect(headerMounts).toContainEqual(
+      expect.stringContaining('color={styles.roomCornersGlyph.color}'),
+    );
+    expect(headerSource).toContain('roomCornersGlyph: { color: groknight.accent }');
+
+    const inlineSites = [
       'app/(app)/beeline/channels.tsx',
       'app/(app)/beeline/bookmarks.tsx',
       'components/buzz/WritePermissionOutcome.tsx',
     ];
-    for (const site of sites) {
+    for (const site of inlineSites) {
       const source = readFileSync(path.join(roots, site), 'utf8');
       const mounts = [...source.matchAll(/<CornerGlyph\b[^>]*\/?>/g)].map((match) => match[0]);
       expect(mounts.length, `${site} mounts CornerGlyph`).toBeGreaterThan(0);

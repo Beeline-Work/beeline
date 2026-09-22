@@ -91,9 +91,9 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'empty')).toContain("alignItems: 'flex-start'");
     expect(styleBlock(source, 'empty')).toContain('paddingHorizontal: hull.space.lg');
     expect(styleBlock(source, 'header')).toContain('paddingLeft: hull.space.lg');
-    expect(styleBlock(source, 'header')).toContain(
-      'paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR',
-    );
+    expect(source).toContain('const HEADER_RIGHT_SPACING = 12');
+    expect(styleBlock(source, 'header')).toContain('paddingRight: HEADER_RIGHT_SPACING');
+    expect(styleBlock(cornerHeaderSource, 'header', '    ')).toContain('paddingHorizontal: 12');
     // Touching 44pt boxes: no gap, while the marks keep their own visual size.
     expect(styleBlock(source, 'headerActions')).toContain('gap: 0');
     expect(styleBlock(source, 'headerActions')).not.toContain('gap: hull.space');
@@ -172,7 +172,14 @@ describe('Room list layout contract', () => {
       /<BookmarksGlyph[\s\S]*?\bfilled\b[\s\S]*?testID="workspace-bookmarks-glyph"/,
     );
     expect(styleBlock(source, 'headerBookmarkGlyph')).toContain('color: hull.accent');
+    expect(cornerHeaderSource).toContain('color={styles.roomCornersGlyph.color}');
+    expect(styleBlock(cornerHeaderSource, 'roomCornersGlyph', '    ')).toContain(
+      'color: groknight.accent',
+    );
     expect(source).toContain('color={styles.headerActionGlyph.color}');
+    expect(source).toMatch(
+      /<MembersGlyph[\s\S]*?\bfilled\b[\s\S]*?testID="workspace-members-glyph"/,
+    );
     expect(styleBlock(source, 'headerActionGlyph')).toContain('color: hull.textMuted');
     expect(source).not.toMatch(/['"][‹›⌃⌄]['"]/u);
     expect(source).not.toMatch(/OPTICAL|NUDGE|optical|nudge/);

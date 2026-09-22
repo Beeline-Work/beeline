@@ -665,7 +665,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'close_corner',
     description:
-      'Close this corner after its task is complete. Only the agent that opened the corner may close it, because closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub, which closes an open pull request from that branch: close only work that has landed or is being abandoned. Already-attached files remain available from the Room.',
+      'Close this corner after its task is complete. Only the agent that opened the corner may close it, because closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub only when it has no open pull request or that pull request already merged; an open pull request keeps its branch, because deleting it would close the pull request and make the commits recoverable only from GitHub. Close only work that has landed or is being abandoned. Already-attached files remain available from the Room.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

@@ -5403,27 +5403,11 @@ export class PhoneService {
           decidedBy: remover,
           decidedAt: grant.decided_at,
         });
-      const orphaned = await database.query<{ id: string }>(
-        `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE workspace_id=$2 AND parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=$1)
-         RETURNING id`,
-        [input.agentId, input.workspaceId],
-      );
-      for (const corner of orphaned.rows)
-        await database.query(
-          `UPDATE corner_facts SET close_requested=true,
-             lifecycle=lifecycle||$2::jsonb,updated_at=now()
-           WHERE corner_id=$1`,
-          [
-            corner.id,
-            JSON.stringify({
-              lifecycle: 'done',
-              outcome: 'abandoned',
-              reason: `${removed.name} was removed`,
-            }),
-          ],
-        );
+      // Removal retires the helper; it never closes the corners. A corner is
+      // carried by its MEMBERS, and the branch/PR is a shared artifact other
+      // people may still land. The removed agent's `owner_agent_id` stays as
+      // the historical "opened by"; the merge webhook and a human close still
+      // reach the corner, and a later helper can be addressed in it.
       await workspaceSystemLine(database, {
         workspaceId: input.workspaceId,
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
@@ -5440,7 +5424,9 @@ export class PhoneService {
    *
    *   - every agent the account owns is removed outright (its identity row
    *     goes too); its daemon tokens, schedules and grants die with it, and
-   *     the corners it owns archive as `done`/`abandoned` like removeAgent;
+   *     the corners it owned lose their owner and archive as
+   *     `done`/`abandoned` (account deletion is a full erasure, so those
+   *     corners cannot wait for a helper);
    *   - Workspace/Room ownership the account held alone passes to the
    *     longest-serving remaining human (admin first), so shared surfaces
    *     stay manageable;

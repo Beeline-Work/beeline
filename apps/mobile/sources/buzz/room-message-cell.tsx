@@ -120,13 +120,11 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
 });
 
 /**
- * The arrival pointer: `bgHighlight` laid UNDER the row, never around it, so
- * nothing about the row itself moves or re-lays-out when it plays. One cycle
- * — hold, then fade — and the fill is gone; under reduce-motion the hold is
- * the whole of it and the fill clears without animating.
- *
- * `flashing` going false→true is the whole trigger, so a re-render, a refresh
- * or a live arrival while it is already true replays nothing.
+ * The row's ground. At most one row in a transcript is ever flashing, so the
+ * fill — and every animation hook that drives it — is mounted only for that
+ * row. The slot stays in the tree as `null` the rest of the time, which keeps
+ * the children at a stable position: swapping the wrapper itself in and out
+ * would remount the message under it every time a pointer started or ended.
  */
 function ArrivalFlashGround({
   children,
@@ -135,35 +133,44 @@ function ArrivalFlashGround({
   children: React.ReactNode;
   flashing: boolean;
 }) {
-  const reduceMotion = useReducedMotion();
+  return (
+    <View>
+      {flashing ? <ArrivalFlashFill /> : null}
+      {children}
+    </View>
+  );
+}
+
+/**
+ * The arrival pointer: `bgHighlight` laid UNDER the row, never around it, so
+ * nothing about the row itself moves or re-lays-out when it plays. One cycle
+ * — hold, then fade — and the fill is gone; under reduce-motion the hold is
+ * the whole of it and the fill clears without animating.
+ *
+ * Mounting IS the trigger, and this only mounts for a landing, so a
+ * re-render, a refresh or a live arrival replays nothing.
+ */
+function ArrivalFlashFill() {
   const fill = useSharedValue(0);
-  const played = React.useRef(false);
+  // Read once: the cycle is decided when it starts, so a setting toggled
+  // mid-flash cannot restart the pointer the reader is already watching.
+  const reduceMotionAtMount = React.useRef(useReducedMotion());
 
   React.useEffect(() => {
-    if (!flashing) {
-      played.current = false;
-      fill.value = 0;
-      return;
-    }
-    if (played.current) return;
-    played.current = true;
-    const { holdMs, fadeMs } = arrivalFlashTiming(reduceMotion);
+    const { holdMs, fadeMs } = arrivalFlashTiming(reduceMotionAtMount.current);
     fill.value = 1;
     fill.value = withDelay(holdMs, withTiming(0, { duration: fadeMs }));
-  }, [fill, flashing, reduceMotion]);
+  }, [fill]);
 
   const groundStyle = useAnimatedStyle(() => ({ opacity: fill.value }));
   return (
-    <View>
-      <Animated.View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        pointerEvents="none"
-        style={[styles.arrivalFlashGround, groundStyle]}
-        testID={flashing ? 'arrival-flash-ground' : undefined}
-      />
-      {children}
-    </View>
+    <Animated.View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={[styles.arrivalFlashGround, groundStyle]}
+      testID="arrival-flash-ground"
+    />
   );
 }
 

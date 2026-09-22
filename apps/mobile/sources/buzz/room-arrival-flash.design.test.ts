@@ -32,14 +32,31 @@ describe('the arrival flash', () => {
   });
 
   it('CHEV-19: plays once per landing, and a re-render is not a landing', () => {
-    // The false→true edge is the trigger, guarded so a repeat render cannot
-    // replay it; the surface clears the id on its own timer so the NEXT
-    // landing on the same row is a fresh edge.
-    expect(cell).toContain('if (played.current) return;');
-    expect(cell).toContain('played.current = true;');
+    // Mounting is the trigger, and the fill mounts only for the landed row,
+    // so a repeat render of a row that is already flashing replays nothing.
+    // The surface clears the id on its own timer, so the NEXT landing on the
+    // same row is a fresh mount.
+    expect(cell).toContain('{flashing ? <ArrivalFlashFill /> : null}');
     expect(cell).toContain('fill.value = withDelay(holdMs, withTiming(0, { duration: fadeMs }));');
+    // The cycle depends on nothing that can change under it: a setting
+    // toggled mid-flash must not restart the pointer.
+    expect(cell).toContain('}, [fill]);');
     expect(cell).not.toMatch(/withRepeat|loop|Infinity/);
     expect(surface).toContain('setArrivalFlashMessageId(null);');
+  });
+
+  it('CHEV-22: costs an unflashing row no animation work at all', () => {
+    // At most one row in a transcript is ever flashing. Mounting the hooks on
+    // every row put reanimated work on every transcript render, which is what
+    // the room-view render budget measures.
+    const ground = cell.slice(
+      cell.indexOf('function ArrivalFlashGround'),
+      cell.indexOf('function ArrivalFlashFill'),
+    );
+    expect(ground).not.toMatch(/useSharedValue|useAnimatedStyle|useReducedMotion|useEffect/);
+    // And the slot stays in the tree as null rather than the wrapper coming
+    // and going, which would remount the message under it on every pointer.
+    expect(ground).toContain(': null}');
   });
 
   it('CHEV-20: is an area fill in an existing token, with no stroke and no new colour', () => {

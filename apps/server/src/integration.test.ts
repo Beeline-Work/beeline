@@ -5605,6 +5605,18 @@ describe('monolith integration', () => {
       corners: Array<{ corner: { id: string; about?: string }; state: string }>;
     };
     expect(listed.corners.find((item) => item.corner.id === cornerId)).toBeUndefined();
+    const archived = (await (
+      await request(`/v1/phone/rooms/${ROOM}/corners?archived=1`)
+    ).json()) as {
+      corners: Array<{ corner: { id: string }; state: string; closedAt?: number }>;
+    };
+    expect(archived.corners).toContainEqual(
+      expect.objectContaining({
+        corner: expect.objectContaining({ id: cornerId }),
+        state: 'archived',
+        closedAt: expect.any(Number),
+      }),
+    );
     expect(
       (
         await database.query<{ archived: boolean }>(

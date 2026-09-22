@@ -752,6 +752,9 @@ export type CornerListItem = {
    * latest child turn receipt rather than the corner metadata timestamp. */
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
+  /** Unix seconds the corner was closed. Present only on archived corners, and
+   * the key the archived list is ordered by: closure recency, not creation. */
+  readonly closedAt?: number;
   /** Human whose request caused the agent to open this corner. */
   readonly initiator?: RoomViewIdentity;
   readonly agent?: RoomViewIdentity;

@@ -288,6 +288,14 @@ describe('phone contract', () => {
         state: 'review',
       }),
     ).toEqual([{ corner: header, lifecycle, state: 'review' }]);
+    // The archived list's closure stamp travels; an unreadable one is dropped
+    // rather than dating the closure from the epoch.
+    expect(
+      cornersFor({ corner: header, lifecycle, state: 'archived', closedAt: 1_700_000_000 }),
+    ).toEqual([{ corner: header, lifecycle, state: 'archived', closedAt: 1_700_000_000 }]);
+    expect(cornersFor({ corner: header, lifecycle, state: 'archived', closedAt: 'never' })).toEqual(
+      [{ corner: header, lifecycle, state: 'archived' }],
+    );
   });
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {

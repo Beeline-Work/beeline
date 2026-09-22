@@ -32,6 +32,30 @@ const room: RoomView = {
 };
 
 describe('RoomViewClient', () => {
+  it('requests archived corners only when the caller opts in', async () => {
+    const identity = createIdentity('room-view-archived-corners');
+    const cornerList = {
+      room: room.room,
+      corners: [],
+      viewer: room.viewer,
+      watchFilters: [],
+    };
+    const fetch = vi.fn(async () => Response.json(cornerList));
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity,
+      fetch,
+    });
+
+    await client.corners(room.room.id);
+    await client.corners(room.room.id, { archived: true });
+
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      `https://relay.example/room/${room.room.id}/corners`,
+      `https://relay.example/room/${room.room.id}/corners?archived=1`,
+    ]);
+  });
+
   it('normalizes an older successful pairing claim without inherited Room IDs', async () => {
     const identity = createIdentity('room-view-pairing-compat');
     const fetch = vi.fn(async () =>

@@ -112,4 +112,40 @@ describe('mobile transport cutover switch', () => {
       { timeoutMs: 15_000 },
     );
   });
+
+  it('puts the archived-corners opt-in on the monolith request', async () => {
+    controls.enabled = true;
+    const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+    const { monolithSession } = await import('@/auth/monolith-session');
+    vi.mocked(monolithSession.fetch).mockResolvedValueOnce(
+      Response.json({
+        room: {
+          id: roomId,
+          name: 'Alpha',
+          archived: false,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        corners: [],
+        viewer: {
+          identity: fixture.viewer,
+          role: 'owner',
+          permissions: { send: true, manage: true },
+        },
+        watchFilters: [],
+      }),
+    );
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+    });
+
+    await client.corners(roomId, { archived: true });
+
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
+      `https://server.example/v1/phone/rooms/${roomId}/corners?archived=1`,
+      expect.objectContaining({ method: 'GET' }),
+      { timeoutMs: 15_000 },
+    );
+  });
 });

@@ -1114,7 +1114,12 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/corners$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.readCorners(match[1]!, identityId!);
+    const result = await options.phone.readCorners(
+      match[1]!,
+      identityId!,
+      false,
+      url.searchParams.get('archived') === '1',
+    );
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

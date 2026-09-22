@@ -35,6 +35,35 @@ export type CornerAppView = CornerAppDefinition & {
   readonly updatedAt: number;
 };
 
+/** An installed app advertises human UI and agent capability separately.
+ * Broker capability names are opaque here: a later permission grant decides
+ * whether either side may invoke them. */
+export type CornerAppManifest = {
+  readonly version: 1;
+  readonly slug: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly developer: string;
+  readonly humanUi?:
+    | {
+        readonly kind: 'native';
+        readonly definition: CornerAppDefinition;
+        readonly embedsChat?: boolean;
+      }
+    | { readonly kind: 'broker'; readonly capability: string; readonly embedsChat?: boolean };
+  readonly agent?: { readonly kind: 'broker'; readonly capability: string };
+  readonly permissions?: readonly string[];
+};
+
+export type CornerAppInstallationView = {
+  readonly id: string;
+  readonly manifest: CornerAppManifest;
+};
+
+export type CornerAppBindingView = CornerAppInstallationView & {
+  readonly instanceId: string;
+};
+
 const text = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 
@@ -101,5 +130,60 @@ export function readCornerAppDefinition(value: unknown): CornerAppDefinition | n
     ...(typeof app.description === 'string' ? { description: app.description.trim() } : {}),
     command: app.command,
     blocks,
+  };
+}
+
+const capability = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-z][a-z0-9._:-]{0,127}$/.test(value);
+
+export function readCornerAppManifest(value: unknown): CornerAppManifest | null {
+  if (!value || typeof value !== 'object') return null;
+  const manifest = value as Record<string, unknown>;
+  if (
+    manifest.version !== 1 ||
+    typeof manifest.slug !== 'string' ||
+    !CORNER_APP_SLUG.test(manifest.slug) ||
+    !text(manifest.title, 80) ||
+    !text(manifest.developer, 120) ||
+    (manifest.description !== undefined && !text(manifest.description, 240))
+  )
+    return null;
+  const human = manifest.humanUi as Record<string, unknown> | undefined;
+  let humanUi: CornerAppManifest['humanUi'];
+  if (human?.kind === 'native') {
+    const definition = readCornerAppDefinition(human.definition);
+    if (!definition) return null;
+    humanUi = {
+      kind: 'native',
+      definition,
+      ...(human.embedsChat === true ? { embedsChat: true } : {}),
+    };
+  } else if (human?.kind === 'broker' && capability(human.capability)) {
+    humanUi = {
+      kind: 'broker',
+      capability: human.capability,
+      ...(human.embedsChat === true ? { embedsChat: true } : {}),
+    };
+  } else if (human !== undefined) return null;
+  const agent = manifest.agent as Record<string, unknown> | undefined;
+  if (agent !== undefined && (agent.kind !== 'broker' || !capability(agent.capability)))
+    return null;
+  const permissions = manifest.permissions;
+  if (
+    permissions !== undefined &&
+    (!Array.isArray(permissions) || permissions.length > 32 || !permissions.every(capability))
+  )
+    return null;
+  return {
+    version: 1,
+    slug: manifest.slug,
+    title: manifest.title.trim(),
+    ...(typeof manifest.description === 'string'
+      ? { description: manifest.description.trim() }
+      : {}),
+    developer: manifest.developer.trim(),
+    ...(humanUi ? { humanUi } : {}),
+    ...(agent ? { agent: { kind: 'broker', capability: agent.capability as string } } : {}),
+    ...(permissions ? { permissions: permissions as string[] } : {}),
   };
 }

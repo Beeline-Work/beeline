@@ -2111,6 +2111,44 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('binds an installed app selected by open_corner', async () => {
+    const installationId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
+       VALUES($1,$2,$3,$4,$5::jsonb)`,
+      [
+        installationId,
+        WORKSPACE,
+        HUMAN,
+        AGENT,
+        JSON.stringify({
+          version: 1,
+          slug: 'release-board',
+          title: 'Release board',
+          developer: 'Bee Labs',
+          humanUi: { kind: 'broker', capability: 'release-board.ui' },
+        }),
+      ],
+    );
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-app-request',
+      name: 'Release board',
+      objective: 'Track release readiness in the installed app',
+      app: 'release-board',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await database.query<{ installation_id: string }>(
+          `SELECT installation_id FROM corner_app_bindings WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows[0]?.installation_id,
+    ).toBe(installationId);
+  });
+
   it('lets a Workspace member open a corner inherited from a public Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
@@ -4714,6 +4752,51 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.archived,
     ).toBe(true);
+  });
+
+  it('binds one installed Corner App while preserving inherited Room membership', async () => {
+    const installationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const manifest = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      developer: 'Bee Labs',
+      humanUi: { kind: 'broker', capability: 'release-board.ui' },
+      agent: { kind: 'broker', capability: 'release-board.agent' },
+      permissions: ['github.read'],
+    };
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
+       VALUES($1,$2,$3,$4,$5::jsonb)`,
+      [installationId, WORKSPACE, HUMAN, AGENT, JSON.stringify(manifest)],
+    );
+    const available = await phone.readCorners(ROOM, HUMAN);
+    expect(available?.apps).toEqual([{ id: installationId, manifest }]);
+
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'Release control',
+      appInstallationId: installationId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const listed = await phone.readCorners(ROOM, HUMAN);
+    expect(listed?.corners.find((corner) => corner.corner.id === cornerId)?.app).toMatchObject({
+      id: installationId,
+      manifest,
+    });
+    expect((await phone.readRoom(cornerId, HUMAN))?.boundApp).toMatchObject({
+      id: installationId,
+      manifest,
+    });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+          [cornerId, AGENT],
+        )
+      ).rowCount,
+    ).toBe(1);
   });
 
   it('deduplicates push delivery claims in Postgres', async () => {

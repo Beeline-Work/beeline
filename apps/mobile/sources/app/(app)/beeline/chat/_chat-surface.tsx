@@ -1699,6 +1699,14 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
+  useEffect(() => {
+    const humanUi = roomSurface?.boundApp?.manifest.humanUi;
+    if (!isFocused || !isCorner || !humanUi || humanUi.embedsChat) return;
+    router.replace({
+      pathname: '/beeline/corner-app/[slug]',
+      params: { slug: roomSurface.boundApp!.manifest.slug, roomId: decodedId },
+    } as Href);
+  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain

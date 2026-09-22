@@ -620,6 +620,8 @@ export type CreateCornerInput = TurnOutputAuthority &
      * corner with no repository is `no_code` whatever this says.
      */
     readonly lane?: CornerLane;
+    /** Optional Workspace-installed app slug to bind as this corner's surface. */
+    readonly app?: string;
   };
 export type CornerResult = { readonly cornerId: string };
 export type CornerLane = 'code' | 'no_code';

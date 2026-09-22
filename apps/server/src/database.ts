@@ -791,6 +791,27 @@ CREATE INDEX IF NOT EXISTS corner_apps_author_idx ON corner_apps(author_agent_id
 CREATE UNIQUE INDEX IF NOT EXISTS corner_apps_command_idx
   ON corner_apps(corner_id,(definition->>'command'));
 
+-- Workspace-installed apps and their zero-or-one binding to a corner. The
+-- manifest separates human UI from agent broker capabilities; neither opaque
+-- broker capability executes at this storage boundary.
+CREATE TABLE IF NOT EXISTS corner_app_installations (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  installed_by text NOT NULL REFERENCES identities(id),
+  developer_agent_id text REFERENCES identities(id),
+  manifest jsonb NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS corner_app_installations_workspace_idx
+  ON corner_app_installations(workspace_id,connected_at DESC);
+CREATE TABLE IF NOT EXISTS corner_app_bindings (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  installation_id uuid NOT NULL REFERENCES corner_app_installations(id) ON DELETE RESTRICT,
+  instance_id uuid NOT NULL UNIQUE,
+  bound_by text NOT NULL REFERENCES identities(id),
+  bound_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
 DROP TABLE IF EXISTS corner_check_facts;
 

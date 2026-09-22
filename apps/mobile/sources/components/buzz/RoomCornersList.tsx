@@ -80,11 +80,22 @@ export function RoomCornersList({
     // else, so its closure age joins the same quiet line.
     const closed = cornerClosedStamp(item.closedAt, stampedAt);
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
+    const open = () => {
+      const humanUi = item.app?.manifest.humanUi;
+      if (humanUi && !humanUi.embedsChat) {
+        router.push({
+          pathname: '/beeline/corner-app/[slug]',
+          params: { slug: item.app!.manifest.slug, roomId: item.corner.id },
+        });
+        return;
+      }
+      router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name));
+    };
     return (
       <Pressable
         accessibilityLabel={`${label}. ${display.word}. ${line}`}
         accessibilityRole="button"
-        onPress={() => router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name))}
+        onPress={open}
         style={styles.row}
         testID={`room-corner-${item.corner.id}`}
       >

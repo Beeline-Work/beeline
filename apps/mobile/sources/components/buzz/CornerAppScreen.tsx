@@ -9,11 +9,15 @@ export function CornerAppScreen({
   onBack,
   onAction,
   busyAction,
+  unavailableTitle,
+  unavailableMessage,
 }: {
   app?: CornerAppView;
   onBack: () => void;
   onAction: (prompt: string) => void;
   busyAction?: string;
+  unavailableTitle?: string;
+  unavailableMessage?: string;
 }) {
   return (
     <View style={styles.screen} testID="corner-app-screen">
@@ -25,15 +29,11 @@ export function CornerAppScreen({
           onPress={onBack}
           style={styles.back}
         >
-          <ChevronGlyph
-            color={styles.backText.color}
-            direction="left"
-            size={CHEVRON_BACK_SIZE}
-          />
+          <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text numberOfLines={1} style={styles.title}>
-            {app?.title ?? 'Corner App'}
+            {app?.title ?? unavailableTitle ?? 'Corner App'}
           </Text>
           {app ? (
             <Text numberOfLines={1} style={styles.byline}>
@@ -44,7 +44,9 @@ export function CornerAppScreen({
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {!app ? (
-          <Text style={styles.empty}>This app is not available in the corner.</Text>
+          <Text style={styles.empty}>
+            {unavailableMessage ?? 'This app is not available in the corner.'}
+          </Text>
         ) : (
           <>
             {app.description ? <Text style={styles.description}>{app.description}</Text> : null}

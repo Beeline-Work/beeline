@@ -20,6 +20,7 @@ import {
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
   readCornerAppDefinition,
+  readCornerAppManifest,
 } from '@beeline/api-contract/phone';
 import type {
   AgentGrantView,
@@ -306,6 +307,9 @@ interface CornerRow extends RoomRow {
   agent_avatar: string | null;
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
+  app_installation_id: string | null;
+  app_instance_id: string | null;
+  app_manifest: unknown | null;
 }
 // Correlated with the authorized Room and viewer in both Room read paths.
 const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
@@ -1348,6 +1352,31 @@ export class PhoneService {
           )
         ).rows[0]
       : undefined;
+    const boundApp = room.parent_id
+      ? (
+          await measured(
+            'bound-app',
+            this.database.query<{
+              id: string;
+              instance_id: string;
+              manifest: unknown;
+              developer_agent_id: string | null;
+              developer_name: string | null;
+              developer_handle: string | null;
+            }>(
+              `SELECT installation.id,binding.instance_id,installation.manifest,
+                      installation.developer_agent_id,developer.name developer_name,
+                      developer.handle developer_handle
+               FROM corner_app_bindings binding
+               JOIN corner_app_installations installation ON installation.id=binding.installation_id
+               LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
+               WHERE binding.corner_id=$1`,
+              [roomId],
+            ),
+          )
+        ).rows[0]
+      : undefined;
+    const boundManifest = readCornerAppManifest(boundApp?.manifest);
     const cornerApps = room.parent_id
       ? (
           await measured(
@@ -1383,6 +1412,20 @@ export class PhoneService {
             : [];
         })
       : [];
+    if (
+      boundManifest?.humanUi?.kind === 'native' &&
+      boundApp?.developer_agent_id &&
+      boundApp.developer_name
+    ) {
+      cornerApps.unshift({
+        ...boundManifest.humanUi.definition,
+        authorId: boundApp.developer_agent_id,
+        authorName: boundApp.developer_name,
+        ...(boundApp.developer_handle ? { authorHandle: boundApp.developer_handle } : {}),
+        revision: 1,
+        updatedAt: unix(room.updated_at),
+      });
+    }
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
     const briefingRows: MessageRow[] = room.parent_id
@@ -1472,6 +1515,15 @@ export class PhoneService {
       repositoryResolution: (parent ?? room).repository_resolution,
       ...(cornerLifecycle ? { cornerLifecycle } : {}),
       ...(cornerApps.length ? { cornerApps } : {}),
+      ...(boundApp && boundManifest
+        ? {
+            boundApp: {
+              id: boundApp.id,
+              instanceId: boundApp.instance_id,
+              manifest: boundManifest,
+            },
+          }
+        : {}),
       watchFilters: roomFilters(
         roomId,
         room.workspace_id,
@@ -1548,13 +1600,22 @@ export class PhoneService {
     );
     const room = parent.rows[0];
     if (!room) return null;
-    const [rows, viewerIdentity] = await Promise.all([
+    const [rows, viewerIdentity, appRows] = await Promise.all([
       this.cornerRows(roomId, viewerId, roomViewFamilyOrder, archived),
       this.requireIdentity(viewerId),
+      this.database.query<{ id: string; manifest: unknown }>(
+        `SELECT id,manifest FROM corner_app_installations
+         WHERE workspace_id=$1 ORDER BY connected_at DESC,id`,
+        [room.workspace_id],
+      ),
     ]);
     return {
       room: roomHeader(room, this.publicOrigin),
       corners: this.projectCorners(rows),
+      apps: appRows.rows.flatMap((row) => {
+        const manifest = readCornerAppManifest(row.manifest);
+        return manifest ? [{ id: row.id, manifest }] : [];
+      }),
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
@@ -1775,7 +1836,9 @@ export class PhoneService {
         initiator.face_id initiator_face,
         li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
-        turn.status latest_turn_status,turn.created_at latest_turn_created_at
+        turn.status latest_turn_status,turn.created_at latest_turn_created_at,
+        app_binding.installation_id app_installation_id,
+        app_binding.instance_id app_instance_id,app_installation.manifest app_manifest
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
         ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1794,6 +1857,8 @@ export class PhoneService {
         SELECT status,created_at FROM agent_turns WHERE room_id=c.id
         ORDER BY created_at DESC LIMIT 1
       ) turn ON true
+      LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
+      LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
@@ -1817,6 +1882,7 @@ export class PhoneService {
       });
       const header = roomHeader(corner, this.publicOrigin);
       const about = header.about ?? (corner.objective?.trim() || undefined);
+      const appManifest = readCornerAppManifest(corner.app_manifest);
       return {
         corner: about ? { ...header, about } : header,
         lifecycle,
@@ -1852,6 +1918,15 @@ export class PhoneService {
                 ...(corner.agent_avatar
                   ? { avatar: assetUrl(corner.agent_avatar, this.publicOrigin) }
                   : {}),
+              },
+            }
+          : {}),
+        ...(corner.app_installation_id && corner.app_instance_id && appManifest
+          ? {
+              app: {
+                id: corner.app_installation_id,
+                instanceId: corner.app_instance_id,
+                manifest: appManifest,
               },
             }
           : {}),
@@ -4020,6 +4095,14 @@ export class PhoneService {
         )
       ).rows[0];
       if (!parent) throw new Error('room access denied');
+      if (input.appInstallationId) {
+        const installed = await database.query(
+          `SELECT 1 FROM corner_app_installations
+           WHERE id=$1 AND workspace_id=$2 FOR SHARE`,
+          [input.appInstallationId, parent.workspace_id],
+        );
+        if (!installed.rowCount) throw new Error('Corner App is not installed in this Workspace');
+      }
       await database.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
          VALUES($1,$2,$3,$4,$5)`,
@@ -4043,6 +4126,13 @@ export class PhoneService {
          VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}')`,
         [id, viewerId],
       );
+      if (input.appInstallationId) {
+        await database.query(
+          `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+           VALUES($1,$2,$3,$4)`,
+          [id, input.appInstallationId, randomUUID(), viewerId],
+        );
+      }
     });
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };

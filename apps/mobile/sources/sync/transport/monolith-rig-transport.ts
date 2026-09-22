@@ -410,8 +410,8 @@ export class MonolithRigTransport {
   closeCorner(roomId: string) {
     return this.operation('requestCornerClose', { roomId }).then(() => undefined);
   }
-  createHumanCorner(roomId: string, title: string) {
-    return this.operation('createHumanCorner', { roomId, title }).then(
+  createHumanCorner(roomId: string, title: string, appInstallationId?: string) {
+    return this.operation('createHumanCorner', { roomId, title, appInstallationId }).then(
       (value) => (value as { id: string }).id,
     );
   }

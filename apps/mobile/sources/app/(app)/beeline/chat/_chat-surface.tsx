@@ -160,7 +160,10 @@ import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
-import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
+import {
+  MemberPickerSheet,
+  type MemberPickerCandidate,
+} from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import { confirmRoomRepositoryLink } from '@/buzz/room-management';
 import {
@@ -649,9 +652,11 @@ export function BuzzChatSurface({
   const replacePendingAttachments = useCallback(
     (
       update:
-        PickedChatAttachment[] | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
+        | PickedChatAttachment[]
+        | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
     ) => {
-      const next = typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
+      const next =
+        typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
       pendingAttachmentsRef.current = next;
       setPendingAttachments(next);
     },
@@ -661,7 +666,9 @@ export function BuzzChatSurface({
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
-  const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(null);
+  const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(
+    null,
+  );
   const [forwardBusyRoomId, setForwardBusyRoomId] = useState<string | null>(null);
   const [forwardError, setForwardError] = useState<string | null>(null);
   // What this corner inherited from the Room it was opened out of: the task
@@ -857,9 +864,14 @@ export function BuzzChatSurface({
   // Zero live corners: no handle (toggle is a no-op too). The pane still
   // mounts when already present — an artifact tap can re-present it.
   const desktopWorkPaneMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'present' ? desktopWorkRoom : null;
+    desktopExperience && !isDirectMessage && workPaneMode === 'present'
+      ? desktopWorkRoom
+      : null;
   const desktopWorkHandleMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'dismissed' && hasLiveDesktopCorners;
+    desktopExperience &&
+    !isDirectMessage &&
+    workPaneMode === 'dismissed' &&
+    hasLiveDesktopCorners;
   const channelKind: ChannelKind = roomSurface
     ? surfaceParentId
       ? 'corner'
@@ -1054,8 +1066,7 @@ export function BuzzChatSurface({
         // removal, or deletion. The Room read is the current authorization
         // verdict; only a successful read earns navigation.
         await roomClient.room(resolved.channelId);
-        if (resolved.kind === 'corner')
-          openDesktopCorner(resolved.parentChannelId, resolved.channelId);
+        if (resolved.kind === 'corner') openDesktopCorner(resolved.parentChannelId, resolved.channelId);
         else router.push(roomHref(resolved.channelId));
       } catch (error) {
         if (isUnavailableChannelReferenceError(error)) {
@@ -1178,7 +1189,9 @@ export function BuzzChatSurface({
     () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
     [durableMessages, roomSendFrame.optimistic],
   );
-  const [newMessageQueue, setNewMessageQueue] = useState<NewMessageQueue>(EMPTY_NEW_MESSAGE_QUEUE);
+  const [newMessageQueue, setNewMessageQueue] = useState<NewMessageQueue>(
+    EMPTY_NEW_MESSAGE_QUEUE,
+  );
   useEffect(() => {
     setNewMessageQueue(EMPTY_NEW_MESSAGE_QUEUE);
   }, [decodedId]);
@@ -1195,7 +1208,10 @@ export function BuzzChatSurface({
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(() => {
     const anchored = anchorRelayReports(combinedMessages);
-    const boundary = boundaryRowIndex(anchored, newMessageQueue.boundaryId ?? firstUnreadMessageId);
+    const boundary = boundaryRowIndex(
+      anchored,
+      newMessageQueue.boundaryId ?? firstUnreadMessageId,
+    );
     if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
     // Folding cannot swallow the one exact server-owned unread boundary.
     return [
@@ -1718,7 +1734,9 @@ export function BuzzChatSurface({
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
     const published = agentCommandsByScope[mentionAgentCommandScope];
-    return (published ?? []).filter((command) => matchesAgentCommand(command, mentionSlash.query));
+    return (published ?? []).filter((command) =>
+      matchesAgentCommand(command, mentionSlash.query),
+    );
   }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
@@ -1930,8 +1948,9 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCornerItem =
-    isCorner && roomSurface ? cornerDisplayFromRoomView(roomSurface) : undefined;
+  const canonicalCornerItem = isCorner && roomSurface
+    ? cornerDisplayFromRoomView(roomSurface)
+    : undefined;
   const sessionState = !isCorner
     ? 'idle'
     : canonicalCornerItem?.state === 'working'
@@ -2151,7 +2170,9 @@ export function BuzzChatSurface({
     pendingNewMessageLandingRef.current = null;
     if (pending.acknowledgeQueue) {
       setNewMessageQueue((current) =>
-        current.boundaryId === pending.boundaryId ? acknowledgeNewMessageQueue(current) : current,
+        current.boundaryId === pending.boundaryId
+          ? acknowledgeNewMessageQueue(current)
+          : current,
       );
     } else {
       completedUnreadLandingRef.current = pending.boundaryId;
@@ -2181,7 +2202,10 @@ export function BuzzChatSurface({
         scheduleAnimationFrame(() => {
           const pending = pendingNewMessageLandingRef.current;
           if (userDraggingRef.current || pending?.boundaryId !== boundaryId) return;
-          const currentIndex = boundaryRowIndex(transcriptMessagesRef.current, boundaryId);
+          const currentIndex = boundaryRowIndex(
+            transcriptMessagesRef.current,
+            boundaryId,
+          );
           if (currentIndex < 0) return;
           cancelDesktopOpenLanding();
           flatListRef.current?.scrollToIndex({
@@ -2807,7 +2831,9 @@ export function BuzzChatSurface({
           {
             text: forwardTarget.text,
             author: forwardTarget.authorIdentity ?? {
-              name: forwardTarget.pubkey ? fallbackMemberName(forwardTarget.pubkey) : 'SOMEONE',
+              name: forwardTarget.pubkey
+                ? fallbackMemberName(forwardTarget.pubkey)
+                : 'SOMEONE',
               ...(forwardTarget.pubkey
                 ? { handle: fallbackMemberHandle(forwardTarget.pubkey) }
                 : {}),
@@ -2832,260 +2858,253 @@ export function BuzzChatSurface({
   const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
-  const handleSend = useCallback(
-    async (shortcut?: MessageShortcut) => {
-      // A leaked responder event must never read as a shortcut (#1340's
-      // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
-      // skipped the composer-clear block and the field kept its text after
-      // every send). Only a real shortcut — it always carries text — qualifies.
-      const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
-      const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
-      const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
-      const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
-      // State updates are committed asynchronously. A ref closes the short
-      // double-tap window before `sending` can disable the native control.
-      if (
-        sendInFlightRef.current ||
-        (!rawText && activePendingAttachments.length === 0) ||
-        isArchived
-      )
-        return;
-      // The daemon already refuses corner-open on a repo-less Room; this is the
-      // friendly client-side path — catch the common phrasing before the
-      // message is sent (and the composer text lost) rather than after a
-      // doomed round-trip.
-      if (
-        !isCorner &&
-        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
-        looksLikeCornerOpenIntent(rawText)
-      ) {
-        setCornerOpenRepoPrompt(true);
-        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-          void transport
-            .workspaceGitHubAccess({ refresh: true })
-            .then((access) => {
-              setRoomRepoCandidates(access.candidates);
-              setGitHubInstallations(access.installations);
-            })
-            .catch(() => undefined);
-        }
-        return;
+  const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
+    // A leaked responder event must never read as a shortcut (#1340's
+    // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
+    // skipped the composer-clear block and the field kept its text after
+    // every send). Only a real shortcut — it always carries text — qualifies.
+    const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
+    const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
+    const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
+    const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
+    // State updates are committed asynchronously. A ref closes the short
+    // double-tap window before `sending` can disable the native control.
+    if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
+      return;
+    // The daemon already refuses corner-open on a repo-less Room; this is the
+    // friendly client-side path — catch the common phrasing before the
+    // message is sent (and the composer text lost) rather than after a
+    // doomed round-trip.
+    if (
+      !isCorner &&
+      ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+      looksLikeCornerOpenIntent(rawText)
+    ) {
+      setCornerOpenRepoPrompt(true);
+      if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
+        void transport
+          .workspaceGitHubAccess({ refresh: true })
+          .then((access) => {
+            setRoomRepoCandidates(access.candidates);
+            setGitHubInstallations(access.installations);
+          })
+          .catch(() => undefined);
       }
-      const preparedReply = activeReplyTarget
-        ? prepareMessageReply(rawText, activeReplyTarget)
-        : undefined;
-      const text = preparedReply?.text ?? rawText;
-      const mentionedPubkeys = resolveComposerMentions(
-        text,
-        roomParticipants,
-        sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
-      ).pubkeys;
-      const selectedMentionedAgent = sendShortcut
-        ? undefined
-        : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
-      const mentionedAgent =
-        selectedMentionedAgent ??
-        preparedReply?.agentPubkey ??
-        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
-        mentionedAgentPubkey(text, roomAgents);
-      // Resolve before attachment upload or cold transport creation so the ack
-      // cannot wait on either. A corner (one agent, always addressed) or a
-      // two-party Room (the sole other participant may speak naturally, per the
-      // addressing rule) counts too.
-      const addressesAgent =
-        isCorner ||
-        Boolean(mentionedAgent) ||
-        (roomAgents.length === 1 && roomParticipants.length <= 2);
-      setReceivedSteer(null);
-      setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
-
-      sendInFlightRef.current = true;
-      setSending(true);
-      if (desktopExperience) setDesktopDeliveryState('sending');
-      let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
-      let preparedTransport: BuzzRigTransport | undefined;
-      try {
-        // A warm/partial snapshot can paint before the hydration effect has
-        // published its transport state. Sending is still a valid operation:
-        // construct the monolith transport on demand rather than
-        // leaving the enabled send control as a silent no-op.
-        let sendTransport = transport;
-        if (!sendTransport) {
-          const identity = await loadBuzzIdentity();
-          if (!identity) throw new Error('Beeline identity is unavailable');
-          sendTransport = new BuzzRigTransport(identity);
-        }
-        if (!transport) setSessionTransport(sendTransport);
-        preparedTransport = sendTransport;
-        const attachments = await uploadChatAttachments(
-          await sendTransport.ensureClient(),
-          activePendingAttachments,
-        );
-        // Sign before append. The authoritative event id is the optimistic row
-        // identity and the durable outbox key from its first frame onward.
-        preparedEvent = preparedReply?.reference
-          ? await sendTransport.composeReplyMessage(
-              text,
-              preparedReply.reference,
-              mentionedAgent,
-              attachments,
-              mentionedPubkeys,
-            )
-          : await sendTransport.composeMessage(
-              { sessionId: decodedId, text, attachments },
-              mentionedAgent || mentionedPubkeys.length
-                ? {
-                    ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
-                    ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-                  }
-                : undefined,
-            );
-        if (addressesAgent) {
-          setPendingAck((current) =>
-            current ? { ...current, requestId: preparedEvent!.id } : current,
-          );
-        }
-        const optimistic = {
-          id: preparedEvent.id,
-          text,
-          isUser: true,
-          timestamp: preparedEvent.created_at,
-          authorIdentity: roomSurface?.viewer.identity ?? {
-            pubkey: userPubkey,
-            kind: 'human',
-            name: fallbackMemberName(userPubkey),
-          },
-          pubkey: userPubkey,
-          reference: undefined,
-          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
-          ...(attachments.length ? { attachments } : {}),
-        } satisfies ChatDisplayMessage;
-        const activeOutbox = outbox.current();
-        if (!activeOutbox) throw new Error('Message outbox is unavailable');
-        await activeOutbox.enqueue(preparedEvent, {
-          id: preparedEvent.id,
-          text,
-          createdAt: preparedEvent.created_at,
-          author: roomSurface?.viewer.identity ?? {
-            pubkey: userPubkey,
-            kind: 'human',
-            name: fallbackMemberName(userPubkey),
-          },
-          presentation: 'message',
-          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(attachments.length ? { attachments } : {}),
-        });
-        addMessages([optimistic]);
-        if (!sendShortcut) {
-          const nextInputRevision = composerInputRevisionRef.current + 1;
-          composerInputRevisionRef.current = nextInputRevision;
-          // Clear both owners of the controlled field. `clear()` removes the
-          // platform value immediately; the revision remount below guarantees
-          // the replacement starts empty even if native reconciliation lags.
-          composerRef.current?.clear();
-          inputTextRef.current = '';
-          setInputText('');
-          setComposerInputRevision(nextInputRevision);
-          setComposerHeight(COMPOSER_MIN_HEIGHT);
-          setInputSelection({ start: 0, end: 0 });
-          replacePendingAttachments((current) =>
-            current.filter((attachment) => !activePendingAttachments.includes(attachment)),
-          );
-          setReplyTarget(null);
-          if (desktopExperience) void saveDesktopDraft(decodedId, '');
-        }
-        await activeOutbox.attempted(preparedEvent.id);
-        const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
-        if (
-          isCorner &&
-          activeAgentTurn &&
-          writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
-        ) {
-          setReceivedSteer({
-            agentPubkey: activeAgentTurn.agentPubkey,
-            turnRequestId: activeAgentTurn.requestId,
-            receivedAt: Date.now(),
-          });
-        }
-        if (desktopExperience) setDesktopDeliveryState('delivered');
-        // The write ack retires the local bridge: the server has STORED the
-        // message, so "sending…" has nothing left to bridge. It used to outlive
-        // the write by up to the whole first-token wait (tens of seconds) or
-        // its own 15s bound, whichever was longer. The claimed turn's WORKING
-        // receipt lights `thinking` on its own, and this ack must not sit
-        // between them.
-        const ackedRequestId = preparedEvent.id;
-        setPendingAck((current) =>
-          current && (current.requestId === undefined || current.requestId === ackedRequestId)
-            ? null
-            : current,
-        );
-        // Advance the read mark to our own message immediately: a message we
-        // wrote must never gold the Room list while the deck's working
-        // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
-        void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
-        refreshSignal.signal();
-        scheduleOutboxConfirmation(preparedEvent.id);
-      } catch (err) {
-        console.warn('Send failed:', err);
-        if (desktopExperience) setDesktopDeliveryState('failed');
-        // A publish failure already gets its own explicit modal below; the
-        // local ack has nothing left to guess at and must not keep buzzing.
-        setPendingAck(null);
-        if (preparedEvent) await markOutboxFailed(preparedEvent.id);
-        const failure = publishFailurePresentation(err);
-        Modal.alert(
-          'Message not sent',
-          failure.message,
-          failure.retryable
-            ? [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Retry',
-                  onPress: () => {
-                    if (!preparedEvent || !preparedTransport) return;
-                    retryOutboxMessage(preparedEvent.id, preparedTransport);
-                  },
-                },
-              ]
-            : [{ text: 'OK' }],
-        );
-      } finally {
-        sendInFlightRef.current = false;
-        setSending(false);
-      }
-    },
-    [
-      activeCommunityId,
-      replacePendingAttachments,
-      transport,
-      decodedId,
-      addMessages,
-      isArchived,
-      isCorner,
-      activeAgentTurn,
-      userPubkey,
-      parentChannelId,
+      return;
+    }
+    const preparedReply = activeReplyTarget
+      ? prepareMessageReply(rawText, activeReplyTarget)
+      : undefined;
+    const text = preparedReply?.text ?? rawText;
+    const mentionedPubkeys = resolveComposerMentions(
+      text,
       roomParticipants,
-      roomAgents,
-      cacheViewerPubkey,
-      replyTarget,
-      agentsOffline,
-      roomRepoCandidates.length,
-      roomRepository,
-      cornerAgentPubkey,
-      agentPresences,
-      presenceNow,
-      presenceResolved,
-      presenceReconnectGrace,
-      agentByPubkey,
-      roomRepositoryResolved,
-      roomRepoAccessIssue,
-      roomSurface,
-      desktopExperience,
-    ],
-  );
+      sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
+    ).pubkeys;
+    const selectedMentionedAgent = sendShortcut
+      ? undefined
+      : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
+    const mentionedAgent =
+      selectedMentionedAgent ??
+      preparedReply?.agentPubkey ??
+      mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+      mentionedAgentPubkey(text, roomAgents);
+    // Resolve before attachment upload or cold transport creation so the ack
+    // cannot wait on either. A corner (one agent, always addressed) or a
+    // two-party Room (the sole other participant may speak naturally, per the
+    // addressing rule) counts too.
+    const addressesAgent =
+      isCorner ||
+      Boolean(mentionedAgent) ||
+      (roomAgents.length === 1 && roomParticipants.length <= 2);
+    setReceivedSteer(null);
+    setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
+
+    sendInFlightRef.current = true;
+    setSending(true);
+    if (desktopExperience) setDesktopDeliveryState('sending');
+    let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
+    let preparedTransport: BuzzRigTransport | undefined;
+    try {
+      // A warm/partial snapshot can paint before the hydration effect has
+      // published its transport state. Sending is still a valid operation:
+      // construct the monolith transport on demand rather than
+      // leaving the enabled send control as a silent no-op.
+      let sendTransport = transport;
+      if (!sendTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        sendTransport = new BuzzRigTransport(identity);
+      }
+      if (!transport) setSessionTransport(sendTransport);
+      preparedTransport = sendTransport;
+      const attachments = await uploadChatAttachments(
+        await sendTransport.ensureClient(),
+        activePendingAttachments,
+      );
+      // Sign before append. The authoritative event id is the optimistic row
+      // identity and the durable outbox key from its first frame onward.
+      preparedEvent = preparedReply?.reference
+        ? await sendTransport.composeReplyMessage(
+            text,
+            preparedReply.reference,
+            mentionedAgent,
+            attachments,
+            mentionedPubkeys,
+          )
+        : await sendTransport.composeMessage(
+            { sessionId: decodedId, text, attachments },
+            mentionedAgent || mentionedPubkeys.length
+              ? {
+                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                }
+              : undefined,
+          );
+      if (addressesAgent) {
+        setPendingAck((current) =>
+          current ? { ...current, requestId: preparedEvent!.id } : current,
+        );
+      }
+      const optimistic = {
+        id: preparedEvent.id,
+        text,
+        isUser: true,
+        timestamp: preparedEvent.created_at,
+        authorIdentity: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+            name: fallbackMemberName(userPubkey),
+        },
+        pubkey: userPubkey,
+        reference: undefined,
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      } satisfies ChatDisplayMessage;
+      const activeOutbox = outbox.current();
+      if (!activeOutbox) throw new Error('Message outbox is unavailable');
+      await activeOutbox.enqueue(preparedEvent, {
+        id: preparedEvent.id,
+        text,
+        createdAt: preparedEvent.created_at,
+        author: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+            name: fallbackMemberName(userPubkey),
+        },
+        presentation: 'message',
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      });
+      addMessages([optimistic]);
+      if (!sendShortcut) {
+        const nextInputRevision = composerInputRevisionRef.current + 1;
+        composerInputRevisionRef.current = nextInputRevision;
+        // Clear both owners of the controlled field. `clear()` removes the
+        // platform value immediately; the revision remount below guarantees
+        // the replacement starts empty even if native reconciliation lags.
+        composerRef.current?.clear();
+        inputTextRef.current = '';
+        setInputText('');
+        setComposerInputRevision(nextInputRevision);
+        setComposerHeight(COMPOSER_MIN_HEIGHT);
+        setInputSelection({ start: 0, end: 0 });
+        replacePendingAttachments((current) =>
+          current.filter((attachment) => !activePendingAttachments.includes(attachment)),
+        );
+        setReplyTarget(null);
+        if (desktopExperience) void saveDesktopDraft(decodedId, '');
+      }
+      await activeOutbox.attempted(preparedEvent.id);
+      const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+      if (
+        isCorner &&
+        activeAgentTurn &&
+        writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
+      ) {
+        setReceivedSteer({
+          agentPubkey: activeAgentTurn.agentPubkey,
+          turnRequestId: activeAgentTurn.requestId,
+          receivedAt: Date.now(),
+        });
+      }
+      if (desktopExperience) setDesktopDeliveryState('delivered');
+      // The write ack retires the local bridge: the server has STORED the
+      // message, so "sending…" has nothing left to bridge. It used to outlive
+      // the write by up to the whole first-token wait (tens of seconds) or
+      // its own 15s bound, whichever was longer. The claimed turn's WORKING
+      // receipt lights `thinking` on its own, and this ack must not sit
+      // between them.
+      const ackedRequestId = preparedEvent.id;
+      setPendingAck((current) =>
+        current && (current.requestId === undefined || current.requestId === ackedRequestId)
+          ? null
+          : current,
+      );
+      // Advance the read mark to our own message immediately: a message we
+      // wrote must never gold the Room list while the deck's working
+      // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
+      void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
+      refreshSignal.signal();
+      scheduleOutboxConfirmation(preparedEvent.id);
+    } catch (err) {
+      console.warn('Send failed:', err);
+      if (desktopExperience) setDesktopDeliveryState('failed');
+      // A publish failure already gets its own explicit modal below; the
+      // local ack has nothing left to guess at and must not keep buzzing.
+      setPendingAck(null);
+      if (preparedEvent) await markOutboxFailed(preparedEvent.id);
+      const failure = publishFailurePresentation(err);
+      Modal.alert(
+        'Message not sent',
+        failure.message,
+        failure.retryable
+          ? [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Retry',
+                onPress: () => {
+                  if (!preparedEvent || !preparedTransport) return;
+                  retryOutboxMessage(preparedEvent.id, preparedTransport);
+                },
+              },
+            ]
+          : [{ text: 'OK' }],
+      );
+    } finally {
+      sendInFlightRef.current = false;
+      setSending(false);
+    }
+  }, [
+    activeCommunityId,
+    replacePendingAttachments,
+    transport,
+    decodedId,
+    addMessages,
+    isArchived,
+    isCorner,
+    activeAgentTurn,
+    userPubkey,
+    parentChannelId,
+    roomParticipants,
+    roomAgents,
+    cacheViewerPubkey,
+    replyTarget,
+    agentsOffline,
+    roomRepoCandidates.length,
+    roomRepository,
+    cornerAgentPubkey,
+    agentPresences,
+    presenceNow,
+    presenceResolved,
+    presenceReconnectGrace,
+    agentByPubkey,
+    roomRepositoryResolved,
+    roomRepoAccessIssue,
+    roomSurface,
+    desktopExperience,
+  ]);
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
@@ -3961,7 +3980,10 @@ export function BuzzChatSurface({
   );
 
   const toggleDesktopWorkPane = useCallback(() => {
-    if (desktopWorkPaneRef.current.preference !== 'present' && !hasLiveDesktopCorners) {
+    if (
+      desktopWorkPaneRef.current.preference !== 'present' &&
+      !hasLiveDesktopCorners
+    ) {
       return;
     }
     const transition = commitDesktopWorkPane({ type: 'toggle' });
@@ -4687,7 +4709,10 @@ export function BuzzChatSurface({
                 style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >
-                <CornerGlyph size={HEADER_MARK_SIZE} testID="room-corners-glyph" />
+                <CornerGlyph
+                  size={HEADER_MARK_SIZE}
+                  testID="room-corners-glyph"
+                />
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -4742,402 +4767,399 @@ export function BuzzChatSurface({
             style={styles.keyboardBody}
             behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
           >
-            {/* What the corner is for, held under the header for its whole life:
+          {/* What the corner is for, held under the header for its whole life:
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-            {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
 
-            {/* The corner's PR state, inscribed above the transcript: one line
+          {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
-            {isCorner && (
-              <CornerStatusLine
-                lifecycle={roomSurface?.cornerLifecycle}
-                archived={isArchived}
-                onOpenPullRequest={(url) => {
-                  void openExternalUrl(url).catch(() => {
-                    Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
-                  });
-                }}
-              />
-            )}
+          {isCorner && (
+            <CornerStatusLine
+              lifecycle={roomSurface?.cornerLifecycle}
+              archived={isArchived}
+              onOpenPullRequest={(url) => {
+                void openExternalUrl(url).catch(() => {
+                  Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
+                });
+              }}
+            />
+          )}
 
-            <View style={styles.transcriptViewport}>
-              <FlatList
-                {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
-                testID="chat-messages"
-                ref={flatListRef}
-                inverted={!desktopTranscript && transcriptMessages.length > 0}
-                data={transcriptMessages}
-                keyExtractor={(item: ChatDisplayMessage) => item.id}
-                style={styles.messageList}
-                contentContainerStyle={[
-                  styles.messageListContent,
-                  desktopTranscript && styles.messageListContentDesktop,
-                  transcriptMessages.length === 0 && styles.messageListContentEmpty,
-                  // Inverted list: paddingTop is the visual tail. Always the
-                  // ordinary speaker-change margin — the thinking line is
-                  // absolute, painted over it, not a padding reserve.
-                  !desktopTranscript &&
-                    !isArchived && {
-                      paddingTop: phoneTranscriptTailPadding({
-                        turnChromeVisible: Boolean(composerAck || settledTurn),
-                        pushedChromeVisible: agentsOffline,
-                      }),
-                    },
-                ]}
-                maintainVisibleContentPosition={
-                  desktopTranscript
-                    ? undefined
-                    : {
-                        // Native records the first eligible visible child's real
-                        // frame and compensates by its measured movement. That
-                        // preserves variable-height history without getItemLayout,
-                        // eager rendering, or an estimated offset. Index 0 is
-                        // excluded because optimistic settlement and streams can
-                        // replace it in place. Web's adapter shifts scrollTop on
-                        // tail appends, so desktop uses its measured path instead.
-                        minIndexForVisible: 1,
-                        // Native offset 0 is the visual bottom.
-                        autoscrollToTopThreshold: 50,
-                      }
-                }
-                maxToRenderPerBatch={
-                  desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
-                }
-                initialNumToRender={
-                  desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
-                }
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
-                onScroll={(event) => {
-                  const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-                  currentScrollOffsetRef.current = contentOffset.y;
-                  viewportHeightRef.current = layoutMeasurement.height;
-                  isPinnedToTailRef.current = desktopTranscript
-                    ? contentOffset.y + layoutMeasurement.height >=
-                      contentSize.height - TAIL_PIN_THRESHOLD
-                    : contentOffset.y <= TAIL_PIN_THRESHOLD;
-                  if (
-                    desktopTranscript &&
-                    (!isPinnedToTailRef.current ||
-                      contentSize.height <= layoutMeasurement.height + TAIL_PIN_THRESHOLD) &&
-                    contentOffset.y <= TAIL_PIN_THRESHOLD
-                  ) {
-                    loadOlderTranscriptMessages();
+          <View style={styles.transcriptViewport}>
+          <FlatList
+            {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
+            testID="chat-messages"
+            ref={flatListRef}
+            inverted={!desktopTranscript && transcriptMessages.length > 0}
+            data={transcriptMessages}
+            keyExtractor={(item: ChatDisplayMessage) => item.id}
+            style={styles.messageList}
+            contentContainerStyle={[
+              styles.messageListContent,
+              desktopTranscript && styles.messageListContentDesktop,
+              transcriptMessages.length === 0 && styles.messageListContentEmpty,
+              // Inverted list: paddingTop is the visual tail. Always the
+              // ordinary speaker-change margin — the thinking line is
+              // absolute, painted over it, not a padding reserve.
+              !desktopTranscript &&
+                !isArchived && {
+                  paddingTop: phoneTranscriptTailPadding({
+                    turnChromeVisible: Boolean(composerAck || settledTurn),
+                    pushedChromeVisible: agentsOffline,
+                  }),
+                },
+            ]}
+            maintainVisibleContentPosition={
+              desktopTranscript
+                ? undefined
+                : {
+                    // Native records the first eligible visible child's real
+                    // frame and compensates by its measured movement. That
+                    // preserves variable-height history without getItemLayout,
+                    // eager rendering, or an estimated offset. Index 0 is
+                    // excluded because optimistic settlement and streams can
+                    // replace it in place. Web's adapter shifts scrollTop on
+                    // tail appends, so desktop uses its measured path instead.
+                    minIndexForVisible: 1,
+                    // Native offset 0 is the visual bottom.
+                    autoscrollToTopThreshold: 50,
                   }
-                }}
-                scrollEventThrottle={100}
-                onViewableItemsChanged={observeVisibleTranscriptMessages}
-                onScrollBeginDrag={() => {
-                  cancelDesktopOpenLanding();
-                  dragEndSequenceRef.current += 1;
-                  userDraggingRef.current = true;
-                  allowOlderHistoryRef.current = true;
-                }}
-                onScrollEndDrag={(event) => {
-                  // Drag-end precedes momentum-begin. Missing optional velocity is
-                  // not proof that the gesture stopped: keep the guard armed for
-                  // the event turn, so momentum-begin can claim it before a
-                  // pending boundary landing resumes.
-                  const sequence = ++dragEndSequenceRef.current;
-                  const velocity = event.nativeEvent.velocity?.y;
-                  if (velocity !== undefined) {
-                    const hasMomentum = Math.abs(velocity) > 0.01;
-                    userDraggingRef.current = hasMomentum;
-                    if (!hasMomentum) resumePendingNewMessageLanding();
-                    return;
-                  }
-                  userDraggingRef.current = true;
-                  scheduleAnimationFrame(() => {
-                    if (dragEndSequenceRef.current !== sequence) return;
-                    userDraggingRef.current = false;
-                    resumePendingNewMessageLanding();
+            }
+            maxToRenderPerBatch={
+              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
+            }
+            initialNumToRender={
+              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
+            }
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+            onScroll={(event) => {
+              const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+              currentScrollOffsetRef.current = contentOffset.y;
+              viewportHeightRef.current = layoutMeasurement.height;
+              isPinnedToTailRef.current = desktopTranscript
+                ? contentOffset.y + layoutMeasurement.height >=
+                  contentSize.height - TAIL_PIN_THRESHOLD
+                : contentOffset.y <= TAIL_PIN_THRESHOLD;
+              if (
+                desktopTranscript &&
+                (!isPinnedToTailRef.current ||
+                  contentSize.height <= layoutMeasurement.height + TAIL_PIN_THRESHOLD) &&
+                contentOffset.y <= TAIL_PIN_THRESHOLD
+              ) {
+                loadOlderTranscriptMessages();
+              }
+            }}
+            scrollEventThrottle={100}
+            onViewableItemsChanged={observeVisibleTranscriptMessages}
+            onScrollBeginDrag={() => {
+              cancelDesktopOpenLanding();
+              dragEndSequenceRef.current += 1;
+              userDraggingRef.current = true;
+              allowOlderHistoryRef.current = true;
+            }}
+            onScrollEndDrag={(event) => {
+              // Drag-end precedes momentum-begin. Missing optional velocity is
+              // not proof that the gesture stopped: keep the guard armed for
+              // the event turn, so momentum-begin can claim it before a
+              // pending boundary landing resumes.
+              const sequence = ++dragEndSequenceRef.current;
+              const velocity = event.nativeEvent.velocity?.y;
+              if (velocity !== undefined) {
+                const hasMomentum = Math.abs(velocity) > 0.01;
+                userDraggingRef.current = hasMomentum;
+                if (!hasMomentum) resumePendingNewMessageLanding();
+                return;
+              }
+              userDraggingRef.current = true;
+              scheduleAnimationFrame(() => {
+                if (dragEndSequenceRef.current !== sequence) return;
+                userDraggingRef.current = false;
+                resumePendingNewMessageLanding();
+              });
+            }}
+            onMomentumScrollBegin={() => {
+              cancelDesktopOpenLanding();
+              dragEndSequenceRef.current += 1;
+              userDraggingRef.current = true;
+              allowOlderHistoryRef.current = true;
+            }}
+            onMomentumScrollEnd={() => {
+              dragEndSequenceRef.current += 1;
+              userDraggingRef.current = false;
+              resumePendingNewMessageLanding();
+            }}
+            onContentSizeChange={(_width, height) => {
+              const previousHeight = nativeContentHeightRef.current;
+              nativeContentHeightRef.current = height;
+              if (desktopTranscript) {
+                if (desktopOpenLandingRef.current) {
+                  // Cold-open landing ignores transient pin reports from its
+                  // own jumps. Reader input cancels it through the handlers
+                  // above; appended-message following remains separately
+                  // guarded by its held reader offset.
+                  const openLandingDecision = desktopOpenLandingOnContentSizeChange({
+                    active: true,
+                    previousHeight,
+                    nextHeight: height,
+                    isUserDragging: userDraggingRef.current,
                   });
-                }}
-                onMomentumScrollBegin={() => {
-                  cancelDesktopOpenLanding();
-                  dragEndSequenceRef.current += 1;
-                  userDraggingRef.current = true;
-                  allowOlderHistoryRef.current = true;
-                }}
-                onMomentumScrollEnd={() => {
-                  dragEndSequenceRef.current += 1;
-                  userDraggingRef.current = false;
-                  resumePendingNewMessageLanding();
-                }}
-                onContentSizeChange={(_width, height) => {
-                  const previousHeight = nativeContentHeightRef.current;
-                  nativeContentHeightRef.current = height;
-                  if (desktopTranscript) {
-                    if (desktopOpenLandingRef.current) {
-                      // Cold-open landing ignores transient pin reports from its
-                      // own jumps. Reader input cancels it through the handlers
-                      // above; appended-message following remains separately
-                      // guarded by its held reader offset.
-                      const openLandingDecision = desktopOpenLandingOnContentSizeChange({
-                        active: true,
-                        previousHeight,
-                        nextHeight: height,
-                        isUserDragging: userDraggingRef.current,
-                      });
-                      if (openLandingDecision === 'settle') {
-                        cancelDesktopOpenLanding();
-                      } else if (openLandingDecision === 'scroll') {
-                        flatListRef.current?.scrollToOffset({
-                          offset: height,
-                          animated: false,
-                        });
-                        if (desktopOpenLandingSettleTimerRef.current !== null) {
-                          clearTimeout(desktopOpenLandingSettleTimerRef.current);
-                        }
-                        desktopOpenLandingSettleTimerRef.current = setTimeout(
-                          cancelDesktopOpenLanding,
-                          DESKTOP_OPEN_LANDING_SETTLE_MS,
-                        );
-                      }
-                      return;
+                  if (openLandingDecision === 'settle') {
+                    cancelDesktopOpenLanding();
+                  } else if (openLandingDecision === 'scroll') {
+                    flatListRef.current?.scrollToOffset({
+                      offset: height,
+                      animated: false,
+                    });
+                    if (desktopOpenLandingSettleTimerRef.current !== null) {
+                      clearTimeout(desktopOpenLandingSettleTimerRef.current);
                     }
-                    if (desktopTailDisarmTimerRef.current !== null) {
-                      clearTimeout(desktopTailDisarmTimerRef.current);
-                      desktopTailDisarmTimerRef.current = null;
-                    }
-                    desktopTailStableSinceRef.current = null;
-                    // The measured tail gap is the landing authority on append:
-                    // scrollToEnd's estimated metrics land mid-list the moment
-                    // the row appends, and each provisional content height only
-                    // advances about one render batch, so re-land while the gap
-                    // is still above the pin threshold. Disarm after the real
-                    // gap stays closed across the settle window, or immediately
-                    // when the reader scrolls, so no stale follow reaches paging.
-                    const scrollNode = flatListRef.current?.getScrollableNode() as
+                    desktopOpenLandingSettleTimerRef.current = setTimeout(
+                      cancelDesktopOpenLanding,
+                      DESKTOP_OPEN_LANDING_SETTLE_MS,
+                    );
+                  }
+                  return;
+                }
+                if (desktopTailDisarmTimerRef.current !== null) {
+                  clearTimeout(desktopTailDisarmTimerRef.current);
+                  desktopTailDisarmTimerRef.current = null;
+                }
+                desktopTailStableSinceRef.current = null;
+                // The measured tail gap is the landing authority on append:
+                // scrollToEnd's estimated metrics land mid-list the moment
+                // the row appends, and each provisional content height only
+                // advances about one render batch, so re-land while the gap
+                // is still above the pin threshold. Disarm after the real
+                // gap stays closed across the settle window, or immediately
+                // when the reader scrolls, so no stale follow reaches paging.
+                const scrollNode = flatListRef.current?.getScrollableNode() as
+                  | { scrollHeight: number; clientHeight: number; scrollTop: number }
+                  | null
+                  | undefined;
+                const tailGap = scrollNode
+                  ? scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop
+                  : height - viewportHeightRef.current - currentScrollOffsetRef.current;
+                const landing = desktopTailLanding({
+                  tailGapAboveThreshold: tailGap > TAIL_PIN_THRESHOLD,
+                  tailStable: false,
+                  isUserScrolling:
+                    userScrolledAtRef.current > 0 &&
+                    Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+                  readerMovedUp:
+                    desktopTailHeldOffsetRef.current !== null &&
+                    scrollNode != null &&
+                    scrollNode.scrollTop <
+                      desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
+                  landingsRemaining: desktopTailLandingsRef.current,
+                });
+                // Charge the landing only when the previous one left the
+                // follow in the same place (stalled). A landing that
+                // reached the bottom it was shown cannot be charged for
+                // the gap RN Web later reopens by measuring rows above
+                // the viewport — a long transcript needs many such
+                // landings, so the budget must never become a
+                // transcript-length limit.
+                const stalled = tailFollowStalled(
+                  desktopTailLastLandRef.current,
+                  scrollNode
+                    ? { scrollHeight: scrollNode.scrollHeight, scrollTop: scrollNode.scrollTop }
+                    : null,
+                  DESKTOP_TAIL_STALL_EPS,
+                );
+                if (landing.disarm) {
+                  desktopTailLandingsRef.current = 0;
+                } else if (landing.land) {
+                  desktopTailLandingsRef.current = stalled
+                    ? Math.max(0, desktopTailLandingsRef.current - 1)
+                    : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
+                }
+                if (landing.disarm) {
+                  desktopTailHeldOffsetRef.current = null;
+                  desktopTailLastLandRef.current = null;
+                }
+                if (landing.land) {
+                  flatListRef.current?.scrollToOffset({
+                    offset: scrollNode?.scrollHeight ?? height,
+                    animated: false,
+                  });
+                  if (scrollNode) {
+                    desktopTailHeldOffsetRef.current =
+                      scrollNode.scrollHeight - scrollNode.clientHeight;
+                    // Record the state this landing left, read after the
+                    // scroll so the next event's stall test compares the
+                    // real landed position.
+                    desktopTailLastLandRef.current = {
+                      scrollHeight: scrollNode.scrollHeight,
+                      scrollTop: scrollNode.scrollTop,
+                    };
+                  }
+                }
+                if (!landing.disarm && desktopTailLandingsRef.current > 0) {
+                  const settleDesktopTail = () => {
+                    const settledNode = flatListRef.current?.getScrollableNode() as
                       | { scrollHeight: number; clientHeight: number; scrollTop: number }
                       | null
                       | undefined;
-                    const tailGap = scrollNode
-                      ? scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop
-                      : height - viewportHeightRef.current - currentScrollOffsetRef.current;
-                    const landing = desktopTailLanding({
-                      tailGapAboveThreshold: tailGap > TAIL_PIN_THRESHOLD,
-                      tailStable: false,
+                    const settledGap = settledNode
+                      ? settledNode.scrollHeight - settledNode.clientHeight - settledNode.scrollTop
+                      : Number.POSITIVE_INFINITY;
+                    if (settledGap > TAIL_PIN_THRESHOLD) {
+                      desktopTailStableSinceRef.current = null;
+                    } else if (desktopTailStableSinceRef.current === null) {
+                      desktopTailStableSinceRef.current = Date.now();
+                    }
+                    const settledDecision = desktopTailLanding({
+                      tailGapAboveThreshold: settledGap > TAIL_PIN_THRESHOLD,
+                      tailStable:
+                        desktopTailStableSinceRef.current !== null &&
+                        Date.now() - desktopTailStableSinceRef.current >= DESKTOP_TAIL_SETTLE_MS,
                       isUserScrolling:
                         userScrolledAtRef.current > 0 &&
                         Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
                       readerMovedUp:
                         desktopTailHeldOffsetRef.current !== null &&
-                        scrollNode != null &&
-                        scrollNode.scrollTop <
+                        settledNode != null &&
+                        settledNode.scrollTop <
                           desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
                       landingsRemaining: desktopTailLandingsRef.current,
                     });
-                    // Charge the landing only when the previous one left the
-                    // follow in the same place (stalled). A landing that
-                    // reached the bottom it was shown cannot be charged for
-                    // the gap RN Web later reopens by measuring rows above
-                    // the viewport — a long transcript needs many such
-                    // landings, so the budget must never become a
-                    // transcript-length limit.
-                    const stalled = tailFollowStalled(
+                    // Same stall test as the content-size site: charge only
+                    // a poll landing that left the follow unchanged.
+                    const settledStalled = tailFollowStalled(
                       desktopTailLastLandRef.current,
-                      scrollNode
-                        ? { scrollHeight: scrollNode.scrollHeight, scrollTop: scrollNode.scrollTop }
+                      settledNode
+                        ? {
+                            scrollHeight: settledNode.scrollHeight,
+                            scrollTop: settledNode.scrollTop,
+                          }
                         : null,
                       DESKTOP_TAIL_STALL_EPS,
                     );
-                    if (landing.disarm) {
+                    if (settledDecision.disarm) {
                       desktopTailLandingsRef.current = 0;
-                    } else if (landing.land) {
-                      desktopTailLandingsRef.current = stalled
+                    } else if (settledDecision.land) {
+                      desktopTailLandingsRef.current = settledStalled
                         ? Math.max(0, desktopTailLandingsRef.current - 1)
                         : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
                     }
-                    if (landing.disarm) {
+                    if (settledDecision.disarm) {
                       desktopTailHeldOffsetRef.current = null;
                       desktopTailLastLandRef.current = null;
                     }
-                    if (landing.land) {
+                    if (settledDecision.land && settledNode) {
                       flatListRef.current?.scrollToOffset({
-                        offset: scrollNode?.scrollHeight ?? height,
+                        offset: settledNode.scrollHeight,
                         animated: false,
                       });
-                      if (scrollNode) {
-                        desktopTailHeldOffsetRef.current =
-                          scrollNode.scrollHeight - scrollNode.clientHeight;
-                        // Record the state this landing left, read after the
-                        // scroll so the next event's stall test compares the
-                        // real landed position.
-                        desktopTailLastLandRef.current = {
-                          scrollHeight: scrollNode.scrollHeight,
-                          scrollTop: scrollNode.scrollTop,
-                        };
-                      }
-                    }
-                    if (!landing.disarm && desktopTailLandingsRef.current > 0) {
-                      const settleDesktopTail = () => {
-                        const settledNode = flatListRef.current?.getScrollableNode() as
-                          | { scrollHeight: number; clientHeight: number; scrollTop: number }
-                          | null
-                          | undefined;
-                        const settledGap = settledNode
-                          ? settledNode.scrollHeight -
-                            settledNode.clientHeight -
-                            settledNode.scrollTop
-                          : Number.POSITIVE_INFINITY;
-                        if (settledGap > TAIL_PIN_THRESHOLD) {
-                          desktopTailStableSinceRef.current = null;
-                        } else if (desktopTailStableSinceRef.current === null) {
-                          desktopTailStableSinceRef.current = Date.now();
-                        }
-                        const settledDecision = desktopTailLanding({
-                          tailGapAboveThreshold: settledGap > TAIL_PIN_THRESHOLD,
-                          tailStable:
-                            desktopTailStableSinceRef.current !== null &&
-                            Date.now() - desktopTailStableSinceRef.current >=
-                              DESKTOP_TAIL_SETTLE_MS,
-                          isUserScrolling:
-                            userScrolledAtRef.current > 0 &&
-                            Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
-                          readerMovedUp:
-                            desktopTailHeldOffsetRef.current !== null &&
-                            settledNode != null &&
-                            settledNode.scrollTop <
-                              desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
-                          landingsRemaining: desktopTailLandingsRef.current,
-                        });
-                        // Same stall test as the content-size site: charge only
-                        // a poll landing that left the follow unchanged.
-                        const settledStalled = tailFollowStalled(
-                          desktopTailLastLandRef.current,
-                          settledNode
-                            ? {
-                                scrollHeight: settledNode.scrollHeight,
-                                scrollTop: settledNode.scrollTop,
-                              }
-                            : null,
-                          DESKTOP_TAIL_STALL_EPS,
-                        );
-                        if (settledDecision.disarm) {
-                          desktopTailLandingsRef.current = 0;
-                        } else if (settledDecision.land) {
-                          desktopTailLandingsRef.current = settledStalled
-                            ? Math.max(0, desktopTailLandingsRef.current - 1)
-                            : Math.min(
-                                DESKTOP_TAIL_LANDING_CAP,
-                                desktopTailLandingsRef.current + 1,
-                              );
-                        }
-                        if (settledDecision.disarm) {
-                          desktopTailHeldOffsetRef.current = null;
-                          desktopTailLastLandRef.current = null;
-                        }
-                        if (settledDecision.land && settledNode) {
-                          flatListRef.current?.scrollToOffset({
-                            offset: settledNode.scrollHeight,
-                            animated: false,
-                          });
-                          desktopTailHeldOffsetRef.current =
-                            settledNode.scrollHeight - settledNode.clientHeight;
-                          desktopTailLastLandRef.current = {
-                            scrollHeight: settledNode.scrollHeight,
-                            scrollTop: settledNode.scrollTop,
-                          };
-                        }
-                        if (settledDecision.disarm || desktopTailLandingsRef.current <= 0) {
-                          desktopTailLandingsRef.current = 0;
-                          desktopTailHeldOffsetRef.current = null;
-                          desktopTailLastLandRef.current = null;
-                          desktopTailDisarmTimerRef.current = null;
-                          return;
-                        }
-                        desktopTailDisarmTimerRef.current = setTimeout(
-                          settleDesktopTail,
-                          DESKTOP_TAIL_POLL_MS,
-                        );
+                      desktopTailHeldOffsetRef.current =
+                        settledNode.scrollHeight - settledNode.clientHeight;
+                      desktopTailLastLandRef.current = {
+                        scrollHeight: settledNode.scrollHeight,
+                        scrollTop: settledNode.scrollTop,
                       };
-                      desktopTailDisarmTimerRef.current = setTimeout(
-                        settleDesktopTail,
-                        DESKTOP_TAIL_POLL_MS,
-                      );
                     }
-                    return;
-                  }
-                  // Native history anchoring is owned solely by
-                  // maintainVisibleContentPosition above. Programmatic offset
-                  // correction here would race its measured child-frame delta and
-                  // can override a touch or momentum scroll.
-                }}
-                renderItem={renderItem}
-                onScrollToIndexFailed={({ averageItemLength }) => {
-                  const pending = pendingNewMessageLandingRef.current;
-                  if (!pending || userDraggingRef.current) return;
-                  const currentIndex = boundaryRowIndex(
-                    transcriptMessagesRef.current,
-                    pending.boundaryId,
+                    if (settledDecision.disarm || desktopTailLandingsRef.current <= 0) {
+                      desktopTailLandingsRef.current = 0;
+                      desktopTailHeldOffsetRef.current = null;
+                      desktopTailLastLandRef.current = null;
+                      desktopTailDisarmTimerRef.current = null;
+                      return;
+                    }
+                    desktopTailDisarmTimerRef.current = setTimeout(
+                      settleDesktopTail,
+                      DESKTOP_TAIL_POLL_MS,
+                    );
+                  };
+                  desktopTailDisarmTimerRef.current = setTimeout(
+                    settleDesktopTail,
+                    DESKTOP_TAIL_POLL_MS,
                   );
-                  if (currentIndex < 0) return;
-                  // Variable-height ledger rows cannot provide getItemLayout.
-                  // Estimate near the CURRENT boundary, let that window measure,
-                  // then resolve the durable id again before retrying.
-                  flatListRef.current?.scrollToOffset({
-                    offset: averageItemLength * currentIndex,
-                    animated: false,
-                  });
-                  setTimeout(() => {
-                    const current = pendingNewMessageLandingRef.current;
-                    if (!current || userDraggingRef.current) return;
-                    landAtNewMessageBoundary(current.boundaryId, current.acknowledgeQueue);
-                  }, 50);
-                }}
-                onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}
-                onEndReachedThreshold={0.5}
-                ListEmptyComponent={
-                  <View style={styles.emptyState}>
-                    <EmptyLedgerState
-                      variant={emptyLedgerVariant}
-                      name={isDirectMessage ? displayRoomName : undefined}
-                      objective={isCorner ? cornerObjectiveText : undefined}
-                      onPress={focusComposer}
-                    />
-                  </View>
                 }
-                ListHeaderComponent={desktopTranscript ? transcriptHistoryLine : null}
-                ListFooterComponent={
-                  // Inverted native list: the footer is the visual top.
-                  desktopTranscript ? null : transcriptHistoryLine
-                }
-              />
-              {newMessageQueue.count > 0 && newMessageQueue.boundaryId && (
-                <Pressable
-                  accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
-                  accessibilityRole="button"
-                  onPress={() => landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)}
-                  style={({ pressed }) => [
-                    styles.newMessageControlHitTarget,
-                    pressed && styles.newMessageControlPressed,
-                  ]}
-                  testID="new-message-control"
-                >
-                  <View style={styles.newMessageControlPlate}>
-                    <Text style={styles.newMessageControlText}>
-                      {compactNewMessageCount(newMessageQueue.count)} new
-                    </Text>
-                  </View>
-                </Pressable>
-              )}
-            </View>
-
-            {/* P2: Archived channels are read-only */}
-            {isArchived ? (
-              <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-                <Text
-                  style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}
-                >
-                  {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
+                return;
+              }
+              // Native history anchoring is owned solely by
+              // maintainVisibleContentPosition above. Programmatic offset
+              // correction here would race its measured child-frame delta and
+              // can override a touch or momentum scroll.
+            }}
+            renderItem={renderItem}
+            onScrollToIndexFailed={({ averageItemLength }) => {
+              const pending = pendingNewMessageLandingRef.current;
+              if (!pending || userDraggingRef.current) return;
+              const currentIndex = boundaryRowIndex(
+                transcriptMessagesRef.current,
+                pending.boundaryId,
+              );
+              if (currentIndex < 0) return;
+              // Variable-height ledger rows cannot provide getItemLayout.
+              // Estimate near the CURRENT boundary, let that window measure,
+              // then resolve the durable id again before retrying.
+              flatListRef.current?.scrollToOffset({
+                offset: averageItemLength * currentIndex,
+                animated: false,
+              });
+              setTimeout(() => {
+                const current = pendingNewMessageLandingRef.current;
+                if (!current || userDraggingRef.current) return;
+                landAtNewMessageBoundary(
+                  current.boundaryId,
+                  current.acknowledgeQueue,
+                );
+              }, 50);
+            }}
+            onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}
+            onEndReachedThreshold={0.5}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <EmptyLedgerState
+                  variant={emptyLedgerVariant}
+                  name={isDirectMessage ? displayRoomName : undefined}
+                  objective={isCorner ? cornerObjectiveText : undefined}
+                  onPress={focusComposer}
+                />
+              </View>
+            }
+            ListHeaderComponent={desktopTranscript ? transcriptHistoryLine : null}
+            ListFooterComponent={
+              // Inverted native list: the footer is the visual top.
+              desktopTranscript ? null : transcriptHistoryLine
+            }
+          />
+          {newMessageQueue.count > 0 && newMessageQueue.boundaryId && (
+            <Pressable
+              accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
+              accessibilityRole="button"
+              onPress={() =>
+                landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
+              }
+              style={({ pressed }) => [
+                styles.newMessageControlHitTarget,
+                pressed && styles.newMessageControlPressed,
+              ]}
+              testID="new-message-control"
+            >
+              <View style={styles.newMessageControlPlate}>
+                <Text style={styles.newMessageControlText}>
+                  {compactNewMessageCount(newMessageQueue.count)} new
                 </Text>
               </View>
-            ) : (
-              <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-                {/* Phone turn chrome paints over the transcript's own bottom
+            </Pressable>
+          )}
+          </View>
+
+          {/* P2: Archived channels are read-only */}
+          {isArchived ? (
+            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+              <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
+                {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
+              {/* Phone turn chrome paints over the transcript's own bottom
                 margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
                 anchored to this stack's top edge, so it takes no height from
                 the list whether or not an agent is working and cannot cover
@@ -5146,379 +5168,361 @@ export function BuzzChatSurface({
                 whether or not a line is showing; `pointerEvents="box-none"`
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}
-                {!desktopExperience && (
-                  <TurnBandSlot testID="hanging-turn-chrome">
-                    {composerAck ? (
-                      <TurnProgressLine
-                        label={composerAck.label}
-                        startedAt={composerAck.startedAt}
-                        received={composerAck.received}
-                        stopping={stoppingThisTurn}
-                        onStop={
-                          composerAck.stop
-                            ? () => void handleStopTurn(composerAck.stop!)
-                            : undefined
-                        }
-                        testID="turn-progress-line"
-                      />
-                    ) : settledTurn ? (
-                      <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                    ) : null}
-                  </TurnBandSlot>
-                )}
-                {/* No pinned corner line lives here. A Room holds many corners at
+              {!desktopExperience && (
+                <TurnBandSlot testID="hanging-turn-chrome">
+                  {composerAck ? (
+                    <TurnProgressLine
+                      label={composerAck.label}
+                      startedAt={composerAck.startedAt}
+                      received={composerAck.received}
+                      stopping={stoppingThisTurn}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
+                      testID="turn-progress-line"
+                    />
+                  ) : settledTurn ? (
+                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                  ) : null}
+                </TurnBandSlot>
+              )}
+              {/* No pinned corner line lives here. A Room holds many corners at
                 once, so one line above the composer could only ever name one of
                 them, and it sat between the reader and the field they were
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-                {agentsOffline && <AgentOfflineHint />}
-                {isReadOnlyDirectMessage ? (
-                  <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-                    <Text style={styles.archivedInputText}>
-                      Announcements only · you can't reply here
-                    </Text>
-                  </View>
-                ) : (
-                  <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
-                    {slashMenuVisible &&
-                      (() => {
-                        const mentionAgent = mentionSlashAgentPubkey
-                          ? agentByPubkey.get(mentionSlashAgentPubkey)
-                          : undefined;
-                        const mentionAgentName = mentionSlashAgentPubkey
-                          ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
-                          : undefined;
-                        return (
-                          <SlashVerbPicker
-                            verbs={slashVerbs}
-                            query={currentSlashQuery ?? mentionSlash?.query ?? ''}
-                            highlightedIndex={highlightedSlashVerbIndex}
-                            onDismiss={dismissSlashMenu}
-                            onSelect={runSlashVerb}
-                            commands={mentionAgentCommands}
-                            apps={cornerAppCommands}
-                            agentName={mentionAgentName}
-                            agentLacksCommands={mentionAgentLacksCommands}
-                            onSelectCommand={insertAgentCommand}
-                            onSelectApp={openCornerApp}
-                          />
-                        );
-                      })()}
-                    {mentionMenuVisible && (
-                      <View
-                        accessibilityLabel="Mention a Room participant"
-                        style={styles.mentionMenu}
-                        testID="mention-suggestions"
+              {agentsOffline && <AgentOfflineHint />}
+              {isReadOnlyDirectMessage ? (
+                <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+                  <Text style={styles.archivedInputText}>
+                    Announcements only · you can't reply here
+                  </Text>
+                </View>
+              ) : (
+            <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
+              {slashMenuVisible &&
+                (() => {
+                  const mentionAgent = mentionSlashAgentPubkey
+                    ? agentByPubkey.get(mentionSlashAgentPubkey)
+                    : undefined;
+                  const mentionAgentName = mentionSlashAgentPubkey
+                    ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
+                    : undefined;
+                  return (
+                    <SlashVerbPicker
+                      verbs={slashVerbs}
+                      query={currentSlashQuery ?? mentionSlash?.query ?? ''}
+                      highlightedIndex={highlightedSlashVerbIndex}
+                      onDismiss={dismissSlashMenu}
+                      onSelect={runSlashVerb}
+                      commands={mentionAgentCommands}
+                      apps={cornerAppCommands}
+                      agentName={mentionAgentName}
+                      agentLacksCommands={mentionAgentLacksCommands}
+                      onSelectCommand={insertAgentCommand}
+                      onSelectApp={openCornerApp}
+                    />
+                  );
+                })()}
+              {mentionMenuVisible && (
+                <View
+                  accessibilityLabel="Mention a Room participant"
+                  style={styles.mentionMenu}
+                  testID="mention-suggestions"
+                >
+                  <Text style={styles.mentionMenuLabel}>MENTION</Text>
+                  {mentionSuggestions.matches.map((participant, index) => {
+                    const selected = index === highlightedMentionIndex;
+                    const display = participant.agent
+                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                      : undefined;
+                    return (
+                      <TouchableOpacity
+                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        key={participant.pubkey}
+                        onPress={() => selectMention(participant)}
+                        style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+                        testID={`mention-suggestion-${participant.handle}`}
                       >
-                        <Text style={styles.mentionMenuLabel}>MENTION</Text>
-                        {mentionSuggestions.matches.map((participant, index) => {
-                          const selected = index === highlightedMentionIndex;
-                          const display = participant.agent
-                            ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                            : undefined;
-                          return (
-                            <TouchableOpacity
-                              accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
-                              accessibilityRole="button"
-                              accessibilityState={{ selected }}
-                              key={participant.pubkey}
-                              onPress={() => selectMention(participant)}
-                              style={[styles.mentionRow, selected && styles.mentionRowSelected]}
-                              testID={`mention-suggestion-${participant.handle}`}
-                            >
-                              {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
-                                <View style={styles.mentionChannelGlyph}>
-                                  <Text style={styles.mentionChannelGlyphText}>@</Text>
-                                </View>
-                              ) : display ? (
-                                <IdentityMark
-                                  kind="agent"
-                                  seed={display.avatarSeed ?? participant.pubkey}
-                                  avatarUrl={display.avatarUrl}
-                                  face={display.face}
-                                  name={display.name}
-                                  size={28}
-                                />
-                              ) : (
-                                <IdentityMark
-                                  kind="human"
-                                  seed={participant.pubkey}
-                                  avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                                  face={participant.face}
-                                  name={participant.name}
-                                  size={28}
-                                />
-                              )}
-                              <View style={styles.mentionIdentity}>
-                                <Text numberOfLines={1} style={styles.mentionName}>
-                                  {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                                    ? 'Everyone in this Room'
-                                    : participant.name}
-                                </Text>
-                                <Text numberOfLines={1} style={styles.mentionHandle}>
-                                  @{participant.handle}
-                                </Text>
-                              </View>
-                              <Text style={styles.mentionKind}>
-                                {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                                  ? 'ROOM'
-                                  : participant.kind === 'agent'
-                                    ? 'AGENT'
-                                    : 'PERSON'}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                        {mentionSuggestions.overflow > 0 && (
-                          <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
-                            AND {mentionSuggestions.overflow} OTHERS
-                          </Text>
-                        )}
-                      </View>
-                    )}
-                    {cornerOpenRepoPrompt && (
-                      <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
-                        <Text style={styles.repoPromptTitle}>
-                          {roomRepoAccessIssue
-                            ? roomRepoAccessIssue.reason === 'revoked'
-                              ? 'ACCESS TO THIS REPO WAS REVOKED'
-                              : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
-                            : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
-                        </Text>
-                        <Text style={styles.repoPromptHint}>
-                          {roomRepoAccessIssue
-                            ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
-                            : `Pick one to open a ${CORNER_LABEL}.`}
-                        </Text>
-                        {roomRepoAccessIssue && (
-                          <TouchableOpacity
-                            accessibilityRole="button"
-                            onPress={() => void handleReconnectRoomRepository()}
-                            style={styles.repoPromptConnect}
-                            testID="corner-open-repo-connect"
-                          >
-                            <Text style={styles.repoPromptConnectText}>
-                              {roomRepoAccessIssue.reason === 'not_granted'
-                                ? 'Add this repo to the Beeline installation →'
-                                : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                        {canManageWorkspace ? (
-                          <RepoPicker
-                            busy={roomRepoBusy}
-                            candidates={roomRepoCandidates}
-                            installations={githubInstallations}
-                            currentKey={null}
-                            error={roomRepoError}
-                            notice={roomRepoNotice}
-                            ownerGrant={ownerGrant}
-                            onAddAccount={() => void handleAddGitHubAccount()}
-                            onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                            onCreateRepository={handleCreateGitHubRepository}
-                            onManageInstallation={(installation) =>
-                              void handleManageGitHubInstallation(installation)
-                            }
-                            onSelect={handleSelectRoomRepoCandidate}
-                            testIDPrefix="corner-open-repo-picker"
+                        {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
+                          <View style={styles.mentionChannelGlyph}>
+                            <Text style={styles.mentionChannelGlyphText}>@</Text>
+                          </View>
+                        ) : display ? (
+                          <IdentityMark
+                            kind="agent"
+                            seed={display.avatarSeed ?? participant.pubkey}
+                            avatarUrl={display.avatarUrl}
+                            face={display.face}
+                            name={display.name}
+                            size={28}
                           />
                         ) : (
-                          <Text style={styles.repoPromptHint}>
-                            Ask a {ROOM_LABEL} admin to link one.
-                          </Text>
-                        )}
-                        <TouchableOpacity
-                          accessibilityLabel="Dismiss"
-                          accessibilityRole="button"
-                          onPress={() => setCornerOpenRepoPrompt(false)}
-                          style={styles.repoPromptDismiss}
-                          testID="corner-open-repo-prompt-dismiss"
-                        >
-                          <Text style={styles.repoPromptDismissText}>DISMISS</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                    {desktopExperience ? (
-                      <View
-                        style={styles.desktopStatusSlot}
-                        accessibilityLiveRegion="polite"
-                        testID="desktop-message-status"
-                      >
-                        {desktopDeliveryState === 'sending' ? (
-                          <Text style={styles.desktopStatusText}>SENDING…</Text>
-                        ) : composerAck ? (
-                          <TurnProgressLine
-                            label={composerAck.label}
-                            startedAt={composerAck.startedAt}
-                            received={composerAck.received}
-                            stopping={stoppingThisTurn}
-                            onStop={
-                              composerAck.stop
-                                ? () => void handleStopTurn(composerAck.stop!)
-                                : undefined
-                            }
-                            testID="turn-progress-line"
+                          <IdentityMark
+                            kind="human"
+                            seed={participant.pubkey}
+                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                            face={participant.face}
+                            name={participant.name}
+                            size={28}
                           />
-                        ) : desktopDeliveryState ? (
-                          <Text
-                            style={[
-                              styles.desktopStatusText,
-                              desktopDeliveryState === 'failed' && styles.desktopStatusFailed,
-                            ]}
-                          >
-                            {desktopDeliveryState === 'delivered'
-                              ? 'DELIVERED'
-                              : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                        )}
+                        <View style={styles.mentionIdentity}>
+                          <Text numberOfLines={1} style={styles.mentionName}>
+                            {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                              ? 'Everyone in this Room'
+                              : participant.name}
                           </Text>
-                        ) : settledTurn ? (
-                          <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                        ) : null}
-                      </View>
-                    ) : null}
-                    <ConversationComposer
-                      onStop={
-                        composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined
+                          <Text numberOfLines={1} style={styles.mentionHandle}>
+                            @{participant.handle}
+                          </Text>
+                        </View>
+                        <Text style={styles.mentionKind}>
+                          {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                            ? 'ROOM'
+                            : participant.kind === 'agent'
+                              ? 'AGENT'
+                              : 'PERSON'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {mentionSuggestions.overflow > 0 && (
+                    <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
+                      AND {mentionSuggestions.overflow} OTHERS
+                    </Text>
+                  )}
+                </View>
+              )}
+              {cornerOpenRepoPrompt && (
+                <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
+                  <Text style={styles.repoPromptTitle}>
+                    {roomRepoAccessIssue
+                      ? roomRepoAccessIssue.reason === 'revoked'
+                        ? 'ACCESS TO THIS REPO WAS REVOKED'
+                        : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
+                      : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
+                  </Text>
+                  <Text style={styles.repoPromptHint}>
+                    {roomRepoAccessIssue
+                      ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
+                      : `Pick one to open a ${CORNER_LABEL}.`}
+                  </Text>
+                  {roomRepoAccessIssue && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => void handleReconnectRoomRepository()}
+                      style={styles.repoPromptConnect}
+                      testID="corner-open-repo-connect"
+                    >
+                      <Text style={styles.repoPromptConnectText}>
+                        {roomRepoAccessIssue.reason === 'not_granted'
+                          ? 'Add this repo to the Beeline installation →'
+                          : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {canManageWorkspace ? (
+                    <RepoPicker
+                      busy={roomRepoBusy}
+                      candidates={roomRepoCandidates}
+                      installations={githubInstallations}
+                      currentKey={null}
+                      error={roomRepoError}
+                      notice={roomRepoNotice}
+                      ownerGrant={ownerGrant}
+                      onAddAccount={() => void handleAddGitHubAccount()}
+                      onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                      onCreateRepository={handleCreateGitHubRepository}
+                      onManageInstallation={(installation) =>
+                        void handleManageGitHubInstallation(installation)
                       }
-                      inputRef={composerRef}
-                      reply={
-                        replyTarget
-                          ? {
-                              handle: replyTarget.authorHandle ?? replyTarget.authorName,
-                              preview: replyTarget.preview,
-                            }
-                          : undefined
-                      }
-                      onCancelReply={() => setReplyTarget(null)}
-                      attachments={pendingAttachments.map((attachment) => ({
-                        uri: attachment.uri,
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeLabel: formatAttachmentSize(attachment.size),
-                      }))}
-                      attachmentsUploading={sending}
-                      onRemoveAttachment={(index) =>
-                        replacePendingAttachments((current) =>
-                          current.filter((_, attachmentIndex) => attachmentIndex !== index),
-                        )
-                      }
-                      value={inputText}
-                      inputRevision={composerInputRevision}
-                      isInputRevisionCurrent={(inputRevision) =>
-                        inputRevision === composerInputRevisionRef.current
-                      }
-                      height={composerHeight}
-                      maxHeight={COMPOSER_MAX_HEIGHT}
-                      focused={composerFocused}
-                      disabled={sending}
-                      canSend={
-                        slashMenuVisible
-                          ? Boolean(inputText.trim())
-                          : Boolean(inputText.trim() || pendingAttachments.length)
-                      }
-                      onAttach={chooseAttachment}
-                      attachDisabled={sending}
-                      containerProps={
-                        desktopExperience
-                          ? ({
-                              onDragOver: (event: React.DragEvent<HTMLElement>) =>
-                                event.preventDefault(),
-                              onDrop: handleDesktopDrop,
-                            } as any)
-                          : undefined
-                      }
-                      onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}
-                      onChangeText={(value) => {
-                        inputTextRef.current = value;
-                        setInputText(value);
-                      }}
-                      onContentSizeChange={(event) => {
-                        const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
-                        setComposerHeight(
-                          Math.min(
-                            COMPOSER_MAX_HEIGHT,
-                            Math.max(COMPOSER_MIN_HEIGHT, contentHeight),
-                          ),
-                        );
-                      }}
-                      onFocus={() => setComposerFocused(true)}
-                      onBlur={() => setComposerFocused(false)}
-                      onKeyPress={(event) => {
-                        const action = mentionKeyboardAction(event.nativeEvent.key);
-                        // Printable keys must never be prevented by the mention
-                        // picker. In particular, `>` is ordinary composer text.
-                        if (slashMenuVisible) {
-                          if (!action) return;
-                          if (action === 'select') {
-                            event.preventDefault();
-                            selectHighlightedPaletteItem();
-                          } else if (
-                            (action === 'next' || action === 'previous') &&
-                            paletteItemCount
-                          ) {
-                            event.preventDefault();
-                            const direction = action === 'next' ? 1 : -1;
-                            setHighlightedSlashVerbIndex(
-                              (current) =>
-                                (current + direction + paletteItemCount) % paletteItemCount,
-                            );
-                          } else {
-                            event.preventDefault();
-                            dismissSlashMenu();
-                          }
-                          return;
-                        }
-                        if (!mentionMenuVisible) {
-                          const desktopAction = desktopComposerKeyAction(
-                            Platform.OS,
-                            event.nativeEvent.key,
-                            Boolean(
-                              (event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey,
-                            ),
-                          );
-                          if (desktopAction === 'send') {
-                            event.preventDefault();
-                            void handleSend();
-                          }
-                          return;
-                        }
-                        if (!mentionMenuVisible || !action) return;
-                        if (action === 'select') {
-                          event.preventDefault();
-                          const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                          if (selected) selectMention(selected);
-                        } else if (action === 'next' || action === 'previous') {
-                          event.preventDefault();
-                          const direction = action === 'next' ? 1 : -1;
-                          setHighlightedMentionIndex((current) => {
-                            const count = mentionSuggestions.matches.length;
-                            return (current + direction + count) % count;
-                          });
-                        } else {
-                          event.preventDefault();
-                          setDismissedMentionKey(mentionMenuKey);
-                        }
-                      }}
-                      onSelectionChange={(event) => {
-                        const nextSelection = event.nativeEvent.selection;
-                        setInputSelection((current) =>
-                          current.start === nextSelection.start && current.end === nextSelection.end
-                            ? current
-                            : nextSelection,
-                        );
-                      }}
-                      onSend={
-                        slashMenuVisible
-                          ? () => {
-                              selectHighlightedPaletteItem();
-                            }
-                          : handleSend
-                      }
+                      onSelect={handleSelectRoomRepoCandidate}
+                      testIDPrefix="corner-open-repo-picker"
                     />
-                  </Animated.View>
-                )}
-              </View>
-            )}
+                  ) : (
+                    <Text style={styles.repoPromptHint}>Ask a {ROOM_LABEL} admin to link one.</Text>
+                  )}
+                  <TouchableOpacity
+                    accessibilityLabel="Dismiss"
+                    accessibilityRole="button"
+                    onPress={() => setCornerOpenRepoPrompt(false)}
+                    style={styles.repoPromptDismiss}
+                    testID="corner-open-repo-prompt-dismiss"
+                  >
+                    <Text style={styles.repoPromptDismissText}>DISMISS</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {desktopExperience ? (
+                <View
+                  style={styles.desktopStatusSlot}
+                  accessibilityLiveRegion="polite"
+                  testID="desktop-message-status"
+                >
+                  {desktopDeliveryState === 'sending' ? (
+                    <Text style={styles.desktopStatusText}>SENDING…</Text>
+                  ) : composerAck ? (
+                    <TurnProgressLine
+                      label={composerAck.label}
+                      startedAt={composerAck.startedAt}
+                      received={composerAck.received}
+                      stopping={stoppingThisTurn}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
+                      testID="turn-progress-line"
+                    />
+                  ) : desktopDeliveryState ? (
+                    <Text
+                      style={[
+                        styles.desktopStatusText,
+                        desktopDeliveryState === 'failed' && styles.desktopStatusFailed,
+                      ]}
+                    >
+                      {desktopDeliveryState === 'delivered'
+                        ? 'DELIVERED'
+                        : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                    </Text>
+                  ) : settledTurn ? (
+                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                  ) : null}
+                </View>
+              ) : null}
+              <ConversationComposer
+                onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
+                inputRef={composerRef}
+                reply={
+                  replyTarget
+                    ? {
+                        handle: replyTarget.authorHandle ?? replyTarget.authorName,
+                        preview: replyTarget.preview,
+                      }
+                    : undefined
+                }
+                onCancelReply={() => setReplyTarget(null)}
+                attachments={pendingAttachments.map((attachment) => ({
+                  uri: attachment.uri,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeLabel: formatAttachmentSize(attachment.size),
+                }))}
+                attachmentsUploading={sending}
+                onRemoveAttachment={(index) =>
+                  replacePendingAttachments((current) =>
+                    current.filter((_, attachmentIndex) => attachmentIndex !== index),
+                  )
+                }
+                value={inputText}
+                inputRevision={composerInputRevision}
+                isInputRevisionCurrent={(inputRevision) =>
+                  inputRevision === composerInputRevisionRef.current
+                }
+                height={composerHeight}
+                maxHeight={COMPOSER_MAX_HEIGHT}
+                focused={composerFocused}
+                disabled={sending}
+                canSend={
+                  slashMenuVisible
+                    ? Boolean(inputText.trim())
+                    : Boolean(inputText.trim() || pendingAttachments.length)
+                }
+                onAttach={chooseAttachment}
+                attachDisabled={sending}
+                containerProps={
+                  desktopExperience
+                    ? ({
+                        onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
+                        onDrop: handleDesktopDrop,
+                      } as any)
+                    : undefined
+                }
+                onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}
+                onChangeText={(value) => {
+                  inputTextRef.current = value;
+                  setInputText(value);
+                }}
+                onContentSizeChange={(event) => {
+                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                  setComposerHeight(
+                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
+                  );
+                }}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
+                onKeyPress={(event) => {
+                  const action = mentionKeyboardAction(event.nativeEvent.key);
+                  // Printable keys must never be prevented by the mention
+                  // picker. In particular, `>` is ordinary composer text.
+                  if (slashMenuVisible) {
+                    if (!action) return;
+                    if (action === 'select') {
+                      event.preventDefault();
+                      selectHighlightedPaletteItem();
+                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
+                      event.preventDefault();
+                      const direction = action === 'next' ? 1 : -1;
+                      setHighlightedSlashVerbIndex(
+                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
+                      );
+                    } else {
+                      event.preventDefault();
+                      dismissSlashMenu();
+                    }
+                    return;
+                  }
+                  if (!mentionMenuVisible) {
+                    const desktopAction = desktopComposerKeyAction(
+                      Platform.OS,
+                      event.nativeEvent.key,
+                      Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
+                    );
+                    if (desktopAction === 'send') {
+                      event.preventDefault();
+                      void handleSend();
+                    }
+                    return;
+                  }
+                  if (!mentionMenuVisible || !action) return;
+                  if (action === 'select') {
+                    event.preventDefault();
+                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                    if (selected) selectMention(selected);
+                  } else if (action === 'next' || action === 'previous') {
+                    event.preventDefault();
+                    const direction = action === 'next' ? 1 : -1;
+                    setHighlightedMentionIndex((current) => {
+                      const count = mentionSuggestions.matches.length;
+                      return (current + direction + count) % count;
+                    });
+                  } else {
+                    event.preventDefault();
+                    setDismissedMentionKey(mentionMenuKey);
+                  }
+                }}
+                onSelectionChange={(event) => {
+                  const nextSelection = event.nativeEvent.selection;
+                  setInputSelection((current) =>
+                    current.start === nextSelection.start && current.end === nextSelection.end
+                      ? current
+                      : nextSelection,
+                  );
+                }}
+                onSend={
+                  slashMenuVisible
+                    ? () => {
+                        selectHighlightedPaletteItem();
+                      }
+                    : handleSend
+                }
+              />
+            </Animated.View>
+              )}
+            </View>
+          )}
           </KeyboardAvoidingView>
         </View>
         {desktopWorkPaneMounted && (

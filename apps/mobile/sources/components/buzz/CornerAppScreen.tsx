@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerAppBlock, CornerAppView } from '@beeline/api-contract/phone';
-import { Typography } from '@/constants/Typography';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export function CornerAppScreen({
   app,
@@ -25,7 +25,11 @@ export function CornerAppScreen({
           onPress={onBack}
           style={styles.back}
         >
-          <Text style={styles.backText}>‹</Text>
+          <ChevronGlyph
+            color={styles.backText.color}
+            direction="left"
+            size={CHEVRON_BACK_SIZE}
+          />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text numberOfLines={1} style={styles.title}>
@@ -149,15 +153,10 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.borderQuiet,
   },
   back: { width: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  backText: {
-    ...Typography.default(),
-    color: theme.buzz.textPrimary,
-    fontSize: 32,
-    lineHeight: 36,
-  },
+  backText: { color: theme.buzz.textPrimary },
   headerCopy: { flex: 1, minWidth: 0 },
-  title: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 16 },
-  byline: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10, marginTop: 2 },
+  title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  byline: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: 2 },
   content: {
     width: '100%',
     maxWidth: 720,
@@ -167,25 +166,19 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: 56,
   },
   description: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 15,
-    lineHeight: 23,
     marginBottom: 30,
   },
   heading: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
-    fontSize: 18,
-    lineHeight: 24,
     marginTop: 28,
     marginBottom: 10,
   },
   body: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
-    fontSize: 16,
-    lineHeight: 25,
     marginBottom: 18,
   },
   fields: { marginVertical: 8 },
@@ -197,19 +190,15 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.borderQuiet,
   },
   fieldLabel: {
-    ...Typography.mono(),
+    ...theme.buzz.type.sectionHead,
     width: 120,
     color: theme.buzz.textMuted,
-    fontSize: 10,
-    lineHeight: 18,
     textTransform: 'uppercase',
   },
   fieldValue: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     flex: 1,
     color: theme.buzz.textPrimary,
-    fontSize: 12,
-    lineHeight: 18,
     textAlign: 'right',
   },
   notice: {
@@ -222,10 +211,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   noticeWarning: { borderColor: theme.buzz.accent },
   noticeText: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 14,
-    lineHeight: 21,
   },
   action: {
     minHeight: 48,
@@ -240,10 +227,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   actionPressed: { backgroundColor: theme.buzz.bgHover },
   actionBusy: { opacity: 0.6 },
-  actionLabel: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 14 },
-  actionArrow: { ...Typography.default(), color: theme.buzz.accent, fontSize: 18 },
-  revision: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 9, marginTop: 38 },
-  empty: { ...Typography.default(), color: theme.buzz.ledgerQuiet, fontSize: 15, lineHeight: 23 },
+  actionLabel: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  actionArrow: { ...theme.buzz.type.bodyStrong, color: theme.buzz.accent },
+  revision: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: 38 },
+  empty: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   appRow: {
     minHeight: 58,
     marginVertical: 6,
@@ -256,6 +243,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 10,
   },
   appRowCopy: { flex: 1, minWidth: 0, gap: 3 },
-  appRowLabel: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 9, letterSpacing: 1 },
-  appRowTitle: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 14 },
+  appRowLabel: { ...theme.buzz.type.sectionHead, color: theme.buzz.textMuted },
+  appRowTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
 }));

@@ -12,6 +12,13 @@ function row(id: string, extra: Partial<ChatDisplayMessage> = {}): ChatDisplayMe
 
 const TRANSCRIPT = [row('a'), row('b'), row('c'), row('d')];
 
+/**
+ * What `_chat-surface.tsx` renders on a phone: `[...visibleMessages].reverse()`
+ * for the inverted FlatList. The advancer must never be handed this array, and
+ * these cases prove what happens to a reader if it is.
+ */
+const NATIVE_ORDER = [...TRANSCRIPT].reverse();
+
 describe('newestVisibleMessageId', () => {
   it('names the newest row the viewport can see, not the newest row that exists', () => {
     expect(newestVisibleMessageId(TRANSCRIPT, [TRANSCRIPT[0]!, TRANSCRIPT[1]!])).toBe('b');
@@ -28,6 +35,14 @@ describe('newestVisibleMessageId', () => {
 
   it('names nothing when the viewport is empty', () => {
     expect(newestVisibleMessageId(TRANSCRIPT, [])).toBeNull();
+  });
+
+  // Reproduction NATIVE-INVERTED-CURSOR. The phone's list renders
+  // [...visibleMessages].reverse(); ranking THAT array by index names the
+  // oldest visible row. Rows 'c' and 'b' on screen must resolve to 'c'.
+  it('names the newest visible row for a phone reader, whose list is inverted', () => {
+    const visible = [NATIVE_ORDER[1]!, NATIVE_ORDER[2]!]; // 'c' and 'b'
+    expect(newestVisibleMessageId(TRANSCRIPT, visible)).toBe('c');
   });
 });
 
@@ -113,6 +128,31 @@ describe('ReadCursorAdvancer', () => {
     vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
 
     expect(published).toEqual([]);
+  });
+
+  // Reproduction NATIVE-INVERTED-CURSOR, through the advancer. A phone reader
+  // scrolling UP the transcript published each older row as if it were
+  // progress, dragging their read mark backwards over mail they had not read.
+  it('holds the boundary when a phone reader scrolls back up their inverted list', () => {
+    const published: string[] = [];
+    const advancer = new ReadCursorAdvancer((id) => published.push(id));
+
+    // Sitting on 'c' — the reader's viewport, reported from the inverted list.
+    advancer.observe(TRANSCRIPT, [NATIVE_ORDER[1]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(published).toEqual(['c']);
+
+    // Scrolling back up to 'b', then 'a'. Older rows, never progress.
+    advancer.observe(TRANSCRIPT, [NATIVE_ORDER[2]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    advancer.observe(TRANSCRIPT, [NATIVE_ORDER[3]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(published).toEqual(['c']);
+
+    // Back down past where they were: that IS progress.
+    advancer.observe(TRANSCRIPT, [NATIVE_ORDER[0]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(published).toEqual(['c', 'd']);
   });
 
   it('stops reading once the reader has declared something unread', () => {

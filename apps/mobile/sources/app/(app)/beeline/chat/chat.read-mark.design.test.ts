@@ -41,7 +41,20 @@ describe('the chat surface read-mark contract', () => {
       chatSource.indexOf('const landAtNewMessageBoundary'),
     );
     expect(observer).toContain(
-      'advanceReadCursor(transcriptMessagesRef.current, visibleTranscriptMessagesRef.current)',
+      'advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current)',
     );
+  });
+
+  it('ranks the read cursor against chronological order, never the inverted list', () => {
+    // `transcriptMessages` IS `invertedMessages` on the phone. The cursor
+    // decides which visible row is newest by its index, so handing it that
+    // array picks the OLDEST visible row and reads a scroll back up the
+    // transcript as forward progress (review 2026-09-22).
+    expect(chatSource).toContain('const chronologicalMessagesRef = useRef(visibleMessages)');
+    const observer = chatSource.slice(
+      chatSource.indexOf('const observeVisibleTranscriptMessages'),
+      chatSource.indexOf('const landAtNewMessageBoundary'),
+    );
+    expect(observer).not.toContain('advanceReadCursor(transcriptMessagesRef');
   });
 });

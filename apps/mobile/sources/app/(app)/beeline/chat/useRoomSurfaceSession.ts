@@ -191,9 +191,12 @@ export interface UseRoomSurfaceSessionResult {
   /**
    * Report what the transcript's viewport can currently see. The boundary it
    * publishes is debounced, so this is safe to call on every viewability pass.
+   * `chronological` is the oldest-first transcript — NOT the reversed array the
+   * native inverted list renders from, which would rank the oldest visible row
+   * as newest and read a scroll back up the transcript as progress.
    */
   advanceReadCursor(
-    transcript: readonly ChatDisplayMessage[],
+    chronological: readonly ChatDisplayMessage[],
     visible: readonly ChatDisplayMessage[],
   ): void;
   /** Move the boundary back so this message, and everything after it, is unread. */
@@ -298,10 +301,10 @@ export function useRoomSurfaceSession({
   }, []);
 
   const advanceReadCursor = useCallback(
-    (transcript: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
+    (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
       if (!isFocusedRef.current) return;
       if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
-      readCursorRef.current?.observe(transcript, visible);
+      readCursorRef.current?.observe(chronological, visible);
     },
     [],
   );

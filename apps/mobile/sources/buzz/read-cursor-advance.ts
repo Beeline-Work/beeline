@@ -17,22 +17,37 @@ export const READ_CURSOR_DEBOUNCE_MS = 400;
  * durable id. Rows are ranked by their position in the transcript rather than
  * by any clock, because the transcript already carries the server's own
  * `(created_at, id)` order and the read mark is compared against exactly that.
+ *
+ * `chronological` must be the CHRONOLOGICAL order — oldest first — and not the
+ * reversed array the native inverted list renders from. Ranking by index is
+ * only "newest wins" when the array agrees with the server's ordering; handed
+ * the phone's reversed list it picks the oldest visible row and reads a scroll
+ * back up the transcript as forward progress. The jump control reads the same
+ * order for the same reason (`_chat-surface.tsx`, `newestTranscriptRowId`).
+ *
+ * `visible` may arrive in any order — it is the list's own viewability report,
+ * and only membership is taken from it.
  */
 export function newestVisibleMessageId(
-  transcript: readonly ChatDisplayMessage[],
+  chronological: readonly ChatDisplayMessage[],
   visible: readonly ChatDisplayMessage[],
 ): string | null {
   let newestIndex = -1;
   for (const message of visible) {
-    const index = transcript.findIndex((row) => row.id === message.id);
+    const index = chronological.findIndex((row) => row.id === message.id);
     if (index > newestIndex) newestIndex = index;
   }
   if (newestIndex < 0) return null;
-  return messageBoundaryIds(transcript[newestIndex]!).at(-1) ?? null;
+  return messageBoundaryIds(chronological[newestIndex]!).at(-1) ?? null;
 }
 
 /**
  * Coalesces a scroll's worth of viewport reports into one read-cursor write.
+ *
+ * Every array handed to this advancer is the CHRONOLOGICAL transcript, oldest
+ * first — never the reversed array the native inverted list renders from. Both
+ * the candidate's selection and the forward-only comparison rank by index, so
+ * a reversed array silently inverts both.
  *
  * The boundary only ever moves forward under this advancer: it compares the
  * candidate against the last id it published by their positions in the CURRENT
@@ -53,11 +68,17 @@ export class ReadCursorAdvancer {
     private readonly delayMs: number = READ_CURSOR_DEBOUNCE_MS,
   ) {}
 
-  /** One viewability report. Restarts the debounce; publishes nothing yet. */
-  observe(transcript: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]): void {
+  /**
+   * One viewability report. Restarts the debounce; publishes nothing yet.
+   * `chronological` is the oldest-first transcript, never the inverted list.
+   */
+  observe(
+    chronological: readonly ChatDisplayMessage[],
+    visible: readonly ChatDisplayMessage[],
+  ): void {
     if (this.#suspended) return;
-    const candidate = newestVisibleMessageId(transcript, visible);
-    if (!candidate || !this.#advances(transcript, candidate)) return;
+    const candidate = newestVisibleMessageId(chronological, visible);
+    if (!candidate || !this.#advances(chronological, candidate)) return;
     this.#pending = candidate;
     if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
@@ -104,16 +125,16 @@ export class ReadCursorAdvancer {
     this.#pending = null;
   }
 
-  #advances(transcript: readonly ChatDisplayMessage[], candidate: string): boolean {
+  #advances(chronological: readonly ChatDisplayMessage[], candidate: string): boolean {
     if (this.#published === null) return true;
     // A reader sitting still reports the same row many times over. Only a
     // different, later boundary is worth a write.
     if (this.#published === candidate) return false;
-    const published = transcript.findIndex((row) =>
+    const published = chronological.findIndex((row) =>
       messageBoundaryIds(row).includes(this.#published!),
     );
     if (published < 0) return true;
-    const next = transcript.findIndex((row) => messageBoundaryIds(row).includes(candidate));
+    const next = chronological.findIndex((row) => messageBoundaryIds(row).includes(candidate));
     return next < 0 || next >= published;
   }
 }

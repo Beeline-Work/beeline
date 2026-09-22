@@ -2072,6 +2072,12 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
+  // The read cursor ranks rows by index to decide which is newest, so it reads
+  // the chronological order for the same reason the jump control does: on the
+  // phone `transcriptMessages` IS the reversed list, and ranking that array
+  // picks the oldest visible row and reads a scroll back up as progress.
+  const chronologicalMessagesRef = useRef(visibleMessages);
+  chronologicalMessagesRef.current = visibleMessages;
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
@@ -2238,7 +2244,9 @@ export function BuzzChatSurface({
       observeVisibleMessages(visibleTranscriptMessagesRef.current);
       // The same report is what moves the read mark. A row that never entered
       // the viewport is never read, however far below it the transcript runs.
-      advanceReadCursor(transcriptMessagesRef.current, visibleTranscriptMessagesRef.current);
+      // Chronological order, never `transcriptMessagesRef` — that one is
+      // reversed on the phone, and the cursor ranks by index.
+      advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
     [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages],

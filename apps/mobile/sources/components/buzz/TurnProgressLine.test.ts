@@ -233,6 +233,29 @@ describe('the per-turn progress indicator', () => {
     expect(bar.props.style).not.toHaveProperty('backgroundColor');
   });
 
+  it('lets transcript actions receive touches through its transparent overlay', () => {
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee thinking\u2026',
+        onStop: vi.fn(),
+        testID: 'turn-progress-line',
+      }),
+    );
+    const bar = renderer.root
+      .findAllByType('View')
+      .find((node) => node.props.testID === 'turn-progress-line');
+    const pulse = renderer.root.findByType('AnimatedView');
+    const glyph = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
+    const label = renderer.root.findAllByType('Text')[0];
+    const stop = renderer.root.findByProps({ testID: 'turn-progress-line-stop' });
+
+    expect(bar?.props.pointerEvents).toBe('box-none');
+    expect(pulse.props.pointerEvents).toBe('box-none');
+    expect(glyph.props.pointerEvents).toBe('none');
+    expect(label.props.pointerEvents).toBe('none');
+    expect(stop.props.pointerEvents).toBeUndefined();
+  });
+
   it('ticks the elapsed counter once per second from the receipt time', () => {
     vi.useFakeTimers();
     const startedAt = 10; // unix seconds
@@ -374,6 +397,10 @@ describe('the per-turn progress indicator', () => {
       'Brewed for 14s \u00b7 done 7:10 PM',
     ]);
     expect(renderer.root.findAllByType('AnimatedView')).toHaveLength(0);
+    const settledBar = renderer.root
+      .findAllByType('View')
+      .find((node) => node.props.testID === 'turn-settled-line');
+    expect(settledBar?.props.pointerEvents).toBe('none');
     // The settled row shares the live row's vocabulary: the same mark, in the
     // same fixed cell, completed and still.
     const cell = renderer.root.findByProps({ testID: 'turn-settled-line-glyph' });

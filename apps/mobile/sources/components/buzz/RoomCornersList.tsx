@@ -82,7 +82,7 @@ export function RoomCornersList({
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
     const open = () => {
       const humanUi = item.app?.manifest.humanUi;
-      if (humanUi && !humanUi.embedsChat) {
+      if (humanUi) {
         router.push({
           pathname: '/beeline/corner-app/[slug]',
           params: { slug: item.app!.manifest.slug, roomId: item.corner.id },

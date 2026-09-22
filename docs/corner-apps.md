@@ -28,4 +28,4 @@ The version 1 manifest keeps two capabilities separate:
 
 Native human UI uses the bounded `CornerAppDefinition` vocabulary. Broker capabilities remain opaque until a permissioned app broker is connected; clients must not treat capability names as URLs or executable code.
 
-Set `humanUi.embedsChat` only when the app intentionally includes chat in its own surface. Otherwise the selected app replaces the corner chat surface.
+A selected app always owns the entire corner surface. Set `humanUi.embedsChat` only when the app intentionally includes chat within that app surface; Beeline does not add a separate or default Chat tab.

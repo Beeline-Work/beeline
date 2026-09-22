@@ -1701,7 +1701,7 @@ export function BuzzChatSurface({
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
   useEffect(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
-    if (!isFocused || !isCorner || !humanUi || humanUi.embedsChat) return;
+    if (!isFocused || !isCorner || !humanUi) return;
     router.replace({
       pathname: '/beeline/corner-app/[slug]',
       params: { slug: roomSurface.boundApp!.manifest.slug, roomId: decodedId },

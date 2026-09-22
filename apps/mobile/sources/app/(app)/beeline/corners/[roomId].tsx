@@ -144,7 +144,7 @@ export default function BuzzCorners() {
       setCreateOpen(false);
       setCreateTitle('');
       const selectedApp = surface?.apps?.find((app) => app.id === createAppId);
-      if (selectedApp?.manifest.humanUi && !selectedApp.manifest.humanUi.embedsChat) {
+      if (selectedApp?.manifest.humanUi) {
         router.push({
           pathname: '/beeline/corner-app/[slug]',
           params: { slug: selectedApp.manifest.slug, roomId: cornerId },

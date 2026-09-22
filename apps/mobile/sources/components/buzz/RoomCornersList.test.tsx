@@ -333,28 +333,35 @@ describe('RoomCornersList', () => {
     });
   });
 
-  it('opens a bound app as the entire corner surface when it does not embed chat', () => {
-    const item: CornerListItem = {
-      ...corner('app-corner', 'waiting', 'Release control'),
-      app: {
-        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        instanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-        manifest: {
-          version: 1,
-          slug: 'release-board',
-          title: 'Release board',
-          developer: 'Bee Labs',
-          humanUi: { kind: 'broker', capability: 'release-board.ui' },
+  it.each([false, true])(
+    'opens a bound app as the entire corner surface when embedsChat is %s',
+    (embedsChat) => {
+      const item: CornerListItem = {
+        ...corner('app-corner', 'waiting', 'Release control'),
+        app: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          instanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          manifest: {
+            version: 1,
+            slug: 'release-board',
+            title: 'Release board',
+            developer: 'Bee Labs',
+            humanUi: {
+              kind: 'broker',
+              capability: 'release-board.ui',
+              ...(embedsChat ? { embedsChat: true } : {}),
+            },
+          },
         },
-      },
-    };
-    const tree = render([item]);
-    act(() => tree.root.findByProps({ testID: 'room-corner-app-corner' }).props.onPress());
-    expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/corner-app/[slug]',
-      params: { slug: 'release-board', roomId: 'app-corner' },
-    });
-  });
+      };
+      const tree = render([item]);
+      act(() => tree.root.findByProps({ testID: 'room-corner-app-corner' }).props.onPress());
+      expect(routerPush).toHaveBeenCalledWith({
+        pathname: '/beeline/corner-app/[slug]',
+        params: { slug: 'release-board', roomId: 'app-corner' },
+      });
+    },
+  );
 });
 
 function resolvedStyle(style: any): Record<string, any> {

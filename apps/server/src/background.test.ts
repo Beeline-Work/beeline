@@ -12,7 +12,12 @@ import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
-import { MEDIA_SWEEP_INTERVAL_MS, MEDIA_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
+import {
+  ARTIFACT_TTL_HOURS,
+  MEDIA_SWEEP_INTERVAL_MS,
+  MEDIA_TTL_HOURS,
+  mediaTtlHours,
+} from './media-ttl.js';
 import { ObjectService } from './object-service.js';
 import { ApnsPushError } from './apns-push.js';
 
@@ -938,6 +943,7 @@ describe('media TTL sweep', () => {
     const { db, storage, service } = await seed();
     try {
       expect(MEDIA_TTL_HOURS).toBe(24);
+      expect(ARTIFACT_TTL_HOURS).toBe(168);
       expect(
         await new MediaExpiryLoop(db, 24, 0, { storage: storage.asStorage(), service }).runOnce(),
       ).toBe(1);

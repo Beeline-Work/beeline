@@ -17,7 +17,7 @@ import { MCP_GRANT_CREATOR_ONLY_MESSAGE } from '@beeline/api-contract/agent-gran
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
-import { isMediaId, mediaTtlHours } from './media-ttl.js';
+import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
 import { InvitePreviewAccess } from './invite-preview.js';
@@ -1015,7 +1015,7 @@ async function route(
         return;
       }
       if (object?.kind === 'expired') {
-        json(response, 410, { error: 'media_expired', ttlHours: mediaTtlHours() });
+        json(response, 410, { error: 'media_expired', ttlHours: object.ttlHours });
         return;
       }
       if (object?.kind === 'pending') {
@@ -1026,11 +1026,14 @@ async function route(
     // No bytea fallback: every file lives in `objects`. A tombstone is
     // expired; anything else never existed for readers.
     const expired = (
-      await options.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [mediaId])
-    ).rows.length;
+      await options.database.query<{ retention_hours: number }>(
+        `SELECT retention_hours FROM object_expirations WHERE id=$1`,
+        [mediaId],
+      )
+    ).rows[0];
     json(response, expired ? 410 : 404, {
       error: expired ? 'media_expired' : 'media_not_found',
-      ...(expired ? { ttlHours: mediaTtlHours() } : {}),
+      ...(expired ? { ttlHours: Number(expired.retention_hours) } : {}),
     });
     return;
   }

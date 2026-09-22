@@ -1,6 +1,10 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
+import {
+  ARTIFACT_TTL_HOURS,
+  MEDIA_SWEEP_INTERVAL_MS,
+  mediaTtlHours,
+} from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
@@ -393,6 +397,7 @@ export class MediaExpiryLoop {
        *  sweep only uses `deleteObject`, batched and idempotent. */
       service: ObjectService;
     },
+    private readonly artifactTtlHours = ARTIFACT_TTL_HOURS,
   ) {}
 
   /** Objects deleted by this call; 0 when the sweep was throttled or found nothing. */
@@ -412,8 +417,13 @@ export class MediaExpiryLoop {
    */
   private async sweepObjects(): Promise<number> {
     if (!this.objects) return 0;
-    const candidates = await this.database.query<{ id: string; key: string; state: string }>(
-      `SELECT id::text id,key,state FROM objects
+    const candidates = await this.database.query<{
+      id: string;
+      key: string;
+      kind: 'media' | 'artifact';
+      state: string;
+    }>(
+      `SELECT id::text id,key,kind,state FROM objects
        WHERE expires_at < now()
           OR (state='pending' AND created_at < now() - interval '1 hour')
        LIMIT 100`,
@@ -432,8 +442,9 @@ export class MediaExpiryLoop {
       }
       if (object.state === 'ready')
         await this.database.query(
-          `INSERT INTO object_expirations(id) VALUES ($1) ON CONFLICT(id) DO NOTHING`,
-          [object.id],
+          `INSERT INTO object_expirations(id,retention_hours) VALUES ($1,$2)
+           ON CONFLICT(id) DO NOTHING`,
+          [object.id, object.kind === 'artifact' ? this.artifactTtlHours : this.ttlHours],
         );
       await this.database.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
       deleted += 1;

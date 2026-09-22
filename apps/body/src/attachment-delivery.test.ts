@@ -8,7 +8,6 @@ import {
   deliverAttachments,
   MAX_ATTACHMENT_BYTES,
   MAX_INLINE_IMAGE_BYTES,
-  MEDIA_TTL_HOURS,
   promptWithImages,
   withoutImageData,
 } from './attachment-delivery.js';
@@ -111,8 +110,8 @@ describe('attachment delivery', () => {
     expect(attachmentImageBlocks(delivered, true)).toEqual([]);
   });
 
-  // Attachment bytes are swept 24 hours after upload. "not found" reads like a
-  // bug the agent should retry; "expired" is what actually happened.
+  // Attachment bytes are swept after their applicable retention window. "not
+  // found" reads like a bug the agent should retry; "expired" is what happened.
   it('says an attachment expired rather than failed, from the flag and from 410 Gone', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
     roots.push(dir);
@@ -127,9 +126,9 @@ describe('attachment delivery', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(delivered[0]).toEqual({
       attachment: flagged,
-      reason: expect.stringContaining(`expired: attachments are kept for ${MEDIA_TTL_HOURS} hours`),
+      reason: 'expired: these attachment bytes are past their retention window',
     });
-    expect(delivered[1]?.reason).toContain('expired: attachments are kept');
+    expect(delivered[1]?.reason).toBe('expired: these attachment bytes are past their retention window');
     expect(delivered[1]?.path).toBeUndefined();
 
     const lines = attachmentPromptLines([flagged, goneOnFetch], delivered);

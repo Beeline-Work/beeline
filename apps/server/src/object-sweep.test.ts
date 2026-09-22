@@ -5,6 +5,7 @@ import { PgliteDatabase, type SqlDatabase } from './test-support.js';
 import { MediaExpiryLoop } from './background.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
+import { ARTIFACT_TTL_HOURS, MEDIA_TTL_HOURS } from './media-ttl.js';
 
 const AGENT = 'c'.repeat(64);
 
@@ -38,20 +39,35 @@ describe('object sweep', () => {
       const s = storage();
       const service = new ObjectService(db, s, 'https://x');
       const ready = await service.uploadArtifact(AGENT, Buffer.from('<p>x</p>'), 'text/html', 'T');
-      await db.query(`UPDATE objects SET expires_at = now() - interval '1 minute' WHERE id=$1`, [
-        ready.objectId,
-      ]);
+      const media = await service.uploadSharedFile(
+        AGENT,
+        Buffer.from('person upload'),
+        'text/plain',
+        'note.txt',
+      );
+      await db.query(`UPDATE objects SET expires_at = now() - interval '1 minute'`);
 
       const loop = new MediaExpiryLoop(db, 24, 0, { storage: s, service });
       await loop.runOnce();
 
       expect(s.deleteObject).toHaveBeenCalledWith(`artifact/${AGENT}/${sha('<p>x</p>')}`);
+      expect(s.deleteObject).toHaveBeenCalledWith(`media/${AGENT}/${sha('person upload')}`);
       expect(
         (await db.query(`SELECT 1 FROM objects WHERE id=$1`, [ready.objectId])).rows,
       ).toEqual([]);
       expect(
-        (await db.query<{ id: string }>(`SELECT id::text id FROM object_expirations`, [])).rows,
-      ).toEqual([{ id: ready.objectId }]);
+        (
+          await db.query<{ id: string; retention_hours: number }>(
+            `SELECT id::text id,retention_hours FROM object_expirations ORDER BY id`,
+            [],
+          )
+        ).rows,
+      ).toEqual(
+        [
+          { id: ready.objectId, retention_hours: ARTIFACT_TTL_HOURS },
+          { id: media.objectId, retention_hours: MEDIA_TTL_HOURS },
+        ].sort((left, right) => left.id.localeCompare(right.id)),
+      );
 
       // Idempotent: second pass deletes nothing and re-tombstones nothing.
       s.deleteObject.mockClear();
@@ -59,7 +75,10 @@ describe('object sweep', () => {
       expect(s.deleteObject).not.toHaveBeenCalled();
 
       // The tombstone is what the media read turns into a 410.
-      await expect(service.readMediaObject(ready.objectId)).resolves.toEqual({ kind: 'expired' });
+      await expect(service.readMediaObject(ready.objectId)).resolves.toEqual({
+        kind: 'expired',
+        ttlHours: ARTIFACT_TTL_HOURS,
+      });
     } finally {
       await db.close();
     }

@@ -143,7 +143,7 @@ import {
   walletBinding,
   walletHistory,
 } from './wallet.js';
-import { mediaIdFromUrl } from './media-ttl.js';
+import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import {
@@ -5389,9 +5389,11 @@ export class PhoneService {
       // Object bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
       await database.query(
-        `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id)
-         INSERT INTO object_expirations(id) SELECT id FROM swept ON CONFLICT(id) DO NOTHING`,
-        [gone],
+        `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id,kind)
+         INSERT INTO object_expirations(id,retention_hours)
+         SELECT id,CASE kind WHEN 'artifact' THEN $2::integer ELSE $3::integer END FROM swept
+         ON CONFLICT(id) DO NOTHING`,
+        [gone, ARTIFACT_TTL_HOURS, mediaTtlHours()],
       );
 
       // Rooms and GitHub connections the account created: the artifacts stay,

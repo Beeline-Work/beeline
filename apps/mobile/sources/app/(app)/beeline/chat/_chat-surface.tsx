@@ -289,6 +289,7 @@ import {
 } from '@/buzz/transcript-motion';
 import {
   boundaryRowIndex,
+  countsAsUnread,
   messageContainsBoundary,
   messageBoundaryIds,
   newestTranscriptRowId,
@@ -2936,7 +2937,11 @@ export function BuzzChatSurface({
 
   const handleMarkUnread = useCallback(
     async (message: ChatDisplayMessage) => {
-      if (message.isAgentActivity || message.isAgentDraft) return;
+      // The boundary may only be placed on a row the one definition of unread
+      // admits. Placed on the viewer's own message it drew a NEW MESSAGES
+      // divider and announced success while the server — which never counts
+      // viewer-authored rows — reported nothing unread and left the deck read.
+      if (!countsAsUnread(message)) return;
       const messageId = message.relayId ?? message.id;
       try {
         await markUnreadFrom(messageId);
@@ -5859,7 +5864,7 @@ export function BuzzChatSurface({
             testID="message-forward-action"
           />
         ) : null}
-        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+        {messageActionsTarget && countsAsUnread(messageActionsTarget) ? (
           <HullActionSheetRow
             accessibilityLabel="Mark unread from this message"
             label="Mark unread"

@@ -284,6 +284,48 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor())?.unreadCount).toBe(99);
   });
 
+  it('refuses to hold the viewer’s own message unread', async () => {
+    // OWN-MESSAGE-MARK-UNREAD. The action used to be offered on the viewer's
+    // own row, announce success and draw a NEW MESSAGES divider there, while
+    // the count — which never admits viewer-authored rows — stayed at zero and
+    // the deck stayed read. The two now agree: the write is refused.
+    const own = 'e5'.padEnd(64, '5');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'mine',$4)`,
+      [own, ROOM, OWNER, '2026-09-12 01:00:09.000+00'],
+    );
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: own });
+    expect(await cursor()).toEqual({
+      messageId: own,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+
+    const refused = await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: own });
+    expect(refused.status).toBe(400);
+
+    // Nothing moved: no boundary at the viewer's own row, no count behind it.
+    expect(await cursor()).toEqual({
+      messageId: own,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+
+    // The incoming row the reader would actually reach for still works, and
+    // the count it reports is the one the boundary implies.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[3]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[2]!.id,
+      firstUnreadMessageId: MESSAGES[3]!.id,
+      unreadCount: 1,
+    });
+    expect((await deckRow()).unread).toBe(true);
+  });
+
   it('refuses a read or unread write against a Room the caller cannot read', async () => {
     const outsider = createHash('sha256').update('github:outsider').digest('hex');
     await database.query(

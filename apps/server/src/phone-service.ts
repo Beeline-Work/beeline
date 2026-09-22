@@ -2980,6 +2980,11 @@ export class PhoneService {
    *
    * Unlike `markRead` this is not monotonic — moving the boundary backwards is
    * the entire point — so it writes unconditionally.
+   *
+   * The target must be a row this viewer's unread count would actually count.
+   * Anything else — their own message above all — makes the caller a boundary
+   * the count then contradicts: it reported nothing unread while the open Room
+   * drew a NEW MESSAGES divider at the chosen row (review 2026-09-22).
    */
   async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
     const message = await this.database.query<{ exists: boolean }>(
@@ -2988,6 +2993,15 @@ export class PhoneService {
     );
     if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
       throw new Error('message not found');
+    const countable = await this.database.query<{ exists: boolean }>(
+      `SELECT true exists FROM messages message
+       WHERE message.id=$1 AND message.room_id=$3 AND ${unreadMessageSql('message')}`,
+      [messageIdValue, viewerId, roomId],
+    );
+    // 'invalid' is what the router reads as a 400 — the row is real and
+    // readable, it is simply not something this viewer can hold unread.
+    if (!countable.rows[0])
+      throw new Error('messageId is invalid: only a row that counts as unread can be marked unread');
     const previous = (
       await this.database.query<{ id: string; created_at: Date }>(
         `SELECT earlier.id,earlier.created_at FROM messages target

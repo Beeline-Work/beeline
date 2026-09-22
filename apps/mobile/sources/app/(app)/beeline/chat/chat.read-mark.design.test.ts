@@ -58,6 +58,26 @@ describe('the chat surface read-mark contract', () => {
     expect(focusEffect).toContain('readCursorRef.current?.flush()');
   });
 
+  it('offers mark-unread only on a row the one definition calls unread', () => {
+    // OWN-MESSAGE-MARK-UNREAD. The row was gated on `!isAgentActivity`, so it
+    // appeared on the viewer's own message, announced success and installed
+    // that message as the local boundary — while the server, which never
+    // counts viewer-authored rows, reported nothing unread and left the deck
+    // read (review 2026-09-22). Both the row and the handler now run the same
+    // predicate the queue and the server count by.
+    const sheetRow = chatSource.slice(
+      chatSource.indexOf('accessibilityLabel="Mark unread from this message"') - 200,
+      chatSource.indexOf('testID="message-mark-unread-action"'),
+    );
+    expect(sheetRow).toContain('countsAsUnread(messageActionsTarget)');
+    expect(sheetRow).not.toContain('!messageActionsTarget.isAgentActivity');
+    const handler = chatSource.slice(
+      chatSource.indexOf('const handleMarkUnread = useCallback('),
+      chatSource.indexOf('const openMessageActions = useCallback('),
+    );
+    expect(handler).toContain('if (!countsAsUnread(message)) return;');
+  });
+
   it('ranks the read cursor against chronological order, never the inverted list', () => {
     // `transcriptMessages` IS `invertedMessages` on the phone. The cursor
     // decides which visible row is newest by its index, so handing it that

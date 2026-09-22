@@ -1192,13 +1192,13 @@ export function BuzzChatSurface({
   const [newMessageQueue, setNewMessageQueue] = useState<NewMessageQueue>(
     EMPTY_NEW_MESSAGE_QUEUE,
   );
-  // Any visible pixel of the newest row, reported by the list's own
-  // viewability pass. True before the first report: every open lands on the
-  // tail, so the newest row is on screen until the reader leaves it.
-  const [newestMessageVisible, setNewestMessageVisible] = useState(true);
+  // Any visible pixel of the newest row, as the list's own viewability pass
+  // reports it. False until that pass has run, which costs nothing: an empty
+  // queue draws no control either way.
+  const [newestMessageVisible, setNewestMessageVisible] = useState(false);
   useEffect(() => {
     setNewMessageQueue(EMPTY_NEW_MESSAGE_QUEUE);
-    setNewestMessageVisible(true);
+    setNewestMessageVisible(false);
   }, [decodedId]);
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
@@ -2108,6 +2108,20 @@ export function BuzzChatSurface({
     visibleTranscriptMessagesRef.current = [];
     completedUnreadLandingRef.current = null;
   }, [decodedId]);
+  // A row arriving below the fold leaves the viewable set untouched, so the
+  // list has no reason to run its viewability pass, and the last report —
+  // taken while the row above was still the newest — would stand as if the
+  // arrival were on screen. Re-ask the same question against that report
+  // whenever the newest row changes: an arrival the reader cannot see answers
+  // false and the control appears without waiting for a scroll that may never
+  // come.
+  useEffect(() => {
+    setNewestMessageVisible(
+      visibleTranscriptMessagesRef.current.some((message) =>
+        messageContainsBoundary(message, newestTranscriptMessageIdRef.current),
+      ),
+    );
+  }, [newestTranscriptMessageId]);
   useEffect(() => {
     if (!desktopTranscript) return;
     const scrollNode = flatListRef.current?.getScrollableNode() as

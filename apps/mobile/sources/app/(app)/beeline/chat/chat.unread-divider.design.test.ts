@@ -52,4 +52,18 @@ describe('the chat surface unread-divider contract', () => {
   it('reports the newest row from chronological order so both lists agree', () => {
     expect(chatSource).toContain('newestTranscriptRowId(visibleMessages)');
   });
+
+  it('re-asks visibility when the newest row changes, not only when the list scrolls', () => {
+    // An arrival below the fold leaves the viewable set unchanged, so the
+    // list never runs its viewability pass and the previous report — taken
+    // while the row above was the newest — would stand as if the arrival
+    // were on screen, hiding the control the arrival exists to raise.
+    const effect = chatSource.slice(
+      chatSource.indexOf('visibleTranscriptMessagesRef.current = [];'),
+      chatSource.indexOf('if (!desktopTranscript) return;'),
+    );
+    expect(effect).toContain('setNewestMessageVisible(');
+    expect(effect).toContain('messageContainsBoundary(message, newestTranscriptMessageIdRef.current)');
+    expect(effect).toContain('}, [newestTranscriptMessageId]);');
+  });
 });

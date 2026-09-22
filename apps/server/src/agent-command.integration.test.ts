@@ -22,7 +22,7 @@ const W = '11111111-1111-4111-8111-111111111111',
   R = '22222222-2222-4222-8222-222222222222',
   C = '33333333-3333-4333-8333-333333333333';
 const id = () => randomBytes(32).toString('hex');
-let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService;
+let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService, live: LiveHub;
 const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
@@ -87,7 +87,8 @@ beforeAll(async () => {
       [R, agent],
     );
   phone = new PhoneService(db, 'http://test');
-  daemon = new DaemonService(db, new LiveHub());
+  live = new LiveHub();
+  daemon = new DaemonService(db, live);
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {
@@ -1196,6 +1197,77 @@ it('accepts and settles draft, thought, activity, attachment and final under one
       )
     ).rowCount,
   ).toBe(0);
+});
+
+it('keeps Room drafts private while preserving liveness, final replies, and corner streaming', async () => {
+  await send('@hoots work in the Room');
+  const [roomCommand] = await commands();
+  await claim(roomCommand!);
+  const roomInput = {
+    roomId: R,
+    agentId: A,
+    requestId: roomCommand!.turnRequestId,
+    turnId: roomCommand!.turnRequestId,
+    generationId: 'g1',
+  };
+  const events: Array<{ type: string; roomId?: string }> = [];
+  const unsubscribe = live.subscribeAll((event) => events.push(event));
+  try {
+    await daemon.execute('postAgentDraft', { ...roomInput, text: 'Room draft' }, A);
+    expect(
+      (
+        await db.query(
+          `SELECT 1 FROM live_outputs
+           WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+          [R, A, roomCommand!.turnRequestId],
+        )
+      ).rowCount,
+    ).toBe(0);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'draft', roomId: R }));
+    expect(
+      (
+        await db.query<{ status: string }>(
+          `SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+          [R, A, roomCommand!.turnRequestId],
+        )
+      ).rows[0]?.status,
+    ).toBe('working');
+    const final = await result(roomCommand!, 'Room final');
+    expect(
+      (await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [final.id]))
+        .rows[0]?.text,
+    ).toBe('Room final');
+
+    await send('@hoots work in the corner', C);
+    const [cornerCommand] = await commands(A, C);
+    await claim(cornerCommand!);
+    await daemon.execute(
+      'postAgentDraft',
+      {
+        roomId: C,
+        agentId: A,
+        requestId: cornerCommand!.turnRequestId,
+        turnId: cornerCommand!.turnRequestId,
+        generationId: 'g1',
+        text: 'Corner draft',
+      },
+      A,
+    );
+    expect(
+      (
+        await db.query(
+          `SELECT 1 FROM live_outputs
+           WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+          [C, A, cornerCommand!.turnRequestId],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'draft', roomId: C, text: 'Corner draft' }),
+    );
+  } finally {
+    unsubscribe();
+  }
 });
 
 it('deletes draft and thought rows when a successful turn settles without a reply', async () => {

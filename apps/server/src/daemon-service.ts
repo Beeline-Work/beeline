@@ -2523,10 +2523,19 @@ export class DaemonService {
     agentId: string,
   ) {
     await this.access(input.roomId, agentId);
-    await this.database.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+    const written = await this.database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       SELECT room.id,$2,$3,$4,$5::jsonb FROM rooms room
+       WHERE room.id=$1 AND ($4<>'draft' OR room.parent_id IS NOT NULL)
+       ON CONFLICT(room_id,agent_id,turn_id,kind)
+       DO UPDATE SET body=EXCLUDED.body,updated_at=now()
+       RETURNING 1`,
       [input.roomId, agentId, input.turnId, kind, JSON.stringify({ text: input.text })],
     );
+    // Room turns keep their durable working receipt and final reply, but their
+    // provisional prose stays off the transcript. Corners retain the full
+    // draft stream so repository work remains observable while it is running.
+    if (!written.rowCount) return this.writeResult();
     this.live.publish({
       type: kind,
       roomId: input.roomId,

@@ -288,12 +288,12 @@ import {
 } from '@/buzz/transcript-motion';
 import {
   boundaryRowIndex,
-  compactNewMessageCount,
   messageContainsBoundary,
   messageBoundaryIds,
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
+import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -444,8 +444,6 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * 28 matches the Room-list pair so the two screens share one chrome.
  */
 const HEADER_MARK_SIZE = 28;
-const NEW_MESSAGE_CONTROL_HIT_SIZE = 44;
-const NEW_MESSAGE_CONTROL_PLATE_HEIGHT = 30;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -2036,7 +2034,10 @@ export function BuzzChatSurface({
   const {
     dividerMessageId: firstNewMessageId,
     queue: newMessageQueue,
-    controlVisible: newMessageControlShown,
+    discVisible: newestJumpDiscShown,
+    badgeCount: newMessageBadgeCount,
+    catchUpVisible: catchUpStripShown,
+    catchUpSummary,
     observeVisibleMessages,
     settleQueueAtBoundary,
   } = useNewMessageControl({
@@ -2276,6 +2277,16 @@ export function BuzzChatSurface({
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
   }, [desktopTranscript]);
+  // The disc's one job. It lands on the tail itself rather than on a queued
+  // boundary row, so a reader who is merely re-reading history — no queue at
+  // all — gets back to the live end in one tap, and a reader with unread mail
+  // arrives where the next message will land. Any queue behind it is settled
+  // here: the tap is the reader saying they are done being behind.
+  const landAtNewestMessage = useCallback(() => {
+    pendingNewMessageLandingRef.current = null;
+    scrollToNewestMessage();
+    if (newMessageQueue.boundaryId) settleQueueAtBoundary(newMessageQueue.boundaryId);
+  }, [newMessageQueue.boundaryId, scrollToNewestMessage, settleQueueAtBoundary]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -5135,26 +5146,16 @@ export function BuzzChatSurface({
               desktopTranscript ? null : transcriptHistoryLine
             }
           />
-          {newMessageControlShown && (
-            <Pressable
-              accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
-              accessibilityRole="button"
-              onPress={() =>
-                landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
-              }
-              style={({ pressed }) => [
-                styles.newMessageControlHitTarget,
-                pressed && styles.newMessageControlPressed,
-              ]}
-              testID="new-message-control"
-            >
-              <View style={styles.newMessageControlPlate}>
-                <Text style={styles.newMessageControlText}>
-                  {compactNewMessageCount(newMessageQueue.count)} new
-                </Text>
-              </View>
-            </Pressable>
-          )}
+          <RoomCatchUpControls
+            badgeCount={newMessageBadgeCount}
+            catchUpSummary={catchUpSummary}
+            catchUpVisible={catchUpStripShown}
+            discVisible={newestJumpDiscShown}
+            onJumpToFirstNew={() =>
+              landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
+            }
+            onJumpToNewest={landAtNewestMessage}
+          />
           </View>
 
           {/* P2: Archived channels are read-only */}
@@ -6212,39 +6213,6 @@ const styles = StyleSheet.create((theme) => {
     },
     messageListContentEmpty: {
       flexGrow: 1,
-    },
-    newMessageControlHitTarget: {
-      position: 'absolute',
-      right: 12,
-      // Clear of the turn line. Both are pinned to the right edge above the
-      // composer, and the line paints the transcript's bottom margin
-      // (`room-bottom-chrome`), so a pill sitting on the bottom has the
-      // line's STOP control drawn across it. Lifting by the line's own box
-      // keeps them apart whether or not an agent is working — an offset that
-      // changed with the line would move the pill under the reader.
-      bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,
-      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      height: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    newMessageControlPressed: {
-      opacity: 0.72,
-    },
-    newMessageControlPlate: {
-      height: NEW_MESSAGE_CONTROL_PLATE_HEIGHT,
-      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
-      paddingHorizontal: groknight.space.sm,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgHighlight,
-    },
-    newMessageControlText: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.meta,
-      color: groknight.ledgerQuiet,
-      fontVariant: ['tabular-nums'],
     },
     outboxFailure: {
       marginTop: 4,

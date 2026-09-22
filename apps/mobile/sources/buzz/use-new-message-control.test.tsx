@@ -49,6 +49,11 @@ const row = (id: string, index: number): ChatDisplayMessage => ({
   timestamp: 1_700_000_000_000 + index * 1000,
 });
 
+const rowFrom = (id: string, index: number, name: string): ChatDisplayMessage => ({
+  ...row(id, index),
+  authorIdentity: { pubkey: `pk-${name}`, kind: 'agent', name },
+});
+
 const SEED = ['seed-0', 'seed-1', 'seed-2', 'seed-3', 'seed-4'].map(row);
 
 /**
@@ -95,12 +100,22 @@ function TranscriptHarness({
           {renderItem({ item })}
         </View>
       ))}
-      {control.controlVisible && (
+      {control.catchUpVisible && (
         <Pressable
           onPress={() => control.settleQueueAtBoundary(control.queue.boundaryId!)}
-          testID="new-message-control"
+          testID="catch-up-summary-strip"
         >
-          <Text>{`${compactNewMessageCount(control.queue.count)} new`}</Text>
+          <Text>{control.catchUpSummary}</Text>
+        </Pressable>
+      )}
+      {control.discVisible && (
+        <Pressable
+          onPress={() => control.settleQueueAtBoundary(control.queue.boundaryId!)}
+          testID="newest-jump-disc"
+        >
+          {control.badgeCount > 0 && (
+            <Text testID="newest-jump-badge">{compactNewMessageCount(control.badgeCount)}</Text>
+          )}
         </Pressable>
       )}
     </View>
@@ -133,8 +148,18 @@ function report(visible: readonly ChatDisplayMessage[]): void {
   act(() => handles.report?.(visible));
 }
 
-function controls(renderer: ReactTestRenderer) {
-  return renderer.root.findAllByProps({ testID: 'new-message-control' }, { deep: false });
+function strips(renderer: ReactTestRenderer) {
+  return renderer.root.findAllByProps({ testID: 'catch-up-summary-strip' }, { deep: false });
+}
+
+function discs(renderer: ReactTestRenderer) {
+  return renderer.root.findAllByProps({ testID: 'newest-jump-disc' }, { deep: false });
+}
+
+function badges(renderer: ReactTestRenderer): string[] {
+  return renderer.root
+    .findAllByProps({ testID: 'newest-jump-badge' }, { deep: false })
+    .map((badge: { props: { children: string } }) => badge.props.children);
 }
 
 function dividerRowIds(renderer: ReactTestRenderer): string[] {
@@ -170,23 +195,28 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    expect(controls(renderer)).toHaveLength(1);
+    expect(strips(renderer)).toHaveLength(1);
     expect(dividerRowIds(renderer)).toEqual([]);
   });
 
   it('UDIV-01: arms on an arrival below the fold and settles on the reader’s own return', () => {
     const renderer = mount(AT_TAIL);
-    // Opening on the tail: the reader can see the newest row, so nothing to jump to.
+    // Opening on the tail: the reader can see the newest row, so there is
+    // nowhere to land and no disc.
     report([SEED[4]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(0);
+    expect(strips(renderer)).toHaveLength(0);
 
-    // The reader pages back into history. Tail distance changes; nothing shows yet.
+    // The reader pages back into history. The newest row is off screen, so the
+    // disc comes up with no badge — nothing new has arrived to count.
     report([SEED[1]!, SEED[2]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(1);
+    expect(badges(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(0);
 
     // One message arrives below the fold. The viewable set is unchanged, so the
     // list has no reason to re-run its viewability pass and never reports — the
-    // control has to raise itself off the change of newest row alone.
+    // badge has to raise itself off the change of newest row alone.
     const arrived = [...SEED, row('arrival-0', 5)];
     update(renderer, {
       ...AT_TAIL,
@@ -194,17 +224,22 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    expect(controls(renderer)).toHaveLength(1);
-    expect(controls(renderer)[0]!.findByType(Text).props.children).toBe('1 new');
+    expect(badges(renderer)).toEqual(['1']);
+    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe('1 new message');
 
     // The reader scrolls back to the tail under their own finger. No tap on the
-    // control: reaching the newest row is the whole thing the control asked for.
+    // disc: reaching the newest row is the whole thing the badge counted towards.
     report([SEED[4]!, arrived[5]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(badges(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(0);
 
-    // And a settled queue cannot bring its old count back on the next scroll away.
+    // And a settled queue cannot bring its old count back on the next scroll
+    // away: the disc returns bare.
     report([SEED[1]!, SEED[2]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(1);
+    expect(badges(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(0);
   });
 
   it('UDIV-02: stays hidden while the newest row is on screen, however far off the tail', () => {
@@ -217,11 +252,13 @@ describe('the transcript new-message control', () => {
       pinnedToTail: false,
     });
     // Queued, because tail distance said the reader was away from the tail.
-    expect(controls(renderer)).toHaveLength(1);
+    expect(strips(renderer)).toHaveLength(1);
 
     // But the reader is looking straight at the arrival. Slack shows nothing here.
     report([SEED[4]!, arrived[5]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(0);
+    expect(badges(renderer)).toEqual([]);
   });
 
   it('raises the control even though the last report said the newest row was on screen', () => {
@@ -232,7 +269,8 @@ describe('the transcript new-message control', () => {
     // message the reader cannot see.
     const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
     report([SEED[3]!, SEED[4]!]);
-    expect(controls(renderer)).toHaveLength(0);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(discs(renderer)).toHaveLength(0);
 
     update(renderer, {
       ...AT_TAIL,
@@ -240,7 +278,8 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    expect(controls(renderer)).toHaveLength(1);
+    expect(strips(renderer)).toHaveLength(1);
+    expect(badges(renderer)).toEqual(['1']);
   });
 
   it('shows no control for an arrival folded into a host row already on screen', () => {
@@ -259,7 +298,30 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['fold-b']),
       pinnedToTail: false,
     });
-    expect(controls(renderer)).toHaveLength(0);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(badges(renderer)).toEqual([]);
+  });
+
+  it('CHEV-03: the strip names the run the reader is behind on, and retires with it', () => {
+    const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
+    report([SEED[1]!, SEED[2]!]);
+
+    const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
+    update(renderer, {
+      ...AT_TAIL,
+      messages: arrived,
+      arrivingIds: new Set(['arrival-0', 'arrival-1']),
+      pinnedToTail: false,
+    });
+    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(
+      '2 new messages from Sol and Nerd',
+    );
+    expect(badges(renderer)).toEqual(['2']);
+
+    // Reaching the newest row is the reader catching up; the strip has nothing
+    // left to summarise.
+    report([arrived[6]!]);
+    expect(strips(renderer)).toHaveLength(0);
   });
 
   it('UDIV-03: a live arrival never creates a divider in a Room that opened read', () => {
@@ -273,9 +335,9 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    // The control is up, and the transcript still carries no divider at all —
+    // The strip is up, and the transcript still carries no divider at all —
     // the reported failure was one appearing beneath that very arrival.
-    expect(controls(renderer)).toHaveLength(1);
+    expect(strips(renderer)).toHaveLength(1);
     expect(dividerRowIds(renderer)).toEqual([]);
   });
 

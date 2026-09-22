@@ -3,26 +3,33 @@ import type { ChatDisplayMessage } from './room-view-presentation';
 import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
+  catchUpStripVisible,
+  catchUpSummaryText,
   messageContainsBoundary,
-  newMessageControlVisible,
+  newMessageBadgeCount,
+  newestJumpDiscVisible,
   queueIncomingMessages,
   type NewMessageQueue,
 } from './room-new-message-boundary';
 
 /**
- * The two answers a transcript owes a reader about unread mail, kept apart the
+ * The answers a transcript owes a reader about unread mail, kept apart the
  * way Slack keeps them apart:
  *
  * - the NEW MESSAGES divider says where the reader's unread run began when
  *   they opened this Room. The server's opening cursor owns it until the
  *   reader reaches the newest row, and a live arrival may never move it;
- * - the jump control says a newer message exists that the reader cannot see.
- *   Actual viewport visibility decides it, and reaching the newest row settles
- *   it exactly as a tap on it would.
+ * - the jump disc says the newest message is off screen. It is a way back to
+ *   newest and nothing else, so it shows on viewport visibility alone,
+ *   whether or not anything new is waiting;
+ * - the badge on that disc counts the unread run, and reaching the newest row
+ *   clears it exactly as a tap on the disc would;
+ * - the catch-up strip says what that run is — how many and from whom — and
+ *   lands at its first message rather than at newest.
  *
- * Both used to be drawn from the live queue alone, which is what put a fresh
- * divider under the newest row and left the control sitting over a Room the
- * reader had already caught up on.
+ * Divider and count used to be drawn from the live queue alone, which is what
+ * put a fresh divider under the newest row and left the old pill sitting over
+ * a Room the reader had already caught up on.
  */
 export function useNewMessageControl({
   roomId,
@@ -44,15 +51,22 @@ export function useNewMessageControl({
   /** The opening unread row until the newest row is seen, otherwise null. */
   dividerMessageId: string | null;
   queue: NewMessageQueue;
-  controlVisible: boolean;
+  /** The jump disc: shown for as long as the newest row is off screen. */
+  discVisible: boolean;
+  /** What the disc's badge reads, or 0 for no badge. */
+  badgeCount: number;
+  catchUpVisible: boolean;
+  catchUpSummary: string;
   observeVisibleMessages: (visible: readonly ChatDisplayMessage[]) => void;
   settleQueueAtBoundary: (boundaryId: string) => void;
 } {
   const [queue, setQueue] = useState<NewMessageQueue>(EMPTY_NEW_MESSAGE_QUEUE);
   // Any visible pixel of the newest row, as the list's own viewability pass
-  // reports it. False until that pass has run, which costs nothing: an empty
-  // queue draws no control either way.
+  // reports it. False until that pass has run, which is why the disc waits on
+  // `hasObservedVisibility`: it now shows without a queue behind it, so an
+  // unanswered viewport would flash one over every Room at open.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
+  const [hasObservedVisibility, setHasObservedVisibility] = useState(false);
   const [dismissedDividerMessageId, setDismissedDividerMessageId] = useState<string | null>(null);
   const visibleMessagesRef = useRef<readonly ChatDisplayMessage[]>([]);
   const newestMessageIdRef = useRef(newestMessageId);
@@ -65,6 +79,7 @@ export function useNewMessageControl({
   useEffect(() => {
     setQueue(EMPTY_NEW_MESSAGE_QUEUE);
     setNewestMessageVisible(false);
+    setHasObservedVisibility(false);
     setDismissedDividerMessageId(null);
     visibleMessagesRef.current = [];
   }, [roomId]);
@@ -101,6 +116,7 @@ export function useNewMessageControl({
       messageContainsBoundary(message, newestMessageIdRef.current),
     );
     setNewestMessageVisible(newestVisible);
+    setHasObservedVisibility(true);
     // Reaching the newest message is what the control asks for; arriving there
     // under the reader's own finger settles the queue exactly as a tap would,
     // and retires the opening divider now that its unread run has been read.
@@ -125,7 +141,14 @@ export function useNewMessageControl({
     dividerMessageId:
       dismissedDividerMessageId === firstUnreadMessageId ? null : firstUnreadMessageId,
     queue,
-    controlVisible: newMessageControlVisible(queue, newestMessageVisible),
+    discVisible: newestJumpDiscVisible({
+      newestMessageId,
+      newestMessageVisible,
+      hasObservedVisibility,
+    }),
+    badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
+    catchUpVisible: catchUpStripVisible(queue, newestMessageVisible),
+    catchUpSummary: catchUpSummaryText(queue),
     observeVisibleMessages,
     settleQueueAtBoundary,
   };

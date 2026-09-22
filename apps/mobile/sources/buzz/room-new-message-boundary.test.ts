@@ -4,15 +4,25 @@ import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
   boundaryRowIndex,
+  catchUpStripVisible,
+  catchUpSummaryText,
   compactNewMessageCount,
   messageBoundaryIds,
-  newMessageControlVisible,
+  newMessageBadgeCount,
+  newestJumpDiscVisible,
   newestTranscriptRowId,
   queueIncomingMessages,
 } from './room-new-message-boundary';
 
 function message(id: string, isUser = false): ChatDisplayMessage {
   return { id, text: id, timestamp: 1, isUser };
+}
+
+function from(id: string, name: string): ChatDisplayMessage {
+  return {
+    ...message(id),
+    authorIdentity: { pubkey: `pk-${name}`, kind: 'agent', name },
+  };
 }
 
 describe('new-message boundary', () => {
@@ -37,7 +47,7 @@ describe('new-message boundary', () => {
         arrivingIds: new Set(['new-fact']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-fact', count: 1 });
+    ).toEqual({ boundaryId: 'new-fact', count: 1, authorNames: [] });
   });
 
   it('holds history, anchors the first incoming row, and accumulates later arrivals', () => {
@@ -46,14 +56,14 @@ describe('new-message boundary', () => {
       arrivingIds: new Set(['new-1', 'new-2']),
       isPinnedToTail: false,
     });
-    expect(first).toEqual({ boundaryId: 'new-1', count: 2 });
+    expect(first).toEqual({ boundaryId: 'new-1', count: 2, authorNames: [] });
     expect(
       queueIncomingMessages(first, {
         messages: [message('read'), message('new-1'), message('new-2'), message('new-3')],
         arrivingIds: new Set(['new-3']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-1', count: 3 });
+    ).toEqual({ boundaryId: 'new-1', count: 3, authorNames: [] });
   });
 
   it('does not queue the viewer own send or an arrival already followed at the tail', () => {
@@ -84,26 +94,97 @@ describe('new-message boundary', () => {
     expect(newestTranscriptRowId([])).toBeNull();
   });
 
-  it('hides the jump control while any pixel of the newest message is on screen', () => {
+  it('hides the catch-up strip while any pixel of the newest message is on screen', () => {
     // UDIV-02: the reader is a finger's width above the geometric tail, so
     // the pin test says "not at the tail" and the batch queues — but they
     // are looking straight at the newest message, so there is nothing to
-    // jump to and Slack shows no control.
+    // catch up on and Slack shows no strip.
     const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
       messages: [message('read'), message('new-1')],
       arrivingIds: new Set(['new-1']),
       isPinnedToTail: false,
     });
-    expect(queued).toEqual({ boundaryId: 'new-1', count: 1 });
-    expect(newMessageControlVisible(queued, true)).toBe(false);
-    expect(newMessageControlVisible(queued, false)).toBe(true);
-    expect(newMessageControlVisible(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(false);
+    expect(queued).toEqual({ boundaryId: 'new-1', count: 1, authorNames: [] });
+    expect(catchUpStripVisible(queued, true)).toBe(false);
+    expect(catchUpStripVisible(queued, false)).toBe(true);
+    expect(catchUpStripVisible(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(false);
+  });
+
+  it('CHEV-01: shows the disc for an off-screen newest row with no queue behind it', () => {
+    // The pill this replaces only ever appeared for unread mail. A reader who
+    // scrolled up to re-read something had no way back to the live end.
+    const scrolledIntoHistory = {
+      newestMessageId: 'newest',
+      newestMessageVisible: false,
+      hasObservedVisibility: true,
+    };
+    expect(newestJumpDiscVisible(scrolledIntoHistory)).toBe(true);
+    expect(newMessageBadgeCount(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(0);
+    // At the newest row there is nothing to land on.
+    expect(newestJumpDiscVisible({ ...scrolledIntoHistory, newestMessageVisible: true })).toBe(
+      false,
+    );
+    // And before the list has answered anything about its viewport, a disc
+    // drawn on that silence would flash over every Room at open.
+    expect(newestJumpDiscVisible({ ...scrolledIntoHistory, hasObservedVisibility: false })).toBe(
+      false,
+    );
+    expect(newestJumpDiscVisible({ ...scrolledIntoHistory, newestMessageId: null })).toBe(false);
+  });
+
+  it('CHEV-02: clears the badge on visibility while the disc itself stays up', () => {
+    const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: [message('read'), from('new-1', 'Sol'), from('new-2', 'Nerd')],
+      arrivingIds: new Set(['new-1', 'new-2']),
+      isPinnedToTail: false,
+    });
+    expect(newMessageBadgeCount(queued, false)).toBe(2);
+    // Seeing the newest row is what the badge counts towards: it clears there
+    // without a tap, and the disc is a separate question.
+    expect(newMessageBadgeCount(queued, true)).toBe(0);
+    expect(
+      newestJumpDiscVisible({
+        newestMessageId: 'new-2',
+        newestMessageVisible: false,
+        hasObservedVisibility: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('CHEV-03: summarises the catch-up run by count and author', () => {
+    const one = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: [from('new-1', 'Sol')],
+      arrivingIds: new Set(['new-1']),
+      isPinnedToTail: false,
+    });
+    expect(catchUpSummaryText(one)).toBe('1 new message from Sol');
+
+    const two = queueIncomingMessages(one, {
+      messages: [from('new-1', 'Sol'), from('new-2', 'Nerd')],
+      arrivingIds: new Set(['new-2']),
+      isPinnedToTail: false,
+    });
+    expect(catchUpSummaryText(two)).toBe('2 new messages from Sol and Nerd');
+
+    // A repeat author never repeats in the summary, and past two the rest are
+    // counted so the strip stays one line.
+    const many = queueIncomingMessages(two, {
+      messages: [from('new-3', 'Sol'), from('new-4', 'Hoots'), from('new-5', 'Milo')],
+      arrivingIds: new Set(['new-3', 'new-4', 'new-5']),
+      isPinnedToTail: false,
+    });
+    expect(catchUpSummaryText(many)).toBe('5 new messages from Sol, Nerd and 2 others');
+
+    // Rows with no resolved identity leave the count standing alone.
+    expect(
+      catchUpSummaryText({ boundaryId: 'new-1', count: 3, authorNames: [] }),
+    ).toBe('3 new messages');
   });
 
   it('settles the queue when the reader scrolls back to the newest message', () => {
-    // The control used to survive the reader's own scroll to the tail: only
-    // a tap on it cleared the count, so it sat there over a caught-up Room
-    // and armed again the moment they paged back into history.
+    // The count used to survive the reader's own scroll to the tail: only a
+    // tap cleared it, so it sat there over a caught-up Room and armed again
+    // the moment they paged back into history.
     const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
       messages: [message('read'), message('new-1'), message('new-2')],
       arrivingIds: new Set(['new-1', 'new-2']),
@@ -111,20 +192,26 @@ describe('new-message boundary', () => {
     });
     const reachedTheTail = acknowledgeNewMessageQueue(queued);
     expect(reachedTheTail.count).toBe(0);
-    expect(newMessageControlVisible(reachedTheTail, true)).toBe(false);
+    expect(catchUpStripVisible(reachedTheTail, true)).toBe(false);
     // Scrolling away from a settled queue cannot bring the old count back.
-    expect(newMessageControlVisible(reachedTheTail, false)).toBe(false);
+    expect(catchUpStripVisible(reachedTheTail, false)).toBe(false);
+    expect(newMessageBadgeCount(reachedTheTail, false)).toBe(0);
   });
 
   it('keeps the visited divider but starts the next queue at its own earliest row', () => {
-    const visited = acknowledgeNewMessageQueue({ boundaryId: 'new-1', count: 3 });
-    expect(visited).toEqual({ boundaryId: 'new-1', count: 0 });
+    const visited = acknowledgeNewMessageQueue({
+      boundaryId: 'new-1',
+      count: 3,
+      authorNames: ['Sol'],
+    });
+    expect(visited).toEqual({ boundaryId: 'new-1', count: 0, authorNames: [] });
     expect(
       queueIncomingMessages(visited, {
-        messages: [message('new-1'), message('new-4'), message('new-5')],
+        messages: [message('new-1'), from('new-4', 'Nerd'), from('new-5', 'Nerd')],
         arrivingIds: new Set(['new-4', 'new-5']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-4', count: 2 });
+      // The visited batch's authors do not carry into the next run's summary.
+    ).toEqual({ boundaryId: 'new-4', count: 2, authorNames: ['Nerd'] });
   });
 });

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -78,6 +79,34 @@ function pngWithMetadata(): Uint8Array {
     ...chunk('IDAT', [2]),
     ...chunk('IEND', []),
   ]);
+}
+
+/**
+ * A real Samsung phone capture whose encoder left a `Samsung_Capture_InfoScreen`
+ * trailer after the EOI marker (#21402.jpg regression). Kept byte-for-byte.
+ */
+const PHONE_JPEG_WITH_TRAILER = new Uint8Array(
+  readFileSync(new URL('../../evidence/stop-steer/before-phone.jpg', import.meta.url)),
+);
+
+function trailingBytesAfterEoi(bytes: Uint8Array): number {
+  let offset = 2;
+  let inScan = false;
+  while (offset < bytes.byteLength) {
+    if (inScan && bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    while (bytes[offset] === 0xff) offset += 1;
+    const marker = bytes[offset++]!;
+    if (inScan && marker === 0x00) continue;
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+    if (marker === 0xd9) return bytes.byteLength - offset;
+    const length = bytes[offset]! * 0x100 + bytes[offset + 1]!;
+    offset += length;
+    inScan = marker === 0xda;
+  }
+  return -1;
 }
 
 function markerNames(bytes: Uint8Array): number[] {
@@ -244,6 +273,15 @@ describe('chat attachment display metadata', () => {
     expect(uploaded.map(({ name }) => name)).toEqual(['first.txt', 'second.txt']);
   });
 
+  it('accepts a real phone JPEG whose EOI marker is followed by trailing bytes', () => {
+    expect(trailingBytesAfterEoi(PHONE_JPEG_WITH_TRAILER)).toBeGreaterThan(0);
+
+    const normalized = canonicalizeJpeg(PHONE_JPEG_WITH_TRAILER);
+
+    expect(trailingBytesAfterEoi(normalized)).toBe(0);
+    expect(normalized.byteLength).toBeLessThan(PHONE_JPEG_WITH_TRAILER.byteLength);
+  });
+
   it('strips EXIF, ICC, and comment marker channels from JPEG containers', () => {
     const normalized = canonicalizeJpeg(jpegWithMetadata());
 
@@ -301,6 +339,33 @@ describe('chat attachment display metadata', () => {
       mimeType: 'image/jpeg',
       thumbnailUrl: 'https://relay.example/media/thumb.jpg',
     });
+  });
+
+  it('uploads a real phone photo that carries bytes after its EOI marker', async () => {
+    mocks.readFileBytes.mockResolvedValue(PHONE_JPEG_WITH_TRAILER);
+    mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/21402.jpg',
+      sha256: 'photo-hash',
+      size: 450_000,
+      type: 'image/jpeg',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/21402.jpg',
+      name: '21402.jpg',
+      mimeType: 'image/jpeg',
+      size: PHONE_JPEG_WITH_TRAILER.byteLength,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+    const [bytes, mimeType] = uploadMedia.mock.calls[0]!;
+    expect(mimeType).toBe('image/jpeg');
+    expect(trailingBytesAfterEoi(bytes)).toBe(0);
+    expect(uploaded).toMatchObject({ name: '21402.jpg', mimeType: 'image/jpeg' });
   });
 
   it('preserves PNG encoding while scrubbing metadata', async () => {

@@ -150,6 +150,30 @@ function dividerRowIds(renderer: ReactTestRenderer): string[] {
 }
 
 describe('the transcript new-message control', () => {
+  it('UDIV-04: retires the opening divider at the newest row without consuming later arrivals', () => {
+    const open: HarnessProps = { ...AT_TAIL, firstUnreadMessageId: 'seed-2' };
+    const renderer = mount(open);
+    report([SEED[1]!, SEED[2]!]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
+
+    // Reaching the newest row retires the opening unread landmark for the rest
+    // of this visit. It must not remain behind in already-read history.
+    report([SEED[3]!, SEED[4]!]);
+    expect(dividerRowIds(renderer)).toEqual([]);
+
+    // A later arrival below the fold still belongs to the jump control. It
+    // must neither restore the visited divider nor be lost with its dismissal.
+    report([SEED[1]!, SEED[2]!]);
+    update(renderer, {
+      ...open,
+      messages: [...SEED, row('arrival-0', 5)],
+      arrivingIds: new Set(['arrival-0']),
+      pinnedToTail: false,
+    });
+    expect(controls(renderer)).toHaveLength(1);
+    expect(dividerRowIds(renderer)).toEqual([]);
+  });
+
   it('UDIV-01: arms on an arrival below the fold and settles on the reader’s own return', () => {
     const renderer = mount(AT_TAIL);
     // Opening on the tail: the reader can see the newest row, so nothing to jump to.

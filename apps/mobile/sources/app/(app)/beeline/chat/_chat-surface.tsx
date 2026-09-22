@@ -2027,12 +2027,12 @@ export function BuzzChatSurface({
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
   // Divider and jump control, kept apart (`buzz/use-new-message-control.ts`).
   // The divider answers one question: where the reader's unread run began when
-  // they opened this Room. That is the server's cursor, and nothing else may
-  // move it — a message arriving while the reader is in history belongs to the
-  // control, not to that line. Binding the divider to the live queue instead
-  // dragged it off the unread run and pinned it to whichever row had just
-  // landed, which is the divider readers watched appear at the newest message
-  // out of nowhere.
+  // they opened this Room. The server's cursor owns that line until the newest
+  // row is visible; a message arriving while the reader is in history belongs
+  // to the control, not to that line. Binding the divider to the live queue
+  // instead dragged it off the unread run and pinned it to whichever row had
+  // just landed, which is the divider readers watched appear at the newest
+  // message out of nowhere.
   const {
     dividerMessageId: firstNewMessageId,
     queue: newMessageQueue,

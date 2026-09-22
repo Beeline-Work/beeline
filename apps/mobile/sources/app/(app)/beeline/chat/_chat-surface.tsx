@@ -272,10 +272,8 @@ import {
   resolveForwardTargetRoom,
   type ForwardTarget,
 } from '@/buzz/message-forward';
-import {
-  restoreTranscriptAnchor,
-  visibleTranscriptWindow,
-} from '@/buzz/transcript-presentation';
+import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
+import { useArtifactReturn } from '@/buzz/use-artifact-return';
 import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
@@ -507,7 +505,6 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
-  const artifactReturnMessageIdRef = useRef<string | null>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -1978,24 +1975,17 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
-  useFocusEffect(
-    useCallback(() => {
-      const messageId = artifactReturnMessageIdRef.current;
-      if (!messageId) return;
-      restoreTranscriptAnchor({
-        messageId,
-        transcriptMessages,
-        residentMessages: combinedMessages,
-        onReveal: revealTranscriptThrough,
-        onScroll: (index, viewPosition) => {
-          artifactReturnMessageIdRef.current = null;
-          scheduleAnimationFrame(() =>
-            flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false }),
-          );
-        },
-      });
-    }, [combinedMessages, revealTranscriptThrough, transcriptMessages]),
-  );
+  const scrollToArtifactOrigin = useCallback((index: number, viewPosition: number) => {
+    scheduleAnimationFrame(() =>
+      flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false }),
+    );
+  }, []);
+  const handleOpenCode = useArtifactReturn({
+    transcriptMessages,
+    residentMessages: combinedMessages,
+    onReveal: revealTranscriptThrough,
+    onScroll: scrollToArtifactOrigin,
+  });
   // A live message/card change follows to the newest end. The decision is one
   // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
   // most once per arrival, off the render path.
@@ -4026,10 +4016,6 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
-  const handleOpenCode = useCallback((messageId: string) => {
-    artifactReturnMessageIdRef.current = messageId;
-  }, []);
-
   const renderMessage = useCallback(
     (
       item: ChatDisplayMessage,

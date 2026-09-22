@@ -24,8 +24,7 @@ describe('code artifact navigation', () => {
   });
 
   it('restores the exact originating transcript row after Back', () => {
-    expect(chat).toContain('artifactReturnMessageIdRef.current = messageId');
-    expect(chat).toContain('restoreTranscriptAnchor({');
+    expect(chat).toContain('const handleOpenCode = useArtifactReturn({');
     expect(chat).toContain('residentMessages: combinedMessages');
     expect(chat).toContain('onReveal: revealTranscriptThrough');
     expect(chat).toContain('scrollToIndex({ index, viewPosition, animated: false })');

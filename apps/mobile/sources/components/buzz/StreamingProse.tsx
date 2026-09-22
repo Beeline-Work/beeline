@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { type TextStyle } from 'react-native';
+import { Text, type TextStyle } from 'react-native';
 import { liveDraftDrainStore, type LiveDraftDrainStore } from '@/buzz/live-draft-drain';
-import { MonoMarkdown } from './MonoMarkdown';
 
 type StreamingProseProps = {
   textStyle: TextStyle;
@@ -18,10 +17,14 @@ type StreamingProseProps = {
  *
  * Arrivals do not enter React. The drain store coalesces them and commits the
  * whole latest value on its frame gate, which is the only thing that changes
- * this row's text state. The text renders through the SAME `MonoMarkdown` the
- * durable reply settles into, so a half-written `**bold**` reads the same
- * while streaming as it does afterwards; the caller's provisional tone is the
- * only difference. No character-rate reveal, no native TextInput.
+ * this row's text state. The committed value renders through ONE plain `Text`,
+ * never through a Markdown renderer: rebuilding and reconciling the growing
+ * block tree for every cumulative snapshot cost seconds of React work on a long
+ * reply (#1588 regression), so the live lane prints its words literally — a
+ * half-written `**bold**` reads with its asterisks until the turn ends — and
+ * the finished durable reply still renders through `MonoMarkdown`. No
+ * character-rate reveal, no throttle, no debounce: the store's frame gate is
+ * the only scheduler.
  */
 export function StreamingProse({
   markdown,
@@ -31,19 +34,18 @@ export function StreamingProse({
   testID,
 }: StreamingProseProps) {
   if (!streamKey) {
-    return <MonoMarkdown markdown={markdown ?? ''} testID={testID} textStyle={textStyle} />;
+    return (
+      <Text selectable style={textStyle} testID={testID}>
+        {markdown ?? ''}
+      </Text>
+    );
   }
   return (
-    <LiveMarkdownProse
-      store={store}
-      streamKey={streamKey}
-      testID={testID}
-      textStyle={textStyle}
-    />
+    <LiveDraftText store={store} streamKey={streamKey} testID={testID} textStyle={textStyle} />
   );
 }
 
-function LiveMarkdownProse({
+function LiveDraftText({
   store,
   streamKey,
   textStyle,
@@ -65,5 +67,9 @@ function LiveMarkdownProse({
     });
   }, [store, streamKey]);
 
-  return <MonoMarkdown markdown={text} testID={testID} textStyle={textStyle} />;
+  return (
+    <Text selectable style={textStyle} testID={testID}>
+      {text}
+    </Text>
+  );
 }

@@ -95,7 +95,7 @@ function collectText(node: unknown): string {
 }
 
 describe('StreamingProse', () => {
-  it('keeps the static compatibility seam on the ordinary markdown renderer', () => {
+  it('keeps the static compatibility seam printable', () => {
     let renderer!: ReactTestRenderer;
     act(() => {
       renderer = create(<StreamingProse markdown="**Finished**" textStyle={PROVISIONAL} />);
@@ -103,7 +103,10 @@ describe('StreamingProse', () => {
     expect(collectText(renderer.toJSON())).toContain('Finished');
   });
 
-  it('renders streamed markdown through the same renderer as the settled reply', () => {
+  it('prints the streaming draft literally through one plain Text, never Markdown', () => {
+    // Option A: the live lane is one plain Text node. A half-written
+    // `**bold**` shows its asterisks while the turn writes; the finished
+    // durable reply is the surface that renders Markdown (C98).
     const clock = new ManualClock();
     const store = createLiveDraftDrainStore({ clock });
     let renderer!: ReactTestRenderer;
@@ -116,8 +119,12 @@ describe('StreamingProse', () => {
     act(() => clock.runNext());
 
     const text = collectText(renderer.toJSON());
-    expect(text).toContain('The first scroll: the ancient beacons.');
-    expect(text).not.toContain('**');
+    expect(text).toContain('**The first scroll: the ancient beacons.**');
+    // Exactly one text host: no block tree, no Markdown renderer in the lane.
+    const textHosts = renderer.root.findAll(
+      (node: { type: unknown }) => node.type === 'Text',
+    );
+    expect(textHosts).toHaveLength(1);
     act(() => renderer.unmount());
   });
 

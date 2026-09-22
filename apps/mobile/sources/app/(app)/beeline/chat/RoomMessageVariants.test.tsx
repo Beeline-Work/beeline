@@ -640,7 +640,7 @@ describe('Room message variant components', () => {
     expect(json).not.toContain('Test');
   });
 
-  it('renders a landed corner as a summary card with its full objective and tappable PR', () => {
+  it('makes the internal corner action primary and the external PR action secondary', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
     const renderer = render(
@@ -670,14 +670,18 @@ describe('Room message variant components', () => {
         onOpenUrl={onOpenUrl}
       />,
     );
-    act(() =>
-      renderer.root.findByProps({ testID: 'corner-summary-card-primary-action' }).props.onPress(),
-    );
-    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
-    act(() =>
-      renderer.root.findByProps({ testID: 'corner-summary-card-secondary-action' }).props.onPress(),
-    );
+    const primaryAction = renderer.root.findByProps({
+      testID: 'corner-summary-card-primary-action',
+    });
+    expect(primaryAction.props.accessibilityLabel).toBe('Corner →');
+    act(() => primaryAction.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
+    const secondaryAction = renderer.root.findByProps({
+      testID: 'corner-summary-card-secondary-action',
+    });
+    expect(secondaryAction.props.accessibilityLabel).toBe('View ↗');
+    act(() => secondaryAction.props.onPress());
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
     // A legacy card carries no name, so the title is the first three words of

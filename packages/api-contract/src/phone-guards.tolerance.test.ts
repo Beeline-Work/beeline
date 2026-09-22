@@ -317,6 +317,20 @@ describe('phone surface readers', () => {
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
 
+  it('keeps a native installed Corner App without a linked developer identity', () => {
+    const app = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      command: 'release-board',
+      blocks: [{ type: 'text', text: 'Ready to release.' }],
+      authorName: 'Bee Labs',
+      revision: 1,
+      updatedAt: 2,
+    };
+    expect(readRoomView({ ...currentRoom, cornerApps: [app] })?.cornerApps).toEqual([app]);
+  });
+
   it('keeps the deck when the Workspace names a role or visibility this bundle does not know', () => {
     const view = readChatListView({
       workspace: { ...workspace, visibility: 'unlisted', role: 'steward' },

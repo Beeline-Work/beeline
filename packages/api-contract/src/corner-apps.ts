@@ -28,7 +28,8 @@ export type CornerAppDefinition = {
 };
 
 export type CornerAppView = CornerAppDefinition & {
-  readonly authorId: string;
+  /** Present when the installed app is linked to an agent that can receive actions. */
+  readonly authorId?: string;
   readonly authorName: string;
   readonly authorHandle?: string;
   readonly revision: number;
@@ -165,8 +166,11 @@ export function readCornerAppManifest(value: unknown): CornerAppManifest | null 
       ...(human.embedsChat === true ? { embedsChat: true } : {}),
     };
   } else if (human !== undefined) return null;
-  const agent = manifest.agent as Record<string, unknown> | undefined;
-  if (agent !== undefined && (agent.kind !== 'broker' || !capability(agent.capability)))
+  const agent = manifest.agent as Record<string, unknown> | null | undefined;
+  if (
+    agent === null ||
+    (agent !== undefined && (agent.kind !== 'broker' || !capability(agent.capability)))
+  )
     return null;
   const permissions = manifest.permissions;
   if (

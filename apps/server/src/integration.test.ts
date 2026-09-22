@@ -4761,6 +4761,45 @@ describe('monolith integration', () => {
     ).toBe(1);
   });
 
+  it('projects a native installed Corner App without a linked developer identity', async () => {
+    const installationId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const definition = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      command: 'release-board',
+      blocks: [{ type: 'text', text: 'Ready to release.' }],
+    };
+    const manifest = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      developer: 'Bee Labs',
+      humanUi: { kind: 'native', definition },
+    };
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
+       VALUES($1,$2,$3,$4::jsonb)`,
+      [installationId, WORKSPACE, HUMAN, JSON.stringify(manifest)],
+    );
+
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'Release control',
+      appInstallationId: installationId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    expect((await phone.readRoom(cornerId, HUMAN))?.cornerApps).toEqual([
+      expect.objectContaining({
+        ...definition,
+        authorName: manifest.developer,
+        revision: 1,
+      }),
+    ]);
+  });
+
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,

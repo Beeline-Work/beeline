@@ -697,7 +697,7 @@ function readCornerApp(value: unknown): CornerAppView | null {
   if (
     !item ||
     !definition ||
-    !hex64(item.authorId) ||
+    (item.authorId !== undefined && !hex64(item.authorId)) ||
     typeof item.authorName !== 'string' ||
     !integer(item.revision) ||
     !integer(item.updatedAt)
@@ -705,7 +705,7 @@ function readCornerApp(value: unknown): CornerAppView | null {
     return null;
   return {
     ...definition,
-    authorId: item.authorId,
+    ...(typeof item.authorId === 'string' ? { authorId: item.authorId } : {}),
     authorName: item.authorName,
     ...(typeof item.authorHandle === 'string' ? { authorHandle: item.authorHandle } : {}),
     revision: item.revision,

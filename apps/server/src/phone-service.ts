@@ -27,6 +27,7 @@ import type {
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
+  CornerAppView,
   CornerListView,
   InviteView,
   RoomLiveDelta,
@@ -1377,7 +1378,7 @@ export class PhoneService {
         ).rows[0]
       : undefined;
     const boundManifest = readCornerAppManifest(boundApp?.manifest);
-    const cornerApps = room.parent_id
+    const cornerApps: CornerAppView[] = room.parent_id
       ? (
           await measured(
             'corner-apps',
@@ -1412,15 +1413,11 @@ export class PhoneService {
             : [];
         })
       : [];
-    if (
-      boundManifest?.humanUi?.kind === 'native' &&
-      boundApp?.developer_agent_id &&
-      boundApp.developer_name
-    ) {
+    if (boundManifest?.humanUi?.kind === 'native' && boundApp) {
       cornerApps.unshift({
         ...boundManifest.humanUi.definition,
-        authorId: boundApp.developer_agent_id,
-        authorName: boundApp.developer_name,
+        ...(boundApp.developer_agent_id ? { authorId: boundApp.developer_agent_id } : {}),
+        authorName: boundApp.developer_name ?? boundManifest.developer,
         ...(boundApp.developer_handle ? { authorHandle: boundApp.developer_handle } : {}),
         revision: 1,
         updatedAt: unix(room.updated_at),

@@ -72,4 +72,8 @@ describe('Corner App manifest', () => {
       }),
     ).toBeNull();
   });
+
+  it('rejects a null agent declaration without throwing', () => {
+    expect(readCornerAppManifest({ ...manifest, agent: null })).toBeNull();
+  });
 });

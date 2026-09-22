@@ -34,7 +34,7 @@ export default function CornerAppRoute() {
 
   const run = React.useCallback(
     async (prompt: string) => {
-      if (!roomId || !app || busyAction) return;
+      if (!roomId || !app?.authorId || busyAction) return;
       setBusyAction(prompt);
       try {
         const identity = await loadBuzzIdentity();
@@ -57,7 +57,7 @@ export default function CornerAppRoute() {
     <CornerAppScreen
       app={app}
       busyAction={busyAction}
-      onAction={(prompt) => void run(prompt)}
+      onAction={app?.authorId ? (prompt) => void run(prompt) : undefined}
       onBack={() => router.back()}
       unavailableTitle={manifest?.title}
       unavailableMessage={

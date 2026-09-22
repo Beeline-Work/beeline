@@ -14,7 +14,7 @@ export function CornerAppScreen({
 }: {
   app?: CornerAppView;
   onBack: () => void;
-  onAction: (prompt: string) => void;
+  onAction?: (prompt: string) => void;
   busyAction?: string;
   unavailableTitle?: string;
   unavailableMessage?: string;
@@ -93,7 +93,7 @@ function CornerAppBlockView({
 }: {
   block: CornerAppBlock;
   busy: boolean;
-  onAction: (prompt: string) => void;
+  onAction?: (prompt: string) => void;
 }) {
   switch (block.type) {
     case 'heading':
@@ -122,18 +122,19 @@ function CornerAppBlockView({
           <Text style={styles.noticeText}>{block.text}</Text>
         </View>
       );
-    case 'action':
+    case 'action': {
+      const disabled = busy || !onAction;
       return (
         <Pressable
           accessibilityLabel={`${block.label}. Sends a prompt to ${block.prompt}`}
           accessibilityRole="button"
-          accessibilityState={{ busy, disabled: busy }}
-          disabled={busy}
-          onPress={() => onAction(block.prompt)}
+          accessibilityState={{ busy, disabled }}
+          disabled={disabled}
+          onPress={() => onAction?.(block.prompt)}
           style={({ pressed }) => [
             styles.action,
             pressed && styles.actionPressed,
-            busy && styles.actionBusy,
+            disabled && styles.actionBusy,
           ]}
           testID={`corner-app-action-${block.label}`}
         >
@@ -141,6 +142,7 @@ function CornerAppBlockView({
           <Text style={styles.actionArrow}>→</Text>
         </Pressable>
       );
+    }
   }
 }
 

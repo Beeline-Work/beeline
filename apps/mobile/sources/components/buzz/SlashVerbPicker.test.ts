@@ -177,6 +177,32 @@ describe('SlashVerbPicker agent command palette', () => {
     expect(onVerb).toHaveBeenCalledWith('open-corner');
   });
 
+  it('opens a server-projected Corner App without treating it as composer text', () => {
+    const onApp = vi.fn();
+    const renderer = render(
+      React.createElement(SlashVerbPicker, {
+        verbs: [],
+        query: 'release',
+        highlightedIndex: 0,
+        onDismiss: () => undefined,
+        onSelect: () => undefined,
+        commands: [],
+        apps: [
+          {
+            slug: 'release-board',
+            command: 'release-board',
+            title: 'Release board',
+            description: 'Current deployment facts',
+          },
+        ],
+        onSelectCommand: () => undefined,
+        onSelectApp: onApp,
+      }),
+    );
+    find_by_test_id(renderer, 'slash-corner-app-release-board')[0].props.onPress();
+    expect(onApp).toHaveBeenCalledWith('release-board');
+  });
+
   it('states honestly when the agent does not advertise commands', () => {
     const renderer = render(
       React.createElement(SlashVerbPicker, {

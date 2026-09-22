@@ -19,6 +19,7 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
+  readCornerAppDefinition,
 } from '@beeline/api-contract/phone';
 import type {
   AgentGrantView,
@@ -597,6 +598,8 @@ function projectedMessage(
       return { ...base, daemonFact: titledDaemonFact(row.card) };
     case 'corner':
       return { ...base, corner: row.card as NonNullable<RoomViewMessage['corner']> };
+    case 'corner-app':
+      return { ...base, cornerApp: row.card as NonNullable<RoomViewMessage['cornerApp']> };
     default:
       return base;
   }
@@ -1345,6 +1348,41 @@ export class PhoneService {
           )
         ).rows[0]
       : undefined;
+    const cornerApps = room.parent_id
+      ? (
+          await measured(
+            'corner-apps',
+            this.database.query<{
+              definition: unknown;
+              author_agent_id: string;
+              author_name: string;
+              author_handle: string | null;
+              revision: number;
+              updated_at: Date;
+            }>(
+              `SELECT app.definition,app.author_agent_id,author.name author_name,
+                      author.handle author_handle,app.revision,app.updated_at
+               FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
+               WHERE app.corner_id=$1 ORDER BY app.updated_at DESC,app.slug`,
+              [roomId],
+            ),
+          )
+        ).rows.flatMap((row) => {
+          const definition = readCornerAppDefinition(row.definition);
+          return definition
+            ? [
+                {
+                  ...definition,
+                  authorId: row.author_agent_id,
+                  authorName: row.author_name,
+                  ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
+                  revision: row.revision,
+                  updatedAt: unix(row.updated_at),
+                },
+              ]
+            : [];
+        })
+      : [];
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
     const briefingRows: MessageRow[] = room.parent_id
@@ -1433,6 +1471,7 @@ export class PhoneService {
         : {}),
       repositoryResolution: (parent ?? room).repository_resolution,
       ...(cornerLifecycle ? { cornerLifecycle } : {}),
+      ...(cornerApps.length ? { cornerApps } : {}),
       watchFilters: roomFilters(
         roomId,
         room.workspace_id,

@@ -81,6 +81,7 @@ export type LedgerAttributionMessage = {
   choice?: unknown;
   writePermission?: unknown;
   targetBranchProposal?: unknown;
+  cornerApp?: unknown;
 };
 
 /**
@@ -110,6 +111,7 @@ export function ledgerSpeakerKey(
     message.durableFact ||
     message.grantRequest ||
     message.connectorOffer ||
+    message.cornerApp ||
     message.choice
   )
     return null;

@@ -3,6 +3,7 @@ import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './age
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
+import type { CornerAppView } from './corner-apps.js';
 
 export interface AttachmentReference {
   url: string;
@@ -232,6 +233,12 @@ export type RoomViewMessage = {
   readonly corner?: {
     readonly id: string;
     readonly state: CornerState;
+  };
+  /** An agent request to open one persisted app in this corner. */
+  readonly cornerApp?: {
+    readonly slug: string;
+    readonly title: string;
+    readonly revision: number;
   };
   readonly permission?: {
     readonly permissionId: string;
@@ -469,6 +476,8 @@ export type RoomView = {
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
+  /** Native, code-free apps persisted on this corner and shared with its members. */
+  readonly cornerApps?: readonly CornerAppView[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

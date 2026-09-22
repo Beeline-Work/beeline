@@ -38,6 +38,23 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
   };
 });
 
+vi.mock('@/components/buzz/ServiceMark', async () => {
+  const ReactModule = await import('react');
+  return { ServiceMark: (props: any) => ReactModule.createElement('ServiceMark', props) };
+});
+
+vi.mock('@/components/buzz/StateDot', async () => {
+  const ReactModule = await import('react');
+  return { StateDot: (props: any) => ReactModule.createElement('StateDot', props) };
+});
+
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
+
 import ConnectionDetailScreen from './connection';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -87,17 +104,49 @@ async function flush(times = 4): Promise<void> {
 }
 
 describe('Connection detail screen', () => {
-  it('renders hosts, creator, live-grant count and the spend cap', async () => {
+  it('renders service identity and the complete vault facts', async () => {
     const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'connection-service-name' }).props.children).toBe(
+      'vercel',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'connection-key-label' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'connection-detail-metadata' })).toBeDefined();
-    const grants = renderer.root.findByProps({ testID: 'connection-detail-grants' });
-    expect(grants.props.value).toBe('2 live grants');
+    expect(renderer.root.findByProps({ title: 'Reference' }).props.description).toBe('cred_vercel');
+    expect(renderer.root.findByProps({ title: 'Hosts' }).props.description).toBe('api.vercel.com');
+    expect(renderer.root.findByProps({ title: 'Fields' }).props.description).toBe('token');
+    expect(renderer.root.findByProps({ title: 'Created' }).props.value).not.toBe('not reported');
+    expect(renderer.root.findByProps({ title: 'Last synced' }).props.value).not.toBe(
+      'not reported',
+    );
+    expect(renderer.root.findByProps({ title: 'Provisioned by' }).props.value).toContain('@hoots');
+  });
+
+  it('shows a useful vault label and omits redundant ones', async () => {
+    searchParams.params = {
+      workspaceId: 'workspace-1',
+      viewerId: 'human-dani',
+      ref: 'cred_github',
+    };
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'connection-key-label' }).props.children).toBe(
+      'Work key',
+    );
+  });
+
+  it('renders each live grant with its creation fact and reported limits', async () => {
+    const renderer = await render();
+    const capped = renderer.root.findByProps({ testID: 'connection-grant-hoots' });
+    expect(capped.props.description).toContain('Granted');
+    expect(capped.props.value).toBe('$25 cap');
+    expect(renderer.root.findByProps({ testID: 'connection-grant-terra' }).props.value).toBe(
+      'no limits reported',
+    );
   });
 
   it('renders the Squire ledger rows', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-ledger-0' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'connection-ledger-2' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'connection-ledger-4' })).toBeDefined();
   });
 
   it('omits the Created-by row when the vault reports no provisioning fact', async () => {
@@ -110,7 +159,44 @@ describe('Connection detail screen', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-detail-metadata' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ title: 'Created by' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ title: 'Provisioned by' })).toHaveLength(0);
+  });
+
+  it('calls stale metadata refreshing instead of active', async () => {
+    const data = new MockWorkbenchSource();
+    const source = new MockWorkbenchSource();
+    source.readConnectionDetail = async (input) => {
+      const detail = await data.readConnectionDetail(input);
+      return detail
+        ? { ...detail, connection: { ...detail.connection, state: 'active', stale: true } }
+        : null;
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const state = renderer.root.findByProps({ testID: 'connection-detail-state' });
+    expect(state.findByType('StateDot').props.kind).toBe('pulse');
+    expect(state.findByType('Text').props.children).toBe('refreshing');
+  });
+
+  it('states empty grants and activity without offering a destructive action', async () => {
+    const data = new MockWorkbenchSource();
+    const source = new MockWorkbenchSource();
+    source.readConnectionDetail = async (input) => {
+      const detail = await data.readConnectionDetail(input);
+      return detail
+        ? {
+            ...detail,
+            grants: [],
+            ledger: [],
+            connection: { ...detail.connection, grantCount: 0 },
+          }
+        : null;
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'connection-grants-empty' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'connection-activity-empty' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'connection-management' })).toHaveLength(0);
   });
 
   it('revokes all grants only behind an explicit confirmation', async () => {

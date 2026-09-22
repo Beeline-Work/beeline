@@ -5849,6 +5849,7 @@ export class PhoneService {
         label: string | null;
         hosts: string[];
         state: 'active' | 'error';
+        connection_metadata: Record<string, unknown>;
         last_synced_at: Date | null;
         created_at: Date;
       }>(
@@ -5857,7 +5858,7 @@ export class PhoneService {
         // instead floated four unrelated `default` labels to the top. A 0 is
         // "no vault time" (an unparseable timestamp), which falls back to the
         // row's own insert time rather than sinking the key to the bottom.
-        `SELECT id,connector_id,reference,service,label,hosts,state,last_synced_at,created_at
+        `SELECT id,connector_id,reference,service,label,hosts,state,connection_metadata,last_synced_at,created_at
          FROM workspace_connections
          WHERE owner_identity_id=$1
          ORDER BY COALESCE(NULLIF((connection_metadata->>'vaultCreatedAt')::double precision, 0), extract(epoch from created_at)) DESC, reference`,
@@ -5949,6 +5950,11 @@ export class PhoneService {
         service: row.service,
         label: row.label ?? row.reference,
         allowedHosts: row.hosts ?? [],
+        fieldNames: Array.isArray(row.connection_metadata.fieldNames)
+          ? row.connection_metadata.fieldNames.filter(
+              (field): field is string => typeof field === 'string',
+            )
+          : [],
         faviconDomain: faviconDomain(row.hosts ?? []),
         state: row.state,
         ...(row.last_synced_at
@@ -5957,7 +5963,12 @@ export class PhoneService {
               ...(isMetadataStale(row.last_synced_at) ? { stale: true } : {}),
             }
           : { stale: true }),
-        createdAt: seconds(row.created_at),
+        createdAt:
+          typeof row.connection_metadata.vaultCreatedAt === 'number' &&
+          Number.isFinite(row.connection_metadata.vaultCreatedAt) &&
+          row.connection_metadata.vaultCreatedAt > 0
+            ? row.connection_metadata.vaultCreatedAt
+            : seconds(row.created_at),
       })),
     };
   }
@@ -6238,6 +6249,11 @@ export class PhoneService {
         service: connection.service,
         label: connection.label ?? connection.reference,
         allowedHosts: connection.hosts ?? [],
+        fieldNames: Array.isArray(connection.connection_metadata.fieldNames)
+          ? connection.connection_metadata.fieldNames.filter(
+              (field): field is string => typeof field === 'string',
+            )
+          : [],
         faviconDomain: faviconDomain(connection.hosts ?? []),
         state: connection.state,
         ...(connection.last_synced_at
@@ -6246,7 +6262,12 @@ export class PhoneService {
               ...(isMetadataStale(connection.last_synced_at) ? { stale: true } : {}),
             }
           : { stale: true }),
-        createdAt: seconds(connection.created_at),
+        createdAt:
+          typeof connection.connection_metadata.vaultCreatedAt === 'number' &&
+          Number.isFinite(connection.connection_metadata.vaultCreatedAt) &&
+          connection.connection_metadata.vaultCreatedAt > 0
+            ? connection.connection_metadata.vaultCreatedAt
+            : seconds(connection.created_at),
       },
       grants: (connection.grants ?? []) as Output<'readConnectionDetail'>['grants'],
       ledger: ledger.map((row) => ({

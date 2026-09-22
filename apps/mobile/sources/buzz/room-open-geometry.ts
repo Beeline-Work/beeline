@@ -10,8 +10,11 @@ import { composerBottomPadding } from './composer-keyboard';
  * does not pull speech-input onto the first-paint graph.
  */
 
-/** `messageListContent.paddingVertical` — inverted list tail. */
-export const ROOM_OPEN_LIST_TAIL_PADDING = 12;
+/** `phoneTranscriptTailPadding` — the inverted phone list's visual tail.
+ *  A speaker-change margin is 24px; the newest row contributes 6px of its own
+ *  bottom padding, so the tail carries the other 18. See
+ *  `buzz/room-scroll-follow.ts` for why this never steps with the turn line. */
+export const ROOM_OPEN_LIST_TAIL_PADDING = 18;
 /** `inputBar.paddingTop`. */
 export const ROOM_OPEN_INPUT_BAR_PADDING_TOP = 8;
 /** `inputBar.borderTopWidth`. */
@@ -22,12 +25,14 @@ export const ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT = 44;
 export const ROOM_OPEN_COMPOSER_BOX_BORDER = 1;
 
 /**
- * Ledger `entryWithByline.paddingBottom` — the newest committed agent row
- * always carries a byline, and an inverted phone list puts its three rhythm
- * units on the visual tail edge.
+ * Ledger `entry.paddingBottom` — the newest committed agent row's own visual
+ * bottom padding. The speaker-change air now sits on the incoming row's
+ * visual TOP (`entryWithByline.paddingTop`), so every row's tail edge is the
+ * ordinary compact 6px and the list's tail padding supplies the rest of the
+ * 24px speaker-change margin.
  */
 export function roomOpenMessagePadding(): number {
-  return groknight.messagePaddingVertical * 3;
+  return groknight.messagePaddingVertical;
 }
 
 /** Ledger `ledgerText` / `steerText`. `type.body` uses lineHeight 23; chrome is 25. */

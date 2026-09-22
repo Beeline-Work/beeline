@@ -135,6 +135,34 @@ function prose(id: string, kind: 'human' | 'agent'): ChatDisplayMessage {
   };
 }
 
+function cornerPullRequest(
+  id: string,
+  subjectKind: 'person' | 'agent' | 'github' | 'system',
+  state: 'opened' | 'closed' | 'merged',
+): ChatDisplayMessage {
+  return {
+    id,
+    text: `Provider ${state} a pull request Change ${id}`,
+    timestamp: Number(id.replace(/\D/g, '')) || 1,
+    isUser: false,
+    isSystemNotice: true,
+    systemEvent: {
+      subject: { kind: subjectKind, name: 'Provider' },
+      verb:
+        state === 'opened'
+          ? 'opened a pull request'
+          : state === 'closed'
+            ? 'closed a pull request'
+            : 'merged',
+      ...(state === 'merged' ? { kind: 'merged' as const } : {}),
+      object: {
+        text: `Change ${id}`,
+        url: `https://code.example/acme/repo/pulls/${id}`,
+      },
+    },
+  };
+}
+
 describe('notification lifecycle folding', () => {
   it('uses check nouns and passed, failed, running grammar for check batches', () => {
     const allPassed = foldSystemLines([
@@ -207,10 +235,7 @@ describe('notification lifecycle folding', () => {
       message.notificationLifecycleRun ? [message.notificationLifecycleRun] : [],
     );
     expect(batches).toHaveLength(2);
-    expect(batches.map((batch) => batch.headline)).toEqual([
-      'Check 8 passed',
-      'Check 1 running',
-    ]);
+    expect(batches.map((batch) => batch.headline)).toEqual(['Check 8 passed', 'Check 1 running']);
   });
 
   it('puts a single issue or pull request on the same lifecycle card as a batch', () => {
@@ -221,6 +246,27 @@ describe('notification lifecycle folding', () => {
     const issue = foldSystemLines([github('2', 'opened', '2', 'issue')]);
     expect(issue[0]!.notificationLifecycleRun?.headline).toBe('Issue 1 opened');
   });
+
+  it.each(['person', 'agent', 'github', 'system'] as const)(
+    'renders corner-linked PR system events from a %s provider as stacked PR cards',
+    (subjectKind) => {
+      const folded = foldSystemLines([
+        cornerPullRequest('41', subjectKind, 'opened'),
+        cornerPullRequest('42', subjectKind, 'merged'),
+        cornerPullRequest('43', subjectKind, 'closed'),
+      ]);
+
+      expect(folded).toHaveLength(1);
+      expect(folded[0]!.notificationLifecycleRun).toMatchObject({
+        headline: 'PR 1 opened, 1 closed, 1 merged',
+        items: [
+          expect.objectContaining({ state: 'Closed', title: 'Change 43', kindLine: 'PR' }),
+          expect.objectContaining({ state: 'Merged', title: 'Change 42', kindLine: 'PR' }),
+          expect.objectContaining({ state: 'PR opened', title: 'Change 41', kindLine: 'PR' }),
+        ],
+      });
+    },
+  );
 
   it('leaves a single corner fact as it arrived so the dedicated card still paints', () => {
     const only = corner('2', 'corner-complete', 'c2', 2);

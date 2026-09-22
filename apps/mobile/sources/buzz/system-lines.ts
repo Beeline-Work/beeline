@@ -365,10 +365,36 @@ function notificationLifecycleEvent(
   }
 
   const event = message.isSystemNotice ? message.systemEvent : undefined;
+  const url = event?.object?.url;
+  const pullRequestState =
+    event && url
+      ? event.kind === 'merged' || /^merged(?: a pull request)?$/i.test(event.verb)
+        ? 'Merged'
+        : /^opened(?: a)? pull request$/i.test(event.verb)
+          ? 'PR opened'
+          : /^closed(?: a)? pull request$/i.test(event.verb)
+            ? 'Closed'
+            : undefined
+      : undefined;
+  if (event && url && pullRequestState) {
+    const prNumber = pullRequestNumber(url);
+    return {
+      id: message.id,
+      timestamp: message.timestamp,
+      title: event.object?.text ?? message.text,
+      titleRank: 2,
+      state: pullRequestState,
+      ...(event.subject.name ? { actor: event.subject.name } : {}),
+      ...(prNumber ? { prNumber } : {}),
+      kind: 'pull-request',
+      url,
+      refs: repositoryRefs(url, prNumber, undefined),
+    };
+  }
+
   if (event?.subject.kind !== 'github' || !/(started|passed|failed) a check/i.test(event.verb)) {
     return undefined;
   }
-  const url = event.object?.url;
   const prNumber = pullRequestNumber(url);
   return {
     id: message.id,
@@ -490,7 +516,7 @@ function summarizeNotificationRun(
               ? 'issue'
               : prNumber
                 ? `PR #${prNumber}`
-                : 'check',
+                : 'PR',
         ...(stateEvent.state === 'Checks failed' ? { danger: true } : {}),
         ...(corner?.cornerId ? { cornerId: corner.cornerId } : {}),
         ...(!corner?.cornerId && linked?.url ? { url: linked.url } : {}),

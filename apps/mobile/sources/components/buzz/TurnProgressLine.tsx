@@ -14,10 +14,6 @@ import {
 /** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
 const STOP_HIT_SLOP = 9;
 
-/** One glyph in the label's own font. The measured copy needs a line box, not
- *  a word — nobody ever sees this character. */
-const MEASURE_GLYPH = 'M';
-
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
  * and has not answered yet. One transient line pinned above the composer,
@@ -158,22 +154,6 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
 }
 
 /**
- * The band's box with nothing in it, mounted always and shown never, so the
- * slot's height is known BEFORE any band is shown.
- *
- * The reserve cannot be read off the visible band. A band reports its height
- * only once it has been laid out, and a band taller than the reserve — the
- * reader's accessibility text scale makes one — has by then already taken the
- * extra out of the list's viewport and shrunk the transcript. This copy is
- * laid out in the same width, at the same text scale, out of the same
- * stylesheet, while the slot is still empty.
- *
- * It carries the tallest variant's parts — the mark cell, the mono label and
- * the stop control — because the row is as tall as its tallest child. It has
- * no counter, no breath, and no accessibility presence: it exists to be
- * measured, not to be read or heard.
- */
-/**
  * Where the turn line lives: in the margin the transcript already leaves below
  * its newest message, painted over it rather than added beneath it.
  *
@@ -185,9 +165,10 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
  * hidden duplicate of the line mounted purely to measure it.
  *
  * Neither was necessary: the room between the newest message and the composer
- * is already the ordinary speaker-change margin, which is taller than the
- * line. Painting into space that exists costs no height, so there is nothing
- * to reserve, nothing to measure, and nothing for the transcript to move by.
+ * is already the ordinary speaker-change margin, and the line's box is exactly
+ * that margin. Painting into space that exists costs no height, so there is
+ * nothing to reserve, nothing to measure, and nothing for the transcript to
+ * move by.
  */
 export function TurnBandSlot({
   children,
@@ -196,11 +177,10 @@ export function TurnBandSlot({
   children?: React.ReactNode;
   testID?: string;
 }) {
-  // The line paints into the margin the transcript already leaves below its
-  // newest message — the same margin a speaker change leaves between any two
-  // messages. It reserves nothing: with no held-open strip there is no empty
-  // band when nobody is working, and with no height of its own to gain or
-  // lose there is nothing for the transcript to move by.
+  // The slot is absolute (`room-bottom-chrome`): its bottom lands on the
+  // composer's top edge and it takes no room in the column, so the list's
+  // height is identical whether or not the line is showing. It reserves
+  // nothing and has no height of its own for the transcript to move by.
   return (
     <View pointerEvents="box-none" style={styles.slot} testID={testID}>
       {children}
@@ -255,8 +235,10 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 18,
     },
     // One discoverable stop action, shared by Room and corner working lines.
+    // Its height is the row's own: `minHeight: 26` used to make the line 26px
+    // and push it past the 24px margin its box must fit inside.
     stop: {
-      minHeight: 26,
+      minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       justifyContent: 'center',
       marginLeft: 'auto',
       flexShrink: 0,

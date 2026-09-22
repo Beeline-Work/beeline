@@ -213,6 +213,18 @@ describe('the ledger — an agent turn', () => {
   });
 
   it('gives speaker-changing bylines twice the same-speaker chunk spacing', () => {
+    const previous = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'p',
+        luminous: true,
+        continued: true,
+        bodyText: 'Before that.',
+        bodyTestID: 'body',
+      }),
+    );
+    const previousRow = previous.root
+      .findByProps({ testID: 'chat-message-p' })
+      .props.style.filter(Boolean);
     const opens = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
@@ -238,16 +250,17 @@ describe('the ledger — an agent turn', () => {
       .findByProps({ testID: 'chat-message-b' })
       .props.style.filter(Boolean);
     const resolved = (row: Record<string, unknown>[]) => Object.assign({}, ...row);
+    const prior = resolved(previousRow) as Record<string, number>;
     const opener = resolved(opensRow) as Record<string, number>;
     const follower = resolved(continuedRow) as Record<string, number>;
-    const sameSpeakerGap = follower.paddingBottom + follower.paddingTop;
-    // Phone list is inverted: layout-bottom is visual top, so the incoming
-    // byline wears the extra air on paddingBottom.
-    const speakerChangeGap = follower.paddingTop + opener.paddingBottom;
+    // Adjacent cells meet on the incoming row's own top edge: a compact
+    // continuation is 6 + 6 = 12; a bylined speaker change is 6 + 18 = 24.
+    const sameSpeakerGap = prior.paddingBottom + follower.paddingTop;
+    const speakerChangeGap = prior.paddingBottom + opener.paddingTop;
     expect(sameSpeakerGap).toBe(12);
     expect(speakerChangeGap).toBe(24);
     expect(speakerChangeGap).toBe(sameSpeakerGap * 2);
-    expect(opener).toMatchObject({ paddingTop: 6, paddingBottom: 18, marginBottom: 0 });
+    expect(opener).toMatchObject({ paddingTop: 18, paddingBottom: 6, marginBottom: 0 });
     expect(follower).toMatchObject({ paddingTop: 6, paddingBottom: 6, marginBottom: 0 });
 
     // Proximity alone carries the run boundary; no message row adds a rule,
@@ -406,29 +419,29 @@ describe('the ledger — a human turn is plain body text', () => {
     };
 
     // The sender byline opens the run at twice the compact same-speaker gap,
-    // without adding a divider, frame, or fill. On the inverted phone list
-    // that extra air is paddingBottom (visual top).
+    // without adding a divider, frame, or fill. The extra air sits on the
+    // incoming speaker's visual TOP — the cell's layout top on both lists.
     const opener = rowStyle(opens, 'b1');
     const follower = rowStyle(continued, 'b2');
-    expect(opener.paddingTop).toBe(6);
-    expect(opener.paddingBottom).toBe(18);
+    expect(opener.paddingTop).toBe(18);
+    expect(opener.paddingBottom).toBe(6);
     expect(follower.paddingTop).toBe(6);
     expect(follower.paddingBottom).toBe(6);
     expect(follower.marginBottom).toBe(0);
-    expect(follower.paddingTop! + opener.paddingBottom!).toBe(
-      (follower.paddingBottom! + follower.paddingTop!) * 2,
-    );
+    const compact = groknight.messagePaddingVertical;
+    expect(compact + opener.paddingTop!).toBe((follower.paddingBottom! + follower.paddingTop!) * 2);
     expect(opener.borderTopWidth).toBeUndefined();
     expect(opener.borderBottomWidth).toBeUndefined();
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
   });
 
   it('keeps agent→person and person→agent speaker-change gaps equal', () => {
-    // Counterfactual: extra air on paddingTop of a bylined row. On the inverted
-    // phone list that edge is the outgoing visual bottom, so an agent's last
-    // message (always bylined) opened a 24px gap while a person's last message
-    // in a run (often a continuation, no byline) opened 12px — both speaker
-    // changes. Extra air belongs on the incoming visual-top edge instead.
+    // The extra air belongs on the incoming speaker's visual-top edge, so a
+    // speaker change is 24px in both directions (agent→person and
+    // person→agent) while a same-speaker run stays at the compact 12px. In
+    // the phone list the column is flipped and each cell is flipped back, so
+    // a cell's LAYOUT top is its visual top: the incoming row's `paddingTop`
+    // is the edge the two cells meet on, exactly as in the chronological list.
     const row = (element: React.ReactElement, id: string) => {
       const styles = render(element)
         .root.findByProps({ testID: `chat-message-${id}` })
@@ -436,7 +449,7 @@ describe('the ledger — a human turn is plain body text', () => {
       return Object.assign({}, ...styles) as Record<string, number>;
     };
     const invertedGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
-      outgoing.paddingTop + incoming.paddingBottom + (incoming.marginBottom ?? 0);
+      outgoing.paddingBottom + incoming.paddingTop + (incoming.marginBottom ?? 0);
     const chronologicalGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
       outgoing.paddingBottom + incoming.paddingTop + (incoming.marginBottom ?? 0);
 
@@ -516,8 +529,10 @@ describe('the ledger — a human turn is plain body text', () => {
 
   it('keeps a person continuation to the next speaker at the widened facing-edge gap', () => {
     // bf04a0eed (#1379) set speaker-change at twice the compact same-speaker
-    // run. 02ae83bac (#1422) moved that extra onto the incoming visual-top
-    // edge so both directions match; it did not shrink the widened value.
+    // run. The extra sits on the incoming visual-top edge so both directions
+    // match; it did not shrink the widened value. For the inverted phone list
+    // that edge is the incoming cell's layout `paddingTop`, because the
+    // column flip and the per-cell flip cancel inside a cell.
     const row = (element: React.ReactElement, id: string) => {
       const styles = render(element)
         .root.findByProps({ testID: `chat-message-${id}` })
@@ -525,7 +540,7 @@ describe('the ledger — a human turn is plain body text', () => {
       return Object.assign({}, ...styles) as Record<string, number>;
     };
     const invertedGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
-      outgoing.paddingTop + incoming.paddingBottom + (incoming.marginBottom ?? 0);
+      outgoing.paddingBottom + incoming.paddingTop + (incoming.marginBottom ?? 0);
 
     const lastHuman = row(
       React.createElement(LedgerSteer, {

@@ -2329,24 +2329,17 @@ export function BuzzChatSurface({
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard, an offline helper mounts its hint, and the phone turn line is
-  // an in-flow band above the composer (`bottomChromeLayoutKey` includes
-  // turn/no-turn). Native layout can update the pinned ref before an effect
-  // runs, preserving the old offset as an empty gap. Capture the verdict in
-  // render.
+  // keyboard and an offline helper mounts its hint; native layout can update
+  // the pinned ref before an effect runs, preserving the old offset as an
+  // empty gap. Capture the verdict in render.
   //
-  // The turn band is the one piece of that chrome a scroll cannot rescue. It
-  // is in flow, so mounting it takes its own height out of the list's
-  // viewport and the newest row moves — and on an inverted list pinned at the
-  // tail that row is already at offset 0, so re-pinning only re-glues it to
-  // the bottom that just moved and compensating would need a negative offset.
-  // The band's slot is therefore held open at all times, by `TurnBandSlot`:
-  // it holds the band's measured height exactly, whether an agent is working
-  // or not, so the list's height stops depending on the band and the
-  // transcript does not move in either direction.
-  // `bottomChromeLayoutKey` still carries turn/no-turn: the follow it drives
-  // is now a no-op re-pin for that half of the key, and still the real thing
-  // for the offline hint, which holds no reserved slot.
+  // The phone turn line is NOT part of that chrome any more. It is absolute,
+  // anchored to the composer's top edge (`room-bottom-chrome`), so it takes
+  // no height out of the list whether or not an agent is working and the
+  // newest row never moves when it comes or goes.
+  // `bottomChromeLayoutKey` still carries turn/no-turn, but that half is now
+  // a no-op re-pin; the follow it drives is the real thing only for the
+  // offline hint, which still mounts in flow.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -4591,8 +4584,8 @@ export function BuzzChatSurface({
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
               // Inverted list: paddingTop is the visual tail. Always the
-              // ordinary 12px — the thinking line is an in-flow band above
-              // the composer, not a padding reserve and not an overlay.
+              // ordinary speaker-change margin — the thinking line is
+              // absolute, painted over it, not a padding reserve.
               !desktopTranscript &&
                 !isArchived && {
                   paddingTop: phoneTranscriptTailPadding({
@@ -4909,15 +4902,15 @@ export function BuzzChatSurface({
             </View>
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome is an in-flow band above the composer, so
-                it cannot paint over the last message, and the transcript tail
-                stays the ordinary 12px. The SLOT is mounted whether or not an
-                agent is working and holds the band's measured height (C97
-                above): an in-flow band that came and went would take its own
-                height out of the list's viewport and move the newest row each
-                way. An empty strip above the composer is the price, and it
-                carries no rule and no surface of its own. Desktop keeps the
-                slot inside inputBar. */}
+              {/* Phone turn chrome paints over the transcript's own bottom
+                margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
+                anchored to this stack's top edge, so it takes no height from
+                the list whether or not an agent is working and cannot cover
+                the newest row — the line's box is exactly the speaker-change
+                margin the transcript already leaves. The slot is mounted
+                whether or not a line is showing; `pointerEvents="box-none"`
+                lets the transcript keep every touch the line is not using.
+                Desktop keeps the slot inside inputBar. */}
               {!desktopExperience && (
                 <TurnBandSlot testID="hanging-turn-chrome">
                   {composerAck ? (
@@ -6081,9 +6074,10 @@ const styles = StyleSheet.create((theme) => {
     emptyState: {
       flexGrow: 1,
     },
-    // The stack, the in-flow turn band, and the composer row are one measured
-    // column — `buzz/room-bottom-chrome.ts` owns all three. The band's own
-    // strip is styled inside `TurnBandSlot`, which also holds its height.
+    // The stack and the composer row are one measured column —
+    // `buzz/room-bottom-chrome.ts` owns both. The turn line is an absolute
+    // overlay on the stack's top edge, styled inside `TurnBandSlot`; it takes
+    // no height in this column.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
     previewLinkRow: {

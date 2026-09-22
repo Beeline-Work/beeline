@@ -823,10 +823,14 @@ const styles = StyleSheet.create((theme) => ({
   // A bylined row contributes the extra 12px on its visual-top edge, so the
   // preceding row's compact 6px makes the speaker-change boundary 24px
   // whether that preceding row is an agent (always bylined) or a person
-  // continuation (no byline). The inverted phone list renders a cell's
-  // layout-bottom at its visual top; chronological desktop is upright.
+  // continuation (no byline). Both lists are upright within a cell: the
+  // chronological desktop list is upright, and the inverted phone list flips
+  // the whole column and each cell back. A byline's air therefore belongs on
+  // `paddingTop` in BOTH — putting it on `paddingBottom` dropped the 24px
+  // speaker-change air on the message's visual BOTTOM instead, which is what
+  // left a 30px tail under the newest turn and a 12px gap above the next one.
   entryWithByline: {
-    paddingBottom: theme.buzz.messagePaddingVertical * 3,
+    paddingTop: theme.buzz.messagePaddingVertical * 3,
   },
   entryWithBylineChronological: {
     paddingTop: theme.buzz.messagePaddingVertical * 3,

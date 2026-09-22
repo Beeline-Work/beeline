@@ -159,7 +159,9 @@ describe('the per-turn progress indicator', () => {
     expect(pressableStyle(stop)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          minHeight: 26,
+          // The row's own height: 26 used to push the line past the 24px
+          // speaker-change margin its box must fit inside.
+          minHeight: 24,
           marginLeft: 'auto',
         }),
       ]),

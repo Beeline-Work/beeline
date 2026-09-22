@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   COMPOSER_TOP_GAP,
+  TURN_LINE_BAR_MARGIN_BOTTOM,
   TURN_LINE_BOX_HEIGHT,
   TURN_LINE_ROW_MIN_HEIGHT,
 } from '@/buzz/room-bottom-chrome';
@@ -93,9 +94,9 @@ describe('Room composer status layout', () => {
       source.indexOf('    desktopStatusText: {'),
     );
 
-    expect(COMPOSER_TOP_GAP).toBe(12);
-    expect(TURN_LINE_BOX_HEIGHT).toBe(TURN_LINE_ROW_MIN_HEIGHT + COMPOSER_TOP_GAP);
-    expect(TURN_LINE_BOX_HEIGHT).toBe(36);
+    expect(COMPOSER_TOP_GAP).toBe(18);
+    expect(TURN_LINE_BOX_HEIGHT).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
+    expect(TURN_LINE_BOX_HEIGHT).toBe(33);
     expect(desktopStatusStyle).toContain('minHeight: TURN_LINE_BOX_HEIGHT');
     expect(desktopStatusStyle).not.toContain('minHeight: 28');
 

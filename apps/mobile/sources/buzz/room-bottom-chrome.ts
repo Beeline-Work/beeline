@@ -17,7 +17,7 @@
  *
  * All three were solving a shortage that did not exist. The gap between the
  * newest message and the composer is already the ordinary speaker-change
- * margin plus the fixed composer-top gap (24 + 12 = 36), and the line's box is exactly that
+ * margin plus the fixed composer-top gap (24 + 18 = 42), and the line's box is exactly that
  * space. Painting into room that is already reserved costs nothing, so there
  * is no conditional height and no shift to compensate for.
  */
@@ -35,14 +35,25 @@ export const TURN_LINE_ROW_MIN_HEIGHT = 24;
 export const TURN_LABEL_LINE_HEIGHT = 18;
 
 /** Fixed air above the composer, whether the thinking line is mounted or not.
- *  Authored by eye (captain, 2026-09-22) rather than derived from the label:
- *  with 12 here the whole gap under the newest message reads 36px. It only
- *  has to leave the label's ink clear of the composer, which any value at or
- *  below `TURN_LINE_ROW_MIN_HEIGHT` does. */
-export const COMPOSER_TOP_GAP = 12;
+ *  The whole gap under the newest message is the ordinary 24px speaker-change
+ *  margin plus this, so 18 here makes it 42: one speaker-change margin plus
+ *  exactly one label line box. That is the rule, and it is what puts equal air
+ *  on both sides of the thinking label (`TURN_LINE_INK_AIR`). */
+export const COMPOSER_TOP_GAP = TURN_LABEL_LINE_HEIGHT;
 
-/** The thinking line keeps the fixed composer-top gap below its row. */
-export const TURN_LINE_BAR_MARGIN_BOTTOM = COMPOSER_TOP_GAP;
+/** Air above and below the thinking label's ink, which must be EQUAL — the
+ *  captain's rule (2026-09-22). The gap is the ink plus air on both sides, so
+ *  this follows from the two constants above and is never authored directly.
+ *  24 + 18 = 42 total, minus the 18px ink, halved: 12. */
+export const TURN_LINE_INK_AIR =
+  (TURN_LINE_ROW_MIN_HEIGHT + COMPOSER_TOP_GAP - TURN_LABEL_LINE_HEIGHT) / 2;
+
+/** The row centres its 18px ink in 24px, so 3px of the air below the ink is
+ *  already inside the row; the bar's own margin owns the rest. Deliberately
+ *  NOT the composer-top gap: tying the two together is what pinned the label
+ *  to the composer and left 3px above it against 15px below. */
+export const TURN_LINE_BAR_MARGIN_BOTTOM =
+  TURN_LINE_INK_AIR - (TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2;
 
 /** Complete thinking-line box, including the fixed air before the composer. */
 export const TURN_LINE_BOX_HEIGHT = TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM;

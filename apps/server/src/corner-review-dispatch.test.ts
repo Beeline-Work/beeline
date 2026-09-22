@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
-import { REVIEW_HANDBACK_LIMIT } from './agent-command.js';
+import { createAgentCommand, REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';
@@ -140,6 +140,87 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 }
 
 describe('corner message attribution', () => {
+  // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
+  // check webhook exists to create the configured reviewer's command.
+  it('wakes the configured reviewer when the worker completes a zero-check PR, without changing the no-reviewer path', async () => {
+    const checkGate = vi.fn(async () => ({
+      checks: 'pending' as const,
+      checkCount: 0,
+      pullRequest: 'https://github.com/acme/repo/pull/7',
+      headSha: '1'.repeat(40),
+      approvalPending: true,
+      reviewer: '@goosy',
+      reviewerExists: true,
+      reviewerIsAuthor: false,
+      reviewerWake: { status: 'waiting' as const, detail: 'No checks have reported.' },
+      rule: 'Only the configured reviewer records PASS.',
+    }));
+    daemon = new DaemonService(
+      db,
+      new LiveHub(),
+      undefined,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      checkGate,
+    );
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({
+        checks: 'unknown',
+        lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: '1'.repeat(40) },
+      }),
+    ]);
+    const source = await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'person', id: H, name: 'Human' },
+      verb: 'requested work',
+    });
+    await createAgentCommand(db, {
+      roomId: C,
+      agentId: A,
+      sourceMessageId: source.id,
+      reason: 'corner_objective',
+    });
+    const [worker] = await commands(A, C);
+    await claim(worker!);
+    await result(worker!, 'https://github.com/acme/repo/pull/7');
+
+    expect(checkGate).toHaveBeenCalledOnce();
+    expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+    expect(
+      (
+        await db.query<{ lifecycle: { checks: string; checksSummary: { total: number } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows[0]?.lifecycle,
+    ).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+
+    await db.query(`DELETE FROM agent_commands`);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"'),command_check_state=NULL WHERE corner_id=$1`,
+      [C],
+    );
+    await createAgentCommand(db, {
+      roomId: C,
+      agentId: A,
+      sourceMessageId: source.id,
+      reason: 'corner_objective',
+    });
+    const [noReviewerWorker] = await commands(A, C);
+    await claim(noReviewerWorker!, 'g2');
+    await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
+    expect(checkGate).toHaveBeenCalledOnce();
+    expect(await commands(A, C)).toHaveLength(0);
+  });
+
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {
     // Corner owned by Hoots (A); Goosy (B) is the configured reviewer on the
     // parent Room and a member of parent + corner with a check-passed

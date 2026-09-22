@@ -3,7 +3,11 @@ import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './age
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
-import type { CornerAppView } from './corner-apps.js';
+import type {
+  CornerAppBindingView,
+  CornerAppInstallationView,
+  CornerAppView,
+} from './corner-apps.js';
 
 export interface AttachmentReference {
   url: string;
@@ -478,6 +482,8 @@ export type RoomView = {
   readonly cornerLifecycle?: CornerLifecycleView;
   /** Native, code-free apps persisted on this corner and shared with its members. */
   readonly cornerApps?: readonly CornerAppView[];
+  /** Optional installed app whose human surface owns this corner. */
+  readonly boundApp?: CornerAppBindingView;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 
@@ -767,6 +773,7 @@ export type CornerListItem = {
   /** Human whose request caused the agent to open this corner. */
   readonly initiator?: RoomViewIdentity;
   readonly agent?: RoomViewIdentity;
+  readonly app?: CornerAppBindingView;
   readonly latestMessage?: {
     readonly id: string;
     readonly text: string;
@@ -778,6 +785,8 @@ export type CornerListItem = {
 export type CornerListView = {
   readonly room: RoomViewHeader;
   readonly corners: readonly CornerListItem[];
+  /** Apps connected to this Workspace and available for a new corner. */
+  readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };

@@ -9,11 +9,15 @@ export function CornerAppScreen({
   onBack,
   onAction,
   busyAction,
+  unavailableTitle,
+  unavailableMessage,
 }: {
   app?: CornerAppView;
   onBack: () => void;
-  onAction: (prompt: string) => void;
+  onAction?: (prompt: string) => void;
   busyAction?: string;
+  unavailableTitle?: string;
+  unavailableMessage?: string;
 }) {
   return (
     <View style={styles.screen} testID="corner-app-screen">
@@ -25,15 +29,11 @@ export function CornerAppScreen({
           onPress={onBack}
           style={styles.back}
         >
-          <ChevronGlyph
-            color={styles.backText.color}
-            direction="left"
-            size={CHEVRON_BACK_SIZE}
-          />
+          <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text numberOfLines={1} style={styles.title}>
-            {app?.title ?? 'Corner App'}
+            {app?.title ?? unavailableTitle ?? 'Corner App'}
           </Text>
           {app ? (
             <Text numberOfLines={1} style={styles.byline}>
@@ -44,7 +44,9 @@ export function CornerAppScreen({
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {!app ? (
-          <Text style={styles.empty}>This app is not available in the corner.</Text>
+          <Text style={styles.empty}>
+            {unavailableMessage ?? 'This app is not available in the corner.'}
+          </Text>
         ) : (
           <>
             {app.description ? <Text style={styles.description}>{app.description}</Text> : null}
@@ -91,7 +93,7 @@ function CornerAppBlockView({
 }: {
   block: CornerAppBlock;
   busy: boolean;
-  onAction: (prompt: string) => void;
+  onAction?: (prompt: string) => void;
 }) {
   switch (block.type) {
     case 'heading':
@@ -120,18 +122,19 @@ function CornerAppBlockView({
           <Text style={styles.noticeText}>{block.text}</Text>
         </View>
       );
-    case 'action':
+    case 'action': {
+      const disabled = busy || !onAction;
       return (
         <Pressable
           accessibilityLabel={`${block.label}. Sends a prompt to ${block.prompt}`}
           accessibilityRole="button"
-          accessibilityState={{ busy, disabled: busy }}
-          disabled={busy}
-          onPress={() => onAction(block.prompt)}
+          accessibilityState={{ busy, disabled }}
+          disabled={disabled}
+          onPress={() => onAction?.(block.prompt)}
           style={({ pressed }) => [
             styles.action,
             pressed && styles.actionPressed,
-            busy && styles.actionBusy,
+            disabled && styles.actionBusy,
           ]}
           testID={`corner-app-action-${block.label}`}
         >
@@ -139,6 +142,7 @@ function CornerAppBlockView({
           <Text style={styles.actionArrow}>→</Text>
         </Pressable>
       );
+    }
   }
 }
 

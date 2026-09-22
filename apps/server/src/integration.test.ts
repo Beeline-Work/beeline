@@ -4716,6 +4716,90 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
+  it('binds one installed Corner App while preserving inherited Room membership', async () => {
+    const installationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const manifest = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      developer: 'Bee Labs',
+      humanUi: { kind: 'broker', capability: 'release-board.ui' },
+      agent: { kind: 'broker', capability: 'release-board.agent' },
+      permissions: ['github.read'],
+    };
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
+       VALUES($1,$2,$3,$4,$5::jsonb)`,
+      [installationId, WORKSPACE, HUMAN, AGENT, JSON.stringify(manifest)],
+    );
+    const available = await phone.readCorners(ROOM, HUMAN);
+    expect(available?.apps).toEqual([{ id: installationId, manifest }]);
+
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'Release control',
+      appInstallationId: installationId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const listed = await phone.readCorners(ROOM, HUMAN);
+    expect(listed?.corners.find((corner) => corner.corner.id === cornerId)?.app).toMatchObject({
+      id: installationId,
+      manifest,
+    });
+    expect((await phone.readRoom(cornerId, HUMAN))?.boundApp).toMatchObject({
+      id: installationId,
+      manifest,
+    });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+          [cornerId, AGENT],
+        )
+      ).rowCount,
+    ).toBe(1);
+  });
+
+  it('projects a native installed Corner App without a linked developer identity', async () => {
+    const installationId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const definition = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      command: 'release-board',
+      blocks: [{ type: 'text', text: 'Ready to release.' }],
+    };
+    const manifest = {
+      version: 1,
+      slug: 'release-board',
+      title: 'Release board',
+      developer: 'Bee Labs',
+      humanUi: { kind: 'native', definition },
+    };
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
+       VALUES($1,$2,$3,$4::jsonb)`,
+      [installationId, WORKSPACE, HUMAN, JSON.stringify(manifest)],
+    );
+
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'Release control',
+      appInstallationId: installationId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    expect((await phone.readRoom(cornerId, HUMAN))?.cornerApps).toEqual([
+      expect.objectContaining({
+        ...definition,
+        authorName: manifest.developer,
+        revision: 1,
+      }),
+    ]);
+  });
+
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,

@@ -38,6 +38,7 @@ export default function BuzzCorners() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createAppId, setCreateAppId] = useState<string>();
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
@@ -125,6 +126,7 @@ export default function BuzzCorners() {
     setCreateOpen(false);
     setCreateTitle('');
     setCreateError(null);
+    setCreateAppId(undefined);
   };
   const createCorner = async () => {
     const nextTitle = createTitle.replace(/\s+/g, ' ').trim();
@@ -134,10 +136,22 @@ export default function BuzzCorners() {
     try {
       const identity = await loadBuzzIdentity();
       if (!identity) throw new Error('Beeline identity is unavailable');
-      const cornerId = await new BuzzRigTransport(identity).createHumanCorner(decodedId, nextTitle);
+      const cornerId = await new BuzzRigTransport(identity).createHumanCorner(
+        decodedId,
+        nextTitle,
+        createAppId,
+      );
       setCreateOpen(false);
       setCreateTitle('');
-      router.push(cornerHref(cornerId, decodedId, nextTitle));
+      const selectedApp = surface?.apps?.find((app) => app.id === createAppId);
+      if (selectedApp?.manifest.humanUi) {
+        router.push({
+          pathname: '/beeline/corner-app/[slug]',
+          params: { slug: selectedApp.manifest.slug, roomId: cornerId },
+        } as Href);
+      } else {
+        router.push(cornerHref(cornerId, decodedId, nextTitle));
+      }
     } catch (reason) {
       setCreateError(phoneOperationFailureReason(reason));
     } finally {
@@ -231,6 +245,9 @@ export default function BuzzCorners() {
           error={createError}
           onCreate={() => void createCorner()}
           onClose={closeCreate}
+          apps={surface.apps ?? []}
+          selectedAppId={createAppId}
+          setSelectedAppId={setCreateAppId}
         />
       </View>
     </BuzzCommunityShell>

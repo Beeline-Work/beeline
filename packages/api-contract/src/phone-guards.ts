@@ -52,7 +52,13 @@ import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './ag
 import { isConnectorOfferStatus, type ConnectorOfferCardView } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
 import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
-import { readCornerAppDefinition, type CornerAppView } from './corner-apps.js';
+import {
+  readCornerAppDefinition,
+  readCornerAppManifest,
+  type CornerAppBindingView,
+  type CornerAppInstallationView,
+  type CornerAppView,
+} from './corner-apps.js';
 
 /**
  * Phone surface readers project a known-safe view from a wire payload.
@@ -691,7 +697,7 @@ function readCornerApp(value: unknown): CornerAppView | null {
   if (
     !item ||
     !definition ||
-    !hex64(item.authorId) ||
+    (item.authorId !== undefined && !hex64(item.authorId)) ||
     typeof item.authorName !== 'string' ||
     !integer(item.revision) ||
     !integer(item.updatedAt)
@@ -699,12 +705,26 @@ function readCornerApp(value: unknown): CornerAppView | null {
     return null;
   return {
     ...definition,
-    authorId: item.authorId,
+    ...(typeof item.authorId === 'string' ? { authorId: item.authorId } : {}),
     authorName: item.authorName,
     ...(typeof item.authorHandle === 'string' ? { authorHandle: item.authorHandle } : {}),
     revision: item.revision,
     updatedAt: item.updatedAt,
   };
+}
+
+function readCornerAppInstallation(value: unknown): CornerAppInstallationView | null {
+  const item = record(value);
+  const manifest = readCornerAppManifest(item?.manifest);
+  return item && uuid(item.id) && manifest ? { id: item.id, manifest } : null;
+}
+
+function readCornerAppBinding(value: unknown): CornerAppBindingView | null {
+  const installation = readCornerAppInstallation(value);
+  const item = record(value);
+  return installation && item && uuid(item.instanceId)
+    ? { ...installation, instanceId: item.instanceId }
+    : null;
 }
 
 function readPermission(value: unknown): NonNullable<RoomViewMessage['permission']> | null {
@@ -1166,6 +1186,7 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
+    ...field('app', readCornerAppBinding(item.app)),
     ...field('latestMessage', readLatest(item.latestMessage)),
   };
 }
@@ -1342,6 +1363,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
     ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
+    ...field('boundApp', readCornerAppBinding(item.boundApp)),
   };
 }
 
@@ -1488,6 +1510,7 @@ export function readCornerListView(value: unknown): CornerListView | null {
   return {
     room,
     corners,
+    ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),
   };

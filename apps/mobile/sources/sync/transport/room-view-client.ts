@@ -107,6 +107,11 @@ class MonolithRoomViewClient {
       messageId,
     }).then(() => undefined);
   }
+  markUnread(roomId: string, messageId: string): Promise<void> {
+    return this.request(`/v1/phone/rooms/${encodeURIComponent(roomId)}/unread`, 'POST', {
+      messageId,
+    }).then(() => undefined);
+  }
 
   private get<T>(path: string, guard: Guard<T>): Promise<T> {
     return this.checked(path, 'GET', guard);
@@ -201,6 +206,11 @@ export class RoomViewClient {
   markRead(roomId: string, messageId: string): Promise<void> {
     return this.implementation instanceof MonolithRoomViewClient
       ? this.implementation.markRead(roomId, messageId)
+      : Promise.resolve();
+  }
+  markUnread(roomId: string, messageId: string): Promise<void> {
+    return this.implementation instanceof MonolithRoomViewClient
+      ? this.implementation.markUnread(roomId, messageId)
       : Promise.resolve();
   }
 }

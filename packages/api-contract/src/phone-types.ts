@@ -416,6 +416,13 @@ export type RoomViewer = {
   readonly readCursor?: {
     readonly messageId: string | null;
     readonly firstUnreadMessageId: string | null;
+    /**
+     * How many messages sit past the mark, counted by the server over the one
+     * definition of unread it keeps (`apps/server/src/read-cursor.ts`) and
+     * capped at 99. Absent on a server old enough not to send it — which is
+     * not the same as zero, and must not be read as "caught up".
+     */
+    readonly unreadCount?: number;
   };
   readonly identity: RoomViewIdentity;
   readonly role: 'owner' | 'admin' | 'member';

@@ -27,6 +27,7 @@ const controls = vi.hoisted(() => ({
     emit(event: TestSurfaceEvent): void;
   }>,
   replayEvents: [] as NostrEvent[],
+  readMarks: [] as string[],
   transportCount: 0,
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
@@ -145,7 +146,10 @@ vi.mock('@/sync/transport/room-view-client', async () => {
         if (controls.roomResponse) return controls.roomResponse;
         return new Promise<RoomView>(() => undefined);
       }
-      async markRead() {}
+      async markRead(roomId: string, messageId: string) {
+        controls.readMarks.push(messageId);
+      }
+      async markUnread() {}
     },
   };
 });
@@ -206,6 +210,8 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
+import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -348,6 +354,7 @@ beforeEach(() => {
   controls.transportCount = 0;
   controls.reopenChat.mockClear();
   controls.replayEvents.length = 0;
+  controls.readMarks.length = 0;
   controls.identityPromise = null;
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
@@ -358,6 +365,65 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('re-arms viewport advancement on a fresh visit to the same Room', async () => {
+    // mark-unread suspends the advancer so the viewport cannot immediately
+    // read back what the reader just declared unread. Re-arming keyed on
+    // `channelId` alone made that suspension permanent for a reader who
+    // reopened the SAME Room — the id never changed, so nothing resumed and
+    // their read mark stopped moving for good (review 2026-09-22).
+    const rows = ['m1', 'm2', 'm3'].map(
+      (id) => ({ id, text: id, isUser: false, timestamp: 0 }) as ChatDisplayMessage,
+    );
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    const render = (isFocused: boolean) =>
+      React.createElement(Harness, {
+        channelId: 'room-a',
+        isFocused,
+        capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+      });
+    await act(async () => {
+      renderer = create(render(true));
+    });
+    await flushEffects();
+
+    // The viewport reaches m1 and settles.
+    await act(async () => {
+      current.advanceReadCursor(rows, [rows[0]!]);
+      await new Promise((resolve) => setTimeout(resolve, READ_CURSOR_DEBOUNCE_MS + 20));
+    });
+    expect(controls.readMarks).toEqual(['m1']);
+
+    // The reader marks m2 unread. The viewport must not read it straight back.
+    await act(async () => {
+      await current.markUnreadFrom('m2');
+    });
+    await act(async () => {
+      current.advanceReadCursor(rows, [rows[2]!]);
+      await new Promise((resolve) => setTimeout(resolve, READ_CURSOR_DEBOUNCE_MS + 20));
+    });
+    expect(controls.readMarks).toEqual(['m1']);
+
+    // They leave and come back to the same Room. Same channelId throughout.
+    await act(async () => {
+      renderer.update(render(false));
+    });
+    await flushEffects();
+    await act(async () => {
+      renderer.update(render(true));
+    });
+    await flushEffects();
+
+    // A fresh visit reads again.
+    await act(async () => {
+      current.advanceReadCursor(rows, [rows[2]!]);
+      await new Promise((resolve) => setTimeout(resolve, READ_CURSOR_DEBOUNCE_MS + 20));
+    });
+    expect(controls.readMarks).toEqual(['m1', 'm3']);
+    await act(async () => renderer.unmount());
+  });
+
   it('keeps the first unread boundary from the opening read for the whole visit', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;

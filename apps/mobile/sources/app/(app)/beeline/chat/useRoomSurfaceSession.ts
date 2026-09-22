@@ -30,6 +30,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import {
   applyLiveOverlayStructure,
@@ -187,6 +188,19 @@ export interface UseRoomSurfaceSessionResult {
   roomSurface: RoomView | null;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
+  /**
+   * Report what the transcript's viewport can currently see. The boundary it
+   * publishes is debounced, so this is safe to call on every viewability pass.
+   * `chronological` is the oldest-first transcript — NOT the reversed array the
+   * native inverted list renders from, which would rank the oldest visible row
+   * as newest and read a scroll back up the transcript as progress.
+   */
+  advanceReadCursor(
+    chronological: readonly ChatDisplayMessage[],
+    visible: readonly ChatDisplayMessage[],
+  ): void;
+  /** Move the boundary back so this message, and everything after it, is unread. */
+  markUnreadFrom(messageId: string): Promise<void>;
   liveOverlays: readonly LiveOverlay[];
   liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
@@ -225,6 +239,8 @@ export function useRoomSurfaceSession({
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
 
   const outboxRef = useRef<RoomOutbox | null>(null);
+  const roomClientRef = useRef<RoomViewClient | null>(null);
+  roomClientRef.current = roomClient;
   const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
@@ -251,6 +267,66 @@ export function useRoomSurfaceSession({
       schedulerRef.current?.signal();
     }
   }, [roomSurface]);
+
+  const channelIdRef = useRef(channelId);
+  const isFocusedRef = useRef(isFocused);
+  isFocusedRef.current = isFocused;
+  // One advancer per visit. It debounces the viewport's reports and writes the
+  // boundary the reader actually reached; the Room switching out from under it
+  // drops whatever it was still holding, because that belongs to the old Room.
+  const readCursorRef = useRef<ReadCursorAdvancer | null>(null);
+  if (readCursorRef.current === null) {
+    readCursorRef.current = new ReadCursorAdvancer((messageId) => {
+      void roomClientRef.current?.markRead(channelIdRef.current, messageId).catch(() => undefined);
+    });
+  }
+  useEffect(() => {
+    channelIdRef.current = channelId;
+    // A different Room under a mounted surface is its own fresh visit, and
+    // carries none of the previous Room's suspension.
+    readCursorRef.current?.resume();
+    // Leaving drops whatever boundary the debounce was still holding — it
+    // belongs to the Room being left, and must never be written against this
+    // one.
+    return () => readCursorRef.current?.cancel();
+  }, [channelId]);
+  // A VISIT begins and ends with focus, not with the Room id. Re-arming on
+  // `channelId` alone left the advancer suspended forever once mark-unread
+  // stopped it: the reader leaves and reopens the same Room, the id never
+  // changes, and the viewport silently stops moving the boundary for good.
+  //
+  // So: arriving re-arms, leaving publishes what was seen. A debounce still
+  // holding a boundary when the visit ends is not less read for it.
+  useEffect(() => {
+    if (isFocused) {
+      readCursorRef.current?.resume();
+      return;
+    }
+    readCursorRef.current?.flush();
+  }, [isFocused]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') readCursorRef.current?.flush();
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const advanceReadCursor = useCallback(
+    (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
+      if (!isFocusedRef.current) return;
+      if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
+      readCursorRef.current?.observe(chronological, visible);
+    },
+    [],
+  );
+
+  const markUnreadFrom = useCallback(async (messageId: string) => {
+    // The reader has said this message is unread. Stop the viewport from
+    // reading it again on the very next report, then move the server boundary.
+    readCursorRef.current?.suspend();
+    await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
+    setFirstUnreadMessageId(messageId);
+  }, []);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -888,13 +964,10 @@ export function useRoomSurfaceSession({
                 reopenedChat = false;
               });
             }
-            const latest = view.messages.at(-1);
-            if (
-              latest &&
-              AppState.currentState !== 'background' &&
-              AppState.currentState !== 'inactive'
-            )
-              void nextRoomClient.markRead(channelId, latest.id).catch(() => undefined);
+            // The read mark is no longer advanced from here. A fetched view
+            // says what EXISTS, not what was seen, and marking its tail read
+            // cleared the badge for messages sitting well below the fold.
+            // The viewport owns the boundary now (`advanceReadCursor`).
           },
           onError: (error) => {
             if (cancelled) return;
@@ -994,6 +1067,8 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    advanceReadCursor,
+    markUnreadFrom,
     liveOverlays,
     liveDraftStore: liveDraftDrainStore,
     userPubkey,

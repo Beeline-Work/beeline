@@ -114,6 +114,7 @@ import {
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { answerRoomChoice, hiddenWakeCardSql, skipRoomChoice } from './room-choice.js';
+import { unreadMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -312,21 +313,6 @@ interface CornerRow extends RoomRow {
   app_instance_id: string | null;
   app_manifest: unknown | null;
 }
-// Correlated with the authorized Room and viewer in both Room read paths.
-const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
-  'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
-  'firstUnreadMessageId',(
-    SELECT message.id FROM messages message
-    WHERE message.room_id=room.id AND message.author_id<>$2
-      AND message.presentation<>'activity'
-      AND ${hiddenWakeCardSql('message')}
-      AND (message.created_at,message.id)>(
-        COALESCE((SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'-infinity'::timestamptz),
-        COALESCE((SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'')
-      )
-    ORDER BY message.created_at,message.id LIMIT 1
-  ))`;
-
 interface TopLevelRoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member';
@@ -1153,11 +1139,10 @@ export class PhoneService {
            FROM rooms room
            LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
            LEFT JOIN LATERAL(
-             SELECT id,created_at FROM messages
-             WHERE room_id=room.id AND presentation IN ('message','system','card')
-               AND ${hiddenWakeCardSql()}
-               AND author_id IS DISTINCT FROM $2
-             ORDER BY created_at DESC,id DESC LIMIT 1
+             -- The deck's boolean and the Room's cursor now ask one question.
+             SELECT message.id,message.created_at FROM messages message
+             WHERE message.room_id=room.id AND ${unreadMessageSql('message')}
+             ORDER BY message.created_at DESC,message.id DESC LIMIT 1
            ) latest ON true
            WHERE room.id=ANY($1::uuid[])`,
           [roomIds, viewerId],
@@ -1165,14 +1150,14 @@ export class PhoneService {
       ),
     ]);
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
-    const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item.unread]) ?? []);
+    const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
     for (const room of rooms.rows) {
       const item = presenceByRoom.get(room.id);
       room.peer_presence_body = item?.peer_presence_body ?? null;
       room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
       room.peer_activity_at = item?.peer_activity_at ?? null;
       room.agents_offline = item?.agents_offline ?? false;
-      room.unread = cursorByRoom.get(room.id) ?? false;
+      room.unread = cursorByRoom.get(room.id)?.unread ?? false;
     }
     return {
       workspace: {
@@ -2986,6 +2971,64 @@ export class PhoneService {
       WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
       [roomId, viewerId, messageIdValue],
     );
+  }
+
+  /**
+   * Put the boundary back in front of `messageIdValue`, so the Room reads
+   * unread from that message onward. The mark lands on the newest countable
+   * row strictly older than the target; when nothing precedes it the mark is
+   * removed entirely and the whole Room is unread again.
+   *
+   * Unlike `markRead` this is not monotonic — moving the boundary backwards is
+   * the entire point — so it writes unconditionally.
+   *
+   * The target must be a row this viewer's unread count would actually count.
+   * Anything else — their own message above all — makes the caller a boundary
+   * the count then contradicts: it reported nothing unread while the open Room
+   * drew a NEW MESSAGES divider at the chosen row (review 2026-09-22).
+   */
+  async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
+    const message = await this.database.query<{ exists: boolean }>(
+      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
+      [messageIdValue, roomId],
+    );
+    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
+      throw new Error('message not found');
+    const countable = await this.database.query<{ exists: boolean }>(
+      `SELECT true exists FROM messages message
+       WHERE message.id=$1 AND message.room_id=$3 AND ${unreadMessageSql('message')}`,
+      [messageIdValue, viewerId, roomId],
+    );
+    // 'invalid' is what the router reads as a 400 — the row is real and
+    // readable, it is simply not something this viewer can hold unread.
+    if (!countable.rows[0])
+      throw new Error('messageId is invalid: only a row that counts as unread can be marked unread');
+    const previous = (
+      await this.database.query<{ id: string; created_at: Date }>(
+        `SELECT earlier.id,earlier.created_at FROM messages target
+         JOIN messages earlier ON earlier.room_id=target.room_id
+           AND (earlier.created_at,earlier.id)<(target.created_at,target.id)
+           AND earlier.presentation<>'activity'
+           AND ${hiddenWakeCardSql('earlier')}
+         WHERE target.id=$1 AND target.room_id=$2
+         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1`,
+        [messageIdValue, roomId],
+      )
+    ).rows[0];
+    if (previous) {
+      await this.database.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         VALUES($1,$2,$3,$4)
+         ON CONFLICT(room_id,identity_id) DO UPDATE
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()`,
+        [roomId, viewerId, previous.created_at, previous.id],
+      );
+    } else {
+      await this.database.query(
+        `DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
+        [roomId, viewerId],
+      );
+    }
   }
 
   async uploadMedia(

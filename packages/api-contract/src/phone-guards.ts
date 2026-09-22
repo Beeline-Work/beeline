@@ -255,6 +255,12 @@ function readViewer(value: unknown): RoomViewer {
       ? {
           messageId: cursor.messageId as string | null,
           firstUnreadMessageId: cursor.firstUnreadMessageId as string | null,
+          ...field(
+            'unreadCount',
+            integer(cursor.unreadCount) && cursor.unreadCount >= 0
+              ? cursor.unreadCount
+              : undefined,
+          ),
         }
       : undefined;
   return {

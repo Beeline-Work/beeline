@@ -4,15 +4,17 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Read-mark advancement contract for the chat surface. A Room the viewer is
- * sitting in must never report its own messages back as unread:
+ * sitting in must never report its own messages back as unread, and must
+ * never report as READ what the viewer has not actually seen:
  *
  * - sending a message advances the read mark to that message immediately
  *   (optimistically, before the next scheduled fetch) — otherwise leaving
  *   the Room right after sending leaves a stale mark that golds the deck row
  *   for a message the viewer wrote (captain report 2026-09-02);
- * - a fetched Room view applied while the surface is mounted advances the
- *   mark to its latest message — the one "visible arrival" path, owned by
- *   the session's refresh scheduler;
+ * - every OTHER advance comes from the viewport. A fetched Room view says
+ *   what exists, not what was seen; marking its tail read cleared the badge
+ *   for messages sitting far below the fold, so the session no longer does
+ *   it and the list's own viewability pass owns the boundary instead;
  * - the server side independently refuses to count viewer-authored rows
  *   toward `unread` (apps/server/src/phone-service.ts).
  */
@@ -30,7 +32,62 @@ describe('the chat surface read-mark contract', () => {
     expect(sendBlock).toContain('markRead(decodedId, preparedEvent.id)');
   });
 
-  it('advances the read mark on every Room view applied while the surface is open', () => {
-    expect(sessionSource).toContain('markRead(channelId, latest.id)');
+  it('advances the read mark from the viewport, not from the applied view', () => {
+    // The scheduler's apply must hold no read-mark write at all: the tail of
+    // a fetched view is exactly the thing the reader may not have reached.
+    expect(sessionSource).not.toContain('markRead(channelId, latest.id)');
+    const observer = chatSource.slice(
+      chatSource.indexOf('const observeVisibleTranscriptMessages'),
+      chatSource.indexOf('const landAtNewMessageBoundary'),
+    );
+    expect(observer).toContain(
+      'advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current)',
+    );
+  });
+
+  it('re-arms the advancer when a visit begins, not only when the Room changes', () => {
+    // mark-unread suspends the advancer so the viewport cannot read back what
+    // the reader just declared unread. Re-arming only on `channelId` left that
+    // suspension permanent for a reader who reopened the SAME Room: the id
+    // never changed, so nothing resumed (review 2026-09-22).
+    const focusEffect = sessionSource.slice(
+      sessionSource.indexOf('useEffect(() => {\n    if (isFocused) {'),
+      sessionSource.indexOf('}, [isFocused]);'),
+    );
+    expect(focusEffect).toContain('readCursorRef.current?.resume()');
+    expect(focusEffect).toContain('readCursorRef.current?.flush()');
+  });
+
+  it('offers mark-unread only on a row the one definition calls unread', () => {
+    // OWN-MESSAGE-MARK-UNREAD. The row was gated on `!isAgentActivity`, so it
+    // appeared on the viewer's own message, announced success and installed
+    // that message as the local boundary — while the server, which never
+    // counts viewer-authored rows, reported nothing unread and left the deck
+    // read (review 2026-09-22). Both the row and the handler now run the same
+    // predicate the queue and the server count by.
+    const sheetRow = chatSource.slice(
+      chatSource.indexOf('accessibilityLabel="Mark unread from this message"') - 200,
+      chatSource.indexOf('testID="message-mark-unread-action"'),
+    );
+    expect(sheetRow).toContain('countsAsUnread(messageActionsTarget)');
+    expect(sheetRow).not.toContain('!messageActionsTarget.isAgentActivity');
+    const handler = chatSource.slice(
+      chatSource.indexOf('const handleMarkUnread = useCallback('),
+      chatSource.indexOf('const openMessageActions = useCallback('),
+    );
+    expect(handler).toContain('if (!countsAsUnread(message)) return;');
+  });
+
+  it('ranks the read cursor against chronological order, never the inverted list', () => {
+    // `transcriptMessages` IS `invertedMessages` on the phone. The cursor
+    // decides which visible row is newest by its index, so handing it that
+    // array picks the OLDEST visible row and reads a scroll back up the
+    // transcript as forward progress (review 2026-09-22).
+    expect(chatSource).toContain('const chronologicalMessagesRef = useRef(visibleMessages)');
+    const observer = chatSource.slice(
+      chatSource.indexOf('const observeVisibleTranscriptMessages'),
+      chatSource.indexOf('const landAtNewMessageBoundary'),
+    );
+    expect(observer).not.toContain('advanceReadCursor(transcriptMessagesRef');
   });
 });

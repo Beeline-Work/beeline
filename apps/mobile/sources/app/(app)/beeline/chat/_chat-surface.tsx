@@ -287,6 +287,7 @@ import {
 } from '@/buzz/transcript-motion';
 import {
   boundaryRowIndex,
+  countsAsUnread,
   messageContainsBoundary,
   messageBoundaryIds,
   newestTranscriptRowId,
@@ -552,6 +553,8 @@ export function BuzzChatSurface({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    advanceReadCursor,
+    markUnreadFrom,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -2035,6 +2038,12 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
+  // The read cursor ranks rows by index to decide which is newest, so it reads
+  // the chronological order for the same reason the jump control does: on the
+  // phone `transcriptMessages` IS the reversed list, and ranking that array
+  // picks the oldest visible row and reads a scroll back up as progress.
+  const chronologicalMessagesRef = useRef(visibleMessages);
+  chronologicalMessagesRef.current = visibleMessages;
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
@@ -2211,9 +2220,14 @@ export function BuzzChatSurface({
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
       observeVisibleMessages(visibleTranscriptMessagesRef.current);
+      // The same report is what moves the read mark. A row that never entered
+      // the viewport is never read, however far below it the transcript runs.
+      // Chronological order, never `transcriptMessagesRef` — that one is
+      // reversed on the phone, and the cursor ranks by index.
+      advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [completePendingNewMessageLanding, observeVisibleMessages],
+    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages],
   );
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2959,6 +2973,28 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
+  const handleMarkUnread = useCallback(
+    async (message: ChatDisplayMessage) => {
+      // The boundary may only be placed on a row the one definition of unread
+      // admits. Placed on the viewer's own message it drew a NEW MESSAGES
+      // divider and announced success while the server — which never counts
+      // viewer-authored rows — reported nothing unread and left the deck read.
+      if (!countsAsUnread(message)) return;
+      const messageId = message.relayId ?? message.id;
+      try {
+        await markUnreadFrom(messageId);
+        AccessibilityInfo.announceForAccessibility('Marked unread from this message');
+        refreshSignal.force();
+      } catch (error) {
+        AccessibilityInfo.announceForAccessibility('Mark unread failed');
+        Modal.alert(
+          'Could not mark unread',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [markUnreadFrom, refreshSignal],
+  );
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
     // A live draft is the turn still writing — it settles into the reply the
     // actions would target, so it offers none.
@@ -5686,6 +5722,18 @@ export function BuzzChatSurface({
               if (target) void beginForward(target);
             }}
             testID="message-forward-action"
+          />
+        ) : null}
+        {messageActionsTarget && countsAsUnread(messageActionsTarget) ? (
+          <HullActionSheetRow
+            accessibilityLabel="Mark unread from this message"
+            label="Mark unread"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleMarkUnread(target);
+            }}
+            testID="message-mark-unread-action"
           />
         ) : null}
         <HullActionSheetCancel

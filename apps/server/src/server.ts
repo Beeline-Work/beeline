@@ -1131,6 +1131,14 @@ async function route(
     json(response, 204, {});
     return;
   }
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/unread$/);
+  if (method === 'POST' && match) {
+    const input = await body(request);
+    if (typeof input.messageId !== 'string') throw new Error('messageId is required');
+    await options.phone.markUnread(match[1]!, input.messageId, identityId!);
+    json(response, 204, {});
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/phone/media') {
     if (!options.objectService) {
       json(response, 503, { error: 'object_storage_unavailable' });

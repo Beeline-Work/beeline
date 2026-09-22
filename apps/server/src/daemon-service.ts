@@ -2621,6 +2621,7 @@ export class DaemonService {
           input.roomId,
           input.requestId,
           agentId,
+          input.generationId,
           reason,
           input.reasonKind,
         );
@@ -2691,6 +2692,7 @@ export class DaemonService {
     roomId: string,
     requestId: string,
     agentId: string,
+    generationId: string | undefined,
     reason: string | null,
     reasonKind?: string,
   ) {
@@ -2698,6 +2700,7 @@ export class DaemonService {
       roomId,
       requestId,
       agentId,
+      generationId,
       reason,
       reasonKind,
     });

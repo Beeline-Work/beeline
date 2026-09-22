@@ -438,6 +438,64 @@ describe('90-second first silence from presence', () => {
     expect(restarts).toEqual([1]);
   });
 
+  it('lets a silent long-running turn heartbeat past the deadline and publish exactly one reply', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const requestId = 'd'.repeat(63) + '1';
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, live);
+    const turn = (
+      await database.query<CommittedTurnLiveRow>(
+        `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
+         FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+        [ROOM, requestId],
+      )
+    ).rows[0]!;
+    live.publish({
+      type: 'invalidate',
+      roomId: ROOM,
+      reason: 'turn',
+      agentId: AGENT,
+      requestId,
+      committedRow: { type: 'turn', row: turn },
+    });
+
+    for (let heartbeat = 0; heartbeat < 3; heartbeat += 1) {
+      await vi.advanceTimersByTimeAsync(40);
+      await daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: ROOM,
+          requestId,
+          generationId: 'g1',
+          status: 'working',
+          heartbeat: true,
+        },
+        AGENT,
+      );
+    }
+    await daemon.execute(
+      'postRoomMessage',
+      { roomId: ROOM, requestId, generationId: 'g1', text: 'The only reply.' },
+      AGENT,
+    );
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'complete',
+      hiccup_attempts: 0,
+      generation_id: 'g1',
+    });
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE request_id=$1 AND author_id=$2 ORDER BY created_at,id`,
+          [requestId, AGENT],
+        )
+      ).rows,
+    ).toEqual([{ text: 'The only reply.' }]);
+  });
+
   it('inscribes every Room that still has an unanswered delivery when presence demotes once', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const SECOND_ROOM = '33333333-3333-4333-8333-333333333333';
@@ -569,6 +627,7 @@ describe('silence detector ownership', () => {
         roomId: ROOM,
         requestId,
         agentId: AGENT,
+        generationId: 'g1',
         reason: 'the turn stalled',
         reasonKind: 'hiccup',
         liveRestart: false,
@@ -577,6 +636,7 @@ describe('silence detector ownership', () => {
         roomId: ROOM,
         requestId,
         agentId: AGENT,
+        generationId: 'g1',
         reason: 'the turn stalled',
         reasonKind: 'hiccup',
         liveRestart: true,
@@ -590,5 +650,71 @@ describe('silence detector ownership', () => {
       generation_id: null,
     });
     expect(liveRestarts.length).toBeLessThanOrEqual(1);
+  });
+
+  it('does not reopen a completed command when a stale stall detector finishes', async () => {
+    const requestId = '1'.repeat(63) + 'a';
+    const command = await ask(database, requestId);
+    const live = new LiveHub();
+    const daemon = new DaemonService(database, live);
+    await daemon.execute(
+      'postRoomMessage',
+      { roomId: ROOM, requestId, generationId: 'g1', text: 'One answer.' },
+      AGENT,
+    );
+
+    const outcome = await noteFirstSilence(database, live, {
+      roomId: ROOM,
+      requestId,
+      agentId: AGENT,
+      generationId: 'g1',
+      reason: 'the turn stalled',
+      reasonKind: 'hiccup',
+      liveRestart: true,
+    });
+
+    expect(outcome.hiccupRestart).toBe(false);
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'complete',
+      hiccup_attempts: 0,
+      generation_id: 'g1',
+    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::integer count FROM messages WHERE request_id=$1 AND author_id=$2`,
+          [requestId, AGENT],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+  });
+
+  it('does not let a stale generation fail or reopen its successor', async () => {
+    const requestId = '1'.repeat(63) + 'b';
+    const command = await ask(database, requestId);
+    await database.query(
+      `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
+      [command.id],
+    );
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'g2');
+
+    const outcome = await noteFirstSilence(database, new LiveHub(), {
+      roomId: ROOM,
+      requestId,
+      agentId: AGENT,
+      generationId: 'g1',
+      reason: 'the turn stalled',
+      reasonKind: 'hiccup',
+      liveRestart: true,
+    });
+
+    expect(outcome.hiccupRestart).toBe(false);
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'claimed',
+      hiccup_attempts: 0,
+      generation_id: 'g2',
+    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
   });
 });

@@ -774,6 +774,23 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 
+-- Agent-authored, code-free views shared by every member of one corner.
+-- The definition is validated at the daemon boundary and interpreted by the
+-- phone; no executable client payload is stored here.
+CREATE TABLE IF NOT EXISTS corner_apps (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  author_agent_id text NOT NULL REFERENCES identities(id),
+  definition jsonb NOT NULL,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, slug)
+);
+CREATE INDEX IF NOT EXISTS corner_apps_author_idx ON corner_apps(author_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS corner_apps_command_idx
+  ON corner_apps(corner_id,(definition->>'command'));
+
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
 DROP TABLE IF EXISTS corner_check_facts;
 

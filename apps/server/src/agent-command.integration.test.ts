@@ -102,6 +102,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
+  await db.query(`DELETE FROM corner_apps`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
@@ -109,6 +110,62 @@ beforeEach(async () => {
   await db.query(
     `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
   );
+});
+
+it('persists one declarative app per corner and projects agent open requests', async () => {
+  await send('@hoots build the release board', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  const definition = {
+    version: 1 as const,
+    slug: 'release-board',
+    title: 'Release board',
+    description: 'Current release facts.',
+    command: 'release-board',
+    blocks: [
+      { type: 'fields' as const, items: [{ label: 'State', value: 'Ready' }] },
+      { type: 'action' as const, label: 'Refresh', prompt: 'Refresh this release board.' },
+    ],
+  };
+  await expect(
+    daemon.execute(
+      'putCornerApp',
+      {
+        cornerId: C,
+        requestId: command!.turnRequestId,
+        generationId: 'g1',
+        definition,
+      },
+      A,
+    ),
+  ).resolves.toEqual(expect.objectContaining({ slug: 'release-board', revision: 1 }));
+
+  expect((await phone.readRoom(C, H))?.cornerApps).toEqual([
+    expect.objectContaining({
+      ...definition,
+      authorId: A,
+      authorName: 'Hoots',
+      authorHandle: 'hoots',
+      revision: 1,
+    }),
+  ]);
+
+  await daemon.execute(
+    'requestCornerAppOpen',
+    {
+      cornerId: C,
+      requestId: command!.turnRequestId,
+      generationId: 'g1',
+      slug: definition.slug,
+    },
+    A,
+  );
+  expect((await phone.readRoom(C, H))?.messages).toContainEqual(
+    expect.objectContaining({
+      cornerApp: { slug: 'release-board', title: 'Release board', revision: 1 },
+    }),
+  );
+  await result(command!, 'The app is ready.');
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
@@ -1283,8 +1340,11 @@ describe('Room/corner relays', () => {
     ).rejects.toThrow('relay up is retired');
     expect(await commands(B)).toEqual([]);
     expect(
-      (await db.query("SELECT id FROM messages WHERE card_type='relay' AND text='The endpoint is ready'"))
-        .rowCount,
+      (
+        await db.query(
+          "SELECT id FROM messages WHERE card_type='relay' AND text='The endpoint is ready'",
+        )
+      ).rowCount,
     ).toBe(0);
   });
 
@@ -1328,6 +1388,8 @@ describe('Room/corner relays', () => {
     expect(reply?.agentModel).toBe('grok-4-fast');
     // A human row carries no stamp, and an agent row with no known model
     // stays unstamped rather than guessing.
-    expect(view!.messages.find((message) => message.author.pubkey === H)?.agentModel).toBeUndefined();
+    expect(
+      view!.messages.find((message) => message.author.pubkey === H)?.agentModel,
+    ).toBeUndefined();
   });
 });

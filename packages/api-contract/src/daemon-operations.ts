@@ -8,6 +8,7 @@ import type {
 import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
+import type { CornerAppDefinition } from './corner-apps.js';
 import type {
   WalletPayInput,
   WalletSendOutcome,
@@ -197,6 +198,8 @@ export type DaemonOperationMap = {
   postCornerLifecycle: Operation<PostCornerLifecycleInput, WriteResult>;
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
+  putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
+  requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
@@ -213,10 +216,7 @@ export type DaemonOperationMap = {
   getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
-  revokeConnectionGrants: Operation<
-    AgentInput & ConnectionRefInput,
-    ConnectionGrantRevokeResult
-  >;
+  revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
   createCorner: Operation<CreateCornerInput, CornerResult>;
@@ -585,6 +585,19 @@ export type PostCornerPlanInput = CornerInput & {
     readonly status: 'pending' | 'in_progress' | 'completed';
   }[];
 };
+export type PutCornerAppInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly definition: CornerAppDefinition;
+  };
+export type RequestCornerAppOpenInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly slug: string;
+    readonly requestId: string;
+  };
+export type CornerAppWriteResult = WriteResult & {
+  readonly slug: string;
+  readonly revision: number;
+};
 export type PostTargetBranchProposalInput = RoomInput & {
   readonly requestId: string;
   readonly from: string;
@@ -942,7 +955,11 @@ export type ConnectorKind =
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
-  | { readonly kind: 'install'; readonly connectorId: string; readonly connectorType: ConnectorKind }
+  | {
+      readonly kind: 'install';
+      readonly connectorId: string;
+      readonly connectorType: ConnectorKind;
+    }
   | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
   | {
       readonly kind: 'revoke-grants';
@@ -950,7 +967,11 @@ export type ConnectorAssignment =
       readonly connectorType: ConnectorKind;
       readonly reference: string;
     }
-  | { readonly kind: 'uninstall'; readonly connectorId: string; readonly connectorType: ConnectorKind };
+  | {
+      readonly kind: 'uninstall';
+      readonly connectorId: string;
+      readonly connectorType: ConnectorKind;
+    };
 
 export type ConnectorAssignmentsResult = {
   readonly assignments: readonly ConnectorAssignment[];

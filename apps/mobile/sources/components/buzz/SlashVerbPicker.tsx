@@ -5,6 +5,13 @@ import type { BuiltInSlashVerb, BuiltInSlashVerbId } from '@/buzz/slash-verbs';
 import type { AgentPaletteCommand } from '@/buzz/slash-verbs';
 import { Typography } from '@/constants/Typography';
 
+export type CornerAppPaletteCommand = {
+  slug: string;
+  command: string;
+  title: string;
+  description?: string;
+};
+
 export function SlashVerbPicker({
   verbs,
   query,
@@ -18,6 +25,8 @@ export function SlashVerbPicker({
   /** True once the agent's published list resolved empty or absent: quiet honesty line. */
   agentLacksCommands,
   onSelectCommand,
+  apps,
+  onSelectApp,
 }: {
   verbs: readonly BuiltInSlashVerb[];
   /** The slash token currently typed, without the leading `/` ('' when open on just '/'). */
@@ -30,8 +39,12 @@ export function SlashVerbPicker({
   agentName?: string;
   agentLacksCommands?: boolean;
   onSelectCommand: (name: string) => void;
+  /** Corner-scoped commands supplied by the RoomView, never hardcoded here. */
+  apps?: readonly CornerAppPaletteCommand[];
+  onSelectApp?: (slug: string) => void;
 }) {
   const commandCount = commands?.length ?? 0;
+  const appCount = apps?.length ?? 0;
   const heading = agentName ? `COMMANDS · ${agentName.toUpperCase()}` : 'COMMANDS';
   return (
     <View accessibilityLabel="Available commands" style={styles.root} testID="slash-verb-picker">
@@ -49,7 +62,7 @@ export function SlashVerbPicker({
           <Text style={styles.dismissText}>×</Text>
         </TouchableOpacity>
       </View>
-      {commandCount > 0 || verbs.length > 0 ? (
+      {commandCount > 0 || appCount > 0 || verbs.length > 0 ? (
         <ScrollView
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -95,8 +108,38 @@ export function SlashVerbPicker({
               </TouchableOpacity>
             );
           })}
+          {(apps ?? []).map((app, appIndex) => {
+            const index = commandCount + appIndex;
+            const selected = index === highlightedIndex;
+            return (
+              <TouchableOpacity
+                accessibilityLabel={`/${app.command}. Open ${app.title}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                key={`app:${app.slug}`}
+                onPress={() => onSelectApp?.(app.slug)}
+                style={[styles.row, styles.commandRow, selected && styles.rowSelected]}
+                testID={`slash-corner-app-${app.slug}`}
+              >
+                <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}>
+                  /{app.command}
+                </Text>
+                <View style={styles.copy}>
+                  <Text numberOfLines={1} style={styles.label}>
+                    {app.title}
+                  </Text>
+                  {app.description ? (
+                    <Text numberOfLines={2} style={styles.description}>
+                      {app.description}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={styles.enter}>→</Text>
+              </TouchableOpacity>
+            );
+          })}
           {verbs.map((verb, verbIndex) => {
-            const index = commandCount + verbIndex;
+            const index = commandCount + appCount + verbIndex;
             const selected = index === highlightedIndex;
             return (
               <TouchableOpacity
@@ -145,104 +188,104 @@ export function SlashVerbPicker({
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  root: {
-    maxHeight: 276,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: groknight.radius,
-    backgroundColor: groknight.bgBase,
-    overflow: 'hidden',
-  },
-  heading: {
-    minHeight: 34,
-    paddingLeft: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.borderQuiet,
-  },
-  headingText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    letterSpacing: 1.3,
-  },
-  dismiss: {
-    width: 44,
-    minHeight: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dismissText: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 18,
-  },
-  list: { maxHeight: 240 },
-  row: {
-    minHeight: 58,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: groknight.borderQuiet,
-  },
-  rowSelected: { backgroundColor: groknight.bgHover },
-  command: {
-    ...Typography.mono('semiBold'),
-    width: 138,
-    color: groknight.textPrimary,
-    fontSize: 11,
-  },
-  // Android's minimum interactive target is 48dp; iOS's 44pt floor is
-  // therefore covered by the same row without adding a second platform path.
-  commandRow: { minHeight: 48 },
-  agentCommand: {
-    color: groknight.accent,
-  },
-  copy: { flex: 1, minWidth: 0 },
-  label: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  description: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  enter: {
-    ...Typography.mono(),
-    color: groknight.textDisabled,
-    fontSize: 12,
-  },
-  empty: {
-    ...Typography.mono(),
-    paddingHorizontal: 12,
-    paddingTop: 14,
-    color: groknight.textMuted,
-    fontSize: 10,
-  },
-  emptyWrap: { paddingHorizontal: 12, paddingVertical: 12 },
-  quietWrap: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: groknight.borderQuiet,
-  },
-  emptyHint: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-    marginTop: 4,
-  },
-  });
+  return {
+    root: {
+      maxHeight: 276,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.bgBase,
+      overflow: 'hidden',
+    },
+    heading: {
+      minHeight: 34,
+      paddingLeft: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.borderQuiet,
+    },
+    headingText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      letterSpacing: 1.3,
+    },
+    dismiss: {
+      width: 44,
+      minHeight: 34,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dismissText: {
+      ...Typography.default(),
+      color: groknight.textSecondary,
+      fontSize: 18,
+    },
+    list: { maxHeight: 240 },
+    row: {
+      minHeight: 58,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.borderQuiet,
+    },
+    rowSelected: { backgroundColor: groknight.bgHover },
+    command: {
+      ...Typography.mono('semiBold'),
+      width: 138,
+      color: groknight.textPrimary,
+      fontSize: 11,
+    },
+    // Android's minimum interactive target is 48dp; iOS's 44pt floor is
+    // therefore covered by the same row without adding a second platform path.
+    commandRow: { minHeight: 48 },
+    agentCommand: {
+      color: groknight.accent,
+    },
+    copy: { flex: 1, minWidth: 0 },
+    label: {
+      ...Typography.default('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    description: {
+      ...Typography.default(),
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+    },
+    enter: {
+      ...Typography.mono(),
+      color: groknight.textDisabled,
+      fontSize: 12,
+    },
+    empty: {
+      ...Typography.mono(),
+      paddingHorizontal: 12,
+      paddingTop: 14,
+      color: groknight.textMuted,
+      fontSize: 10,
+    },
+    emptyWrap: { paddingHorizontal: 12, paddingVertical: 12 },
+    quietWrap: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.borderQuiet,
+    },
+    emptyHint: {
+      ...Typography.default(),
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+      marginTop: 4,
+    },
+  };
 });

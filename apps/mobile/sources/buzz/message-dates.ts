@@ -85,6 +85,7 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.walletInsufficient ||
     message.walletDelegation ||
     message.targetBranchProposal ||
+    message.cornerApp ||
     message.relay ||
     message.corner ||
     message.notificationLifecycleRun ||

@@ -72,6 +72,25 @@ describe('the catch-up sheet', () => {
     expect(controls).toContain('{catchUpReachable && (');
   });
 
+  it('CHEV-12: one module owns catch-up words, and it counts speakers by identity', () => {
+    const boundary = readFileSync(
+      path.join(__dirname, '../../buzz/room-new-message-boundary.ts'),
+      'utf8',
+    );
+    const report = readFileSync(path.join(__dirname, '../../buzz/room-catch-up-report.ts'), 'utf8');
+    // The strip's line and the sheet's blocks are phrased in one place. The
+    // boundary module holds queue mechanics and a number formatter, no prose.
+    expect(report).toContain('export function catchUpStripLabel');
+    expect(boundary).not.toContain('catchUpSummaryText');
+    expect(boundary).not.toMatch(/ new message|from \$\{/);
+    // Both lines go through the one roll.
+    expect([...report.matchAll(/catchUpAuthorRoll\(/g)].length).toBeGreaterThanOrEqual(3);
+    // Speakers are distinct by pubkey; name-string dedup collapsed two people
+    // who share a display name into one.
+    expect(boundary).toContain('other.pubkey === author.pubkey');
+    expect(boundary).not.toContain('authorNames');
+  });
+
   it('CHEV-11: no navigation slider grew beside any of it', () => {
     for (const source of [sheet, controls]) {
       expect(source).not.toMatch(/Slider|slider/);

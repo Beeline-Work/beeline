@@ -5,7 +5,6 @@ import {
   acknowledgeNewMessageQueue,
   boundaryRowIndex,
   catchUpStripVisible,
-  catchUpSummaryText,
   compactNewMessageCount,
   messageBoundaryIds,
   newMessageBadgeCount,
@@ -47,7 +46,7 @@ describe('new-message boundary', () => {
         arrivingIds: new Set(['new-fact']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-fact', count: 1, authorNames: [] });
+    ).toEqual({ boundaryId: 'new-fact', count: 1, authors: [] });
   });
 
   it('holds history, anchors the first incoming row, and accumulates later arrivals', () => {
@@ -56,14 +55,14 @@ describe('new-message boundary', () => {
       arrivingIds: new Set(['new-1', 'new-2']),
       isPinnedToTail: false,
     });
-    expect(first).toEqual({ boundaryId: 'new-1', count: 2, authorNames: [] });
+    expect(first).toEqual({ boundaryId: 'new-1', count: 2, authors: [] });
     expect(
       queueIncomingMessages(first, {
         messages: [message('read'), message('new-1'), message('new-2'), message('new-3')],
         arrivingIds: new Set(['new-3']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-1', count: 3, authorNames: [] });
+    ).toEqual({ boundaryId: 'new-1', count: 3, authors: [] });
   });
 
   it('does not queue the viewer own send or an arrival already followed at the tail', () => {
@@ -104,7 +103,7 @@ describe('new-message boundary', () => {
       arrivingIds: new Set(['new-1']),
       isPinnedToTail: false,
     });
-    expect(queued).toEqual({ boundaryId: 'new-1', count: 1, authorNames: [] });
+    expect(queued).toEqual({ boundaryId: 'new-1', count: 1, authors: [] });
     expect(catchUpStripVisible(queued, true)).toBe(false);
     expect(catchUpStripVisible(queued, false)).toBe(true);
     expect(catchUpStripVisible(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(false);
@@ -151,34 +150,34 @@ describe('new-message boundary', () => {
     ).toBe(true);
   });
 
-  it('CHEV-03: summarises the catch-up run by count and author', () => {
-    const one = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
-      messages: [from('new-1', 'Sol')],
-      arrivingIds: new Set(['new-1']),
-      isPinnedToTail: false,
-    });
-    expect(catchUpSummaryText(one)).toBe('1 new message from Sol');
-
-    const two = queueIncomingMessages(one, {
+  it('CHEV-03: rolls the queue up by speaker identity, not by display name', () => {
+    const two = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
       messages: [from('new-1', 'Sol'), from('new-2', 'Nerd')],
-      arrivingIds: new Set(['new-2']),
+      arrivingIds: new Set(['new-1', 'new-2']),
       isPinnedToTail: false,
     });
-    expect(catchUpSummaryText(two)).toBe('2 new messages from Sol and Nerd');
+    expect(two.authors).toEqual([
+      { pubkey: 'pk-Sol', name: 'Sol' },
+      { pubkey: 'pk-Nerd', name: 'Nerd' },
+    ]);
 
-    // A repeat author never repeats in the summary, and past two the rest are
-    // counted so the strip stays one line.
-    const many = queueIncomingMessages(two, {
-      messages: [from('new-3', 'Sol'), from('new-4', 'Hoots'), from('new-5', 'Milo')],
-      arrivingIds: new Set(['new-3', 'new-4', 'new-5']),
+    // The same speaker again is the same entry; a DIFFERENT person who happens
+    // to share that name is not. Deduplicating the strings lost the second one
+    // and undercounted how many the reader was behind on.
+    const sameName = queueIncomingMessages(two, {
+      messages: [
+        from('new-3', 'Sol'),
+        { ...from('new-4', 'Sol'), authorIdentity: { pubkey: 'pk-other', kind: 'human', name: 'Sol' } },
+      ],
+      arrivingIds: new Set(['new-3', 'new-4']),
       isPinnedToTail: false,
     });
-    expect(catchUpSummaryText(many)).toBe('5 new messages from Sol, Nerd and 2 others');
-
-    // Rows with no resolved identity leave the count standing alone.
-    expect(
-      catchUpSummaryText({ boundaryId: 'new-1', count: 3, authorNames: [] }),
-    ).toBe('3 new messages');
+    expect(sameName.authors).toEqual([
+      { pubkey: 'pk-Sol', name: 'Sol' },
+      { pubkey: 'pk-Nerd', name: 'Nerd' },
+      { pubkey: 'pk-other', name: 'Sol' },
+    ]);
+    expect(sameName.count).toBe(4);
   });
 
   it('settles the queue when the reader scrolls back to the newest message', () => {
@@ -202,16 +201,20 @@ describe('new-message boundary', () => {
     const visited = acknowledgeNewMessageQueue({
       boundaryId: 'new-1',
       count: 3,
-      authorNames: ['Sol'],
+      authors: [{ pubkey: 'pk-Sol', name: 'Sol' }],
     });
-    expect(visited).toEqual({ boundaryId: 'new-1', count: 0, authorNames: [] });
+    expect(visited).toEqual({ boundaryId: 'new-1', count: 0, authors: [] });
     expect(
       queueIncomingMessages(visited, {
         messages: [message('new-1'), from('new-4', 'Nerd'), from('new-5', 'Nerd')],
         arrivingIds: new Set(['new-4', 'new-5']),
         isPinnedToTail: false,
       }),
-      // The visited batch's authors do not carry into the next run's summary.
-    ).toEqual({ boundaryId: 'new-4', count: 2, authorNames: ['Nerd'] });
+      // The visited batch's speakers do not carry into the next run.
+    ).toEqual({
+      boundaryId: 'new-4',
+      count: 2,
+      authors: [{ pubkey: 'pk-Nerd', name: 'Nerd' }],
+    });
   });
 });

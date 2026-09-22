@@ -4,13 +4,15 @@ import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
   catchUpStripVisible,
-  catchUpSummaryText,
   messageContainsBoundary,
   newMessageBadgeCount,
   newestJumpDiscVisible,
   queueIncomingMessages,
   type NewMessageQueue,
 } from './room-new-message-boundary';
+// The strip's line and the sheet's blocks are one module's words, so the two
+// doors into catch-up cannot phrase the same range differently.
+import { catchUpStripLabel } from './room-catch-up-report';
 
 /**
  * The answers a transcript owes a reader about unread mail, kept apart the
@@ -148,7 +150,7 @@ export function useNewMessageControl({
     }),
     badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
     catchUpVisible: catchUpStripVisible(queue, newestMessageVisible),
-    catchUpSummary: catchUpSummaryText(queue),
+    catchUpSummary: catchUpStripLabel(queue),
     observeVisibleMessages,
     settleQueueAtBoundary,
   };

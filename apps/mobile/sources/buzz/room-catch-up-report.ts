@@ -1,5 +1,12 @@
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { boundaryRowIndex, messageBoundaryIds } from './room-new-message-boundary';
+import {
+  boundaryRowIndex,
+  catchUpAuthorOf,
+  distinctCatchUpAuthors,
+  messageBoundaryIds,
+  type CatchUpAuthor,
+  type NewMessageQueue,
+} from './room-new-message-boundary';
 
 /**
  * The unread range, named by its two ends exactly as the catch-up surfaces
@@ -44,17 +51,45 @@ export function catchUpClock(atMs: number): string {
   });
 }
 
-function distinct(names: readonly string[]): string[] {
-  return names.filter((name, index) => names.indexOf(name) === index);
+/**
+ * Two people can share a display name. Where that happens inside one roll the
+ * handle tells them apart; counting them as one speaker never does, which is
+ * what dedup-by-name did to a Room holding two Sols.
+ */
+function labelFor(author: CatchUpAuthor, within: readonly CatchUpAuthor[]): string {
+  const shared = within.some(
+    (other) => other.pubkey !== author.pubkey && other.name === author.name,
+  );
+  return shared && author.handle
+    ? `${author.name} (@${author.handle.replace(/^@/, '')})`
+    : author.name;
 }
 
-/** `Sol`, `Sol and Nerd`, `Sol, Nerd and 3 others` — the roll every block uses. */
-export function catchUpAuthorRoll(names: readonly string[]): string {
-  const [first, second, ...rest] = names;
+/** `Sol`, `Sol and Nerd`, `Sol, Nerd and 3 others` — the roll every catch-up line uses. */
+export function catchUpAuthorRoll(authors: readonly CatchUpAuthor[]): string {
+  const distinct = distinctCatchUpAuthors(authors);
+  const [first, second, ...rest] = distinct;
   if (!first) return '';
-  if (!second) return first;
-  if (rest.length === 0) return `${first} and ${second}`;
-  return `${first}, ${second} and ${rest.length} other${rest.length === 1 ? '' : 's'}`;
+  if (!second) return labelFor(first, distinct);
+  if (rest.length === 0) return `${labelFor(first, distinct)} and ${labelFor(second, distinct)}`;
+  return `${labelFor(first, distinct)}, ${labelFor(second, distinct)} and ${rest.length} other${
+    rest.length === 1 ? '' : 's'
+  }`;
+}
+
+/**
+ * The strip's one line: how far behind the reader is, and who they are behind
+ * on. Uncompacted — the strip runs the width of the transcript and a reader
+ * deciding whether to open the sheet is owed the real number.
+ *
+ * It lives here, beside the sheet's own blocks, so ONE module turns a
+ * catch-up range into words. The strip used to phrase its own roll from the
+ * queue, which is a second voice saying the same thing in its own dialect.
+ */
+export function catchUpStripLabel(queue: NewMessageQueue): string {
+  const run = `${queue.count} new ${queue.count === 1 ? 'message' : 'messages'}`;
+  const roll = catchUpAuthorRoll(queue.authors);
+  return roll ? `${run} from ${roll}` : run;
 }
 
 function messageLine(text: string): string {
@@ -99,10 +134,11 @@ export function buildCatchUpReport({
   const startedAt = range[0]!.timestamp;
   const endedAt = range.at(-1)!.timestamp;
 
-  const authors = distinct(
-    range.flatMap((message) =>
-      message.isUser || !message.authorIdentity ? [] : [message.authorIdentity.name],
-    ),
+  const authors = distinctCatchUpAuthors(
+    range.flatMap((message) => {
+      const author = message.isUser ? null : catchUpAuthorOf(message);
+      return author ? [author] : [];
+    }),
   );
   const pollsOpened = range.filter((message) => message.choice?.mode === 'poll').length;
   const merges = range.filter((message) => message.durableFact?.kind === 'merge').length;

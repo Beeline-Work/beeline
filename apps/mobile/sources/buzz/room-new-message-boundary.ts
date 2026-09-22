@@ -1,19 +1,40 @@
 import type { ChatDisplayMessage } from './room-view-presentation';
 
+/**
+ * One speaker behind an arrival. Identity, not a display name: two people can
+ * share a name, and counting them as one understates how many the reader is
+ * behind on. The name is carried for the label and the handle disambiguates
+ * it when a Room genuinely holds two of them.
+ */
+export type CatchUpAuthor = {
+  pubkey: string;
+  name: string;
+  handle?: string;
+};
+
 export type NewMessageQueue = {
   /** The exact message id the divider represents; relay reports may be nested in a host row. */
   boundaryId: string | null;
   /** Arrivals queued while the reader stayed in history during this visit. */
   count: number;
-  /** Who those arrivals are from, distinct and oldest first, for the catch-up strip. */
-  authorNames: readonly string[];
+  /** Who those arrivals are from, distinct by identity and oldest first. */
+  authors: readonly CatchUpAuthor[];
 };
 
 export const EMPTY_NEW_MESSAGE_QUEUE: NewMessageQueue = {
   boundaryId: null,
   count: 0,
-  authorNames: [],
+  authors: [],
 };
+
+/** Distinct by pubkey, first mention winning, so a shared name still counts twice. */
+export function distinctCatchUpAuthors(
+  authors: readonly CatchUpAuthor[],
+): readonly CatchUpAuthor[] {
+  return authors.filter(
+    (author, index) => authors.findIndex((other) => other.pubkey === author.pubkey) === index,
+  );
+}
 
 /** Folding may place a relayed message inside its host card. The divider belongs to the host row. */
 export function messageContainsBoundary(
@@ -74,41 +95,39 @@ export function queueIncomingMessages(
       ? []
       : messageBoundaryIds(message)
           .filter((id) => arrivingIds.has(id))
-          .map((id) => ({ id, authorName: message.authorIdentity?.name ?? null })),
+          .map((id) => ({ id, author: catchUpAuthorOf(message) })),
   );
   if (incoming.length === 0) return current;
   // A zero count means the previous batch was visited. Its divider may stay
   // in the ledger, but the next batch starts a new earliest-new boundary and
-  // a fresh roll of names: the strip summarises what is still unread.
+  // a fresh roll of speakers: the strip stands for what is still unread.
   const carried = current.count > 0 ? current : EMPTY_NEW_MESSAGE_QUEUE;
-  const authorNames = [
-    ...carried.authorNames,
-    ...incoming.flatMap((arrival) => (arrival.authorName ? [arrival.authorName] : [])),
-  ];
   return {
     boundaryId: current.count > 0 ? current.boundaryId : incoming[0]!.id,
     count: carried.count + incoming.length,
-    authorNames: authorNames.filter((name, index) => authorNames.indexOf(name) === index),
+    authors: distinctCatchUpAuthors([
+      ...carried.authors,
+      ...incoming.flatMap((arrival) => (arrival.author ? [arrival.author] : [])),
+    ]),
+  };
+}
+
+/** The speaker a row is attributed to, or null for a row with no resolved identity. */
+export function catchUpAuthorOf(
+  message: Pick<ChatDisplayMessage, 'authorIdentity'>,
+): CatchUpAuthor | null {
+  const identity = message.authorIdentity;
+  if (!identity) return null;
+  return {
+    pubkey: identity.pubkey,
+    name: identity.name,
+    ...(identity.handle ? { handle: identity.handle } : {}),
   };
 }
 
 /** Hide the strip after its landing while retaining that batch's jump target. */
 export function acknowledgeNewMessageQueue(current: NewMessageQueue): NewMessageQueue {
-  return current.count > 0 ? { ...current, count: 0, authorNames: [] } : current;
-}
-
-/**
- * The strip's one line: how far behind the reader is, and who they are behind
- * on. Uncompacted — the strip runs the width of the transcript and a reader
- * deciding whether to catch up now is owed the real number.
- */
-export function catchUpSummaryText(queue: NewMessageQueue): string {
-  const run = `${queue.count} new ${queue.count === 1 ? 'message' : 'messages'}`;
-  const [first, second, ...rest] = queue.authorNames;
-  if (!first) return run;
-  if (!second) return `${run} from ${first}`;
-  if (rest.length === 0) return `${run} from ${first} and ${second}`;
-  return `${run} from ${first}, ${second} and ${rest.length} other${rest.length === 1 ? '' : 's'}`;
+  return current.count > 0 ? { ...current, count: 0, authors: [] } : current;
 }
 
 /**

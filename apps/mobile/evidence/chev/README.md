@@ -22,8 +22,9 @@ production report seam (`buzz/room-catch-up-report.ts`), and the production
 inverted `FlatList` settings. Only the row bodies and the RECEIVE button are
 stand-ins; the three arrivals carry a real open poll, a real pending
 repository-edit permission, and a real mention of the viewer, so Needs you is
-populated the way a Room populates it. The readout line prints the hook's
-outputs verbatim.
+populated the way a Room populates it, and two of the three speakers are
+distinct identities sharing one display name. The readout line prints the
+hook's outputs verbatim.
 
 | | pill (before) | disc + sheet (this branch) |
 | --- | --- | --- |
@@ -39,9 +40,13 @@ nothing new waiting. `disc: shown · badge: none`, and the 44pt disc is on
 screen beside `Seed message 14`. The pill showed nothing here at all.
 
 `02-badge-and-strip-in-history.png` — three messages arrive below the fold
-while the reader stays in history. The badge reads `3` on the disc's corner
-and the strip under the Room header reads `3 new messages from Nerd, Hoots and
-1 other`.
+while the reader stays in history. The badge reads `3` on the disc's corner and
+the strip under the Room header reads `3 new messages from Sol (@sol), Sol
+(@sol-two) and 1 …`, ellipsized because the strip is one line by design. Two
+of those three speakers are DIFFERENT people who share the display name `Sol`:
+the roll counts them by identity and tells them apart by handle. Deduplicating
+display names — what the strip did before — would have counted them as one and
+undercounted how many the reader is behind on.
 
 `03-badge-cleared-by-visibility.png` — the reader scrolls back to the tail
 under their own finger, no press on anything. The three arrivals are on screen
@@ -49,11 +54,11 @@ and the readout reads `badge: none`.
 
 `04-sheet-from-strip.png` — the strip is the visible door. One tap opens the
 bottom-anchored sheet: head `Catch up` / `3 msgs · 07:44–09:02`, then SUMMARY
-(`3 messages from Nerd, Hoots and 1 other. 1 poll opened, you were mentioned
-once.`), then NEEDS YOU as ONE list — `Ship Friday?` / `Niglet · 07:44`,
-`Repository edit waiting on you: beeline` / `Hoots · 08:00`, `can you take the
-disc offset one?` / `Sol · 09:02`. Two blocks, no third, no control but
-dismissal.
+(`3 messages from Sol (@sol), Sol (@sol-two) and 1 other. 1 poll opened, you
+were mentioned once.` — the same roll the strip used, from the same module),
+then NEEDS YOU as ONE list — `Ship Friday?` / `Niglet · 07:44`, `Repository
+edit waiting on you: beeline` / `Sol · 08:00`, `can you take the disc offset
+one?` / `Nerd · 09:02`. Two blocks, no third, no control but dismissal.
 
 `05-disc-tap-lands-at-newest.png` — a SHORT press on the disc still lands on
 the tail and opens nothing: the newest row is the last on screen and the sheet

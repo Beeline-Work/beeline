@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { buildCatchUpReport, catchUpClock } from './room-catch-up-report';
+import { buildCatchUpReport, catchUpClock, catchUpStripLabel } from './room-catch-up-report';
 
 const VIEWER = 'pk-viewer';
 const AT_0804 = new Date(2026, 8, 22, 8, 4).getTime();
@@ -20,6 +20,46 @@ function said(id: string, name: string, minutes: number, text = id): ChatDisplay
 }
 
 const identity = (name: string) => ({ pubkey: `pk-${name}`, kind: 'agent' as const, name });
+
+describe('the catch-up strip label', () => {
+  it('CHEV-03: is this module’s words too, so both doors say the same thing', () => {
+    const sol = { pubkey: 'pk-sol', name: 'Sol' };
+    const nerd = { pubkey: 'pk-nerd', name: 'Nerd' };
+    expect(catchUpStripLabel({ boundaryId: 'a', count: 1, authors: [sol] })).toBe(
+      '1 new message from Sol',
+    );
+    expect(catchUpStripLabel({ boundaryId: 'a', count: 2, authors: [sol, nerd] })).toBe(
+      '2 new messages from Sol and Nerd',
+    );
+    expect(
+      catchUpStripLabel({
+        boundaryId: 'a',
+        count: 5,
+        authors: [sol, nerd, { pubkey: 'pk-hoots', name: 'Hoots' }, { pubkey: 'pk-milo', name: 'Milo' }],
+      }),
+    ).toBe('5 new messages from Sol, Nerd and 2 others');
+    // Rows with no resolved identity leave the count standing alone.
+    expect(catchUpStripLabel({ boundaryId: 'a', count: 3, authors: [] })).toBe('3 new messages');
+  });
+
+  it('CHEV-03: keeps two people who share a name apart instead of collapsing them', () => {
+    const one = { pubkey: 'pk-1', name: 'Sol', handle: 'sol' };
+    const other = { pubkey: 'pk-2', name: 'Sol', handle: '@sol-two' };
+    // Both are counted, and the handle is what tells them apart in the line.
+    expect(catchUpStripLabel({ boundaryId: 'a', count: 2, authors: [one, other] })).toBe(
+      '2 new messages from Sol (@sol) and Sol (@sol-two)',
+    );
+    // A third speaker pushes the pair into the counted remainder, still by
+    // identity: dedup by name would have said `and 1 other` here.
+    expect(
+      catchUpStripLabel({
+        boundaryId: 'a',
+        count: 3,
+        authors: [one, other, { pubkey: 'pk-3', name: 'Nerd' }],
+      }),
+    ).toBe('3 new messages from Sol (@sol), Sol (@sol-two) and 1 other');
+  });
+});
 
 describe('the catch-up report', () => {
   it('CHEV-04: states the range by count and clock, boundary through newest', () => {

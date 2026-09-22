@@ -1837,6 +1837,7 @@ export class PhoneService {
       await this.database.query<{
         soul: AgentDetailView['soul'] | null;
         model_catalog: AgentDetailView['catalog'];
+        commands: AgentDetailView['commands'];
         selected_model: string | null;
         selected_effort: string | null;
         model_unavailable: 'model' | 'effort' | 'selection' | null;
@@ -1851,7 +1852,7 @@ export class PhoneService {
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.model_unavailable,
+        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
@@ -1899,6 +1900,7 @@ export class PhoneService {
           }
         : {}),
       catalog: config?.model_catalog ?? [],
+      commands: config?.commands ?? [],
       ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
       ...(config?.selected_model || config?.selected_effort
         ? {

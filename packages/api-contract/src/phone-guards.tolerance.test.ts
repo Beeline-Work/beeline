@@ -227,6 +227,7 @@ const cases: Case[] = [
       workspaceId,
       agent: { identity: agent, role: 'member' },
       catalog: [],
+      commands: [],
       watchFilters: [],
     },
     optionals: [
@@ -242,7 +243,7 @@ const cases: Case[] = [
       'canManageGrants',
       'watchFilters',
     ],
-    loadBearingMissing: { agent: { identity: agent, role: 'member' }, catalog: [] },
+    loadBearingMissing: { agent: { identity: agent, role: 'member' }, catalog: [], commands: [] },
   },
   {
     name: 'InviteView',

@@ -57,12 +57,12 @@ import {
   type RoomRepository,
   type RoomView,
   type GitHubInstallationAccess,
-  type AgentCommandList,
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
   isChatListView,
 } from '@beeline/buzz-client';
+import type { AgentComposerCommand } from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
   conversationIdentityByPubkey,
@@ -207,6 +207,7 @@ import {
   availableSlashVerbs,
   slashVerbQuery,
   agentMentionSlashQuery,
+  insertAgentSlashCommand,
   matchesAgentCommand,
   type BuiltInSlashVerbId,
 } from '@/buzz/slash-verbs';
@@ -626,9 +627,9 @@ export function BuzzChatSurface({
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
-  /** Per-Room+agent command lists (null = read resolved and no record exists). */
+  /** Per-Room+agent command lists (undefined = unresolved, empty = advertises none). */
   const [agentCommandsByScope, setAgentCommandsByScope] = useState<
-    Record<string, AgentCommandList | null>
+    Record<string, readonly AgentComposerCommand[]>
   >({});
   const [sending, setSending] = useState(false);
   const [cornerProposalAction, setCornerProposalAction] = useState<{
@@ -1726,7 +1727,7 @@ export function BuzzChatSurface({
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
     const published = agentCommandsByScope[mentionAgentCommandScope];
-    return (published?.commands ?? []).filter((command) =>
+    return (published ?? []).filter((command) =>
       matchesAgentCommand(command, mentionSlash.query),
     );
   }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
@@ -1737,7 +1738,7 @@ export function BuzzChatSurface({
     mentionSlashAgentPubkey &&
     mentionAgentCommandScope &&
     agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
-    (agentCommandsByScope[mentionAgentCommandScope]?.commands.length ?? 0) === 0,
+    (agentCommandsByScope[mentionAgentCommandScope]?.length ?? 0) === 0,
   );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
@@ -1811,14 +1812,17 @@ export function BuzzChatSurface({
   useEffect(() => {
     const pubkey = mentionSlashAgentPubkey;
     const scope = mentionAgentCommandScope;
-    if (!pubkey || !scope || !transport) return;
+    if (!pubkey || !scope || !roomClient || !activeCommunityId) return;
     if (agentCommandsByScope[scope] !== undefined) return;
     let cancelled = false;
-    transport
-      .agentCommandsRead()
-      .then((list) => {
+    roomClient
+      .agent(activeCommunityId, pubkey)
+      .then((detail) => {
         if (!cancelled) {
-          setAgentCommandsByScope((current) => ({ ...current, [scope]: list }));
+          setAgentCommandsByScope((current) => ({
+            ...current,
+            [scope]: detail.commands ?? [],
+          }));
         }
       })
       .catch(() => {
@@ -1834,7 +1838,7 @@ export function BuzzChatSurface({
     decodedId,
     mentionAgentCommandScope,
     mentionSlashAgentPubkey,
-    transport,
+    roomClient,
   ]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
@@ -4057,7 +4061,7 @@ export function BuzzChatSurface({
    */
   const insertAgentCommand = useCallback(
     (name: string) => {
-      const next = inputText.replace(/\/[a-z0-9-]*$/i, `/${name} `);
+      const next = insertAgentSlashCommand(inputText, name);
       inputTextRef.current = next;
       setInputText(next);
       setInputSelection({ start: next.length, end: next.length });

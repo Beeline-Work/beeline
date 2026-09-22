@@ -113,6 +113,32 @@ describe('SlashVerbPicker agent command palette', () => {
     expect(renderer.root.props.commands).toHaveLength(2);
   });
 
+  it('previews model, usage, status, and permission commands for autocomplete', () => {
+    const commands: AgentPaletteCommand[] = [
+      { name: 'model', description: 'Show or change the agent model' },
+      { name: 'usage', description: 'Show usage status' },
+      { name: 'status', inputHint: 'model and account details' },
+      { name: 'permissions', description: 'Show permission rules' },
+    ];
+    const renderer = render(
+      React.createElement(SlashVerbPicker, {
+        verbs: [],
+        query: '',
+        highlightedIndex: 0,
+        onDismiss: () => undefined,
+        onSelect: () => undefined,
+        commands,
+        agentName: 'lena',
+        agentLacksCommands: false,
+        onSelectCommand: () => undefined,
+      }),
+    );
+
+    for (const command of commands) {
+      expect(find_by_test_id(renderer, `slash-agent-command-${command.name}`)).toHaveLength(1);
+    }
+  });
+
   it('selecting an advertised command inserts it via onSelectCommand', () => {
     const onCommand = vi.fn();
     const renderer = render(

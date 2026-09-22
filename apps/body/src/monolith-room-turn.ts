@@ -33,6 +33,7 @@ import {
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
   attachmentPromptLines,
@@ -759,6 +760,11 @@ export class MonolithRoomTurnLoop {
       autoApprovePermissions: false,
       permissionAllowlist: (request) =>
         isRoomMcpPermissionRequest(request, mountedServers, hostServers),
+      onCommands: agentCommandCatalogPublisher({
+        api: this.options.api,
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+      }),
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,

@@ -658,6 +658,7 @@ export class AcpClient extends EventEmitter {
   private osSandbox: boolean;
   private permissionHandler?: AcpPermissionHandler;
   private permissionAllowlist?: AcpPermissionAllowlist;
+  private commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -697,6 +698,8 @@ export class AcpClient extends EventEmitter {
     permissionHandler?: AcpPermissionHandler;
     /** Host-owned requests allowed while all other permissions are rejected. */
     permissionAllowlist?: AcpPermissionAllowlist;
+    /** Full advertised-command snapshots, ready for the daemon's indexed read. */
+    onCommands?: (commands: readonly AcpAvailableCommand[]) => void;
   }) {
     super();
     const command = opts.agentCommand ?? opts.agentBinary;
@@ -712,6 +715,7 @@ export class AcpClient extends EventEmitter {
     this.osSandbox = opts.osSandbox ?? false;
     this.permissionHandler = opts.permissionHandler;
     this.permissionAllowlist = opts.permissionAllowlist;
+    this.commandsHandler = opts.onCommands;
   }
 
   async start(timeoutMs = 60_000): Promise<void> {
@@ -1215,6 +1219,7 @@ export class AcpClient extends EventEmitter {
         if (params.update.sessionUpdate === 'available_commands_update') {
           const commands = parseAvailableCommands(params.update.availableCommands);
           this.sessionCommands.set(params.sessionId, commands);
+          this.commandsHandler?.(commands);
           this.emit('commands', { sessionId: params.sessionId, commands });
         }
         const toolCallId = params.update.toolCallId;

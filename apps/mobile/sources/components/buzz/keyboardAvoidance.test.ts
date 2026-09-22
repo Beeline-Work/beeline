@@ -19,19 +19,20 @@ describe('Buzz keyboard avoidance', () => {
     expect(chatSource).not.toContain("Platform.OS === 'ios' ? 'padding' : 'height'");
     // Native keeps the list inverted (newest message at offset 0), so
     // keyboard/composer growth never needs a keyboardHeight padding hack.
-    // Desktop deliberately uses chronological flow and scrollToEnd because
-    // React Native Web's transform-based inversion overlaps changed rows.
+    // Desktop (2026-09) renders as a plain scrollable View over real DOM
+    // instead — not FlatList's `inverted` prop at all — because React
+    // Native Web's own list/scroll accounting, not the transform itself,
+    // was racing the browser's real layout (proof/desktop-append-overlap/
+    // NOTES.md).
     expect(chatSource).toContain('inverted');
     // minIndexForVisible: 1 (not 0) — the newest slot is volatile (a fresh
     // send, then its optimistic-id -> real-id swap; an agent stream token),
     // so anchoring there instead of the row below it fights the reveal of
     // a just-sent message. autoscrollToTopThreshold makes offset 0 (visual
     // bottom, inverted) sticky instead, matching sources/components/ChatList.tsx.
-    expect(chatSource).toContain('desktopTranscript\n                ? undefined');
     expect(chatSource).toContain('minIndexForVisible: 1');
     expect(chatSource).toContain('autoscrollToTopThreshold: 50');
     expect(chatSource).not.toContain('MESSAGE_LIST_PADDING');
-    expect(chatSource).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
     expect(chatSource).not.toContain('handleMessageListLayout');
     expect(chatSource).not.toContain('handleMessageListContentSizeChange');
   });

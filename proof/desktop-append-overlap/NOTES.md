@@ -144,4 +144,90 @@ same protocol at 12x CPU throttling, where the fixed batch failed intermittently
 
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same
-lines — whichever PR merges second rebases over the other.
+lines — whichever PR merges second rebases over the other. (Merged into
+`main` at `f20cfb55` before the superseding work below started; no rebase
+was needed.)
+
+## Superseded (2026-09-22): the whole heuristic replaced with real measured DOM
+
+Everything above — `desktopTailLanding`, `tailFollowStalled`, the 24-landing
+cap, the 1s settle window, the held-offset reader-escape guard,
+`desktopOpenLandingOnContentSizeChange` and the cold-open settle timer — is
+released in main (`75cef3e2` #1333 and the six commits after it) and still
+worked, but it is a ninth scroll-timing heuristic stacked on RN Web's
+`onContentSizeChange`/`scrollToOffset`, exactly what the review history
+above already spent three rounds hardening. Room direction (`@lunchboxfortwo`
+via Niglet) was explicit: delete the machinery rather than add a tenth guard.
+
+The desktop transcript no longer renders through `<FlatList>` at all. It is a
+plain scrollable `View` over real DOM (`initialNumToRender`/
+`maxToRenderPerBatch` are gone with it — nothing left to window). Four jobs,
+four browser primitives, all in `shouldFollowDesktopTail` (pure) and its
+wiring in `_chat-surface.tsx` (`buzz/room-scroll-follow.ts`):
+
+- **Pinned?** `scrollHeight - scrollTop - clientHeight <= TAIL_PIN_THRESHOLD`,
+  read from `isPinnedToTailRef` (updated only by a real `scroll` event, never
+  recomputed elsewhere — see the bug below).
+- **Follow an append:** one `ResizeObserver` on the content node. If pinned,
+  `scrollTop = scrollHeight`. No retry, no budget, no convergence loop — with
+  windowing gone the browser's height is final the instant the observer
+  fires, whether that is a new row committing or a late image/font resizing
+  one already on screen.
+- **Prepend history:** record `scrollHeight` before the paginated commit,
+  `scrollTop += scrollHeight_after - scrollHeight_before` in a layout effect
+  keyed on the oldest row id changing. Desktop had no prepend anchoring at
+  all before this (`maintainVisibleContentPosition` was `undefined` there);
+  this is new, not a port.
+- **Jump to a message** (notification anchor, unread boundary, artifact
+  origin): `rowNode.scrollIntoView({ block: 'center' })` from a row-id → DOM
+  node map, filled by a stable per-row ref callback. No index math, no
+  `onScrollToIndexFailed` retry — that stays native-only, where FlatList
+  still needs it.
+- Viewability (`onViewableItemsChanged`, needed for the new-message control
+  and notification landing) is an `IntersectionObserver` over the same row
+  nodes, `root` the scroll container.
+
+### Bug the harness caught before it shipped
+
+First pass computed the pinned check *inside* the `ResizeObserver` callback,
+fresh from the DOM, instead of reading `isPinnedToTailRef`. On a cold open
+`scrollTop` is still `0` against the full (taller-than-viewport) content the
+instant the observer's first callback fires — a fresh read says "not
+pinned" and the transcript never lands:
+
+```text
+count=30 appends=1 FIX -> tailGap 1492 newestRowVisible false overlaps 0 FAIL
+```
+
+`isPinnedToTailRef` starts `true` and is corrected only by a real `scroll`
+event, exactly the invariant the native list already relies on
+(`isPinnedToTailRef = useRef(true)`); reading it instead of recomputing it
+fixed the cold open without touching anything else. `desktop-tail-landing
+.test.ts` now asserts the callback reads the ref and does not contain a
+fresh recomputation, so this exact regression fails loudly if it returns.
+
+### Full protocol, re-run against the rewrite
+
+```text
+count=30  appends=1 FIX -> tailGap 0 newestRowVisible true overlaps 0 PASS
+count=60  appends=1 FIX -> tailGap 0 newestRowVisible true overlaps 0 PASS
+count=30  appends=3 FIX -> tailGap 0 newestRowVisible true overlaps 0 PASS
+count=60  appends=3 FIX -> tailGap 0 newestRowVisible true overlaps 0 PASS
+count=30  appends=1 NOFIX -> tailGap 1492 newestRowVisible false overlaps 0 FAIL (expected)
+count=60  appends=1 NOFIX -> tailGap 3346 newestRowVisible false overlaps 0 FAIL (expected)
+count=500 appends=1 FIX reps=5 -> 5/5 tailGap 0 newestRowVisible true overlaps 0 PASS
+count=500 rate=6x  reps=6 -> 6/6 PASS, tailGap 0 (was 33px — the fixed
+  fill-batch remainder; gone with the fill batch)
+count=500 rate=12x reps=3 -> 3/3 PASS, tailGap 0
+escape 30/60/500 early+late -> follow never re-arms toward the tail
+  (tailGap stays in the thousands); scrollTop moves by exactly the height of
+  the 12 prepended rows (~747px for the 16-height row cycle here), which is
+  the NEW prepend-anchor holding the reader's read position steady across
+  the older page load — not the old code's silent no-op, and not a pull
+  toward the tail.
+```
+
+`app.tsx` mirrors the production wiring 1:1 (imports `shouldFollowDesktopTail`
+from the real module, same `ResizeObserver`/prepend-layout-effect/pin-check
+shape) rather than re-deriving it, so a regression in either place is a
+regression in both.

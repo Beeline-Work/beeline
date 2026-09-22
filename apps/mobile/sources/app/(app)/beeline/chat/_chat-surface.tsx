@@ -187,13 +187,11 @@ import {
   TURN_LINE_ROW_MIN_HEIGHT,
 } from '@/buzz/room-bottom-chrome';
 import {
-  desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
+  shouldFollowDesktopTail,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
-  desktopTailLanding,
-  tailFollowStalled,
 } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
@@ -388,40 +386,6 @@ const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
-// The desktop arrival follow's own metrics are stale the moment a row
-// appends (RN Web estimates unmeasured frames), so content changes re-land
-// while the measured tail gap is still above the pin threshold. The cap is
-// a backstop against a landing that stops advancing, not the goal.
-const DESKTOP_TAIL_LANDING_CAP = 24;
-// Only disarm after the real DOM gap stays closed beyond RN Web's next
-// render batch; every content-size change resets this settle window.
-const DESKTOP_TAIL_SETTLE_MS = 1_000;
-const DESKTOP_TAIL_POLL_MS = 50;
-// Recent web scroll interaction vetoes the landing follow: React Native Web
-// never fires the drag callbacks on the platform that runs this code.
-const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
-// Scroll positions within 1px of the held offset are measurement noise, not
-// the reader leaving the tail.
-const DESKTOP_READER_MOTION_EPS = 1;
-// A landing that left the follow in the SAME place (extent and scroll
-// position unchanged, gap still open) is stalled and charged against the
-// budget. Everything else — including a landing that reached the bottom and
-// RN Web then measured more rows above the viewport — is the follow still
-// converging, so it is refunded: on a long transcript the measured gap
-// grows after every successful landing, and charging those would make the
-// cap transcript-length-dependent.
-const DESKTOP_TAIL_STALL_EPS = 1;
-// RN Web's windowed fill adds at most `maxToRenderPerBatch` new cells per
-// render commit (default 10), and every tail landing scrolls the viewport
-// past the mounted end. Keep the complete loaded desktop transcript in the
-// initial render region and let one fill cover it, so an appended row mounts
-// in the same list update instead of after a machine-speed-sensitive sequence
-// of estimated windows. Native keeps its virtualized defaults.
-// The desktop chronological list lands on the tail through measured content
-// sizes, because RN Web's scrollToEnd estimates unmeasured far frames and can
-// land short on a cold open (the oldest window renders first). Settle only
-// after measured growth has stopped long enough for the next window to mount.
-const DESKTOP_OPEN_LANDING_SETTLE_MS = 250;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -2135,48 +2099,36 @@ export function BuzzChatSurface({
   const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
-  // Follow a new row only from the tail. A reader in history keeps the same
-  // position while the arrival joins the compact queue above the composer.
-  const scrollToArtifactOrigin = useCallback((index: number, viewPosition: number) => {
-    scheduleAnimationFrame(() =>
-      flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false }),
-    );
-  }, []);
-  const handleOpenCode = useArtifactReturn({
-    transcriptMessages,
-    residentMessages: combinedMessages,
-    onReveal: revealTranscriptThrough,
-    onScroll: scrollToArtifactOrigin,
-  });
   // A live message/card change follows to the newest end. The decision is one
   // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
   // most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
-  const currentScrollOffsetRef = useRef(0);
-  const nativeContentHeightRef = useRef<number | null>(null);
-  // Remaining backstop landings for the desktop arrival follow; the arrival
-  // scroll's estimated metrics land short the moment the row appends, so
-  // content changes re-land while the measured tail gap is open.
-  const desktopTailLandingsRef = useRef(0);
-  const desktopTailDisarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const desktopTailStableSinceRef = useRef<number | null>(null);
-  // The scroll offset the follow last held the reader at — armed from the
-  // pinned arrival position and refreshed by every landing (scrollToOffset
-  // clamps to the extent's bottom). Growth below the tail never lowers
-  // scrollTop, so a drop below this offset is the reader leaving for
-  // history, never provisional measurement. Null once disarmed.
-  const desktopTailHeldOffsetRef = useRef<number | null>(null);
-  // The scroll state (extent + offset) left by the previous landing, for the
-  // stall test: a landing that changes nothing while the gap stays open is
-  // charged; any other landing is still converging and is refunded.
-  const desktopTailLastLandRef = useRef<{
-    scrollHeight: number;
-    scrollTop: number;
-  } | null>(null);
-  // Last wheel/touch scroll activity — the web drag guard.
-  const userScrolledAtRef = useRef(0);
-  // Viewport height from the last scroll event, for the tail-gap verdict.
-  const viewportHeightRef = useRef(0);
+  // The desktop transcript's real scroll container and content node — a
+  // plain scrollable View over real DOM (`shouldFollowDesktopTail` in
+  // `buzz/room-scroll-follow.ts`), not React Native Web's FlatList/
+  // VirtualizedList, whose own provisional layout accounting is the root
+  // cause proof/desktop-append-overlap/NOTES.md traces eight prior scroll-
+  // timing patches back to.
+  const desktopScrollNodeRef = useRef<HTMLElement | null>(null);
+  const desktopContentNodeRef = useRef<HTMLElement | null>(null);
+  const desktopContentObserverRef = useRef<ResizeObserver | null>(null);
+  // Row DOM nodes by message id, for id-based jumps (notification anchor,
+  // unread boundary, artifact origin) and viewability — no index math, no
+  // scrollToIndex failure/retry.
+  const desktopRowNodesRef = useRef<Map<string, HTMLElement>>(new Map());
+  const desktopVisibilityObserverRef = useRef<IntersectionObserver | null>(null);
+  const desktopIntersectingIdsRef = useRef<Set<string>>(new Set());
+  // A message anchor (notification, unread boundary) owns the next landing;
+  // read inside the observer callback below, which outlives the render that
+  // armed the anchor.
+  const transcriptLandingAnchorIdRef = useRef(transcriptLandingAnchorId);
+  transcriptLandingAnchorIdRef.current = transcriptLandingAnchorId;
+  // The oldest row id and real scrollHeight the previous commit left, so a
+  // prepend (older history paging in above the reader) can hold the
+  // reader's place by the real measured growth at the top — what
+  // `maintainVisibleContentPosition` does on native.
+  const desktopPrependOldestIdRef = useRef<string | null>(null);
+  const desktopPrependScrollHeightRef = useRef<number | null>(null);
   const pendingNewMessageLandingRef = useRef<{
     boundaryId: string;
     acknowledgeQueue: boolean;
@@ -2212,61 +2164,12 @@ export function BuzzChatSurface({
     pendingNewMessageLandingRef.current = null;
     visibleTranscriptMessagesRef.current = [];
     completedUnreadLandingRef.current = null;
+    desktopRowNodesRef.current.clear();
+    desktopRowRefCallbacksRef.current.clear();
+    desktopIntersectingIdsRef.current.clear();
+    desktopPrependOldestIdRef.current = null;
+    desktopPrependScrollHeightRef.current = null;
   }, [decodedId]);
-  useEffect(() => {
-    if (!desktopTranscript) return;
-    const scrollNode = flatListRef.current?.getScrollableNode() as
-      | {
-          addEventListener?: (
-            type: string,
-            listener: () => void,
-            options?: { passive?: boolean },
-          ) => void;
-          removeEventListener?: (type: string, listener: () => void) => void;
-        }
-      | null
-      | undefined;
-    if (!scrollNode?.addEventListener || !scrollNode.removeEventListener) return;
-    const disarmDesktopTailFollow = () => {
-      userScrolledAtRef.current = Date.now();
-      desktopTailLandingsRef.current = 0;
-      desktopTailStableSinceRef.current = null;
-      desktopTailHeldOffsetRef.current = null;
-      desktopTailLastLandRef.current = null;
-      if (desktopTailDisarmTimerRef.current !== null) {
-        clearTimeout(desktopTailDisarmTimerRef.current);
-        desktopTailDisarmTimerRef.current = null;
-      }
-    };
-    scrollNode.addEventListener('wheel', disarmDesktopTailFollow, { passive: true });
-    scrollNode.addEventListener('touchmove', disarmDesktopTailFollow, { passive: true });
-    return () => {
-      scrollNode.removeEventListener?.('wheel', disarmDesktopTailFollow);
-      scrollNode.removeEventListener?.('touchmove', disarmDesktopTailFollow);
-    };
-  }, [desktopTranscript]);
-  useEffect(
-    () => () => {
-      if (desktopTailDisarmTimerRef.current !== null) {
-        clearTimeout(desktopTailDisarmTimerRef.current);
-      }
-    },
-    [],
-  );
-  // A cold-open landing is distinct from ordinary tail following: its own
-  // programmatic jumps may report the partially measured list as unpinned.
-  // Keep landing through measured growth until it settles or the reader acts.
-  const desktopOpenLandingRef = useRef(false);
-  const desktopOpenLandingStartedRef = useRef(false);
-  const desktopOpenLandingSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelDesktopOpenLanding = useCallback(() => {
-    desktopOpenLandingRef.current = false;
-    if (desktopOpenLandingSettleTimerRef.current !== null) {
-      clearTimeout(desktopOpenLandingSettleTimerRef.current);
-      desktopOpenLandingSettleTimerRef.current = null;
-    }
-  }, []);
-  useEffect(() => cancelDesktopOpenLanding, [cancelDesktopOpenLanding]);
   const completePendingNewMessageLanding = useCallback(() => {
     const pending = pendingNewMessageLandingRef.current;
     if (
@@ -2312,6 +2215,163 @@ export function BuzzChatSurface({
     },
     [completePendingNewMessageLanding, observeVisibleMessages],
   );
+  // Follow a new row only from the tail. A reader in history keeps the same
+  // position while the arrival joins the compact queue above the composer.
+  const scrollToArtifactOrigin = useCallback(
+    (index: number, viewPosition: number) => {
+      scheduleAnimationFrame(() => {
+        if (desktopTranscript) {
+          desktopRowNodesRef.current
+            .get(transcriptMessagesRef.current[index]?.id ?? '')
+            ?.scrollIntoView({ block: 'center' });
+          return;
+        }
+        flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false });
+      });
+    },
+    [desktopTranscript],
+  );
+  const handleOpenCode = useArtifactReturn({
+    transcriptMessages,
+    residentMessages: combinedMessages,
+    onReveal: revealTranscriptThrough,
+    onScroll: scrollToArtifactOrigin,
+  });
+  // Re-land on every REAL layout change of the desktop content — an
+  // appended row, streaming text growing the newest row, a late-loading
+  // image — while the reader is already pinned to the tail. One measured
+  // comparison, no retry budget: `scrollTop`/`scrollHeight` are native
+  // browser state, so a reader who scrolled away is simply no longer
+  // pinned; there is nothing left to disarm.
+  //
+  // Pin state itself is read from `isPinnedToTailRef`, not recomputed here:
+  // a cold open has no scroll event yet (scrollTop is still 0 against the
+  // full, taller-than-viewport content), so a fresh scrollTop/scrollHeight
+  // read at that instant says "not pinned" and would never take the first
+  // landing. `isPinnedToTailRef` starts true and is corrected only by a real
+  // scroll, which is the same invariant the native list already relies on.
+  const setDesktopContentNode = useCallback((node: HTMLElement | null) => {
+    desktopContentObserverRef.current?.disconnect();
+    desktopContentObserverRef.current = null;
+    desktopContentNodeRef.current = node;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const scrollNode = desktopScrollNodeRef.current;
+      if (!scrollNode) return;
+      if (
+        shouldFollowDesktopTail({
+          isPinnedToTail: isPinnedToTailRef.current,
+          isUserDragging: userDraggingRef.current,
+          hasLandingAnchor: Boolean(transcriptLandingAnchorIdRef.current),
+        })
+      ) {
+        scrollNode.scrollTop = scrollNode.scrollHeight;
+      }
+    });
+    observer.observe(node);
+    desktopContentObserverRef.current = observer;
+  }, []);
+  const setDesktopScrollNode = useCallback(
+    (node: HTMLElement | null) => {
+      desktopScrollNodeRef.current = node;
+      desktopVisibilityObserverRef.current?.disconnect();
+      desktopVisibilityObserverRef.current = null;
+      if (!node || typeof IntersectionObserver === 'undefined') return;
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            const id = (entry.target as HTMLElement).dataset?.rowId;
+            if (!id) continue;
+            if (entry.isIntersecting) desktopIntersectingIdsRef.current.add(id);
+            else desktopIntersectingIdsRef.current.delete(id);
+          }
+          observeVisibleTranscriptMessages({
+            viewableItems: transcriptMessagesRef.current
+              .filter((item) => desktopIntersectingIdsRef.current.has(item.id))
+              .map((item) => ({ item, isViewable: true }) as ViewToken<ChatDisplayMessage>),
+          });
+        },
+        { root: node, threshold: 0 },
+      );
+      desktopVisibilityObserverRef.current = observer;
+      for (const rowNode of desktopRowNodesRef.current.values()) observer.observe(rowNode);
+    },
+    [observeVisibleTranscriptMessages],
+  );
+  const registerDesktopRowNode = useCallback((id: string, node: HTMLElement | null) => {
+    const previous = desktopRowNodesRef.current.get(id);
+    if (previous && previous !== node) desktopVisibilityObserverRef.current?.unobserve(previous);
+    if (node) {
+      desktopRowNodesRef.current.set(id, node);
+      desktopVisibilityObserverRef.current?.observe(node);
+    } else {
+      desktopRowNodesRef.current.delete(id);
+      desktopIntersectingIdsRef.current.delete(id);
+    }
+  }, []);
+  // A stable ref callback per row id, so a re-render that leaves a row's id
+  // unchanged does not toggle its DOM node out of and back into the
+  // observers above (a fresh inline `ref` closure does that on every commit).
+  const desktopRowRefCallbacksRef = useRef<Map<string, (node: HTMLElement | null) => void>>(
+    new Map(),
+  );
+  const getDesktopRowRefCallback = useCallback(
+    (id: string) => {
+      let callback = desktopRowRefCallbacksRef.current.get(id);
+      if (!callback) {
+        callback = (node) => registerDesktopRowNode(id, node);
+        desktopRowRefCallbacksRef.current.set(id, callback);
+      }
+      return callback;
+    },
+    [registerDesktopRowNode],
+  );
+  useEffect(
+    () => () => {
+      desktopContentObserverRef.current?.disconnect();
+      desktopVisibilityObserverRef.current?.disconnect();
+    },
+    [],
+  );
+  // Pinned? Real scrollHeight/scrollTop/clientHeight, not RN Web's
+  // contentOffset/contentSize estimates — the same formula the follow above
+  // reads off the live scroll node.
+  const handleDesktopScroll = useCallback(
+    (event: { currentTarget: HTMLElement }) => {
+      const node = event.currentTarget;
+      isPinnedToTailRef.current =
+        node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
+      if (
+        (!isPinnedToTailRef.current ||
+          node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) &&
+        node.scrollTop <= TAIL_PIN_THRESHOLD
+      ) {
+        loadOlderTranscriptMessages();
+      }
+    },
+    [loadOlderTranscriptMessages],
+  );
+  // Older history paging in above the reader grows the content from the
+  // top, not the bottom — hold the reader's place by the real measured
+  // growth instead of letting it silently shift what they were reading.
+  useLayoutEffect(() => {
+    if (!desktopTranscript) return;
+    const node = desktopScrollNodeRef.current;
+    const oldestId = transcriptMessages[0]?.id ?? null;
+    const previousOldestId = desktopPrependOldestIdRef.current;
+    const previousScrollHeight = desktopPrependScrollHeightRef.current;
+    if (
+      node &&
+      oldestId !== null &&
+      previousOldestId !== null &&
+      oldestId !== previousOldestId &&
+      previousScrollHeight !== null
+    ) {
+      node.scrollTop += node.scrollHeight - previousScrollHeight;
+    }
+    desktopPrependOldestIdRef.current = oldestId;
+    desktopPrependScrollHeightRef.current = node?.scrollHeight ?? null;
+  }, [desktopTranscript, transcriptMessages]);
   const landAtNewMessageBoundary = useCallback(
     (boundaryId: string, acknowledgeQueue: boolean) => {
       pendingNewMessageLandingRef.current = { boundaryId, acknowledgeQueue };
@@ -2331,12 +2391,17 @@ export function BuzzChatSurface({
             boundaryId,
           );
           if (currentIndex < 0) return;
-          cancelDesktopOpenLanding();
-          flatListRef.current?.scrollToIndex({
-            index: currentIndex,
-            viewPosition: 0.5,
-            animated: false,
-          });
+          if (desktopTranscript) {
+            desktopRowNodesRef.current
+              .get(transcriptMessagesRef.current[currentIndex]?.id ?? '')
+              ?.scrollIntoView({ block: 'center' });
+          } else {
+            flatListRef.current?.scrollToIndex({
+              index: currentIndex,
+              viewPosition: 0.5,
+              animated: false,
+            });
+          }
           // Keep the durable boundary armed. Viewability is the success
           // signal; onScrollToIndexFailed may still need to measure and retry.
           completePendingNewMessageLanding();
@@ -2352,8 +2417,8 @@ export function BuzzChatSurface({
       }
     },
     [
-      cancelDesktopOpenLanding,
       completePendingNewMessageLanding,
+      desktopTranscript,
       foldedMessages,
       loadOlderTranscriptMessages,
       revealTranscriptThrough,
@@ -2379,20 +2444,8 @@ export function BuzzChatSurface({
   const scrollToNewestMessage = useCallback(() => {
     scheduleAnimationFrame(() => {
       if (desktopTranscript) {
-        flatListRef.current?.scrollToEnd({ animated: false });
-        // Record the position after scrollToEnd clamps against the current
-        // extent. When the complete desktop render region makes that first
-        // landing sufficient, onContentSizeChange has no reason to re-land
-        // and therefore cannot provide this reader-escape baseline for us.
-        const landedNode = flatListRef.current?.getScrollableNode() as
-          { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
-        if (desktopTailLandingsRef.current > 0 && landedNode) {
-          desktopTailHeldOffsetRef.current = landedNode.scrollTop;
-          desktopTailLastLandRef.current = {
-            scrollHeight: landedNode.scrollHeight,
-            scrollTop: landedNode.scrollTop,
-          };
-        }
+        const node = desktopScrollNodeRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
         return;
       }
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -2436,30 +2489,10 @@ export function BuzzChatSurface({
   useLayoutEffect(() => {
     if (transcriptLandingAnchorId) return;
     if (arrivalFollow === 'hold') return;
-    if (desktopTranscript) {
-      const isColdOpen = !desktopOpenLandingStartedRef.current;
-      desktopOpenLandingStartedRef.current = true;
-      if (isColdOpen) {
-        // The immediate scroll may land short while the tail window is still
-        // unmeasured; measured content growth owns the landing from here.
-        desktopOpenLandingRef.current = true;
-      } else {
-        // An appended row may still land short while its window is unmeasured;
-        // measured content changes own the landing until the real gap settles.
-        desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
-        desktopTailStableSinceRef.current = null;
-        desktopTailLastLandRef.current = null;
-        const armNode = flatListRef.current?.getScrollableNode() as
-          { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
-        desktopTailHeldOffsetRef.current = armNode
-          ? armNode.scrollTop
-          : currentScrollOffsetRef.current;
-        if (desktopTailDisarmTimerRef.current !== null) {
-          clearTimeout(desktopTailDisarmTimerRef.current);
-          desktopTailDisarmTimerRef.current = null;
-        }
-      }
-    }
+    // Desktop's own ResizeObserver (`setDesktopContentNode` above) already
+    // re-lands on the real DOM as the appended row's layout commits; this
+    // call is a harmless, idempotent second landing for the same content —
+    // native has no such observer and depends on it entirely.
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage, transcriptLandingAnchorId]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
@@ -2476,14 +2509,19 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
-      cancelDesktopOpenLanding();
-      scheduleAnimationFrame(() =>
+      scheduleAnimationFrame(() => {
+        if (desktopTranscript) {
+          desktopRowNodesRef.current
+            .get(transcriptMessages[visibleIndex]?.id ?? '')
+            ?.scrollIntoView({ block: 'center' });
+          return;
+        }
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
           viewPosition: 0.5,
           animated: false,
-        }),
-      );
+        });
+      });
       handledNotificationAnchorRef.current = anchorKey;
       return;
     }
@@ -2505,7 +2543,7 @@ export function BuzzChatSurface({
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
-    cancelDesktopOpenLanding,
+    desktopTranscript,
     revealTranscriptThrough,
     loadOlderTranscriptMessages,
     transcriptHistoryStatus,
@@ -4975,75 +5013,93 @@ export function BuzzChatSurface({
           )}
 
           <View style={styles.transcriptViewport}>
+          {desktopTranscript ? (
+            // A plain scrollable View over real DOM — no FlatList/
+            // VirtualizedList. See `shouldFollowDesktopTail` in
+            // `buzz/room-scroll-follow.ts` and proof/desktop-append-overlap/
+            // NOTES.md for why RN Web's own list machinery raced the browser's
+            // real layout on this surface.
+            <View
+              testID="chat-messages"
+              ref={setDesktopScrollNode as unknown as React.Ref<View>}
+              {...{ onScroll: handleDesktopScroll }}
+              style={[styles.messageList, styles.desktopScroll]}
+            >
+              <View
+                ref={setDesktopContentNode as unknown as React.Ref<View>}
+                style={[
+                  styles.messageListContent,
+                  styles.messageListContentDesktop,
+                  transcriptMessages.length === 0 && styles.messageListContentEmpty,
+                ]}
+              >
+                {transcriptMessages.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <EmptyLedgerState
+                      variant={emptyLedgerVariant}
+                      name={isDirectMessage ? displayRoomName : undefined}
+                      objective={isCorner ? cornerObjectiveText : undefined}
+                      onPress={focusComposer}
+                    />
+                  </View>
+                ) : (
+                  <>
+                    {transcriptHistoryLine}
+                    {transcriptMessages.map((item) => (
+                      <View
+                        key={item.id}
+                        {...{ dataSet: { rowId: item.id } }}
+                        ref={getDesktopRowRefCallback(item.id) as unknown as React.Ref<View>}
+                      >
+                        {renderItem({ item })}
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+            </View>
+          ) : (
           <FlatList
-            {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
             testID="chat-messages"
             ref={flatListRef}
-            inverted={!desktopTranscript && transcriptMessages.length > 0}
+            inverted={transcriptMessages.length > 0}
             data={transcriptMessages}
             keyExtractor={(item: ChatDisplayMessage) => item.id}
             style={styles.messageList}
             contentContainerStyle={[
               styles.messageListContent,
-              desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
               // Inverted list: paddingTop is the visual tail. Always the
               // ordinary speaker-change margin plus the fixed composer-top
               // gap — the thinking line is absolute and paints over that
               // invariant tail rather than changing it when mounted.
-              !desktopTranscript &&
-                !isArchived && {
-                  paddingTop: phoneTranscriptTailPadding({
-                    turnChromeVisible: Boolean(composerAck || settledTurn),
-                    pushedChromeVisible: agentsOffline,
-                  }),
-                },
+              !isArchived && {
+                paddingTop: phoneTranscriptTailPadding({
+                  turnChromeVisible: Boolean(composerAck || settledTurn),
+                  pushedChromeVisible: agentsOffline,
+                }),
+              },
             ]}
-            maintainVisibleContentPosition={
-              desktopTranscript
-                ? undefined
-                : {
-                    // Native records the first eligible visible child's real
-                    // frame and compensates by its measured movement. That
-                    // preserves variable-height history without getItemLayout,
-                    // eager rendering, or an estimated offset. Index 0 is
-                    // excluded because optimistic settlement and streams can
-                    // replace it in place. Web's adapter shifts scrollTop on
-                    // tail appends, so desktop uses its measured path instead.
-                    minIndexForVisible: 1,
-                    // Native offset 0 is the visual bottom.
-                    autoscrollToTopThreshold: 50,
-                  }
-            }
-            maxToRenderPerBatch={
-              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
-            }
-            initialNumToRender={
-              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
-            }
+            maintainVisibleContentPosition={{
+              // Native records the first eligible visible child's real
+              // frame and compensates by its measured movement. That
+              // preserves variable-height history without getItemLayout,
+              // eager rendering, or an estimated offset. Index 0 is
+              // excluded because optimistic settlement and streams can
+              // replace it in place.
+              minIndexForVisible: 1,
+              // Native offset 0 is the visual bottom.
+              autoscrollToTopThreshold: 50,
+            }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {
-              const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-              currentScrollOffsetRef.current = contentOffset.y;
-              viewportHeightRef.current = layoutMeasurement.height;
-              isPinnedToTailRef.current = desktopTranscript
-                ? contentOffset.y + layoutMeasurement.height >=
-                  contentSize.height - TAIL_PIN_THRESHOLD
-                : contentOffset.y <= TAIL_PIN_THRESHOLD;
-              if (
-                desktopTranscript &&
-                (!isPinnedToTailRef.current ||
-                  contentSize.height <= layoutMeasurement.height + TAIL_PIN_THRESHOLD) &&
-                contentOffset.y <= TAIL_PIN_THRESHOLD
-              ) {
-                loadOlderTranscriptMessages();
-              }
+              const { contentOffset } = event.nativeEvent;
+              isPinnedToTailRef.current = contentOffset.y <= TAIL_PIN_THRESHOLD;
             }}
             scrollEventThrottle={100}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
-              cancelDesktopOpenLanding();
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -5069,7 +5125,6 @@ export function BuzzChatSurface({
               });
             }}
             onMomentumScrollBegin={() => {
-              cancelDesktopOpenLanding();
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -5078,200 +5133,6 @@ export function BuzzChatSurface({
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();
-            }}
-            onContentSizeChange={(_width, height) => {
-              const previousHeight = nativeContentHeightRef.current;
-              nativeContentHeightRef.current = height;
-              if (desktopTranscript) {
-                if (desktopOpenLandingRef.current) {
-                  // Cold-open landing ignores transient pin reports from its
-                  // own jumps. Reader input cancels it through the handlers
-                  // above; appended-message following remains separately
-                  // guarded by its held reader offset.
-                  const openLandingDecision = desktopOpenLandingOnContentSizeChange({
-                    active: true,
-                    previousHeight,
-                    nextHeight: height,
-                    isUserDragging: userDraggingRef.current,
-                  });
-                  if (openLandingDecision === 'settle') {
-                    cancelDesktopOpenLanding();
-                  } else if (openLandingDecision === 'scroll') {
-                    flatListRef.current?.scrollToOffset({
-                      offset: height,
-                      animated: false,
-                    });
-                    if (desktopOpenLandingSettleTimerRef.current !== null) {
-                      clearTimeout(desktopOpenLandingSettleTimerRef.current);
-                    }
-                    desktopOpenLandingSettleTimerRef.current = setTimeout(
-                      cancelDesktopOpenLanding,
-                      DESKTOP_OPEN_LANDING_SETTLE_MS,
-                    );
-                  }
-                  return;
-                }
-                if (desktopTailDisarmTimerRef.current !== null) {
-                  clearTimeout(desktopTailDisarmTimerRef.current);
-                  desktopTailDisarmTimerRef.current = null;
-                }
-                desktopTailStableSinceRef.current = null;
-                // The measured tail gap is the landing authority on append:
-                // scrollToEnd's estimated metrics land mid-list the moment
-                // the row appends, and each provisional content height only
-                // advances about one render batch, so re-land while the gap
-                // is still above the pin threshold. Disarm after the real
-                // gap stays closed across the settle window, or immediately
-                // when the reader scrolls, so no stale follow reaches paging.
-                const scrollNode = flatListRef.current?.getScrollableNode() as
-                  | { scrollHeight: number; clientHeight: number; scrollTop: number }
-                  | null
-                  | undefined;
-                const tailGap = scrollNode
-                  ? scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop
-                  : height - viewportHeightRef.current - currentScrollOffsetRef.current;
-                const landing = desktopTailLanding({
-                  tailGapAboveThreshold: tailGap > TAIL_PIN_THRESHOLD,
-                  tailStable: false,
-                  isUserScrolling:
-                    userScrolledAtRef.current > 0 &&
-                    Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
-                  readerMovedUp:
-                    desktopTailHeldOffsetRef.current !== null &&
-                    scrollNode != null &&
-                    scrollNode.scrollTop <
-                      desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
-                  landingsRemaining: desktopTailLandingsRef.current,
-                });
-                // Charge the landing only when the previous one left the
-                // follow in the same place (stalled). A landing that
-                // reached the bottom it was shown cannot be charged for
-                // the gap RN Web later reopens by measuring rows above
-                // the viewport — a long transcript needs many such
-                // landings, so the budget must never become a
-                // transcript-length limit.
-                const stalled = tailFollowStalled(
-                  desktopTailLastLandRef.current,
-                  scrollNode
-                    ? { scrollHeight: scrollNode.scrollHeight, scrollTop: scrollNode.scrollTop }
-                    : null,
-                  DESKTOP_TAIL_STALL_EPS,
-                );
-                if (landing.disarm) {
-                  desktopTailLandingsRef.current = 0;
-                } else if (landing.land) {
-                  desktopTailLandingsRef.current = stalled
-                    ? Math.max(0, desktopTailLandingsRef.current - 1)
-                    : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
-                }
-                if (landing.disarm) {
-                  desktopTailHeldOffsetRef.current = null;
-                  desktopTailLastLandRef.current = null;
-                }
-                if (landing.land) {
-                  flatListRef.current?.scrollToOffset({
-                    offset: scrollNode?.scrollHeight ?? height,
-                    animated: false,
-                  });
-                  if (scrollNode) {
-                    desktopTailHeldOffsetRef.current =
-                      scrollNode.scrollHeight - scrollNode.clientHeight;
-                    // Record the state this landing left, read after the
-                    // scroll so the next event's stall test compares the
-                    // real landed position.
-                    desktopTailLastLandRef.current = {
-                      scrollHeight: scrollNode.scrollHeight,
-                      scrollTop: scrollNode.scrollTop,
-                    };
-                  }
-                }
-                if (!landing.disarm && desktopTailLandingsRef.current > 0) {
-                  const settleDesktopTail = () => {
-                    const settledNode = flatListRef.current?.getScrollableNode() as
-                      | { scrollHeight: number; clientHeight: number; scrollTop: number }
-                      | null
-                      | undefined;
-                    const settledGap = settledNode
-                      ? settledNode.scrollHeight - settledNode.clientHeight - settledNode.scrollTop
-                      : Number.POSITIVE_INFINITY;
-                    if (settledGap > TAIL_PIN_THRESHOLD) {
-                      desktopTailStableSinceRef.current = null;
-                    } else if (desktopTailStableSinceRef.current === null) {
-                      desktopTailStableSinceRef.current = Date.now();
-                    }
-                    const settledDecision = desktopTailLanding({
-                      tailGapAboveThreshold: settledGap > TAIL_PIN_THRESHOLD,
-                      tailStable:
-                        desktopTailStableSinceRef.current !== null &&
-                        Date.now() - desktopTailStableSinceRef.current >= DESKTOP_TAIL_SETTLE_MS,
-                      isUserScrolling:
-                        userScrolledAtRef.current > 0 &&
-                        Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
-                      readerMovedUp:
-                        desktopTailHeldOffsetRef.current !== null &&
-                        settledNode != null &&
-                        settledNode.scrollTop <
-                          desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
-                      landingsRemaining: desktopTailLandingsRef.current,
-                    });
-                    // Same stall test as the content-size site: charge only
-                    // a poll landing that left the follow unchanged.
-                    const settledStalled = tailFollowStalled(
-                      desktopTailLastLandRef.current,
-                      settledNode
-                        ? {
-                            scrollHeight: settledNode.scrollHeight,
-                            scrollTop: settledNode.scrollTop,
-                          }
-                        : null,
-                      DESKTOP_TAIL_STALL_EPS,
-                    );
-                    if (settledDecision.disarm) {
-                      desktopTailLandingsRef.current = 0;
-                    } else if (settledDecision.land) {
-                      desktopTailLandingsRef.current = settledStalled
-                        ? Math.max(0, desktopTailLandingsRef.current - 1)
-                        : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
-                    }
-                    if (settledDecision.disarm) {
-                      desktopTailHeldOffsetRef.current = null;
-                      desktopTailLastLandRef.current = null;
-                    }
-                    if (settledDecision.land && settledNode) {
-                      flatListRef.current?.scrollToOffset({
-                        offset: settledNode.scrollHeight,
-                        animated: false,
-                      });
-                      desktopTailHeldOffsetRef.current =
-                        settledNode.scrollHeight - settledNode.clientHeight;
-                      desktopTailLastLandRef.current = {
-                        scrollHeight: settledNode.scrollHeight,
-                        scrollTop: settledNode.scrollTop,
-                      };
-                    }
-                    if (settledDecision.disarm || desktopTailLandingsRef.current <= 0) {
-                      desktopTailLandingsRef.current = 0;
-                      desktopTailHeldOffsetRef.current = null;
-                      desktopTailLastLandRef.current = null;
-                      desktopTailDisarmTimerRef.current = null;
-                      return;
-                    }
-                    desktopTailDisarmTimerRef.current = setTimeout(
-                      settleDesktopTail,
-                      DESKTOP_TAIL_POLL_MS,
-                    );
-                  };
-                  desktopTailDisarmTimerRef.current = setTimeout(
-                    settleDesktopTail,
-                    DESKTOP_TAIL_POLL_MS,
-                  );
-                }
-                return;
-              }
-              // Native history anchoring is owned solely by
-              // maintainVisibleContentPosition above. Programmatic offset
-              // correction here would race its measured child-frame delta and
-              // can override a touch or momentum scroll.
             }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength }) => {
@@ -5298,7 +5159,7 @@ export function BuzzChatSurface({
                 );
               }, 50);
             }}
-            onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}
+            onEndReached={loadOlderTranscriptIfReaderAsked}
             onEndReachedThreshold={0.5}
             ListEmptyComponent={
               <View style={styles.emptyState}>
@@ -5310,12 +5171,11 @@ export function BuzzChatSurface({
                 />
               </View>
             }
-            ListHeaderComponent={desktopTranscript ? transcriptHistoryLine : null}
-            ListFooterComponent={
-              // Inverted native list: the footer is the visual top.
-              desktopTranscript ? null : transcriptHistoryLine
-            }
+            ListHeaderComponent={null}
+            // Inverted native list: the footer is the visual top.
+            ListFooterComponent={transcriptHistoryLine}
           />
+          )}
           <RoomCatchUpControls
             badgeCount={newMessageBadgeCount}
             catchUpSummary={catchUpSummary}
@@ -6376,6 +6236,14 @@ const styles = StyleSheet.create((theme) => {
     messageList: {
       flex: 1,
     },
+    // Desktop transcript only: a plain scrollable View over real DOM (no
+    // FlatList/VirtualizedList) — see `shouldFollowDesktopTail` in
+    // `buzz/room-scroll-follow.ts`. Mirrors RN Web's own vertical ScrollView
+    // overflow (overflowX hidden, overflowY auto).
+    desktopScroll: {
+      overflowX: 'hidden',
+      overflowY: 'auto',
+    } as any,
     messageListContent: {
       paddingHorizontal: 12,
       paddingVertical: 12,

@@ -128,6 +128,7 @@ describe('chat attachment display metadata', () => {
         name: 'first.png',
         mimeType: 'image/png',
         size: 12,
+        source: 'photo',
         width: 100,
         height: 80,
       },
@@ -136,6 +137,7 @@ describe('chat attachment display metadata', () => {
         name: 'photo-1234-2.jpg',
         mimeType: 'image/jpeg',
         size: 0,
+        source: 'photo',
         width: 80,
         height: 100,
       },
@@ -149,16 +151,15 @@ describe('chat attachment display metadata', () => {
       1700,
     );
 
-    expect(mocks.writeAsStringAsync).toHaveBeenCalledWith(
-      'file:///cache/pasted-1700.png',
-      base64,
-      { encoding: 'base64' },
-    );
+    expect(mocks.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/pasted-1700.png', base64, {
+      encoding: 'base64',
+    });
     expect(attachment).toEqual({
       uri: 'file:///cache/pasted-1700.png',
       name: 'pasted-1700.png',
       mimeType: 'image/png',
       size: Math.ceil((base64.length * 3) / 4),
+      source: 'photo',
       width: 200,
       height: 100,
     });
@@ -195,12 +196,14 @@ describe('chat attachment display metadata', () => {
         name: 'first.txt',
         mimeType: 'text/plain',
         size: 1,
+        source: 'file',
       },
       {
         uri: 'file:///second',
         name: 'second.txt',
         mimeType: 'text/plain',
         size: 1,
+        source: 'file',
       },
     ]);
 
@@ -245,6 +248,7 @@ describe('chat attachment display metadata', () => {
       name: '14561.jpg',
       mimeType: 'image/jpeg',
       size: 191_398,
+      source: 'photo',
       width: 100,
       height: 80,
     });
@@ -263,5 +267,92 @@ describe('chat attachment display metadata', () => {
       mimeType: 'image/jpeg',
       thumbnailUrl: 'https://relay.example/media/thumb.jpg',
     });
+  });
+
+  it.each([
+    ['image/heic', 'IMG_0001.HEIC'],
+    ['image/heif', 'IMG_0002.HEIF'],
+  ])('converts %s gallery photos to JPEG', async (mimeType, name) => {
+    mocks.manipulateAsync
+      .mockResolvedValueOnce({ uri: 'file:///converted.jpg', width: 100, height: 80 })
+      .mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    mocks.readFileBytes.mockResolvedValue(jpegWithMetadata());
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/photo.jpg',
+      sha256: 'photo-hash',
+      size: 123,
+      type: 'image/jpeg',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/heic',
+      name,
+      mimeType,
+      size: 4_928_307,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    expect(mocks.manipulateAsync).toHaveBeenNthCalledWith(1, 'content://gallery/heic', [], {
+      compress: 0.9,
+      format: 'jpeg',
+    });
+    expect(uploadMedia).toHaveBeenCalledWith(expect.any(Uint8Array), 'image/jpeg');
+    expect(uploaded).toMatchObject({
+      name: name.replace(/\.[^.]+$/, '.jpg'),
+      mimeType: 'image/jpeg',
+    });
+  });
+
+  it('preserves a compatible WebP photo format and original bytes', async () => {
+    const original = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+    mocks.readFileBytes.mockResolvedValueOnce(original);
+    mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/photo.webp',
+      sha256: 'photo-hash',
+      size: original.byteLength,
+      type: 'image/webp',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/webp',
+      name: 'photo.webp',
+      mimeType: 'image/webp',
+      size: original.byteLength,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    expect(uploadMedia).toHaveBeenCalledWith(original, 'image/webp');
+    expect(uploaded).toMatchObject({ name: 'photo.webp', mimeType: 'image/webp' });
+  });
+
+  it('uploads the reported 4.7 MB image file with its original bytes', async () => {
+    const original = new Uint8Array(Math.floor(4.7 * 1024 * 1024));
+    original[0] = 0x00;
+    original[original.byteLength - 1] = 0xff;
+    mocks.readFileBytes.mockResolvedValueOnce(original);
+    mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/original.heic',
+      sha256: 'file-hash',
+      size: original.byteLength,
+      type: 'image/heic',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'file:///cache/original.heic',
+      name: 'original.heic',
+      mimeType: 'image/heic',
+      size: original.byteLength,
+      source: 'file',
+    });
+
+    expect(uploadMedia.mock.calls[0]?.[0]).toBe(original);
+    expect(uploadMedia.mock.calls[0]?.[1]).toBe('image/heic');
+    expect(uploaded).toMatchObject({ name: 'original.heic', mimeType: 'image/heic' });
   });
 });

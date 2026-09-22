@@ -15,6 +15,7 @@ export type PickedChatAttachment = {
   name: string;
   mimeType: string;
   size: number;
+  source: 'photo' | 'file';
   width?: number;
   height?: number;
 };
@@ -38,6 +39,7 @@ export function pickedPhotoAttachments(
     name: asset.fileName?.trim() || `photo-${pickedAt}-${index + 1}.jpg`,
     mimeType: asset.mimeType ?? 'image/jpeg',
     size: asset.fileSize ?? 0,
+    source: 'photo',
     width: asset.width,
     height: asset.height,
   }));
@@ -53,7 +55,8 @@ export async function pastedImageAttachment(
   const match = CLIPBOARD_IMAGE_DATA_URI.exec(image.data);
   if (!match) throw new Error('Clipboard image data was not readable.');
   const [, mimeType, base64] = match;
-  if (!cacheDirectory) throw new Error('No cache directory is available to store the pasted image.');
+  if (!cacheDirectory)
+    throw new Error('No cache directory is available to store the pasted image.');
   const name = `pasted-${pastedAt}.${mimeType.split('/')[1] ?? 'png'}`;
   const uri = `${cacheDirectory}${name}`;
   await writeAsStringAsync(uri, base64, { encoding: EncodingType.Base64 });
@@ -62,6 +65,7 @@ export async function pastedImageAttachment(
     name,
     mimeType,
     size: Math.ceil((base64.length * 3) / 4),
+    source: 'photo',
     width: image.size.width,
     height: image.size.height,
   };
@@ -88,15 +92,30 @@ async function prepareImageForUpload(attachment: PickedChatAttachment): Promise<
   mimeType: string;
   name: string;
 }> {
-  // Preserve lossless/alpha-bearing formats as PNG. Gallery photos use JPEG
-  // so a full-resolution phone image remains comfortably below the media cap.
-  const jpeg = attachment.mimeType === 'image/jpeg' || attachment.mimeType === 'image/jpg';
+  const mimeType = attachment.mimeType.toLowerCase();
+  const extension = attachment.name.split('.').pop()?.toLowerCase();
+  const heic =
+    mimeType === 'image/heic' ||
+    mimeType === 'image/heif' ||
+    mimeType === 'image/heic-sequence' ||
+    mimeType === 'image/heif-sequence' ||
+    extension === 'heic' ||
+    extension === 'heif';
+  const jpeg = mimeType === 'image/jpeg' || mimeType === 'image/jpg';
+  const png = mimeType === 'image/png';
+  if (!heic && !jpeg && !png) {
+    return {
+      bytes: await readFileBytes(attachment.uri),
+      mimeType: attachment.mimeType,
+      name: attachment.name,
+    };
+  }
   const encoded = await manipulateAsync(attachment.uri, [], {
-    compress: jpeg ? PHOTO_JPEG_QUALITY : 1,
-    format: jpeg ? SaveFormat.JPEG : SaveFormat.PNG,
+    compress: heic || jpeg ? PHOTO_JPEG_QUALITY : 1,
+    format: heic || jpeg ? SaveFormat.JPEG : SaveFormat.PNG,
   });
   const bytes = await readFileBytes(encoded.uri);
-  return jpeg
+  return heic || jpeg
     ? {
         bytes: canonicalizeJpeg(bytes),
         mimeType: 'image/jpeg',
@@ -136,13 +155,14 @@ export async function uploadChatAttachment(
   client: BuzzClient,
   attachment: PickedChatAttachment,
 ): Promise<AttachmentReference> {
-  const prepared = attachment.mimeType.startsWith('image/')
-    ? await prepareImageForUpload(attachment)
-    : {
-        bytes: await readFileBytes(attachment.uri),
-        mimeType: attachment.mimeType,
-        name: attachment.name,
-      };
+  const prepared =
+    attachment.source === 'photo' && attachment.mimeType.startsWith('image/')
+      ? await prepareImageForUpload(attachment)
+      : {
+          bytes: await readFileBytes(attachment.uri),
+          mimeType: attachment.mimeType,
+          name: attachment.name,
+        };
   const { bytes } = prepared;
   if (!bytes.byteLength) throw new Error('The selected file is empty.');
   if (bytes.byteLength > MAX_CHAT_ATTACHMENT_BYTES) {

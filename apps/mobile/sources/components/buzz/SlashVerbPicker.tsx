@@ -199,7 +199,9 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.textPrimary,
     fontSize: 11,
   },
-  commandRow: { minHeight: 46 },
+  // Android's minimum interactive target is 48dp; iOS's 44pt floor is
+  // therefore covered by the same row without adding a second platform path.
+  commandRow: { minHeight: 48 },
   agentCommand: {
     color: groknight.accent,
   },

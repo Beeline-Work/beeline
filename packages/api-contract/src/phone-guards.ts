@@ -11,6 +11,7 @@ import {
   ROOM_VIEW_WORKSPACE_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
   type AgentAccessView,
+  type AgentComposerCommand,
   type AgentDetailView,
   type AgentGrantView,
   type AgentModelConfigOption,
@@ -1184,6 +1185,16 @@ function readModelOption(value: unknown): AgentModelConfigOption | null {
   };
 }
 
+function readComposerCommand(value: unknown): AgentComposerCommand | null {
+  const item = record(value);
+  if (!item || !nonempty(item.name)) return null;
+  return {
+    name: item.name,
+    ...field('description', nonempty(item.description) ? item.description : undefined),
+    ...field('inputHint', nonempty(item.inputHint) ? item.inputHint : undefined),
+  };
+}
+
 function readAgentYolo(value: unknown): AgentYoloView | null {
   const item = record(value);
   const setBy = record(item?.setBy);
@@ -1432,6 +1443,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   const agent = readMember(item?.agent);
   if (!item || !uuid(item.workspaceId) || !agent || agent.identity.kind !== 'agent') return null;
   const catalog = readList(item.catalog, readModelOption, 100) ?? [];
+  const commands = readList(item.commands, readComposerCommand, 200) ?? [];
   const soul = record(item.soul);
   const projectedSoul =
     soul &&
@@ -1450,6 +1462,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     workspaceId: item.workspaceId,
     agent,
     catalog,
+    commands,
     watchFilters: readWatchFilters(item.watchFilters),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
     ...field('soul', projectedSoul),

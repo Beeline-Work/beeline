@@ -1754,7 +1754,7 @@ export class DaemonService {
         soul: { name: string; instructions: string } | null;
         selected_model: string | null;
         selected_effort: string | null;
-        commands: Array<{ name: string; description?: string }>;
+        commands: Array<{ name: string; description?: string; inputHint?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
       }>(

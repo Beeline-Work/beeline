@@ -549,7 +549,11 @@ export type PostAgentToolMandateInput = AgentRoomInput & {
 };
 export type PostAgentCommandsInput = AgentInput & {
   readonly workspaceId: string;
-  readonly commands: readonly { readonly name: string; readonly description?: string }[];
+  readonly commands: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly inputHint?: string;
+  }[];
 };
 export type PostAgentModelCatalogInput = AgentInput & {
   readonly workspaceId: string;

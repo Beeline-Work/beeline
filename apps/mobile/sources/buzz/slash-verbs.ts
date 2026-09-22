@@ -97,8 +97,14 @@ export function matchesAgentCommand(command: AgentPaletteCommand, query: string)
   if (!normalizedQuery) return true;
   return (
     command.name.toLowerCase().startsWith(normalizedQuery) ||
-    (command.description?.toLowerCase().includes(normalizedQuery) ?? false)
+    (command.description?.toLowerCase().includes(normalizedQuery) ?? false) ||
+    (command.inputHint?.toLowerCase().includes(normalizedQuery) ?? false)
   );
+}
+
+/** Replace only the active slash token, preserving the exact agent mention that authorizes it. */
+export function insertAgentSlashCommand(text: string, command: string): string {
+  return text.replace(/\/[a-z0-9-]*$/i, `/${command} `);
 }
 
 export function availableSlashVerbs(

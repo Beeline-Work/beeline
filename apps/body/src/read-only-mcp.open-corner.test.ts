@@ -68,7 +68,7 @@ async function daemonDoor(
 async function callTool(
   origin: string,
   args: Record<string, unknown>,
-  options: { name?: string; cornerId?: string } = {},
+  options: { name?: string; cornerId?: string; agentMayCloseCorner?: boolean } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
   const entrypoint = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url));
   const root = await mkdtemp(join(tmpdir(), 'command-mcp-test-'));
@@ -90,6 +90,7 @@ async function callTool(
       BEELINE_DAEMON_TOKEN: 'daemon-token',
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
+      BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
       BEELINE_AGENT_DM: '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -235,7 +236,7 @@ describe('open_corner over the grok wire', () => {
     expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
   }, 30_000);
 
-  it('closes a chat-only corner through the existing archive operation', async () => {
+  it('refuses agent closure for a no-code corner', async () => {
     const door = await daemonDoor({ resolution: 'none' });
     const { result, error } = await callTool(
       door.origin,
@@ -247,11 +248,9 @@ describe('open_corner over the grok wire', () => {
     );
 
     expect(error).toBeUndefined();
-    expect(result?.isError).toBeUndefined();
-    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, status: 'closed' });
-    expect(door.calls).toContainEqual(
-      expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
-    );
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toBe('no-code corners stay open until a human closes them');
+    expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
 
   it('closes a repository corner through that same operation', async () => {
@@ -262,6 +261,7 @@ describe('open_corner over the grok wire', () => {
       {
         name: 'close_corner',
         cornerId: CORNER,
+        agentMayCloseCorner: true,
       },
     );
 

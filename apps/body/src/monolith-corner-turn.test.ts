@@ -289,6 +289,7 @@ describe('corner merge instructions', () => {
     expect(agentServer?.env).toEqual(
       expect.arrayContaining([
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
+        { name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' },
         { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
       ]),
     );
@@ -299,6 +300,8 @@ describe('corner merge instructions', () => {
         agentEnvironment.get('BEELINE_AGENT_DM') === '1',
         Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
         agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+        Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+        agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
       ).map((tool) => tool.name),
     ).toContain('approve_merge');
     const activeInstruction = () =>

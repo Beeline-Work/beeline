@@ -402,7 +402,7 @@ export type CornerRestoreResult = {
   readonly closeRequested: boolean;
   /** The lane this corner was opened in. A restarted helper must not cut a worktree for `no_code`. */
   readonly lane: CornerLane;
-  /** The human who commissioned the corner, as a bare handle. The no-code lane's completion signal. */
+  /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports delivery to. */
   readonly requesterHandle?: string;
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;

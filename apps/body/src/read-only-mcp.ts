@@ -926,6 +926,7 @@ export function agentToolsFor(
   cornerTurn = false,
   reviewer = false,
   commandRunnerAvailable = true,
+  agentMayCloseCorner = cornerTurn,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -935,7 +936,7 @@ export function agentToolsFor(
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
-    if (tool.name === 'close_corner') return cornerTurn;
+    if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
@@ -951,6 +952,7 @@ const TOOLS = youtubeSurface
       Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
       process.env.BEELINE_CORNER_REVIEWER === '1',
       Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
+      process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -1559,6 +1561,9 @@ async function openCorner(args: JsonObject): Promise<string> {
  */
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  if (process.env.BEELINE_CORNER_AGENT_CLOSE !== '1') {
+    throw new Error('no-code corners stay open until a human closes them');
+  }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
 }

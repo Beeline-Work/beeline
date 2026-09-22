@@ -45,6 +45,19 @@ describe('the chat surface read-mark contract', () => {
     );
   });
 
+  it('re-arms the advancer when a visit begins, not only when the Room changes', () => {
+    // mark-unread suspends the advancer so the viewport cannot read back what
+    // the reader just declared unread. Re-arming only on `channelId` left that
+    // suspension permanent for a reader who reopened the SAME Room: the id
+    // never changed, so nothing resumed (review 2026-09-22).
+    const focusEffect = sessionSource.slice(
+      sessionSource.indexOf('useEffect(() => {\n    if (isFocused) {'),
+      sessionSource.indexOf('}, [isFocused]);'),
+    );
+    expect(focusEffect).toContain('readCursorRef.current?.resume()');
+    expect(focusEffect).toContain('readCursorRef.current?.flush()');
+  });
+
   it('ranks the read cursor against chronological order, never the inverted list', () => {
     // `transcriptMessages` IS `invertedMessages` on the phone. The cursor
     // decides which visible row is newest by its index, so handing it that

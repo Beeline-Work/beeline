@@ -282,15 +282,26 @@ export function useRoomSurfaceSession({
   }
   useEffect(() => {
     channelIdRef.current = channelId;
-    const advancer = readCursorRef.current;
-    advancer?.resume();
-    return () => advancer?.cancel();
+    // A different Room under a mounted surface is its own fresh visit, and
+    // carries none of the previous Room's suspension.
+    readCursorRef.current?.resume();
+    // Leaving drops whatever boundary the debounce was still holding — it
+    // belongs to the Room being left, and must never be written against this
+    // one.
+    return () => readCursorRef.current?.cancel();
   }, [channelId]);
-  // Leaving the surface, or the app going to the background, ends the visit
-  // before a debounce that is already holding a seen boundary would have
-  // fired. Publish it rather than losing it.
+  // A VISIT begins and ends with focus, not with the Room id. Re-arming on
+  // `channelId` alone left the advancer suspended forever once mark-unread
+  // stopped it: the reader leaves and reopens the same Room, the id never
+  // changes, and the viewport silently stops moving the boundary for good.
+  //
+  // So: arriving re-arms, leaving publishes what was seen. A debounce still
+  // holding a boundary when the visit ends is not less read for it.
   useEffect(() => {
-    if (isFocused) return;
+    if (isFocused) {
+      readCursorRef.current?.resume();
+      return;
+    }
     readCursorRef.current?.flush();
   }, [isFocused]);
   useEffect(() => {

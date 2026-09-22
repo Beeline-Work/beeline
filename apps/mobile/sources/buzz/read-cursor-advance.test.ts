@@ -176,4 +176,27 @@ describe('ReadCursorAdvancer', () => {
     vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
     expect(published).toEqual(['b', 'd']);
   });
+
+  // Reproduction SUSPENDED-SAME-ROOM. Re-arming keyed on the Room id alone
+  // left a reader who marked something unread, then reopened that SAME Room,
+  // with viewport advancement dead for good — the id never changed, so nothing
+  // resumed. A visit begins with focus, not with a new Room id.
+  it('re-arms on a fresh visit to the same Room, not only on a new one', () => {
+    const published: string[] = [];
+    const advancer = new ReadCursorAdvancer((id) => published.push(id));
+
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[1]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    advancer.suspend(); // the reader taps Mark unread
+
+    // Leaving: whatever the debounce held is published, nothing more.
+    advancer.flush();
+    expect(published).toEqual(['b']);
+
+    // Returning to the same Room. This is what the session now does on focus.
+    advancer.resume();
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(published).toEqual(['b', 'd']);
+  });
 });

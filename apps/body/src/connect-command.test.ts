@@ -411,6 +411,43 @@ describe('connect wizard', () => {
     });
   });
 
+  it('re-reads a chosen Codex model before deciding whether to ask for effort', async () => {
+    const fixture = promptFixture(['gpt-5.6-sol', 'high']);
+    const seam = catalogSeam({
+      configured: {
+        currentValue: 'gpt-5.4',
+        options: [{ id: 'gpt-5.4' }, { id: 'gpt-5.6-sol' }],
+      },
+      perModel: {
+        'gpt-5.6-sol': {
+          currentValue: 'gpt-5.6-sol',
+          options: [{ id: 'gpt-5.4' }, { id: 'gpt-5.6-sol' }],
+          effort: { currentValue: 'medium', options: [{ id: 'medium' }, { id: 'high' }] },
+        },
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('codex'), announce: () => {} },
+      ),
+    ).resolves.toEqual({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
+    expect(fixture.calls).toEqual([
+      'autocomplete:Choose model:gpt-5.4',
+      'select:Choose reasoning effort:medium',
+    ]);
+    expect(seam.requests[1]).toEqual({
+      harness: 'codex',
+      model: 'gpt-5.6-sol',
+      timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
+    });
+  });
+
   it('keeps the ladder in hand when the re-read fails rather than dropping the question', async () => {
     const fixture = promptFixture(['x-ai/grok-code-fast-1', 'high']);
     const seam = catalogSeam({

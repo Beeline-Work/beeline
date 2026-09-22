@@ -11,7 +11,13 @@ import {
 } from './slash-verbs';
 
 const allAvailable: SlashVerbAvailability = {
+  canBuild: true,
+  canAnswerPoll: true,
+  canCatchUp: true,
+  canManageSchedules: true,
+  canRunWorkflows: true,
   canOpenCorner: true,
+  canRename: true,
   canCloseCorner: true,
   canChangeTargetBranch: true,
   canAddAgent: true,
@@ -29,10 +35,24 @@ describe('Buzz composer built-in slash verbs', () => {
 
   it('lists only real controls currently available in this Room or corner', () => {
     const verbs = availableSlashVerbs(
-      { ...allAvailable, canCloseCorner: false, canChangeTargetBranch: false },
+      {
+        ...allAvailable,
+        canAnswerPoll: false,
+        canCatchUp: false,
+        canCloseCorner: false,
+        canChangeTargetBranch: false,
+      },
       '',
     );
-    expect(verbs.map((verb) => verb.command)).toEqual(['open-corner', 'add-agent', 'invite']);
+    expect(verbs.map((verb) => verb.command)).toEqual([
+      'build',
+      'schedule',
+      'workflow',
+      'open-corner',
+      'rename',
+      'add-agent',
+      'invite',
+    ]);
   });
 
   it('filters by command or visible control label as the person types', () => {
@@ -41,6 +61,21 @@ describe('Buzz composer built-in slash verbs', () => {
       'change-target-branch',
     ]);
     expect(availableSlashVerbs(allAvailable, 'zzz')).toEqual([]);
+  });
+
+  it.each([
+    ['canBuild', 'build'],
+    ['canAnswerPoll', 'poll'],
+    ['canCatchUp', 'catch-up'],
+    ['canManageSchedules', 'schedule'],
+    ['canRunWorkflows', 'workflow'],
+    ['canOpenCorner', 'open-corner'],
+    ['canRename', 'rename'],
+  ] as const)('omits %s when its live capability is unavailable', (capability, command) => {
+    const commands = availableSlashVerbs({ ...allAvailable, [capability]: false }, '').map(
+      (verb) => verb.command,
+    );
+    expect(commands).not.toContain(command);
   });
 
   it('does not invent a release command without a shipped release action', () => {
@@ -78,7 +113,13 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
     const commands = availableSlashVerbs(allAvailable, '').map((verb) => verb.command);
     expect(commands).toEqual([...BEELINE_SLASH_COMMANDS]);
     expect(commands).toEqual([
+      'build',
+      'poll',
+      'catch-up',
+      'schedule',
+      'workflow',
       'open-corner',
+      'rename',
       'change-target-branch',
       'add-agent',
       'invite',

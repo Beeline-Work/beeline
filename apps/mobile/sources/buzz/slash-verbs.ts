@@ -1,5 +1,15 @@
 export type BuiltInSlashVerbId =
-  'open-corner' | 'close-corner' | 'change-target-branch' | 'add-agent' | 'invite';
+  | 'build'
+  | 'poll'
+  | 'catch-up'
+  | 'schedule'
+  | 'workflow'
+  | 'open-corner'
+  | 'rename'
+  | 'close-corner'
+  | 'change-target-branch'
+  | 'add-agent'
+  | 'invite';
 
 export type BuiltInSlashVerb = {
   id: BuiltInSlashVerbId;
@@ -9,7 +19,13 @@ export type BuiltInSlashVerb = {
 };
 
 export type SlashVerbAvailability = {
+  canBuild: boolean;
+  canAnswerPoll: boolean;
+  canCatchUp: boolean;
+  canManageSchedules: boolean;
+  canRunWorkflows: boolean;
   canOpenCorner: boolean;
+  canRename: boolean;
   canCloseCorner: boolean;
   canChangeTargetBranch: boolean;
   canAddAgent: boolean;
@@ -20,11 +36,53 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
   available: keyof SlashVerbAvailability;
 })[] = [
   {
+    id: 'build',
+    command: 'build',
+    label: 'Build something',
+    description: 'Start a new corner in this Room',
+    available: 'canBuild',
+  },
+  {
+    id: 'poll',
+    command: 'poll',
+    label: 'Answer poll',
+    description: 'Jump to the latest open poll',
+    available: 'canAnswerPoll',
+  },
+  {
+    id: 'catch-up',
+    command: 'catch-up',
+    label: 'Catch up',
+    description: 'Jump to the first unread message',
+    available: 'canCatchUp',
+  },
+  {
+    id: 'schedule',
+    command: 'schedule',
+    label: 'Scheduled work',
+    description: 'View or stop recurring Agent work',
+    available: 'canManageSchedules',
+  },
+  {
+    id: 'workflow',
+    command: 'workflow',
+    label: 'Run workflow',
+    description: 'Choose a repository workflow to dispatch',
+    available: 'canRunWorkflows',
+  },
+  {
     id: 'open-corner',
     command: 'open-corner',
     label: 'Open edit corner',
     description: 'Allow the pending repository edit request',
     available: 'canOpenCorner',
+  },
+  {
+    id: 'rename',
+    command: 'rename',
+    label: 'Rename Room',
+    description: "Change this Room's display name",
+    available: 'canRename',
   },
   {
     id: 'change-target-branch',

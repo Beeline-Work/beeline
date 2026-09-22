@@ -126,6 +126,12 @@ export default function RootLayout() {
             headerTitle: 'Scheduled work',
           }}
         />
+        <Stack.Screen
+          name="beeline/settings/workflows"
+          options={{
+            headerTitle: 'Workflows',
+          }}
+        />
         {/* Workbench keeps the stack header (its back control) on a phone; on
             desktop the page draws the shared PageHeader so its title lines up
             with the other sections. */}

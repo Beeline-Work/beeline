@@ -27,7 +27,7 @@ import { cornerHref } from '@/buzz/corner-navigation';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
 
 export default function BuzzCorners() {
-  const { roomId } = useLocalSearchParams<{ roomId: string }>();
+  const { roomId, create } = useLocalSearchParams<{ roomId: string; create?: string }>();
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
   const [surface, setSurface] = useState<CornerListView | null>(null);
@@ -35,7 +35,7 @@ export default function BuzzCorners() {
   const [refreshing, setRefreshing] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(create === '1');
   const [createTitle, setCreateTitle] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });

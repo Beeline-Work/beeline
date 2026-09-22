@@ -1731,6 +1731,19 @@ export function BuzzChatSurface({
     if (currentSlashQuery === null) return [];
     return availableCornerAppCommands(roomSurface?.cornerApps ?? [], currentSlashQuery);
   }, [currentSlashQuery, roomSurface?.cornerApps]);
+  const latestOpenPoll = useMemo(() => {
+    for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
+      const message = combinedMessages[index];
+      if (
+        message.choice?.mode === 'poll' &&
+        message.choice.status === 'open' &&
+        message.choice.electorate.includes(userPubkey)
+      ) {
+        return message;
+      }
+    }
+    return undefined;
+  }, [combinedMessages, userPubkey]);
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
       const message = combinedMessages[index];
@@ -1760,7 +1773,30 @@ export function BuzzChatSurface({
     () =>
       availableSlashVerbs(
         {
+          canBuild: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              roomSurface?.viewer.permissions.send,
+          ),
+          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
+          canCatchUp: Boolean(firstUnreadMessageId),
+          canManageSchedules: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              getBuzzRuntimeConfig().monolithEnabled,
+          ),
+          canRunWorkflows: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              roomSurface?.repositoryResolution === 'repository',
+          ),
           canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
+          canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
           canCloseCorner: isCorner && !viewerIsAgent,
           canChangeTargetBranch: Boolean(
             !isCorner &&
@@ -1779,13 +1815,17 @@ export function BuzzChatSurface({
     [
       currentSlashQuery,
       canManageWorkspace,
+      firstUnreadMessageId,
       isCorner,
       isDirectMessage,
+      latestOpenPoll,
       pendingCornerRequest,
       pendingTargetBranchProposal,
       targetBranchActionId,
       viewerChannelRole,
       viewerIsAgent,
+      roomSurface?.repositoryResolution,
+      roomSurface?.viewer.permissions.send,
     ],
   );
   const slashMenuVisible = Boolean(
@@ -4097,8 +4137,41 @@ export function BuzzChatSurface({
       clearSlashComposer();
       void Haptics.selectionAsync();
       switch (verb) {
+        case 'build':
+          router.push({
+            pathname: '/beeline/corners/[roomId]',
+            params: { roomId: decodedId, create: '1' },
+          } as Href);
+          return;
+        case 'poll':
+          if (latestOpenPoll) landAtNewMessageBoundary(latestOpenPoll.id, false);
+          return;
+        case 'catch-up':
+          if (firstUnreadMessageId) landAtNewMessageBoundary(firstUnreadMessageId, false);
+          return;
+        case 'schedule':
+          if (!canManageWorkspace || !activeCommunityId) return;
+          router.push({
+            pathname: '/beeline/settings/schedules',
+            params: { roomId: decodedId, workspaceId: activeCommunityId },
+          } as unknown as Href);
+          return;
+        case 'workflow':
+          if (!canManageWorkspace) return;
+          router.push({
+            pathname: '/beeline/settings/workflows',
+            params: { roomId: decodedId },
+          } as unknown as Href);
+          return;
         case 'open-corner':
           if (pendingCornerRequest) void handleWritePermission(pendingCornerRequest, 'allow');
+          return;
+        case 'rename':
+          if (!canManageWorkspace) return;
+          setRenameDraft(storedRoomName);
+          setRenameError(null);
+          setRenameEditing(true);
+          setRoomActionsVisible(true);
           return;
         case 'close-corner':
           void handleCloseCorner();
@@ -4126,13 +4199,19 @@ export function BuzzChatSurface({
     },
     [
       clearSlashComposer,
+      activeCommunityId,
       canManageWorkspace,
+      decodedId,
+      firstUnreadMessageId,
       handleCloseCorner,
       handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
+      landAtNewMessageBoundary,
+      latestOpenPoll,
       pendingCornerRequest,
       pendingTargetBranchProposal,
+      storedRoomName,
     ],
   );
 

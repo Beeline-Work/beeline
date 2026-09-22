@@ -10,7 +10,9 @@ const themeRef: { current: typeof boneTheme | null } = { current: null };
 const stackRef: {
   current: { props: { screenOptions?: Record<string, unknown> } } | null;
 } = { current: null };
-const screenPropsRef: { current: Array<{ options?: Record<string, unknown> }> } = {
+const screenPropsRef: {
+  current: Array<{ name?: string; options?: Record<string, unknown> }>;
+} = {
   current: [],
 };
 
@@ -61,6 +63,15 @@ function renderLayout(themeName: 'bone' | 'obsidian'): void {
 }
 
 describe('(app) RootLayout status bar glyphs', () => {
+  it('registers the Workbench key route as the single Key header', () => {
+    renderLayout('bone');
+    const route = screenPropsRef.current.find(
+      (screen) => screen.name === 'beeline/settings/workbench/connection',
+    );
+    expect(route?.options).toMatchObject({ headerTitle: 'Key' });
+    expect(route?.options?.headerShown).not.toBe(false);
+  });
+
   it('asks for dark icons in light mode', () => {
     renderLayout('bone');
     // Rendered props, not source text: what the native stack will apply.

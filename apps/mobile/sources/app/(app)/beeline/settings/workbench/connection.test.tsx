@@ -11,10 +11,15 @@ const searchParams = vi.hoisted(() => ({
     ref: 'cred_vercel',
   } as Record<string, string>,
 }));
+const safeAreaInsets = vi.hoisted(() => ({ top: 0, right: 0, bottom: 34, left: 0 }));
 
 vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => searchParams.params,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => safeAreaInsets,
 }));
 
 vi.mock('react-native', async () => {
@@ -104,6 +109,23 @@ async function flush(times = 4): Promise<void> {
 }
 
 describe('Connection detail screen', () => {
+  it('leaves the Key header and back control to the registered stack route', async () => {
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'connection-back' })).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: any) => node.type === 'Text' && node.props.children === 'Key'),
+    ).toHaveLength(0);
+  });
+
+  it('keeps the scroll content above the Android navigation inset', async () => {
+    const renderer = await render();
+    const screen = renderer.root.findByProps({ testID: 'connection-detail-screen' });
+    expect(screen.props.style).toEqual([
+      expect.objectContaining({ flex: 1 }),
+      { paddingBottom: 34 },
+    ]);
+  });
+
   it('renders service identity and the complete vault facts', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-service-name' }).props.children).toBe(

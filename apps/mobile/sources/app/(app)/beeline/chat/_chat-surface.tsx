@@ -275,6 +275,7 @@ import {
   type ForwardTarget,
 } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
+import { useArtifactReturn } from '@/buzz/use-artifact-return';
 import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
@@ -2036,6 +2037,20 @@ export function BuzzChatSurface({
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
+  const scrollToArtifactOrigin = useCallback((index: number, viewPosition: number) => {
+    scheduleAnimationFrame(() =>
+      flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false }),
+    );
+  }, []);
+  const handleOpenCode = useArtifactReturn({
+    transcriptMessages,
+    residentMessages: combinedMessages,
+    onReveal: revealTranscriptThrough,
+    onScroll: scrollToArtifactOrigin,
+  });
+  // A live message/card change follows to the newest end. The decision is one
+  // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
+  // most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
   const currentScrollOffsetRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
@@ -4162,7 +4177,6 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
-
   const renderMessage = useCallback(
     (
       item: ChatDisplayMessage,
@@ -4373,6 +4387,8 @@ export function BuzzChatSurface({
           channelIndex={channelReferenceIndex}
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
+          codeRoomId={decodedId}
+          onOpenCode={handleOpenCode}
           onMention={handleOpenMention}
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
@@ -4406,6 +4422,7 @@ export function BuzzChatSurface({
       handleChoiceAnswer,
       handleChoiceSkip,
       handleOpenSystemIdentity,
+      handleOpenCode,
       handleReactToMessage,
       handleBookmarkMessage,
       messageIsBookmarked,
@@ -4446,6 +4463,7 @@ export function BuzzChatSurface({
       isReadOnlyDirectMessage,
       isArchived,
       isCorner,
+      decodedId,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

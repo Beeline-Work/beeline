@@ -131,6 +131,9 @@ type LedgerBodyProps = {
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  /** Opens a long code block and restores this row when the reader closes. */
+  codeRoomId?: string;
+  onOpenCode?: (messageId: string) => void;
 };
 
 /**
@@ -189,6 +192,8 @@ function TypewriterMarkdown({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
+  onOpenCode,
 }: {
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
@@ -204,6 +209,8 @@ function TypewriterMarkdown({
   onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  codeRoomId?: string;
+  onOpenCode?: (messageId: string) => void;
 }) {
   const reducedMotion = useReducedMotion();
   // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
@@ -250,6 +257,8 @@ function TypewriterMarkdown({
       onMention={onMention}
       channelIndex={channelIndex}
       onChannelReference={onChannelReference}
+      codeSource={codeRoomId && revealId ? { roomId: codeRoomId, messageId: revealId } : undefined}
+      onOpenCode={onOpenCode}
       testID={testID}
       textStyle={textStyle}
     />
@@ -460,6 +469,8 @@ export function LedgerEntry({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
+  onOpenCode,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
@@ -476,6 +487,8 @@ export function LedgerEntry({
           onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
+          codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
+          onOpenCode={onOpenCode}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
           textStyle={styles.ledgerLead}
         />
@@ -491,6 +504,8 @@ export function LedgerEntry({
             onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
+            codeRoomId={codeRoomId}
+            onOpenCode={onOpenCode}
           />
         ) : (
           <MonoMarkdown
@@ -499,6 +514,8 @@ export function LedgerEntry({
             onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
+            codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
+            onOpenCode={onOpenCode}
             testID={bodyTestID}
             textStyle={bodyTextStyle}
           />
@@ -550,6 +567,8 @@ export function LedgerSteer({
   onMention,
   channelIndex,
   onChannelReference,
+  codeRoomId,
+  onOpenCode,
 }: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'>) {
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
@@ -572,6 +591,8 @@ export function LedgerSteer({
           onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
+          codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
+          onOpenCode={onOpenCode}
           textStyle={styles.steerText}
           testID={bodyTestID}
         />

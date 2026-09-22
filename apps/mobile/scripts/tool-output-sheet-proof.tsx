@@ -2,8 +2,11 @@ import React from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
-import { CodeBlock, fenceByteLength, formatFenceBytes } from '../sources/components/buzz/CodeBlock';
-import { TOOL_OUTPUT_SHEET_MAX_WIDTH } from '../sources/components/buzz/ToolOutputSheet';
+import { fenceByteLength, formatFenceBytes } from '../sources/buzz/code-fence';
+import {
+  ToolOutputSheet,
+  TOOL_OUTPUT_SHEET_MAX_WIDTH,
+} from '../sources/components/buzz/ToolOutputSheet';
 import { BookmarksGlyph } from '../sources/components/buzz/BookmarksGlyph';
 import { ChevronGlyph } from '../sources/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '../sources/components/buzz/CornerGlyph';
@@ -24,7 +27,13 @@ const size = formatFenceBytes(fenceByteLength(code));
 function Surface() {
   return (
     <View>
-      <CodeBlock code={code} language="ts" />
+      <ToolOutputSheet
+        detail={code}
+        onClose={() => undefined}
+        subtitle={`40 lines · ${size}`}
+        title="Output"
+        visible
+      />
       {/* Every drawn mark, painted on the same page as the sheet: each one
           used to log an unrecognized-prop error the moment it mounted. */}
       <BookmarksGlyph color="#ffffff" />
@@ -57,10 +66,6 @@ async function measure() {
   createRoot(document.getElementById('root')!).render(<Surface />);
   await pause();
 
-  // The reader opens the fence the way the transcript offers it.
-  document.querySelector<HTMLElement>('[data-testid="code-open"]')!.click();
-  await pause();
-
   const sheet = document.querySelector<HTMLElement>('[data-testid="tool-output-sheet"]');
   assert(sheet != null, 'the sheet did not open');
   const width = sheet!.getBoundingClientRect().width;
@@ -73,10 +78,9 @@ async function measure() {
     `desktop sheet at ${width} is no wider than the ${PHONE_SHEET_MAX_WIDTH} a phone gets`,
   );
 
-  // The size reads on the inscribed line DESIGN.md specifies and in the
-  // sheet's subtitle. A third copy on the Copy row said nothing new.
+  // The sheet reports the supplied size once. The Copy row adds no duplicate.
   const bearing = sizeBearingText();
-  assert(bearing.length === 2, `byte size reads ${bearing.length} times: ${bearing.join(' | ')}`);
+  assert(bearing.length === 1, `byte size reads ${bearing.length} times: ${bearing.join(' | ')}`);
   const copyRow = document.querySelector<HTMLElement>('[data-testid="tool-output-copy"]')!;
   assert(!copyRow.textContent?.includes(size), `Copy row still reports the size: ${copyRow.textContent}`);
 

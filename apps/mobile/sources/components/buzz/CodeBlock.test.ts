@@ -3,9 +3,13 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-const { copy } = vi.hoisted(() => ({ copy: vi.fn(async () => undefined) }));
+const { copy, push } = vi.hoisted(() => ({
+  copy: vi.fn(async () => undefined),
+  push: vi.fn(),
+}));
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: copy }));
+vi.mock('expo-router', () => ({ router: { push } }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -65,7 +69,15 @@ function collectHostText(node: { props?: { children?: unknown } }): string {
 function render(code: string, language: string | null = 'typescript'): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(React.createElement(CodeBlock, { code, language }));
+    renderer = create(
+      React.createElement(CodeBlock, {
+        code,
+        language,
+        roomId: 'room-7',
+        messageId: 'message-42',
+        blockIndex: 0,
+      }),
+    );
   });
   return renderer;
 }
@@ -155,27 +167,36 @@ describe('CodeBlock', () => {
     expect(peekText).toBe(FRAME_JSON.split('\n').slice(0, PEEK_LINE_COUNT).join('\n'));
   });
 
-  it('opens the existing output sheet full-width with wrapping', () => {
-    const renderer = render(FRAME_JSON, 'json');
+  it('opens the full-page reader with the complete block and originating message', async () => {
+    push.mockClear();
+    const onOpen = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CodeBlock, {
+          code: FRAME_JSON,
+          language: 'json',
+          roomId: 'room-7',
+          messageId: 'message-42',
+          blockIndex: 2,
+          onOpen,
+        }),
+      );
+    });
     const open = renderer.root.findByProps({
       accessibilityLabel: `Open json, ${hiddenLineLabel(13)}`,
     });
-    expect(open.props.accessibilityState).toEqual({ expanded: false });
-    expect(renderer.root.findByType('HullActionSheetModal' as any).props.visible).toBe(false);
-    act(() => open.props.onPress());
-    const sheet = renderer.root.findByType('HullActionSheetModal' as any);
-    expect(sheet.props.visible).toBe(true);
-    expect(sheet.props.title).toBe('json');
-    expect(sheet.props.subtitle).toBe(fenceInscription('json', FRAME_JSON));
-    expect(open.props.accessibilityState).toEqual({ expanded: true });
-    expect(renderer.root.findAllByType('ScrollView').some((node) => node.props.horizontal)).toBe(
-      false,
-    );
-    const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
-    const texts = highlighters.map((node) => collectHostText(node));
-    expect(texts.some((text) => text.includes('apiKey') && text.includes('200000'))).toBe(true);
-    expect(texts).toContain(FRAME_JSON);
-    expect(JSON.parse(texts.find((text) => text === FRAME_JSON)!)).toEqual(JSON.parse(FRAME_JSON));
+    await act(async () => open.props.onPress());
+    expect(onOpen).toHaveBeenCalledWith('message-42');
+    expect(push).toHaveBeenCalledWith({
+      pathname: '/artifact-viewer',
+      params: {
+        roomId: 'room-7',
+        messageId: 'message-42',
+        blockIndex: '2',
+      },
+    });
+    expect(renderer.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);
   });
 
   it('pins the length rule: more than a peek is long', () => {

@@ -28,3 +28,38 @@ export function visibleTranscriptWindow(
 ): ChatDisplayMessage[] {
   return messages.filter(rendersTranscriptRow).slice(-Math.max(0, limit));
 }
+
+function transcriptMessageMatches(message: ChatDisplayMessage, messageId: string): boolean {
+  return message.id === messageId || message.relayId === messageId;
+}
+
+export type TranscriptAnchorRestore = 'scrolled' | 'revealed' | 'missing';
+
+/** Restore an anchor from the visible slice, widening through resident rows first when needed. */
+export function restoreTranscriptAnchor({
+  messageId,
+  transcriptMessages,
+  residentMessages,
+  onReveal,
+  onScroll,
+}: {
+  messageId: string;
+  transcriptMessages: readonly ChatDisplayMessage[];
+  residentMessages: readonly ChatDisplayMessage[];
+  onReveal(rowsFromNewest: number): void;
+  onScroll(index: number, viewPosition: number): void;
+}): TranscriptAnchorRestore {
+  const visibleIndex = transcriptMessages.findIndex((message) =>
+    transcriptMessageMatches(message, messageId),
+  );
+  if (visibleIndex >= 0) {
+    onScroll(visibleIndex, 0.5);
+    return 'scrolled';
+  }
+  const residentIndex = residentMessages.findIndex((message) =>
+    transcriptMessageMatches(message, messageId),
+  );
+  if (residentIndex < 0) return 'missing';
+  onReveal(residentMessages.length - residentIndex);
+  return 'revealed';
+}

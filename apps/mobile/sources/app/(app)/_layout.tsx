@@ -210,6 +210,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
+        <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen
           name="text-selection"
           options={{

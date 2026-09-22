@@ -15,6 +15,9 @@ import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sa
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
+import type { CodeDocument } from '@/buzz/code-document';
+import * as Clipboard from 'expo-clipboard';
 import {
   copyPicture,
   sharePicture,
@@ -32,14 +35,20 @@ import {
  */
 export function ArtifactViewerScreen({
   attachment,
+  document,
+  notice,
   onClose,
-}: {
-  attachment: AttachmentReference;
-  authorHandle?: string;
-  onClose: () => void;
-}) {
-  const format = artifactFormat(attachment.mimeType);
-  const title = attachment.title ?? attachment.name;
+}: (
+  | { attachment: AttachmentReference; document?: never; notice?: never }
+  | { attachment?: never; document: CodeDocument; notice?: never }
+  | { attachment?: never; document?: never; notice: { title: string; message: string } }
+) & { authorHandle?: string; onClose: () => void }) {
+  const format = attachment ? artifactFormat(attachment.mimeType) : document ? 'code' : 'notice';
+  const title = attachment
+    ? (attachment.title ?? attachment.name)
+    : document
+      ? document.title
+      : notice.title;
   // The viewer fills the whole screen (HullModal placement 'fill', which is
   // translucent under both system bars on Android's mandatory edge-to-edge),
   // so the header row — title and the ✕ that closes the viewer — must clear
@@ -52,12 +61,22 @@ export function ArtifactViewerScreen({
         <Text numberOfLines={1} style={styles.headerTitle}>
           {title}
         </Text>
-        {format === 'image' ? (
+        {format === 'code' && document ? (
+          <Pressable
+            accessibilityLabel="Copy code"
+            accessibilityRole="button"
+            onPress={() => void Clipboard.setStringAsync(document.code)}
+            style={styles.headerAction}
+            testID="artifact-viewer-copy"
+          >
+            <Text style={styles.headerActionText}>Copy</Text>
+          </Pressable>
+        ) : format === 'image' ? (
           <>
             <Pressable
               accessibilityLabel="Copy image"
               accessibilityRole="button"
-              onPress={() => void copyPicture(attachment)}
+              onPress={() => void copyPicture(attachment!)}
               style={styles.headerAction}
               testID="artifact-viewer-copy"
             >
@@ -66,7 +85,7 @@ export function ArtifactViewerScreen({
             <Pressable
               accessibilityLabel="Share image"
               accessibilityRole="button"
-              onPress={() => void sharePicture(attachment)}
+              onPress={() => void sharePicture(attachment!)}
               style={styles.headerAction}
               testID="artifact-viewer-share"
             >
@@ -85,41 +104,53 @@ export function ArtifactViewerScreen({
         </Pressable>
       </View>
       <View style={styles.body}>
-        {format === 'markdown' ? (
-          <ArtifactViewerMarkdown attachment={attachment} />
+        {format === 'code' && document ? (
+          <ScrollView contentContainerStyle={styles.codeBody} testID="artifact-viewer-code">
+            <Text style={styles.codeInscription}>{document.inscription}</Text>
+            <CodeHighlighter code={document.code} language={document.language} />
+          </ScrollView>
+        ) : format === 'notice' ? (
+          <View style={styles.placeholder} testID="artifact-viewer-notice">
+            <Text style={styles.placeholderText}>{notice!.message}</Text>
+          </View>
+        ) : format === 'markdown' ? (
+          <ArtifactViewerMarkdown attachment={attachment!} />
         ) : format === 'image' ? (
           <Pressable
             accessibilityLabel={`Image ${title}`}
             delayLongPress={450}
-            onLongPress={() => showPictureActions(attachment)}
+            onLongPress={() => showPictureActions(attachment!)}
             style={styles.image}
             testID="artifact-viewer-image-actions"
             {...(Platform.OS === 'web'
               ? {
                   onContextMenu: (event: { preventDefault(): void }) => {
                     event.preventDefault();
-                    showPictureActions(attachment);
+                    showPictureActions(attachment!);
                   },
                 }
               : {})}
           >
             <ArtifactImage
-              attachment={attachment}
+              attachment={attachment!}
               fit="contain"
               style={styles.image}
               testID="artifact-viewer-image"
             />
           </Pressable>
         ) : format === 'text' ? (
-          <ArtifactText attachment={attachment} crop={false} testID="artifact-viewer-text" />
+          <ArtifactText attachment={attachment!} crop={false} testID="artifact-viewer-text" />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
           <ArtifactPdfView
-            attachment={attachment}
+            attachment={attachment!}
             mode="viewer"
             testID="artifact-viewer-pdf"
           />
         ) : (
-          <ArtifactViewerSandbox attachment={attachment} format={format} />
+          <ArtifactViewerSandbox
+            attachment={attachment!}
+            format={format as 'html' | 'svg' | 'pdf' | 'document'}
+          />
         )}
       </View>
     </View>
@@ -259,6 +290,12 @@ const styles = StyleSheet.create((theme) => ({
   body: { flex: 1 },
   image: { flex: 1, height: '100%', width: '100%' },
   webview: { flex: 1, backgroundColor: 'transparent' },
+  codeBody: { flexGrow: 1, padding: theme.buzz.space.md },
+  codeInscription: {
+    ...theme.buzz.type.machine,
+    color: theme.buzz.ledgerBody,
+    marginBottom: theme.buzz.space.md,
+  },
   markdownBody: { padding: theme.buzz.space.md },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },

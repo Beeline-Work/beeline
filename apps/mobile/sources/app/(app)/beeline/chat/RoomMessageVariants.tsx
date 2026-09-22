@@ -45,6 +45,7 @@ import {
   formatNotificationHeadlines,
 } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
+import { artifactFormat } from '@/buzz/artifact';
 import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { ArtifactCard } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
@@ -1991,27 +1992,43 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       testID={`chat-machine-noise-${message.id}`}
     />
   ) : null;
-  const attachments = message.attachments?.map((attachment) =>
-    attachment.kind === 'artifact' && !attachment.expired ? (
-      <ArtifactCard
-        attachment={attachment}
-        authorHandle={
-          attachment.author ??
-          (message.authorIdentity?.kind === 'agent'
-            ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
-            : undefined)
-        }
-        isDesktop={desktopLayout}
-        key={`${message.id}-${attachment.url}`}
-      />
-    ) : (
+  const livePhotoArtifacts = message.attachments?.filter(
+    (attachment) =>
+      attachment.kind === 'artifact' &&
+      !attachment.expired &&
+      artifactFormat(attachment.mimeType) === 'image',
+  );
+  const groupedPhotoArtifacts =
+    livePhotoArtifacts && livePhotoArtifacts.length > 1 ? livePhotoArtifacts : undefined;
+  const firstGroupedPhoto = groupedPhotoArtifacts?.[0];
+  const attachments = message.attachments?.map((attachment) => {
+    if (attachment.kind === 'artifact' && !attachment.expired) {
+      if (groupedPhotoArtifacts && artifactFormat(attachment.mimeType) === 'image') {
+        if (attachment !== firstGroupedPhoto) return null;
+      }
+      return (
+        <ArtifactCard
+          attachment={attachment}
+          authorHandle={
+            attachment.author ??
+            (message.authorIdentity?.kind === 'agent'
+              ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
+              : undefined)
+          }
+          isDesktop={desktopLayout}
+          key={`${message.id}-${attachment.url}`}
+          {...(attachment === firstGroupedPhoto ? { photoAttachments: groupedPhotoArtifacts } : {})}
+        />
+      );
+    }
+    return (
       <AttachmentCard
         attachment={attachment}
         isDesktop={desktopLayout}
         key={`${message.id}-${attachment.url}`}
       />
-    ),
-  );
+    );
+  });
 
   const content = (
     <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>

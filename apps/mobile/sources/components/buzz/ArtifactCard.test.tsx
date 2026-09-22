@@ -53,20 +53,21 @@ vi.mock('react-native-webview', () => ({
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) => factory({
-      buzz: {
-        border: '#333',
-        bgBase: '#111',
-        bgHighlight: '#222',
-        textPrimary: '#eee',
-        steel: '#888',
-        ledgerQuiet: '#777',
-        accent: '#b08a4a',
-        space: { sm: 8, md: 12 },
-        transcriptCard: { cornerRadius: 3, footerMinHeight: 40, footerVertical: 6, side: 12 },
-        type: { body: {}, bodyStrong: {}, machine: {} },
-      },
-    }),
+    create: (factory: (theme: unknown) => unknown) =>
+      factory({
+        buzz: {
+          border: '#333',
+          bgBase: '#111',
+          bgHighlight: '#222',
+          textPrimary: '#eee',
+          steel: '#888',
+          ledgerQuiet: '#777',
+          accent: '#b08a4a',
+          space: { sm: 8, md: 12 },
+          transcriptCard: { cornerRadius: 3, footerMinHeight: 40, footerVertical: 6, side: 12 },
+          type: { body: {}, bodyStrong: {}, machine: {} },
+        },
+      }),
   },
 }));
 vi.mock('@/modal', () => ({
@@ -108,8 +109,10 @@ vi.mock('@/components/buzz/ArtifactViewer', () => ({
 // The media views have their own suites; here the card is on trial for which
 // view it reaches for and what it hands it.
 vi.mock('@/components/buzz/ArtifactMedia', () => ({
-  ArtifactImage: (props: Record<string, unknown>) => React.createElement('ArtifactImage', props, null),
-  ArtifactText: (props: Record<string, unknown>) => React.createElement('ArtifactText', props, null),
+  ArtifactImage: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactImage', props, null),
+  ArtifactText: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactText', props, null),
 }));
 vi.mock('@/components/buzz/ArtifactPdfView', () => ({
   ArtifactPdfView: (props: Record<string, unknown>) =>
@@ -124,10 +127,12 @@ import { ARTIFACT_PDF_BASE_URL, ARTIFACT_PDF_RENDERED_URL } from '@/buzz/artifac
 
 const originalConsoleError = console.error;
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -175,7 +180,9 @@ function textOf(renderer: ReactTestRenderer): string {
     .findAll(
       (node: any) => typeof node.props.children === 'string' || Array.isArray(node.props.children),
     )
-    .map((node: any) => (Array.isArray(node.props.children) ? node.props.children.join(' ') : node.props.children))
+    .map((node: any) =>
+      Array.isArray(node.props.children) ? node.props.children.join(' ') : node.props.children,
+    )
     .join(' | ');
 }
 
@@ -200,7 +207,9 @@ async function flush(): Promise<void> {
 describe('the artifact card is the preview (mock 1b)', () => {
   it('renders an HTML artifact as caption (title, author, size) with the two footer actions and no status label', async () => {
     mocks.probeArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
-    const renderer = render(<ArtifactCard attachment={artifactAttachment()} authorHandle="hoots" />);
+    const renderer = render(
+      <ArtifactCard attachment={artifactAttachment()} authorHandle="hoots" />,
+    );
     await flush();
     const text = textOf(renderer);
     expect(text).toContain('Login mock');
@@ -217,12 +226,16 @@ describe('the artifact card is the preview (mock 1b)', () => {
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
     expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
-    expect(renderer.root.findAll((n: any) => typeof n.type === 'string' && n.type === 'Image')).toHaveLength(1);
+    expect(
+      renderer.root.findAll((n: any) => typeof n.type === 'string' && n.type === 'Image'),
+    ).toHaveLength(1);
   });
 
   it('renders the page itself in the script-off sandbox once, then snapshots it', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body><p>mock</p></body></html>'));
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body><p>mock</p></body></html>'),
+    );
     mocks.snapshotArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
@@ -244,7 +257,11 @@ describe('the artifact card is the preview (mock 1b)', () => {
     mocks.fetchArtifactText.mockResolvedValue('# Heading\n\nBody');
     const renderer = render(
       <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'text/markdown', name: 'notes.md', title: 'Notes' })}
+        attachment={artifactAttachment({
+          mimeType: 'text/markdown',
+          name: 'notes.md',
+          title: 'Notes',
+        })}
       />,
     );
     await flush();
@@ -262,7 +279,11 @@ describe('the artifact card is the preview (mock 1b)', () => {
     mocks.loadPdfViewerDocument.mockResolvedValue('<!doctype html><html>pdf</html>');
     const renderer = render(
       <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf', title: 'Spec' })}
+        attachment={artifactAttachment({
+          mimeType: 'application/pdf',
+          name: 'spec.pdf',
+          title: 'Spec',
+        })}
       />,
     );
     await flush();
@@ -337,10 +358,14 @@ describe('the artifact card is the preview (mock 1b)', () => {
   ])('crops %s onto the card instead of the file-style row', async (_name, mimeType, fileName) => {
     mocks.platformOS.value = 'android';
     const renderer = render(
-      <ArtifactCard attachment={artifactAttachment({ mimeType, name: fileName, title: fileName })} />,
+      <ArtifactCard
+        attachment={artifactAttachment({ mimeType, name: fileName, title: fileName })}
+      />,
     );
     await flush();
-    expect(renderer.root.findAll((node: any) => node.props.testID === 'artifact-document-body')).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: any) => node.props.testID === 'artifact-document-body'),
+    ).toHaveLength(0);
     const text = renderer.root.findByType('ArtifactText' as any);
     expect(text.props.crop).toBe(true);
     expect(text.props.testID).toBe('artifact-preview-text');
@@ -353,7 +378,11 @@ describe('the artifact card is the preview (mock 1b)', () => {
     mocks.artifactPdfLocalUri.mockResolvedValue('file:///cache/artifact-pdf-x.pdf');
     const renderer = render(
       <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf', title: 'Spec' })}
+        attachment={artifactAttachment({
+          mimeType: 'application/pdf',
+          name: 'spec.pdf',
+          title: 'Spec',
+        })}
       />,
     );
     await flush();
@@ -364,7 +393,11 @@ describe('the artifact card is the preview (mock 1b)', () => {
   it('an unknown format falls back to the document card with open-in-browser only', async () => {
     const renderer = render(
       <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/zip', name: 'bundle.zip', title: 'Bundle' })}
+        attachment={artifactAttachment({
+          mimeType: 'application/zip',
+          name: 'bundle.zip',
+          title: 'Bundle',
+        })}
       />,
     );
     await flush();
@@ -380,7 +413,9 @@ describe('the artifact card is the preview (mock 1b)', () => {
     const photo = artifactAttachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
     const renderer = render(<ArtifactCard attachment={photo} />);
     await flush();
-    expect(renderer.root.findAll((node: any) => node.props.testID === 'artifact-document-body')).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: any) => node.props.testID === 'artifact-document-body'),
+    ).toHaveLength(0);
     const image = renderer.root.findByType('ArtifactImage' as any);
     expect(image.props.fit).toBe('cover');
     expect(image.props.testID).toBe('artifact-preview-image');
@@ -404,6 +439,69 @@ describe('the artifact card is the preview (mock 1b)', () => {
       }),
     );
     expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+  });
+
+  it('navigates a message photo group inside one card and opens the selected photo', async () => {
+    mocks.platformOS.value = 'android';
+    const first = artifactAttachment({
+      url: 'https://usebeeline.app/v1/media/11111111-1111-4111-8111-111111111111',
+      mimeType: 'image/jpeg',
+      name: 'first.jpg',
+      title: 'First',
+    });
+    const second = artifactAttachment({
+      url: 'https://usebeeline.app/v1/media/22222222-2222-4222-8222-222222222222',
+      mimeType: 'image/png',
+      name: 'second.png',
+      title: 'Second',
+    });
+    const renderer = render(<ArtifactCard attachment={first} photoAttachments={[first, second]} />);
+    await flush();
+
+    expect(hostNodes(renderer, 'artifact-photo-group')).toHaveLength(1);
+    expect(renderer.root.findByType('ArtifactImage' as any).props.attachment).toBe(first);
+    expect(hostNodes(renderer, 'artifact-photo-position')[0]!.props.children.join('')).toBe(
+      '1 of 2',
+    );
+    expect(hostNodes(renderer, 'artifact-photo-position')[0]!.props.accessibilityLabel).toBe(
+      'Photo 1 of 2',
+    );
+    expect(hostNodes(renderer, 'artifact-photo-previous')[0]!.props.style).toMatchObject({
+      width: 44,
+      height: 44,
+    });
+
+    await act(async () => {
+      hostNodes(renderer, 'artifact-photo-next')[0]!.props.onPress();
+    });
+    expect(renderer.root.findByType('ArtifactImage' as any).props.attachment).toBe(second);
+    expect(hostNodes(renderer, 'artifact-title')[0]!.props.children).toBe('Second');
+    expect(hostNodes(renderer, 'artifact-photo-position')[0]!.props.children.join('')).toBe(
+      '2 of 2',
+    );
+
+    await act(async () => {
+      hostNodes(renderer, 'artifact-open')[0]!.props.onPress();
+      hostNodes(renderer, 'artifact-open-browser')[0]!.props.onPress();
+    });
+    expect(mocks.modalShow).toHaveBeenCalledWith(
+      expect.objectContaining({ props: expect.objectContaining({ attachment: second }) }),
+    );
+    expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalledWith(second);
+
+    await act(async () => {
+      hostNodes(renderer, 'artifact-photo-previous')[0]!.props.onPress();
+    });
+    expect(renderer.root.findByType('ArtifactImage' as any).props.attachment).toBe(first);
+  });
+
+  it('does not add photo navigation to a single-photo card', async () => {
+    const photo = artifactAttachment({ mimeType: 'image/jpeg', name: 'photo.jpg' });
+    const renderer = render(<ArtifactCard attachment={photo} />);
+    await flush();
+    expect(hostNodes(renderer, 'artifact-photo-next')).toHaveLength(0);
+    expect(hostNodes(renderer, 'artifact-photo-previous')).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'artifact-photo-position' })).toHaveLength(0);
   });
 
   // The audit found desktop had no image viewer at all: Open was gone and the
@@ -471,7 +569,9 @@ describe('the artifact card is the preview (mock 1b)', () => {
 
   it('the sandbox props ride the preview render', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body></body></html>'));
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body></body></html>'),
+    );
     render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
     expect(webviewCreated.length).toBeGreaterThan(0);

@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { RelayPublishError } from '@beeline/buzz-client';
-import { publishFailurePresentation } from './publish-failure';
+import {
+  publishFailurePresentation,
+  RAW_PHOTO_FILE_GUIDANCE,
+  RawPhotoDecodeError,
+} from './publish-failure';
 
 describe('publish failure dialog copy', () => {
+  it('presents RAW decode recovery without relay or technical-detail copy', () => {
+    expect(publishFailurePresentation(new RawPhotoDecodeError(new Error('unsupported')))).toEqual({
+      message: RAW_PHOTO_FILE_GUIDANCE,
+      retryable: false,
+    });
+  });
+
   it('renders safe typed recovery copy and exposes retry posture', () => {
     expect(
       publishFailurePresentation(

@@ -26,6 +26,7 @@ import {
   uploadChatAttachment,
   uploadChatAttachments,
 } from './chat-attachment';
+import { RAW_PHOTO_FILE_GUIDANCE, RawPhotoDecodeError } from './publish-failure';
 
 function segment(marker: number, payload: number[]): number[] {
   const length = payload.length + 2;
@@ -47,6 +48,35 @@ function jpegWithMetadata(): Uint8Array {
     13,
     0xff,
     0xd9,
+  ]);
+}
+
+function pngWithMetadata(): Uint8Array {
+  const chunk = (name: string, payload: number[]): number[] => [
+    0,
+    0,
+    0,
+    payload.length,
+    ...Buffer.from(name),
+    ...payload,
+    0,
+    0,
+    0,
+    0,
+  ];
+  return new Uint8Array([
+    137,
+    80,
+    78,
+    71,
+    13,
+    10,
+    26,
+    10,
+    ...chunk('IHDR', [1]),
+    ...chunk('tEXt', [...Buffer.from('private metadata')]),
+    ...chunk('IDAT', [2]),
+    ...chunk('IEND', []),
   ]);
 }
 
@@ -223,10 +253,12 @@ describe('chat attachment display metadata', () => {
     expect(Buffer.from(normalized).includes(Buffer.from('phone comment'))).toBe(false);
   });
 
-  it('re-encodes and scrubs both the chat photo and its thumbnail before upload', async () => {
-    mocks.manipulateAsync
-      .mockResolvedValueOnce({ uri: 'file:///encoded.jpg', width: 100, height: 80 })
-      .mockResolvedValueOnce({ uri: 'file:///thumbnail.jpg', width: 360, height: 288 });
+  it('preserves JPEG encoding while scrubbing metadata from the photo and thumbnail', async () => {
+    mocks.manipulateAsync.mockResolvedValueOnce({
+      uri: 'file:///thumbnail.jpg',
+      width: 360,
+      height: 288,
+    });
     mocks.readFileBytes.mockResolvedValue(jpegWithMetadata());
     const uploadMedia = vi
       .fn()
@@ -253,10 +285,12 @@ describe('chat attachment display metadata', () => {
       height: 80,
     });
 
-    expect(mocks.manipulateAsync).toHaveBeenNthCalledWith(1, 'content://gallery/14561', [], {
-      compress: 0.9,
-      format: 'jpeg',
-    });
+    expect(mocks.manipulateAsync).toHaveBeenCalledTimes(1);
+    expect(mocks.manipulateAsync).toHaveBeenCalledWith(
+      'content://gallery/14561',
+      [{ resize: { width: 360 } }],
+      { compress: 0.72, format: 'jpeg' },
+    );
     expect(uploadMedia).toHaveBeenCalledTimes(2);
     for (const [bytes, mimeType] of uploadMedia.mock.calls) {
       expect(mimeType).toBe('image/jpeg');
@@ -267,6 +301,34 @@ describe('chat attachment display metadata', () => {
       mimeType: 'image/jpeg',
       thumbnailUrl: 'https://relay.example/media/thumb.jpg',
     });
+  });
+
+  it('preserves PNG encoding while scrubbing metadata', async () => {
+    const original = pngWithMetadata();
+    mocks.readFileBytes.mockResolvedValueOnce(original);
+    mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/photo.png',
+      sha256: 'photo-hash',
+      size: original.byteLength,
+      type: 'image/png',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/photo.png',
+      name: 'photo.png',
+      mimeType: 'image/png',
+      size: original.byteLength,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    const [uploadedBytes, uploadedMimeType] = uploadMedia.mock.calls[0]!;
+    expect(uploadedMimeType).toBe('image/png');
+    expect(Buffer.from(uploadedBytes).includes(Buffer.from('private metadata'))).toBe(false);
+    expect(mocks.manipulateAsync).toHaveBeenCalledTimes(1);
+    expect(uploaded).toMatchObject({ name: 'photo.png', mimeType: 'image/png' });
   });
 
   it.each([
@@ -330,29 +392,116 @@ describe('chat attachment display metadata', () => {
     expect(uploaded).toMatchObject({ name: 'photo.webp', mimeType: 'image/webp' });
   });
 
-  it('uploads the reported 4.7 MB image file with its original bytes', async () => {
+  it.each([
+    ['image/gif', 'photo.gif'],
+    ['image/webp', 'photo.webp'],
+  ])('preserves %s photo bytes', async (mimeType, name) => {
+    const original = new Uint8Array([1, 2, 3, 4]);
+    mocks.readFileBytes.mockResolvedValueOnce(original);
+    mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: `https://relay.example/media/${name}`,
+      sha256: 'photo-hash',
+      size: original.byteLength,
+      type: mimeType,
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: `content://gallery/${name}`,
+      name,
+      mimeType,
+      size: original.byteLength,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    expect(uploadMedia).toHaveBeenCalledWith(original, mimeType);
+    expect(uploaded).toMatchObject({ name, mimeType });
+  });
+
+  it.each([
+    ['image/bmp', 'photo.bmp'],
+    ['image/x-adobe-dng', 'photo.dng'],
+  ])('converts a decodable %s photo to high-quality JPEG', async (mimeType, name) => {
+    mocks.manipulateAsync
+      .mockResolvedValueOnce({ uri: 'file:///converted.jpg', width: 100, height: 80 })
+      .mockRejectedValueOnce(new Error('thumbnail unavailable'));
+    mocks.readFileBytes.mockResolvedValueOnce(jpegWithMetadata());
+    const uploadMedia = vi.fn().mockResolvedValue({
+      url: 'https://relay.example/media/photo.jpg',
+      sha256: 'photo-hash',
+      size: 123,
+      type: 'image/jpeg',
+    });
+
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: `content://gallery/${name}`,
+      name,
+      mimeType,
+      size: 123,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    expect(mocks.manipulateAsync).toHaveBeenNthCalledWith(1, `content://gallery/${name}`, [], {
+      compress: 0.9,
+      format: 'jpeg',
+    });
+    expect(uploadMedia).toHaveBeenCalledWith(expect.any(Uint8Array), 'image/jpeg');
+    expect(uploaded).toMatchObject({ name: 'photo.jpg', mimeType: 'image/jpeg' });
+  });
+
+  it('shows Send as file guidance when a RAW photo cannot decode', async () => {
+    const decoderFailure = new Error('unsupported RAW variant');
+    mocks.manipulateAsync.mockRejectedValueOnce(decoderFailure);
+    const uploadMedia = vi.fn();
+
+    const upload = uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/photo.cr3',
+      name: 'photo.cr3',
+      mimeType: 'image/jpeg',
+      size: 123,
+      source: 'photo',
+      width: 100,
+      height: 80,
+    });
+
+    await expect(upload).rejects.toMatchObject({
+      name: 'RawPhotoDecodeError',
+      message: RAW_PHOTO_FILE_GUIDANCE,
+      cause: decoderFailure,
+    } satisfies Partial<RawPhotoDecodeError>);
+    expect(uploadMedia).not.toHaveBeenCalled();
+  });
+
+  it('uploads the reported 4.7 MB RAW file with its original bytes', async () => {
     const original = new Uint8Array(Math.floor(4.7 * 1024 * 1024));
     original[0] = 0x00;
     original[original.byteLength - 1] = 0xff;
     mocks.readFileBytes.mockResolvedValueOnce(original);
     mocks.manipulateAsync.mockRejectedValueOnce(new Error('thumbnail unavailable'));
     const uploadMedia = vi.fn().mockResolvedValue({
-      url: 'https://relay.example/media/original.heic',
+      url: 'https://relay.example/media/original.dng',
       sha256: 'file-hash',
       size: original.byteLength,
-      type: 'image/heic',
+      type: 'image/x-adobe-dng',
     });
 
     const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
-      uri: 'file:///cache/original.heic',
-      name: 'original.heic',
-      mimeType: 'image/heic',
+      uri: 'file:///cache/original.dng',
+      name: 'original.dng',
+      mimeType: 'image/x-adobe-dng',
       size: original.byteLength,
       source: 'file',
     });
 
     expect(uploadMedia.mock.calls[0]?.[0]).toBe(original);
-    expect(uploadMedia.mock.calls[0]?.[1]).toBe('image/heic');
-    expect(uploaded).toMatchObject({ name: 'original.heic', mimeType: 'image/heic' });
+    expect(uploadMedia.mock.calls[0]?.[1]).toBe('image/x-adobe-dng');
+    expect(uploaded).toMatchObject({
+      name: 'original.dng',
+      mimeType: 'image/x-adobe-dng',
+    });
   });
 });

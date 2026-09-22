@@ -3,12 +3,66 @@ import { writeAsStringAsync, EncodingType, cacheDirectory } from 'expo-file-syst
 import type { ClipboardImage } from 'expo-clipboard';
 import type { BuzzClient, AttachmentReference } from '@beeline/buzz-client';
 import { canonicalizeJpeg, canonicalizePng } from '@/buzz/avatar-png';
+import { RawPhotoDecodeError } from '@/buzz/publish-failure';
 import { readFileBytes } from '@/utils/readFileBytes';
 
 export const MAX_CHAT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_MESSAGE_ATTACHMENTS = 10;
 const THUMBNAIL_EDGE = 360;
 const PHOTO_JPEG_QUALITY = 0.9;
+type PreservedPhotoFormat = 'jpeg' | 'png' | 'gif' | 'webp';
+const PRESERVED_PHOTO_EXTENSIONS: Readonly<Record<string, PreservedPhotoFormat>> = {
+  gif: 'gif',
+  jpeg: 'jpeg',
+  jpg: 'jpeg',
+  png: 'png',
+  webp: 'webp',
+};
+const PRESERVED_PHOTO_MIME_TYPES: Readonly<Record<string, PreservedPhotoFormat>> = {
+  'image/gif': 'gif',
+  'image/jpeg': 'jpeg',
+  'image/jpg': 'jpeg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+const RAW_PHOTO_EXTENSIONS = new Set([
+  '3fr',
+  'arw',
+  'cr2',
+  'cr3',
+  'crw',
+  'dng',
+  'erf',
+  'iiq',
+  'kdc',
+  'mef',
+  'mos',
+  'mrw',
+  'nef',
+  'nrw',
+  'orf',
+  'pef',
+  'raf',
+  'raw',
+  'rwl',
+  'rw2',
+  'sr2',
+  'srw',
+  'x3f',
+]);
+const RAW_PHOTO_MIME_TYPES = new Set([
+  'image/dng',
+  'image/x-adobe-dng',
+  'image/x-canon-cr2',
+  'image/x-canon-cr3',
+  'image/x-fuji-raf',
+  'image/x-nikon-nef',
+  'image/x-olympus-orf',
+  'image/x-panasonic-rw2',
+  'image/x-pentax-pef',
+  'image/x-raw',
+  'image/x-sony-arw',
+]);
 
 export type PickedChatAttachment = {
   uri: string;
@@ -94,38 +148,46 @@ async function prepareImageForUpload(attachment: PickedChatAttachment): Promise<
 }> {
   const mimeType = attachment.mimeType.toLowerCase();
   const extension = attachment.name.split('.').pop()?.toLowerCase();
-  const heic =
-    mimeType === 'image/heic' ||
-    mimeType === 'image/heif' ||
-    mimeType === 'image/heic-sequence' ||
-    mimeType === 'image/heif-sequence' ||
-    extension === 'heic' ||
-    extension === 'heif';
-  const jpeg = mimeType === 'image/jpeg' || mimeType === 'image/jpg';
-  const png = mimeType === 'image/png';
-  if (!heic && !jpeg && !png) {
+  const raw = RAW_PHOTO_MIME_TYPES.has(mimeType) || RAW_PHOTO_EXTENSIONS.has(extension ?? '');
+  const preservedFormat =
+    (extension ? PRESERVED_PHOTO_EXTENSIONS[extension] : undefined) ??
+    PRESERVED_PHOTO_MIME_TYPES[mimeType];
+  if (!raw && preservedFormat) {
+    const bytes = await readFileBytes(attachment.uri);
     return {
-      bytes: await readFileBytes(attachment.uri),
-      mimeType: attachment.mimeType,
+      bytes:
+        preservedFormat === 'jpeg'
+          ? canonicalizeJpeg(bytes)
+          : preservedFormat === 'png'
+            ? canonicalizePng(bytes)
+            : bytes,
+      mimeType:
+        preservedFormat === 'jpeg'
+          ? 'image/jpeg'
+          : preservedFormat === 'png'
+            ? 'image/png'
+            : preservedFormat === 'gif'
+              ? 'image/gif'
+              : 'image/webp',
       name: attachment.name,
     };
   }
-  const encoded = await manipulateAsync(attachment.uri, [], {
-    compress: heic || jpeg ? PHOTO_JPEG_QUALITY : 1,
-    format: heic || jpeg ? SaveFormat.JPEG : SaveFormat.PNG,
-  });
+  let encoded: Awaited<ReturnType<typeof manipulateAsync>>;
+  try {
+    encoded = await manipulateAsync(attachment.uri, [], {
+      compress: PHOTO_JPEG_QUALITY,
+      format: SaveFormat.JPEG,
+    });
+  } catch (error) {
+    if (raw) throw new RawPhotoDecodeError(error);
+    throw error;
+  }
   const bytes = await readFileBytes(encoded.uri);
-  return heic || jpeg
-    ? {
-        bytes: canonicalizeJpeg(bytes),
-        mimeType: 'image/jpeg',
-        name: replaceExtension(attachment.name, 'jpg'),
-      }
-    : {
-        bytes: canonicalizePng(bytes),
-        mimeType: 'image/png',
-        name: replaceExtension(attachment.name, 'png'),
-      };
+  return {
+    bytes: canonicalizeJpeg(bytes),
+    mimeType: 'image/jpeg',
+    name: replaceExtension(attachment.name, 'jpg'),
+  };
 }
 
 async function uploadImageThumbnail(
@@ -156,7 +218,7 @@ export async function uploadChatAttachment(
   attachment: PickedChatAttachment,
 ): Promise<AttachmentReference> {
   const prepared =
-    attachment.source === 'photo' && attachment.mimeType.startsWith('image/')
+    attachment.source === 'photo'
       ? await prepareImageForUpload(attachment)
       : {
           bytes: await readFileBytes(attachment.uri),

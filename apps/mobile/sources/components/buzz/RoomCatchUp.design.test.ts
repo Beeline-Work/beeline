@@ -83,12 +83,41 @@ describe('the catch-up sheet', () => {
     expect(report).toContain('export function catchUpStripLabel');
     expect(boundary).not.toContain('catchUpSummaryText');
     expect(boundary).not.toMatch(/ new message|from \$\{/);
-    // Both lines go through the one roll.
-    expect([...report.matchAll(/catchUpAuthorRoll\(/g)].length).toBeGreaterThanOrEqual(3);
     // Speakers are distinct by pubkey; name-string dedup collapsed two people
     // who share a display name into one.
-    expect(boundary).toContain('other.pubkey === author.pubkey');
+    expect(report).toContain('other.pubkey === author.pubkey');
     expect(boundary).not.toContain('authorNames');
+  });
+
+  it('CHEV-15: no catch-up copy states a message count it cannot source', () => {
+    const report = readFileSync(path.join(__dirname, '../../buzz/room-catch-up-report.ts'), 'utf8');
+    const hook = readFileSync(path.join(__dirname, '../../buzz/use-new-message-control.ts'), 'utf8');
+    // There is no unread count in this product: the server serves
+    // `unread: boolean`, the queue count resets on every Room open, and the
+    // session marks a Room read at its tail on first fresh view. The strip
+    // dates the run; the sheet head names the window by its two ends.
+    expect(report).toContain('`${run}${when} · Catch me up`');
+    expect(report).toContain('`Since ${catchUpClock(startedAt)} · newest ${catchUpClock(endedAt)}`');
+    expect(report).not.toMatch(/msgs?['`]|\$\{count\}/);
+    // The badge keeps its own count, which only ever claims this visit.
+    expect(hook).toContain('badgeCount: newMessageBadgeCount(queue, newestMessageVisible)');
+    // One seam for a server-supplied count, and nothing feeds it yet.
+    expect(report).toContain('unreadCount?: number | null');
+    expect(hook).toContain('catchUpStripLabel({ since: unreadSinceAt })');
+    expect(hook).not.toContain('unreadCount:');
+  });
+
+  it('CHEV-16: the strip is gated on the server cursor, not on the live queue', () => {
+    const boundary = readFileSync(
+      path.join(__dirname, '../../buzz/room-new-message-boundary.ts'),
+      'utf8',
+    );
+    const hook = readFileSync(path.join(__dirname, '../../buzz/use-new-message-control.ts'), 'utf8');
+    expect(boundary).toContain('export function catchUpStripVisible(firstUnreadMessageId');
+    expect(boundary).not.toMatch(/catchUpStripVisible[\s\S]{0,200}queue\.count/);
+    expect(hook).toContain('catchUpVisible: catchUpStripVisible(firstUnreadMessageId)');
+    // The queue keeps a boundary and a count, and nothing that can be read out.
+    expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');
   });
 
   it('CHEV-11: no navigation slider grew beside any of it', () => {

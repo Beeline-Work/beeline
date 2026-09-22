@@ -2104,7 +2104,10 @@ export function BuzzChatSurface({
   // anything has queued) through the newest row — into the one seam that
   // builds the sheet's two blocks (`buzz/room-catch-up-report.ts`).
   const [catchUpSheetVisible, setCatchUpSheetVisible] = useState(false);
-  const catchUpBoundaryId = newMessageQueue.boundaryId ?? firstUnreadMessageId;
+  // The server's cursor first: it is the one boundary that knows where the
+  // reader fell behind BEFORE this visit. The live queue only answers for a
+  // Room that opened read and gained arrivals while they sat in history.
+  const catchUpBoundaryId = firstUnreadMessageId ?? newMessageQueue.boundaryId;
   const catchUpReport = useMemo(
     () =>
       catchUpSheetVisible

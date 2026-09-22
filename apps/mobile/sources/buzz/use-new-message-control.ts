@@ -136,12 +136,18 @@ export function useNewMessageControl({
     );
   }, []);
 
+  // The divider is the server's cursor and only ever the server's cursor. It
+  // retires after the reader reaches the newest row and stays retired when a
+  // later live batch arms the independent jump control. The strip stands for
+  // that same cursor but does NOT retire with the line: a Room opening at its
+  // tail sees the newest row at once, and the strip would be gone before the
+  // reader could reach for it.
+  const dividerRetired = dismissedDividerMessageId === firstUnreadMessageId;
+  const unreadSinceAt =
+    queueableMessages.find((message) => messageContainsBoundary(message, firstUnreadMessageId))
+      ?.timestamp ?? null;
   return {
-    // The divider is the server's cursor and only ever the server's cursor. It
-    // retires after the reader reaches the newest row and stays retired when a
-    // later live batch arms the independent jump control.
-    dividerMessageId:
-      dismissedDividerMessageId === firstUnreadMessageId ? null : firstUnreadMessageId,
+    dividerMessageId: dividerRetired ? null : firstUnreadMessageId,
     queue,
     discVisible: newestJumpDiscVisible({
       newestMessageId,
@@ -149,8 +155,9 @@ export function useNewMessageControl({
       hasObservedVisibility,
     }),
     badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
-    catchUpVisible: catchUpStripVisible(queue, newestMessageVisible),
-    catchUpSummary: catchUpStripLabel(queue),
+    catchUpVisible: catchUpStripVisible(firstUnreadMessageId),
+    // No count: there is none to state honestly (`room-catch-up-report.ts`).
+    catchUpSummary: catchUpStripLabel({ since: unreadSinceAt }),
     observeVisibleMessages,
     settleQueueAtBoundary,
   };

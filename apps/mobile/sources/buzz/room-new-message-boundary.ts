@@ -1,40 +1,20 @@
 import type { ChatDisplayMessage } from './room-view-presentation';
 
-/**
- * One speaker behind an arrival. Identity, not a display name: two people can
- * share a name, and counting them as one understates how many the reader is
- * behind on. The name is carried for the label and the handle disambiguates
- * it when a Room genuinely holds two of them.
- */
-export type CatchUpAuthor = {
-  pubkey: string;
-  name: string;
-  handle?: string;
-};
-
 export type NewMessageQueue = {
   /** The exact message id the divider represents; relay reports may be nested in a host row. */
   boundaryId: string | null;
-  /** Arrivals queued while the reader stayed in history during this visit. */
+  /**
+   * Arrivals queued while the reader stayed in history during THIS visit, and
+   * the only honest count in the product: it never claims to know what
+   * arrived while they were away. The badge is the one thing that draws it.
+   */
   count: number;
-  /** Who those arrivals are from, distinct by identity and oldest first. */
-  authors: readonly CatchUpAuthor[];
 };
 
 export const EMPTY_NEW_MESSAGE_QUEUE: NewMessageQueue = {
   boundaryId: null,
   count: 0,
-  authors: [],
 };
-
-/** Distinct by pubkey, first mention winning, so a shared name still counts twice. */
-export function distinctCatchUpAuthors(
-  authors: readonly CatchUpAuthor[],
-): readonly CatchUpAuthor[] {
-  return authors.filter(
-    (author, index) => authors.findIndex((other) => other.pubkey === author.pubkey) === index,
-  );
-}
 
 /** Folding may place a relayed message inside its host card. The divider belongs to the host row. */
 export function messageContainsBoundary(
@@ -91,43 +71,21 @@ export function queueIncomingMessages(
 ): NewMessageQueue {
   if (isPinnedToTail || arrivingIds.size === 0) return current;
   const incoming = messages.flatMap((message) =>
-    message.isUser
-      ? []
-      : messageBoundaryIds(message)
-          .filter((id) => arrivingIds.has(id))
-          .map((id) => ({ id, author: catchUpAuthorOf(message) })),
+    message.isUser ? [] : messageBoundaryIds(message).filter((id) => arrivingIds.has(id)),
   );
   if (incoming.length === 0) return current;
   // A zero count means the previous batch was visited. Its divider may stay
-  // in the ledger, but the next batch starts a new earliest-new boundary and
-  // a fresh roll of speakers: the strip stands for what is still unread.
+  // in the ledger, but the next batch starts a new earliest-new boundary.
   const carried = current.count > 0 ? current : EMPTY_NEW_MESSAGE_QUEUE;
   return {
-    boundaryId: current.count > 0 ? current.boundaryId : incoming[0]!.id,
+    boundaryId: current.count > 0 ? current.boundaryId : incoming[0]!,
     count: carried.count + incoming.length,
-    authors: distinctCatchUpAuthors([
-      ...carried.authors,
-      ...incoming.flatMap((arrival) => (arrival.author ? [arrival.author] : [])),
-    ]),
   };
 }
 
-/** The speaker a row is attributed to, or null for a row with no resolved identity. */
-export function catchUpAuthorOf(
-  message: Pick<ChatDisplayMessage, 'authorIdentity'>,
-): CatchUpAuthor | null {
-  const identity = message.authorIdentity;
-  if (!identity) return null;
-  return {
-    pubkey: identity.pubkey,
-    name: identity.name,
-    ...(identity.handle ? { handle: identity.handle } : {}),
-  };
-}
-
-/** Hide the strip after its landing while retaining that batch's jump target. */
+/** Clear the badge after its landing while retaining that batch's jump target. */
 export function acknowledgeNewMessageQueue(current: NewMessageQueue): NewMessageQueue {
-  return current.count > 0 ? { ...current, count: 0, authors: [] } : current;
+  return current.count > 0 ? { ...current, count: 0 } : current;
 }
 
 /**
@@ -181,10 +139,20 @@ export function newMessageBadgeCount(
   return newestMessageVisible ? 0 : queue.count;
 }
 
-/** The catch-up strip stands for the unread run itself, so an empty queue retires it. */
-export function catchUpStripVisible(
-  queue: NewMessageQueue,
-  newestMessageVisible: boolean,
-): boolean {
-  return queue.count > 0 && queue.boundaryId !== null && !newestMessageVisible;
+/**
+ * The strip stands for the server's unread cursor and nothing else, which is
+ * the same gate the `/catch-up` verb runs on (`canCatchUp`). It used to be
+ * drawn from the live queue, whose count only ever knew about arrivals during
+ * this visit — a strip sourced from that could not describe what the reader
+ * missed while away, which is the one thing it exists to describe.
+ *
+ * Only the cursor. Retiring it alongside the NEW MESSAGES divider was tried
+ * and is wrong: the divider retires the moment the newest row is seen, and a
+ * Room that opens at its tail sees that row immediately, so the strip
+ * vanished before the reader could reach for it in exactly the Room that
+ * needed it. The cursor clears when the session marks the Room read, and the
+ * strip goes with it.
+ */
+export function catchUpStripVisible(firstUnreadMessageId: string | null): boolean {
+  return firstUnreadMessageId !== null;
 }

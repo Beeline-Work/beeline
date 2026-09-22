@@ -1,12 +1,38 @@
 import type { ChatDisplayMessage } from './room-view-presentation';
-import {
-  boundaryRowIndex,
-  catchUpAuthorOf,
-  distinctCatchUpAuthors,
-  messageBoundaryIds,
-  type CatchUpAuthor,
-  type NewMessageQueue,
-} from './room-new-message-boundary';
+import { boundaryRowIndex } from './room-new-message-boundary';
+
+/**
+ * One speaker in a catch-up range. Identity, not a display name: two people
+ * can share a name, and folding them into one understates how many the reader
+ * is behind on. The handle disambiguates them when a Room holds both.
+ */
+export type CatchUpAuthor = {
+  pubkey: string;
+  name: string;
+  handle?: string;
+};
+
+/** Distinct by pubkey, first mention winning, so a shared name still counts twice. */
+export function distinctCatchUpAuthors(
+  authors: readonly CatchUpAuthor[],
+): readonly CatchUpAuthor[] {
+  return authors.filter(
+    (author, index) => authors.findIndex((other) => other.pubkey === author.pubkey) === index,
+  );
+}
+
+/** The speaker a row is attributed to, or null for a row with no resolved identity. */
+export function catchUpAuthorOf(
+  message: Pick<ChatDisplayMessage, 'authorIdentity'>,
+): CatchUpAuthor | null {
+  const identity = message.authorIdentity;
+  if (!identity) return null;
+  return {
+    pubkey: identity.pubkey,
+    name: identity.name,
+    ...(identity.handle ? { handle: identity.handle } : {}),
+  };
+}
 
 /**
  * The unread range, named by its two ends exactly as the catch-up surfaces
@@ -15,8 +41,6 @@ import {
 export type CatchUpRange = {
   boundaryId: string;
   newestId: string;
-  /** Durable ids in the range, so a folded run counts every fact it carries. */
-  count: number;
   startedAt: number;
   endedAt: number;
 };
@@ -78,18 +102,35 @@ export function catchUpAuthorRoll(authors: readonly CatchUpAuthor[]): string {
 }
 
 /**
- * The strip's one line: how far behind the reader is, and who they are behind
- * on. Uncompacted — the strip runs the width of the transcript and a reader
- * deciding whether to open the sheet is owed the real number.
+ * THE seam where a number may enter catch-up copy, and the only one.
  *
- * It lives here, beside the sheet's own blocks, so ONE module turns a
- * catch-up range into words. The strip used to phrase its own roll from the
- * queue, which is a second voice saying the same thing in its own dialect.
+ * There is no unread count in this product to print. The server serves
+ * `unread: boolean` per Room (`phone-service.ts`), the client's own
+ * `NewMessageQueue.count` resets on every Room open so it only ever knows
+ * about arrivals during this visit, and the session marks a Room read at its
+ * tail on the first fresh view (`useRoomSurfaceSession.ts`) — so no count
+ * available here can say how much the reader missed while away. A strip
+ * reading `42 new since 08:04` would be inventing that 42.
+ *
+ * `unreadCount` is where a server-supplied count slots in when one exists.
+ * Nothing supplies it today, and nothing may compute one from loaded rows and
+ * pass it here: partial history would understate the number and the strip
+ * would still be lying, just more quietly.
  */
-export function catchUpStripLabel(queue: NewMessageQueue): string {
-  const run = `${queue.count} new ${queue.count === 1 ? 'message' : 'messages'}`;
-  const roll = catchUpAuthorRoll(queue.authors);
-  return roll ? `${run} from ${roll}` : run;
+export function catchUpStripLabel({
+  since,
+  unreadCount,
+}: {
+  /** Timestamp of the first unread row — the boundary the reader fell behind at. */
+  since: number | null;
+  unreadCount?: number | null;
+}): string {
+  const run =
+    typeof unreadCount === 'number' && unreadCount > 0
+      ? `${unreadCount} new`
+      : 'New';
+  const when = since === null ? '' : ` since ${catchUpClock(since)}`;
+  return `${run}${when} · Catch me up`;
 }
 
 function messageLine(text: string): string {
@@ -139,7 +180,6 @@ export function buildCatchUpReport({
   const range = messages.slice(from, to + 1);
   if (range.length === 0) return null;
 
-  const count = range.reduce((total, message) => total + messageBoundaryIds(message).length, 0);
   const startedAt = range[0]!.timestamp;
   const endedAt = range.at(-1)!.timestamp;
 
@@ -156,19 +196,22 @@ export function buildCatchUpReport({
     ? range.filter((message) => message.mentionPubkeys?.includes(viewerPubkey)).length
     : 0;
 
-  const opening = `${count} ${count === 1 ? 'message' : 'messages'}${
-    authors.length > 0 ? ` from ${catchUpAuthorRoll(authors)}` : ''
-  }.`;
+  // Who, never how many. The rows this range covers are the rows the client
+  // happens to hold, so a total stated from them would be a guess dressed as
+  // a fact; the head states the window instead and lets the reader see it.
+  const roll = catchUpAuthorRoll(authors);
+  const opening = roll ? `From ${roll}.` : '';
   const clauses = [
     pollsOpened > 0 ? `${pollsOpened} ${pollsOpened === 1 ? 'poll' : 'polls'} opened` : null,
     merges > 0 ? `${merges} ${merges === 1 ? 'merge' : 'merges'} landed` : null,
     failures > 0 ? `${failures} ${failures === 1 ? 'failure' : 'failures'} reported` : null,
     mentions > 0 ? `you were mentioned ${mentions === 1 ? 'once' : `${mentions} times`}` : null,
   ].filter((clause): clause is string => clause !== null);
-  const summary =
+  const tail =
     clauses.length === 0
-      ? opening
-      : `${opening} ${clauses.join(', ').replace(/^./, (first) => first.toUpperCase())}.`;
+      ? ''
+      : `${clauses.join(', ').replace(/^./, (first) => first.toUpperCase())}.`;
+  const summary = [opening, tail].filter(Boolean).join(' ') || 'Nothing but messages.';
 
   const needsYou = range.flatMap((message): CatchUpNeedsYouItem[] => {
     const requesterName = message.authorIdentity?.name ?? 'Someone';
@@ -229,8 +272,10 @@ export function buildCatchUpReport({
   });
 
   return {
-    range: { boundaryId, newestId, count, startedAt, endedAt },
-    rangeLabel: `${count} ${count === 1 ? 'msg' : 'msgs'} · ${catchUpClock(startedAt)}–${catchUpClock(endedAt)}`,
+    range: { boundaryId, newestId, startedAt, endedAt },
+    // The window, by its two ends. A count here would be a count of loaded
+    // rows presenting itself as the size of the run.
+    rangeLabel: `Since ${catchUpClock(startedAt)} · newest ${catchUpClock(endedAt)}`,
     summary,
     needsYou,
   };

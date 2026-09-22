@@ -22,47 +22,37 @@ function said(id: string, name: string, minutes: number, text = id): ChatDisplay
 const identity = (name: string) => ({ pubkey: `pk-${name}`, kind: 'agent' as const, name });
 
 describe('the catch-up strip label', () => {
-  it('CHEV-03: is this module’s words too, so both doors say the same thing', () => {
-    const sol = { pubkey: 'pk-sol', name: 'Sol' };
-    const nerd = { pubkey: 'pk-nerd', name: 'Nerd' };
-    expect(catchUpStripLabel({ boundaryId: 'a', count: 1, authors: [sol] })).toBe(
-      '1 new message from Sol',
+  it('CHEV-15: states when the reader fell behind, never how much they missed', () => {
+    // There is no unread count in this product to print: the server serves
+    // `unread: boolean`, the client's queue count resets on every Room open,
+    // and the session marks a Room read at its tail on first fresh view. A
+    // number here would be invented.
+    expect(catchUpStripLabel({ since: at(4) })).toBe(
+      `New since ${catchUpClock(at(4))} · Catch me up`,
     );
-    expect(catchUpStripLabel({ boundaryId: 'a', count: 2, authors: [sol, nerd] })).toBe(
-      '2 new messages from Sol and Nerd',
-    );
-    expect(
-      catchUpStripLabel({
-        boundaryId: 'a',
-        count: 5,
-        authors: [sol, nerd, { pubkey: 'pk-hoots', name: 'Hoots' }, { pubkey: 'pk-milo', name: 'Milo' }],
-      }),
-    ).toBe('5 new messages from Sol, Nerd and 2 others');
-    // Rows with no resolved identity leave the count standing alone.
-    expect(catchUpStripLabel({ boundaryId: 'a', count: 3, authors: [] })).toBe('3 new messages');
+    expect(catchUpStripLabel({ since: null })).toBe('New · Catch me up');
+    expect(catchUpStripLabel({ since: at(4) })).not.toMatch(/\d+ new|messages? from/);
   });
 
-  it('CHEV-03: keeps two people who share a name apart instead of collapsing them', () => {
-    const one = { pubkey: 'pk-1', name: 'Sol', handle: 'sol' };
-    const other = { pubkey: 'pk-2', name: 'Sol', handle: '@sol-two' };
-    // Both are counted, and the handle is what tells them apart in the line.
-    expect(catchUpStripLabel({ boundaryId: 'a', count: 2, authors: [one, other] })).toBe(
-      '2 new messages from Sol (@sol) and Sol (@sol-two)',
+  it('CHEV-15: prints a count only when a server supplies one', () => {
+    // The one seam a real unread count slots into. Nothing supplies it today,
+    // and a count computed from loaded rows must never be passed here.
+    expect(catchUpStripLabel({ since: at(4), unreadCount: 42 })).toBe(
+      `42 new since ${catchUpClock(at(4))} · Catch me up`,
     );
-    // A third speaker pushes the pair into the counted remainder, still by
-    // identity: dedup by name would have said `and 1 other` here.
-    expect(
-      catchUpStripLabel({
-        boundaryId: 'a',
-        count: 3,
-        authors: [one, other, { pubkey: 'pk-3', name: 'Nerd' }],
-      }),
-    ).toBe('3 new messages from Sol (@sol), Sol (@sol-two) and 1 other');
+    // An absent or empty count falls back to the countless line rather than
+    // printing a zero the reader would read as fact.
+    expect(catchUpStripLabel({ since: at(4), unreadCount: null })).toBe(
+      `New since ${catchUpClock(at(4))} · Catch me up`,
+    );
+    expect(catchUpStripLabel({ since: at(4), unreadCount: 0 })).toBe(
+      `New since ${catchUpClock(at(4))} · Catch me up`,
+    );
   });
 });
 
 describe('the catch-up report', () => {
-  it('CHEV-04: states the range by count and clock, boundary through newest', () => {
+  it('CHEV-04: states the range by its two ends, boundary through newest', () => {
     const messages = [
       said('read-0', 'Sol', 0),
       said('new-0', 'Sol', 10),
@@ -76,17 +66,21 @@ describe('the catch-up report', () => {
       viewerPubkey: VIEWER,
     });
 
-    // Four durable ids across three rows: a fold counts every fact it carries.
     expect(report?.range).toEqual({
       boundaryId: 'new-0',
       newestId: 'new-2',
-      count: 4,
       startedAt: at(10),
       endedAt: at(102),
     });
-    expect(report?.rangeLabel).toBe(`4 msgs · ${catchUpClock(at(10))}–${catchUpClock(at(102))}`);
+    // The head names the window. It cannot name a size: these are the rows
+    // the client happens to hold, not the run the reader actually missed.
+    expect(report?.rangeLabel).toBe(
+      `Since ${catchUpClock(at(10))} · newest ${catchUpClock(at(102))}`,
+    );
+    expect(report?.rangeLabel).not.toMatch(/\d+\s*(msgs?|messages?)/);
     // The row before the boundary is read history and is not in the range.
-    expect(report?.summary).toContain('4 messages from Sol and Nerd');
+    expect(report?.summary).toBe('From Sol and Nerd.');
+    expect(report?.summary).not.toMatch(/^\d/);
   });
 
   it('CHEV-04: refuses a range it cannot resolve rather than guessing one', () => {
@@ -135,7 +129,7 @@ describe('the catch-up report', () => {
     });
 
     expect(report?.summary).toBe(
-      '4 messages from Sol, Nerd and 1 other. 1 poll opened, 1 merge landed, you were mentioned once.',
+      'From Sol, Nerd and 1 other. 1 poll opened, 1 merge landed, you were mentioned once.',
     );
   });
 
@@ -203,6 +197,23 @@ describe('the catch-up report', () => {
         at: at(12),
       },
     ]);
+  });
+
+  it('CHEV-03: rolls the range by speaker identity, not by display name', () => {
+    // Two DIFFERENT people both called Sol. Deduplicating the name strings
+    // lost the second one; the handle is what tells them apart.
+    const sol = said('new-0', 'Sol', 0);
+    const otherSol = {
+      ...said('new-1', 'Sol', 2),
+      authorIdentity: { pubkey: 'pk-other', kind: 'human' as const, name: 'Sol', handle: 'sol-two' },
+    };
+    const report = buildCatchUpReport({
+      messages: [{ ...sol, authorIdentity: { ...sol.authorIdentity!, handle: 'sol' } }, otherSol],
+      boundaryId: 'new-0',
+      newestId: 'new-1',
+      viewerPubkey: VIEWER,
+    });
+    expect(report?.summary).toBe('From Sol (@sol) and Sol (@sol-two).');
   });
 
   it('CHEV-13: names the person who asked for an edit, not the agent that filed it', () => {

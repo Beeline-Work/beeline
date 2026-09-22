@@ -29,6 +29,7 @@ vi.mock('@/components/buzz/Ledger', () => ({
 const { useRoomMessageRenderItem } = await import('./room-message-cell');
 const { useNewMessageControl } = await import('./use-new-message-control');
 const { compactNewMessageCount } = await import('./room-new-message-boundary');
+const { catchUpClock } = await import('./room-catch-up-report');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -195,6 +196,11 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
+    // The arrival raises the BADGE. The strip stands for the server's cursor,
+    // which the reader reaching the newest row does not clear — only the
+    // session's own markRead does — so it is still there for the divider that
+    // has gone.
+    expect(badges(renderer)).toEqual(['1']);
     expect(strips(renderer)).toHaveLength(1);
     expect(dividerRowIds(renderer)).toEqual([]);
   });
@@ -225,7 +231,9 @@ describe('the transcript new-message control', () => {
       pinnedToTail: false,
     });
     expect(badges(renderer)).toEqual(['1']);
-    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe('1 new message');
+    // A Room that opened read has no cursor, so nothing was missed while away
+    // and no strip is owed — however much arrives while the reader sits here.
+    expect(strips(renderer)).toHaveLength(0);
 
     // The reader scrolls back to the tail under their own finger. No tap on the
     // disc: reaching the newest row is the whole thing the badge counted towards.
@@ -244,6 +252,8 @@ describe('the transcript new-message control', () => {
 
   it('UDIV-02: stays hidden while the newest row is on screen, however far off the tail', () => {
     const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
+    // The reader is in history, so the disc that carries the badge is up.
+    report([SEED[1]!, SEED[2]!]);
     const arrived = [...SEED, row('arrival-0', 5)];
     update(renderer, {
       ...AT_TAIL,
@@ -252,11 +262,10 @@ describe('the transcript new-message control', () => {
       pinnedToTail: false,
     });
     // Queued, because tail distance said the reader was away from the tail.
-    expect(strips(renderer)).toHaveLength(1);
+    expect(badges(renderer)).toEqual(['1']);
 
     // But the reader is looking straight at the arrival. Slack shows nothing here.
     report([SEED[4]!, arrived[5]!]);
-    expect(strips(renderer)).toHaveLength(0);
     expect(discs(renderer)).toHaveLength(0);
     expect(badges(renderer)).toEqual([]);
   });
@@ -278,7 +287,6 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    expect(strips(renderer)).toHaveLength(1);
     expect(badges(renderer)).toEqual(['1']);
   });
 
@@ -302,25 +310,35 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual([]);
   });
 
-  it('CHEV-03: the strip names the run the reader is behind on, and retires with it', () => {
-    const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
+  it('CHEV-15: the strip dates the unread run and never counts it', () => {
+    // A Room that opened with an unread cursor. The strip says when the run
+    // began and nothing about its size: no count in this product can say how
+    // much arrived while the reader was away (`room-catch-up-report.ts`).
+    const open: HarnessProps = { ...AT_TAIL, firstUnreadMessageId: 'seed-2', pinnedToTail: false };
+    const renderer = mount(open);
     report([SEED[1]!, SEED[2]!]);
 
-    const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
-    update(renderer, {
-      ...AT_TAIL,
-      messages: arrived,
-      arrivingIds: new Set(['arrival-0', 'arrival-1']),
-      pinnedToTail: false,
-    });
-    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(
-      '2 new messages from Sol and Nerd',
-    );
-    expect(badges(renderer)).toEqual(['2']);
+    const label = strips(renderer)[0]!.findByType(Text).props.children as string;
+    expect(label).toBe(`New since ${catchUpClock(SEED[2]!.timestamp)} · Catch me up`);
+    expect(label).not.toMatch(/\d+ new|messages? from/);
 
-    // Reaching the newest row is the reader catching up; the strip has nothing
-    // left to summarise.
+    // Arrivals during the visit raise the badge and leave the line alone.
+    const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
+    update(renderer, { ...open, messages: arrived, arrivingIds: new Set(['arrival-0', 'arrival-1']) });
+    expect(badges(renderer)).toEqual(['2']);
+    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
+
+    // Reaching the newest row retires the DIVIDER. It does not retire the
+    // strip: the cursor is the server's to clear, and a Room that opens at
+    // its tail would otherwise lose the strip before the reader could reach
+    // for it — which is exactly the Room that needs it.
     report([arrived[6]!]);
+    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(1);
+    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
+
+    // And the cursor going away takes the strip with it.
+    update(renderer, { ...open, messages: arrived, firstUnreadMessageId: null });
     expect(strips(renderer)).toHaveLength(0);
   });
 
@@ -335,9 +353,11 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    // The strip is up, and the transcript still carries no divider at all —
-    // the reported failure was one appearing beneath that very arrival.
-    expect(strips(renderer)).toHaveLength(1);
+    // The badge is up, and the transcript still carries no divider at all —
+    // the reported failure was one appearing beneath that very arrival. No
+    // strip either: a Room that opened read has no unread run to date.
+    expect(badges(renderer)).toEqual(['1']);
+    expect(strips(renderer)).toHaveLength(0);
     expect(dividerRowIds(renderer)).toEqual([]);
   });
 

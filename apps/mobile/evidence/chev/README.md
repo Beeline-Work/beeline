@@ -1,9 +1,9 @@
 # CHEV disc-chevron and catch-up-sheet proof
 
 These frames are supporting evidence. The executable regressions are
-`sources/buzz/room-new-message-boundary.test.ts` (CHEV-01/02/03),
-`sources/buzz/room-catch-up-report.test.ts` (CHEV-04/05/06),
-`sources/components/buzz/RoomCatchUp.design.test.ts` (CHEV-07…11), and
+`sources/buzz/room-new-message-boundary.test.ts` (CHEV-01/02/16),
+`sources/buzz/room-catch-up-report.test.ts` (CHEV-03/04/05/06/13/15),
+`sources/components/buzz/RoomCatchUp.design.test.ts` (CHEV-07…16), and
 `sources/buzz/use-new-message-control.test.tsx`, which mounts the production
 hook through the same transitions; start there.
 
@@ -18,68 +18,65 @@ removed after capture — the same method as `evidence/udiv`.
 The proof entry is not a re-implementation. It mounts the production hook
 (`buzz/use-new-message-control.ts`), the production controls and sheet
 (`components/buzz/RoomCatchUpControls.tsx`, `RoomCatchUpSheet.tsx`), the
-production report seam (`buzz/room-catch-up-report.ts`), and the production
-inverted `FlatList` settings. Only the row bodies and the RECEIVE button are
-stand-ins; the three arrivals carry a real open poll, a real pending
-repository-edit permission, and a real mention of the viewer, so Needs you is
-populated the way a Room populates it, and two of the three speakers are
-distinct identities sharing one display name. The readout line prints the
-hook's outputs verbatim.
+production report seam (`buzz/room-catch-up-report.ts`), the production
+palette entry (`buzz/slash-verbs.ts`), and the production inverted `FlatList`
+settings. Only the row bodies and the two buttons are stand-ins. The Room
+opens with a server cursor at `seed-20`, and what was missed carries a real
+open poll, a real pending repository-edit permission whose requester is NOT
+its author, and a real mention of the viewer.
 
-| | pill (before) | disc + sheet (this branch) |
-| --- | --- | --- |
-| shows when | unread mail is off screen | the newest row is off screen |
-| press lands at | the first unread message | the newest message |
-| count clears | on a press | at the newest row; the disc stays |
-| what you missed | `9+ new` | a strip, and the sheet behind it |
+## No count in the strip
+
+There is no unread count in this product to print. The server serves
+`unread: boolean` per Room (`phone-service.ts:1147`); the client's
+`NewMessageQueue.count` resets on every Room open, so it only ever knows about
+arrivals during the current visit; and the session marks a Room read at its
+tail on the first fresh view (`useRoomSurfaceSession.ts:891`). So the strip
+dates the run — `New since 07:40 · Catch me up` — and the sheet head names the
+window by its two ends. `catchUpStripLabel` carries one `unreadCount` seam for
+a server-supplied number; nothing feeds it, and nothing may feed it a count
+derived from loaded rows.
+
+The badge is unchanged and keeps its count, because that count is honest: it
+only ever claims arrivals during this visit, and it caps at `9+`.
 
 ## Frames
 
-`01-history-disc-no-badge.png` — the reader scrolls up into history with
-nothing new waiting. `disc: shown · badge: none`, and the 44pt disc is on
-screen beside `Seed message 14`. The pill showed nothing here at all.
+`01-history-disc-no-badge.png` — the reader is in history with nothing new
+since they arrived. The 44pt disc is up with no badge, and the strip sits
+under the Room header because the server cursor is set.
 
-`02-badge-and-strip-in-history.png` — three messages arrive below the fold
-while the reader stays in history. The badge reads `3` on the disc's corner and
-the strip under the Room header reads `3 new messages from Sol (@sol), Sol
-(@sol-two) and 1 …`, ellipsized because the strip is one line by design. Two
-of those three speakers are DIFFERENT people who share the display name `Sol`:
-the roll counts them by identity and tells them apart by handle. Deduplicating
-display names — what the strip did before — would have counted them as one and
-undercounted how many the reader is behind on.
+`02-strip-dates-the-run.png` — two messages arrive during the visit. The badge
+reads `2`; the strip still reads `New since 07:40 · Catch me up`, unchanged,
+because arrivals the reader can see are not what it describes.
 
-`03-badge-cleared-by-visibility.png` — the reader scrolls back to the tail
-under their own finger, no press on anything. The three arrivals are on screen
-and the readout reads `badge: none`.
+`03-badge-cleared-by-visibility.png` — the reader scrolls to the tail under
+their own finger, no press on anything: `badge: none`. The strip stays, since
+only the session's own markRead clears the cursor it stands for.
 
 `04-sheet-from-strip.png` — the strip is the visible door. One tap opens the
-bottom-anchored sheet: head `Catch up` / `3 msgs · 07:44–09:02`, then SUMMARY
-(`3 messages from Sol (@sol), Sol (@sol-two) and 1 other. 1 poll opened, you
-were mentioned once.` — the same roll the strip used, from the same module),
-then NEEDS YOU as ONE list — `Ship Friday?` / `Niglet · 07:44`, `Repository
-edit waiting on you: beeline` / `Sol · 08:00`, `can you take the disc offset
-one?` / `Nerd · 09:02`. Two blocks, no third, no control but dismissal.
+bottom-anchored sheet: head `Catch up` / `Since 07:40 · newest 09:02`, then
+SUMMARY (`From Milo, Sol (@sol) and 2 others. 1 poll opened, you were
+mentioned once.` — who, never how many), then NEEDS YOU as ONE list:
+`Ship Friday?` / `Niglet · 07:44`, `Repository edit waiting on you: beeline` /
+`lunchboxfortwo · 08:00`, `can you take the disc offset one?` / `Nerd · 09:02`.
+Two blocks, no third, no control but dismissal.
 
-`05-disc-tap-lands-at-newest.png` — a SHORT press on the disc still lands on
-the tail and opens nothing: the newest row is the last on screen and the sheet
-stays closed.
+`05-disc-tap-lands-at-newest.png` — a SHORT press on the disc lands on the
+tail and opens nothing.
 
 `06-sheet-closed-before-long-press.png` / `07-sheet-from-badge-long-press.png`
-— the long-press door, shown against a verified-closed sheet first
-(`sheet: closed`, badge still `3`), then a 900ms press on the badge alone
-reopening the same sheet. The screen-reader equivalent is the registered
-`catchUp` accessibility action on the same control, which a screenshot cannot
-show; it is pinned in `RoomCatchUp.design.test.ts` (CHEV-09).
+— the long-press door, shown against a verified-closed sheet first (badge
+still `2`), then a 900ms press on the badge alone opening the sheet. The
+screen-reader equivalent is the registered `catchUp` accessibility action on
+the same control, which a screenshot cannot show; it is pinned in
+`RoomCatchUp.design.test.ts` (CHEV-09).
 
-`08-catch-up-verb-closed.png` / `09-sheet-from-catch-up-verb.png` — the third
-door. The row carries the production palette entry verbatim (`/catch-up — See
-what you missed`, from `buzz/slash-verbs.ts`); pressing it runs the same
-`openCatchUpSheet` the surface's `case 'catch-up'` now runs, and the readout
-reads `door: /catch-up verb` over the same `3 msgs · 07:44–09:02` report. The
-verb scrolled to the first unread row before this.
+`08-sheet-from-catch-up-verb.png` — the third door. The row carries the
+production palette entry verbatim (`/catch-up — See what you missed`) and
+opens the same report: `door: /catch-up verb`.
 
-Frame `09` also carries the attribution fix: the repository-edit row reads
-`lunchboxfortwo · 08:00`, the person who ASKED for the edit. That card is
-authored by the agent `Sol (@sol-two)` and names its requester by pubkey, so
-attributing it to its author — what the sheet did before — put the agent's
-name against a decision a person had asked for.
+The `lunchboxfortwo · 08:00` line is the attribution fix: that card is authored
+by the agent `Sol (@sol-two)` and names its requester by pubkey, so
+attributing it to its author put the agent's name against a decision a person
+had asked for.

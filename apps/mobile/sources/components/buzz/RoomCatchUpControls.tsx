@@ -59,7 +59,7 @@ export function RoomCatchUpControls({
     <>
       {catchUpVisible && (
         <Pressable
-          accessibilityLabel={`${catchUpSummary}. Open catch up`}
+          accessibilityLabel={catchUpSummary}
           accessibilityRole="button"
           onPress={onOpenCatchUp}
           style={({ pressed }) => [styles.strip, pressed && styles.pressed]}

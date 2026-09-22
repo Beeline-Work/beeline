@@ -46,7 +46,7 @@ describe('new-message boundary', () => {
         arrivingIds: new Set(['new-fact']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-fact', count: 1, authors: [] });
+    ).toEqual({ boundaryId: 'new-fact', count: 1 });
   });
 
   it('holds history, anchors the first incoming row, and accumulates later arrivals', () => {
@@ -55,14 +55,14 @@ describe('new-message boundary', () => {
       arrivingIds: new Set(['new-1', 'new-2']),
       isPinnedToTail: false,
     });
-    expect(first).toEqual({ boundaryId: 'new-1', count: 2, authors: [] });
+    expect(first).toEqual({ boundaryId: 'new-1', count: 2 });
     expect(
       queueIncomingMessages(first, {
         messages: [message('read'), message('new-1'), message('new-2'), message('new-3')],
         arrivingIds: new Set(['new-3']),
         isPinnedToTail: false,
       }),
-    ).toEqual({ boundaryId: 'new-1', count: 3, authors: [] });
+    ).toEqual({ boundaryId: 'new-1', count: 3 });
   });
 
   it('does not queue the viewer own send or an arrival already followed at the tail', () => {
@@ -93,20 +93,13 @@ describe('new-message boundary', () => {
     expect(newestTranscriptRowId([])).toBeNull();
   });
 
-  it('hides the catch-up strip while any pixel of the newest message is on screen', () => {
-    // UDIV-02: the reader is a finger's width above the geometric tail, so
-    // the pin test says "not at the tail" and the batch queues — but they
-    // are looking straight at the newest message, so there is nothing to
-    // catch up on and Slack shows no strip.
-    const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
-      messages: [message('read'), message('new-1')],
-      arrivingIds: new Set(['new-1']),
-      isPinnedToTail: false,
-    });
-    expect(queued).toEqual({ boundaryId: 'new-1', count: 1, authors: [] });
-    expect(catchUpStripVisible(queued, true)).toBe(false);
-    expect(catchUpStripVisible(queued, false)).toBe(true);
-    expect(catchUpStripVisible(EMPTY_NEW_MESSAGE_QUEUE, false)).toBe(false);
+  it('CHEV-16: draws the strip from the server cursor, never from the live queue', () => {
+    // The queue count only ever knows about arrivals during THIS visit, so a
+    // strip sourced from it could not stand for what the reader missed while
+    // away — the one thing it exists to stand for. The cursor is the gate,
+    // which is the gate `/catch-up` itself runs on.
+    expect(catchUpStripVisible('new-1')).toBe(true);
+    expect(catchUpStripVisible(null)).toBe(false);
   });
 
   it('CHEV-01: shows the disc for an off-screen newest row with no queue behind it', () => {
@@ -150,34 +143,16 @@ describe('new-message boundary', () => {
     ).toBe(true);
   });
 
-  it('CHEV-03: rolls the queue up by speaker identity, not by display name', () => {
-    const two = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+  it('CHEV-16: carries no speaker roll of its own, only the per-visit count', () => {
+    // The roll lives where the words are made (`room-catch-up-report.ts`).
+    // The queue is arrival bookkeeping: a boundary and a count, nothing that
+    // could be phrased at a reader.
+    const queued = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
       messages: [from('new-1', 'Sol'), from('new-2', 'Nerd')],
       arrivingIds: new Set(['new-1', 'new-2']),
       isPinnedToTail: false,
     });
-    expect(two.authors).toEqual([
-      { pubkey: 'pk-Sol', name: 'Sol' },
-      { pubkey: 'pk-Nerd', name: 'Nerd' },
-    ]);
-
-    // The same speaker again is the same entry; a DIFFERENT person who happens
-    // to share that name is not. Deduplicating the strings lost the second one
-    // and undercounted how many the reader was behind on.
-    const sameName = queueIncomingMessages(two, {
-      messages: [
-        from('new-3', 'Sol'),
-        { ...from('new-4', 'Sol'), authorIdentity: { pubkey: 'pk-other', kind: 'human', name: 'Sol' } },
-      ],
-      arrivingIds: new Set(['new-3', 'new-4']),
-      isPinnedToTail: false,
-    });
-    expect(sameName.authors).toEqual([
-      { pubkey: 'pk-Sol', name: 'Sol' },
-      { pubkey: 'pk-Nerd', name: 'Nerd' },
-      { pubkey: 'pk-other', name: 'Sol' },
-    ]);
-    expect(sameName.count).toBe(4);
+    expect(Object.keys(queued).sort()).toEqual(['boundaryId', 'count']);
   });
 
   it('settles the queue when the reader scrolls back to the newest message', () => {
@@ -191,30 +166,20 @@ describe('new-message boundary', () => {
     });
     const reachedTheTail = acknowledgeNewMessageQueue(queued);
     expect(reachedTheTail.count).toBe(0);
-    expect(catchUpStripVisible(reachedTheTail, true)).toBe(false);
     // Scrolling away from a settled queue cannot bring the old count back.
-    expect(catchUpStripVisible(reachedTheTail, false)).toBe(false);
     expect(newMessageBadgeCount(reachedTheTail, false)).toBe(0);
+    expect(newMessageBadgeCount(reachedTheTail, true)).toBe(0);
   });
 
   it('keeps the visited divider but starts the next queue at its own earliest row', () => {
-    const visited = acknowledgeNewMessageQueue({
-      boundaryId: 'new-1',
-      count: 3,
-      authors: [{ pubkey: 'pk-Sol', name: 'Sol' }],
-    });
-    expect(visited).toEqual({ boundaryId: 'new-1', count: 0, authors: [] });
+    const visited = acknowledgeNewMessageQueue({ boundaryId: 'new-1', count: 3 });
+    expect(visited).toEqual({ boundaryId: 'new-1', count: 0 });
     expect(
       queueIncomingMessages(visited, {
         messages: [message('new-1'), from('new-4', 'Nerd'), from('new-5', 'Nerd')],
         arrivingIds: new Set(['new-4', 'new-5']),
         isPinnedToTail: false,
       }),
-      // The visited batch's speakers do not carry into the next run.
-    ).toEqual({
-      boundaryId: 'new-4',
-      count: 2,
-      authors: [{ pubkey: 'pk-Nerd', name: 'Nerd' }],
-    });
+    ).toEqual({ boundaryId: 'new-4', count: 2 });
   });
 });

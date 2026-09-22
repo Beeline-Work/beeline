@@ -497,11 +497,13 @@ describe('workbench connectors', () => {
       workspaceId: WORKSPACE,
       connectionId,
     })) as {
-      connection: { reference: string };
+      connection: { reference: string; fieldNames: string[]; createdAt: number };
       grants: { grantId: string }[];
       ledger: { operation: string }[];
     };
     expect(detail.connection.reference).toBe('github.com/acme/tooling');
+    expect(detail.connection.fieldNames).toEqual(['token']);
+    expect(detail.connection.createdAt).toBeGreaterThan(0);
     expect(detail.grants.map((grant) => grant.grantId)).toEqual(['hoots']);
     expect(detail.ledger).toHaveLength(1);
 

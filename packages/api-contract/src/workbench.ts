@@ -106,6 +106,8 @@ export type WorkbenchConnectionView = {
   readonly service: string | null;
   readonly label: string;
   readonly allowedHosts: readonly string[];
+  /** Vault field names only. Secret values never cross this boundary. */
+  readonly fieldNames: readonly string[];
   /** The brand domain for the row's icon, or `null` to draw the lettermark. */
   readonly faviconDomain: string | null;
   readonly state: 'active' | 'error';

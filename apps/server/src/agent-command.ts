@@ -525,11 +525,21 @@ export async function authorizeCommandOutput(
           )
         ).rows[0]
       : undefined;
+  // No lease-expiry refusal here, deliberately. The lookup above already pins
+  // `generation_id`, so every row that reaches this point belongs to the
+  // execution that owns the command — a stale generation is filtered out
+  // before it can be judged, and `claimAgentCommand` is the one place that
+  // decides when a DIFFERENT generation may take over an expired lease. So an
+  // expiry test here can only ever refuse the live owner. It did: the turn
+  // heartbeat is the sole writer that refreshes the lease during a turn, so
+  // one >=90s gap in successful receipts expired the lease, the next heartbeat
+  // was refused for the expired lease, and a refusal refreshes nothing — every
+  // later heartbeat was refused too. `agent_turns.created_at` then stayed
+  // stale and ConnectionPresence declared a genuinely working turn stalled and
+  // restarted the helper. One transient gap became permanent.
   if (
     !row ||
-    (row.state !== 'claimed' && !(allowCompleted && row.state === 'complete')) ||
-    (row.state === 'claimed' &&
-      (!row.lease_expires_at || row.lease_expires_at.getTime() <= Date.now()))
+    (row.state !== 'claimed' && !(allowCompleted && row.state === 'complete'))
   ) {
     console.error('command output rejected', {
       command: row?.id,

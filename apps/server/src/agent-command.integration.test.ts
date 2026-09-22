@@ -1524,3 +1524,66 @@ describe('Room/corner relays', () => {
     ).toBeUndefined();
   });
 });
+
+describe('heartbeat authority across a lapsed lease', () => {
+  // A turn is killed at 90s of silence, and its heartbeat is the only writer
+  // that pushes `agent_turns.created_at` forward during the turn. The command
+  // lease is also 90s and the same heartbeat is its only refresher, so any
+  // gap long enough to expire the lease used to make the next heartbeat a
+  // refusal — and a refusal refreshes nothing, so every later heartbeat was
+  // refused too and a working turn was declared stalled. `authorizeCommandOutput`
+  // already pins `generation_id`, so the expiry could only ever refuse the
+  // live owner; `claimAgentCommand` remains the one place a DIFFERENT
+  // generation may take over an expired lease.
+  it('lands a same-generation heartbeat after the lease window and refreshes the turn', async () => {
+    const source = id();
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@hoots go')`, [
+      source,
+      R,
+      H,
+    ]);
+    const command = (await createAgentCommand(db, {
+      roomId: R,
+      agentId: A,
+      sourceMessageId: source,
+      reason: 'human_tag',
+    }))!;
+    await claim({ ...command, roomId: R, agentId: A, turnRequestId: command.turn_request_id } as never);
+
+    // One gap long enough to expire the lease: a deploy, a network blip, a 5xx
+    // window, or a slow heartbeat request.
+    await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [
+      command.id,
+    ]);
+    await db.query(
+      `UPDATE agent_turns SET created_at=now()-interval '100 seconds'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [R, command.turn_request_id, A],
+    );
+
+    await expect(
+      daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: R,
+          agentId: A,
+          requestId: command.turn_request_id,
+          generationId: 'g1',
+          status: 'working',
+          heartbeat: true,
+        },
+        A,
+      ),
+    ).resolves.toBeDefined();
+
+    const age = (
+      await db.query<{ age: number }>(
+        `SELECT extract(epoch FROM now()-created_at)::float age FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [R, command.turn_request_id, A],
+      )
+    ).rows[0]!.age;
+    // Back inside the 90s pickup window, so the turn is no longer stalled.
+    expect(age).toBeLessThan(5);
+  });
+});

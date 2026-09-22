@@ -752,6 +752,7 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"unknown","checks":"unknown"}'::jsonb,
   plan jsonb,
   request_id text,
+  open_idempotency_key text,
   feature_branch text,
   close_requested boolean NOT NULL DEFAULT false,
   lane text NOT NULL DEFAULT 'code' CHECK (lane IN ('code', 'no_code')),
@@ -760,6 +761,7 @@ CREATE TABLE IF NOT EXISTS corner_facts (
 );
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 -- Every corner that existed before the lane did was a commit-and-merge corner,
 -- so the default backfills them truthfully. The CHECK rides the same pattern
 -- as agent_turns_status_check: drop by generated name, re-add, idempotent.

@@ -1504,7 +1504,7 @@ async function relayMessage(direction: 'down', args: JsonObject): Promise<string
   );
 }
 
-async function openCorner(args: JsonObject): Promise<string> {
+async function openCorner(args: JsonObject, toolCallId: string): Promise<string> {
   if (process.env.BEELINE_DAEMON_CORNER_ID || process.env.BEELINE_AGENT_DM === '1') {
     throw new Error('open_corner is available only in a top-level Room');
   }
@@ -1522,9 +1522,13 @@ async function openCorner(args: JsonObject): Promise<string> {
     throw new Error('open_corner requires a complete verified repository binding');
   }
   const requestId = (await activeCommandContext()).requestId;
+  const idempotencyKey = createHash('sha256')
+    .update(`open_corner\0${requestId}\0${toolCallId}`)
+    .digest('hex');
   const created = await daemonExecute('createCorner', {
     roomId,
     requestId,
+    idempotencyKey,
     name,
     objective,
     lane,
@@ -2681,7 +2685,7 @@ async function daemonUploadArtifact(
   };
 }
 
-async function callAgentTool(name: string, args: JsonObject): Promise<string> {
+async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
     case 'wallet_address':
       return JSON.stringify(await daemonExecute('getWalletToolState', { agentId: 'self' }));
@@ -2726,7 +2730,7 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
         }),
       );
     case 'open_corner':
-      return openCorner(args);
+      return openCorner(args, toolCallId);
     case 'steer_corner':
       return relayMessage('down', args);
     case 'react_to_message':
@@ -2799,6 +2803,12 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   }
 }
 
+function toolCallId(params: JsonObject, requestId: JsonRpcRequest['id']): string {
+  const metadata = asObject(params._meta);
+  const candidate = metadata.beelineToolCallId ?? metadata.progressToken ?? requestId;
+  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
+}
+
 function send(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -2863,7 +2873,11 @@ async function handleLine(line: string): Promise<void> {
               youtubeClientFromToken(process.env.BEELINE_YOUTUBE_ACCESS_TOKEN ?? ''),
             )
           : agentSurface
-            ? await callAgentTool(params.name, asObject(params.arguments))
+            ? await callAgentTool(
+                params.name,
+                asObject(params.arguments),
+                toolCallId(params, request.id),
+              )
             : callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {

@@ -6957,6 +6957,7 @@ describe('monolith integration', () => {
     const input = {
       roomId: ROOM,
       requestId: 'repeated-corner-open',
+      idempotencyKey: 'repeated-corner-open:call-1',
       name: 'Ship widget',
       objective: 'Ship the widget end to end',
     };
@@ -6979,10 +6980,46 @@ describe('monolith integration', () => {
     expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
   });
 
+  it('creates every independently keyed corner requested by one originating task', async () => {
+    const requestId = 'multiple-corner-open';
+    const first = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId,
+      idempotencyKey: `${requestId}:call-1`,
+      name: 'First fix',
+      objective: 'Fix the first independent problem',
+    });
+    const second = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId,
+      idempotencyKey: `${requestId}:call-2`,
+      name: 'Second fix',
+      objective: 'Fix the second independent problem',
+    });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstResult = (await first.json()) as { cornerId: string };
+    const secondResult = (await second.json()) as { cornerId: string };
+    expect(secondResult.cornerId).not.toBe(firstResult.cornerId);
+
+    const stored = await database.query<{ corners: number; cards: number; commands: number }>(
+      `SELECT
+         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM messages
+          WHERE room_id=$2 AND card_type='daemon-fact'
+            AND card->>'cornerId' IN ($3,$4)) cards,
+         (SELECT count(*)::integer FROM agent_commands
+          WHERE room_id IN ($3::uuid,$4::uuid) AND reason='corner_objective') commands`,
+      [requestId, ROOM, firstResult.cornerId, secondResult.cornerId],
+    );
+    expect(stored.rows[0]).toEqual({ corners: 2, cards: 2, commands: 2 });
+  });
+
   it('serializes concurrent opens for the same originating task', async () => {
     const input = {
       roomId: ROOM,
       requestId: 'concurrent-corner-open',
+      idempotencyKey: 'concurrent-corner-open:call-1',
       name: 'Ship widget',
       objective: 'Ship the widget end to end',
     };

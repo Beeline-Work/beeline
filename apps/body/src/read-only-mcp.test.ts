@@ -50,6 +50,9 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('open_corner_app');
       expect(names).not.toContain('open_corner');
     }
+    const noCodeCorner = agentToolsFor(true, false, true, false, true, false);
+    expect(noCodeCorner.map((tool) => tool.name)).not.toContain('close_corner');
+    expect(noCodeCorner.map((tool) => tool.name)).toContain('post_artifact');
     for (const tools of [room, directMessage]) {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');

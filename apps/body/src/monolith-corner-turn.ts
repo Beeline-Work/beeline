@@ -860,6 +860,7 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
+        agentMayCloseCorner: Boolean(repository),
         reviewer: Boolean(reviewerInstruction),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
@@ -940,12 +941,11 @@ export class MonolithCornerTurnLoop {
               "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
               'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
               // This lane has no pull request URL and no merge card, so its
-              // attached final reply is the requester-facing completion
-              // signal. close_corner is still the lifecycle completion: it
-              // archives the corner and reaps this scratch workspace.
+              // attached final reply reports delivery to the requester. The
+              // corner remains open until a human explicitly closes it.
               this.options.requesterHandle
-                ? `Deliver the result as artifacts: post_artifact everything the objective asked for, then call close_corner. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted; that attached reply is the requester-facing completion signal.`
-                : `Deliver the result as artifacts: post_artifact everything the objective asked for, then call close_corner. Finish the turn by replying with one line on what you posted; that attached reply is the requester-facing completion signal.`,
+                ? `Deliver the result as artifacts: post_artifact everything the objective asked for. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted. The corner stays open until a human explicitly closes it.`
+                : `Deliver the result as artifacts: post_artifact everything the objective asked for. Finish the turn by replying with one line on what you posted. The corner stays open until a human explicitly closes it.`,
             ]),
       ]
         .filter(Boolean)
@@ -1185,7 +1185,7 @@ export class MonolithCornerTurnLoop {
                   ].join('\n'),
                   this.options.repository
                     ? 'Continue the objective. Obey the PR checks and human hold rules in your session instructions.'
-                    : 'Continue the objective. Attach completed files before calling close_corner.',
+                    : 'Continue the objective. Attach completed files; only a human can close this corner.',
                   MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                 ]
                   .filter(Boolean)

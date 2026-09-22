@@ -13,6 +13,7 @@ import { commandFixtureApi } from './command-fixture.test-support.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { CORNER_AUTHOR_CONTRACT, MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import { agentToolsFor } from './read-only-mcp.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, stageMonolithAgentRuntime, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -257,10 +258,22 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
   expect(prompt).toContain('post_artifact everything the objective asked for');
-  expect(prompt).toContain('then call close_corner');
-  expect(prompt).toContain('that attached reply is the requester-facing completion signal');
-  expect(prompt).not.toContain("That reply is this corner's only completion signal");
-  // The tag is the completion signal, so the handle has to reach the prompt.
+  expect(prompt).toContain('The corner stays open until a human explicitly closes it');
+  expect(prompt).not.toContain('close_corner');
+  const agentServer = sessionInput?.mcpServers.find((server) => server.name === 'beeline-agent');
+  const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
+  expect(agentEnvironment.has('BEELINE_CORNER_AGENT_CLOSE')).toBe(false);
+  expect(
+    agentToolsFor(
+      agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+      agentEnvironment.get('BEELINE_AGENT_DM') === '1',
+      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+      agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+    ).map((tool) => tool.name),
+  ).not.toContain('close_corner');
+  // The requester still has to receive the delivery report.
   expect(prompt).toContain('@ada');
   expect(prompt).toContain('Do not initialize a repository, create a branch, commit, push');
   expect(prompt).not.toContain('Open the pull request with gh');

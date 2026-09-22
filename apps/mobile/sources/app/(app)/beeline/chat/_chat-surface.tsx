@@ -180,7 +180,11 @@ import {
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
-import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
+import {
+  roomBottomChromeStyles,
+  TURN_LINE_BAR_MARGIN_BOTTOM,
+  TURN_LINE_ROW_MIN_HEIGHT,
+} from '@/buzz/room-bottom-chrome';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
@@ -6164,7 +6168,13 @@ const styles = StyleSheet.create((theme) => {
     newMessageControlHitTarget: {
       position: 'absolute',
       right: 12,
-      bottom: 4,
+      // Clear of the turn line. Both are pinned to the right edge above the
+      // composer, and the line paints the transcript's bottom margin
+      // (`room-bottom-chrome`), so a pill sitting on the bottom has the
+      // line's STOP control drawn across it. Lifting by the line's own box
+      // keeps them apart whether or not an agent is working — an offset that
+      // changed with the line would move the pill under the reader.
+      bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,
       minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
       height: NEW_MESSAGE_CONTROL_HIT_SIZE,
       alignItems: 'center',

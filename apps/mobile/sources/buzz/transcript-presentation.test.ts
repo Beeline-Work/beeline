@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import { visibleTranscriptWindow } from './transcript-presentation';
+import { restoreTranscriptAnchor, visibleTranscriptWindow } from './transcript-presentation';
 
 const prose = (id: string): ChatDisplayMessage => ({
   id,
@@ -50,5 +50,44 @@ describe('visibleTranscriptWindow', () => {
     expect(
       visibleTranscriptWindow([opening, progress, ...hidden], 30).map((message) => message.id),
     ).toEqual([opening.id, progress.id]);
+  });
+});
+
+describe('restoreTranscriptAnchor', () => {
+  it('widens a bounded tail after an arrival, then re-centers the exact origin', () => {
+    const messages = Array.from({ length: 30 }, (_, index) =>
+      prose(`message-${String(index).padStart(2, '0')}`),
+    );
+    const originId = messages[0]!.id;
+    const resident = [...messages, prose('message-30')];
+    let visible = visibleTranscriptWindow(resident, 30).reverse();
+    expect(visible.some((candidate) => candidate.id === originId)).toBe(false);
+
+    const reveal = vi.fn((rowsFromNewest: number) => {
+      visible = visibleTranscriptWindow(resident, rowsFromNewest).reverse();
+    });
+    const scroll = vi.fn();
+    expect(
+      restoreTranscriptAnchor({
+        messageId: originId,
+        transcriptMessages: visible,
+        residentMessages: resident,
+        onReveal: reveal,
+        onScroll: scroll,
+      }),
+    ).toBe('revealed');
+    expect(reveal).toHaveBeenCalledWith(31);
+
+    expect(
+      restoreTranscriptAnchor({
+        messageId: originId,
+        transcriptMessages: visible,
+        residentMessages: resident,
+        onReveal: reveal,
+        onScroll: scroll,
+      }),
+    ).toBe('scrolled');
+    expect(scroll).toHaveBeenCalledWith(30, 0.5);
+    expect(visible[30]!.id).toBe(originId);
   });
 });

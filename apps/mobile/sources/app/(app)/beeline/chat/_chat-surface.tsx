@@ -272,7 +272,10 @@ import {
   resolveForwardTargetRoom,
   type ForwardTarget,
 } from '@/buzz/message-forward';
-import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
+import {
+  restoreTranscriptAnchor,
+  visibleTranscriptWindow,
+} from '@/buzz/transcript-presentation';
 import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
@@ -1979,15 +1982,19 @@ export function BuzzChatSurface({
     useCallback(() => {
       const messageId = artifactReturnMessageIdRef.current;
       if (!messageId) return;
-      const index = transcriptMessages.findIndex(
-        (message) => message.id === messageId || message.relayId === messageId,
-      );
-      if (index < 0) return;
-      artifactReturnMessageIdRef.current = null;
-      scheduleAnimationFrame(() =>
-        flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false }),
-      );
-    }, [transcriptMessages]),
+      restoreTranscriptAnchor({
+        messageId,
+        transcriptMessages,
+        residentMessages: combinedMessages,
+        onReveal: revealTranscriptThrough,
+        onScroll: (index, viewPosition) => {
+          artifactReturnMessageIdRef.current = null;
+          scheduleAnimationFrame(() =>
+            flatListRef.current?.scrollToIndex({ index, viewPosition, animated: false }),
+          );
+        },
+      });
+    }, [combinedMessages, revealTranscriptThrough, transcriptMessages]),
   );
   // A live message/card change follows to the newest end. The decision is one
   // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at

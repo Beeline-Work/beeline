@@ -148,14 +148,13 @@ describe('Chat header — one language for Room and Corner', () => {
       chatSource.indexOf('testID="room-corners-menu"'),
     );
     expect(glyph).toContain('!parentChannelId && !isDirectMessage');
-    // Brand-mark gold is CornerGlyph's own fill. The header does not restain
-    // it with chrome; overflow stays steel.
+    // Destination marks share the active theme's brass. Overflow stays steel.
     const doorMount = chatSource.slice(
       chatSource.indexOf('<CornerGlyph'),
       chatSource.indexOf('testID="room-corners-glyph"'),
     );
-    expect(doorMount).not.toContain('color=');
-    expect(chatSource).not.toContain('roomCornersGlyph');
+    expect(doorMount).toContain('color={styles.roomCornersGlyph.color}');
+    expect(chatSource).toContain('roomCornersGlyph: { color: groknight.accent }');
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\},/);
     expect(dots![0]).toContain('color: groknight.steel');
     // Both marks are DRAWN in a fixed box at one shared size, so the sigil

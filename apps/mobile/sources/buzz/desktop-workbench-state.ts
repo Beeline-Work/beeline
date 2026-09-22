@@ -17,6 +17,7 @@ export const DESKTOP_WORK_PANE_HYSTERESIS = 24;
 const NAV_WIDTH_KEY = 'beeline.desktop.nav-width.v1';
 const INSPECTOR_WIDTH_KEY = 'beeline.desktop.inspector-width.v1';
 const WORK_PANE_PREFERENCE_PREFIX = 'beeline.desktop.work-pane-preference.v1:';
+const ROOM_CORNERS_EXPANDED_PREFIX = 'beeline.desktop.room-corners-expanded.v1:';
 const DRAFT_PREFIX = 'beeline.desktop.draft.v1:';
 
 export type DesktopWorkPanePreference = 'present' | 'dismissed';
@@ -190,6 +191,25 @@ export async function saveDesktopWorkPanePreference(
   preference: DesktopWorkPanePreference,
 ): Promise<void> {
   await AsyncStorage.setItem(desktopWorkPanePreferenceKey(windowClass), preference);
+}
+
+function desktopRoomCornersExpandedKey(roomId: string): string {
+  return `${ROOM_CORNERS_EXPANDED_PREFIX}${encodeURIComponent(roomId)}`;
+}
+
+/** Existing desktop behavior is expanded; only an explicit collapse changes it. */
+export async function loadDesktopRoomCornersExpanded(roomId: string): Promise<boolean> {
+  return (await AsyncStorage.getItem(desktopRoomCornersExpandedKey(roomId))) !== 'collapsed';
+}
+
+export async function saveDesktopRoomCornersExpanded(
+  roomId: string,
+  expanded: boolean,
+): Promise<void> {
+  await AsyncStorage.setItem(
+    desktopRoomCornersExpandedKey(roomId),
+    expanded ? 'expanded' : 'collapsed',
+  );
 }
 
 export function desktopDraftKey(roomId: string): string {

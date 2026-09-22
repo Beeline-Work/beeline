@@ -89,6 +89,22 @@ export function shouldPostInitialCornerWorkingState(
   return isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
 }
 
+/**
+ * Whether a closed corner's feature branch is debris or recoverable work.
+ *
+ * The branch IS the shared artifact: an open pull request's head branch must
+ * never be deleted by close cleanup, because deleting it closes the pull
+ * request and the commits survive only through `refs/pull/<n>/head`. Only a
+ * merged pull request (whose server-side merge handler already deleted the
+ * branch) or the absence of any pull request makes the branch safe to remove.
+ */
+export function cornerBranchIsSafeToDelete(
+  lifecycle?: CornerRestoreResult['lifecycle'],
+): boolean {
+  const pr = lifecycle?.pr;
+  return !pr || Boolean(pr.mergedAt);
+}
+
 export function cornerStartConfigKey(
   repository: Pick<RoomRepositoryStateResult, 'resolution' | 'key' | 'remote'>,
   objective: string,
@@ -301,7 +317,11 @@ interface CornerScratch {
   cornerId: string;
 }
 
-export async function removeCornerWorktreeAndBranches(worktree: CornerWorktree): Promise<void> {
+export async function removeCornerWorktreeAndBranches(
+  worktree: CornerWorktree,
+  options: { preserveRemoteBranch?: boolean } = {},
+): Promise<void> {
+  const preserveRemoteBranch = options.preserveRemoteBranch === true;
   const localRef = `refs/heads/${worktree.branch}`;
   const remoteRef = `refs/heads/${worktree.branch}`;
   const worktreeExists = existsSync(worktree.path);
@@ -328,6 +348,7 @@ export async function removeCornerWorktreeAndBranches(worktree: CornerWorktree):
   } else if (!localExists) {
     // Idempotent retry after a successful close: nothing local remains to
     // prove ownership, so the remote ref must already be gone.
+    if (preserveRemoteBranch) return;
     await deleteExactRemoteBranch(worktree.gitCommonDir, remoteRef, worktree.token, {
       requireAbsent: true,
     });
@@ -339,7 +360,13 @@ export async function removeCornerWorktreeAndBranches(worktree: CornerWorktree):
     }
   }
 
-  await deleteExactRemoteBranch(worktree.gitCommonDir, remoteRef, worktree.token);
+  // An open pull request's head branch is recoverable work, not debris. Its
+  // worktree still goes; only the remote ref (and the pull request it closes)
+  // is preserved. The local ref is deleted in both cases so nothing outlives
+  // the worktree that owned it.
+  if (!preserveRemoteBranch) {
+    await deleteExactRemoteBranch(worktree.gitCommonDir, remoteRef, worktree.token);
+  }
   if (await gitRefExists(worktree.gitCommonDir, localRef)) {
     await execFileAsync('git', [
       `--git-dir=${worktree.gitCommonDir}`,
@@ -1146,25 +1173,52 @@ export class RoomRuntimeCoordinator {
     // is success, so a later pass cannot turn an untrusted branch string into
     // a guessed deletion.
     try {
+      // A corner closed with an open pull request keeps its branch: the
+      // worktree goes, the shared artifact does not. An unreadable corner is
+      // never proof its pull request is gone, so it is preserved too.
+      const preserveRemoteBranch = !(await this.cornerBranchMayBeDeleted(worktree.cornerId));
       const parentRoomId = worktree.parentRoomId;
-      if (!parentRoomId) {
+      if (!parentRoomId && !preserveRemoteBranch) {
         throw new Error(`corner ${worktree.cornerId} has no parent Room for GitHub token`);
       }
-      const token = (
-        await this.options.daemonApi.execute('getRoomGitHubToken', { roomId: parentRoomId })
-      ).token;
-      await removeCornerWorktreeAndBranches({ ...worktree, token });
-      await this.options.daemonApi.execute('postCornerRemoteState', {
-        cornerId: worktree.cornerId,
-        branch: worktree.branch,
-        state: 'gone',
-        checks: 'unknown',
-      });
+      const token = preserveRemoteBranch
+        ? ''
+        : (
+            await this.options.daemonApi.execute('getRoomGitHubToken', {
+              roomId: parentRoomId!,
+            })
+          ).token;
+      await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
       this.pendingCornerReaps.delete(worktree.cornerId);
+      // `gone` asserts the remote branch is gone, so a preserved branch must
+      // not post it: the corner's own GitHub facts still own its lifecycle.
+      if (!preserveRemoteBranch) {
+        await this.options.daemonApi.execute('postCornerRemoteState', {
+          cornerId: worktree.cornerId,
+          branch: worktree.branch,
+          state: 'gone',
+          checks: 'unknown',
+        });
+      }
     } catch (error) {
       this.pendingCornerReaps.set(worktree.cornerId, { ...worktree, token: '' });
       this.confirmationPending = true;
       throw error;
+    }
+  }
+
+  /**
+   * Whether a corner's feature branch is safe to delete on teardown. A read
+   * that fails — an agent removed from the corner, or a corner a helper can no
+   * longer reach — is not proof its pull request is gone, so the branch is
+   * kept.
+   */
+  private async cornerBranchMayBeDeleted(cornerId: string): Promise<boolean> {
+    try {
+      const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
+      return cornerBranchIsSafeToDelete(state.lifecycle);
+    } catch {
+      return false;
     }
   }
 

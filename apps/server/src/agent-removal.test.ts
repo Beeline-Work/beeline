@@ -205,7 +205,26 @@ describe('PhoneService agent removal', () => {
     expect(card?.card.grants[0]).toMatchObject({ status: 'revoked' });
   });
 
-  it('archives the corner the removed agent owned, keeping its transcript', async () => {
+  it('leaves the corner the removed INITIAL agent opened open, with its PR facts untouched', async () => {
+    // The opener is the corner's initial agent (`corner_facts.owner_agent_id`).
+    // Removal retires the helper; it must never close the shared corner.
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
+      [
+        CORNER,
+        JSON.stringify({
+          branch: 'feature/corner-ship',
+          pr: {
+            number: 1610,
+            url: 'https://github.com/beeline/buzzy/pull/1610',
+            title: 'Ship the thing',
+            targetBranch: 'main',
+            headSha: 'e'.repeat(40),
+          },
+        }),
+      ],
+    );
+
     await remove();
 
     const corner = (
@@ -214,18 +233,23 @@ describe('PhoneService agent removal', () => {
         [CORNER],
       )
     ).rows[0];
-    expect(corner).toEqual({ archived: true });
+    expect(corner).toEqual({ archived: false });
     const facts = (
-      await database.query<{ close_requested: boolean; lifecycle: Record<string, unknown> }>(
-        `SELECT close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
-        [CORNER],
-      )
+      await database.query<{
+        close_requested: boolean;
+        owner_agent_id: string | null;
+        lifecycle: Record<string, unknown>;
+      }>(`SELECT close_requested,owner_agent_id,lifecycle FROM corner_facts WHERE corner_id=$1`, [
+        CORNER,
+      ])
     ).rows[0];
-    expect(facts?.close_requested).toBe(true);
+    expect(facts?.close_requested).toBe(false);
+    // The historical "opened by" survives the removal.
+    expect(facts?.owner_agent_id).toBe(AGENT);
     expect(facts?.lifecycle).toMatchObject({
-      lifecycle: 'done',
-      outcome: 'abandoned',
-      reason: 'Foxy was removed',
+      lifecycle: 'working',
+      branch: 'feature/corner-ship',
+      pr: { number: 1610 },
     });
   });
 

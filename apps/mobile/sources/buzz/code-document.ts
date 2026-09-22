@@ -1,4 +1,5 @@
 import type { RoomViewMessage } from '@beeline/buzz-client';
+import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 import { parseMarkdown } from '@/components/markdown/parseMarkdown';
 import { fenceInscription } from '@/buzz/code-fence';
 
@@ -18,7 +19,11 @@ export function codeDocumentFromMessages(
   if (!Number.isSafeInteger(blockIndex) || blockIndex < 0) return null;
   const message = messages.find((candidate) => candidate.id === messageId);
   if (!message) return null;
-  const blocks = parseMarkdown(message.text).filter(
+  const markdown =
+    message.author.kind === 'agent'
+      ? (agentMessageJsonMarkdown(message.text) ?? message.text)
+      : message.text;
+  const blocks = parseMarkdown(markdown).filter(
     (block) => block.type === 'code-block' || block.type === 'mermaid',
   );
   const block = blocks[blockIndex];

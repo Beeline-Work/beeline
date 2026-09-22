@@ -54,6 +54,8 @@ describe('AttachmentPickerSheet', () => {
     expect(source).toContain('<HullActionSheetCancel');
     expect(source).toContain('label="Photos"');
     expect(source).toContain('metadata="Choose up to 10"');
+    expect(source).toContain('label="Send as file"');
+    expect(source).toContain('metadata="Preserve original"');
   });
 
   it('uses the centered Hull dialog only at the desktop breakpoint', () => {
@@ -160,9 +162,7 @@ describe('AttachmentPickerSheet', () => {
         }),
       );
     });
-    act(() =>
-      renderer!.root.findByProps({ testID: 'attachment-picker-paste' }).props.onPress(),
-    );
+    act(() => renderer!.root.findByProps({ testID: 'attachment-picker-paste' }).props.onPress());
     expect(onCloseDesktop).toHaveBeenCalledTimes(1);
     expect(onPickPastedDesktop).toHaveBeenCalledTimes(1);
   });

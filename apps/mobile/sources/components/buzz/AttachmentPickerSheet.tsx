@@ -43,8 +43,8 @@ export function AttachmentPickerSheet({
           testID="attachment-picker-photo"
         />
         <HullActionSheetRow
-          label="Document"
-          metadata="This device"
+          label="Send as file"
+          metadata="Preserve original"
           onPress={() => choose(onPickDocument)}
           testID="attachment-picker-document"
         />
@@ -76,8 +76,8 @@ export function AttachmentPickerSheet({
         testID="attachment-picker-photo"
       />
       <HullActionSheetRow
-        label="Document"
-        metadata="This device"
+        label="Send as file"
+        metadata="Preserve original"
         onPress={() => choose(onPickDocument)}
         testID="attachment-picker-document"
       />

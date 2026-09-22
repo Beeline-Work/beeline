@@ -1,11 +1,12 @@
-/**
- * Read file bytes from a URI — native implementation.
- * Uses expo-file-system/legacy to read file:// URIs on iOS/Android.
- */
-import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
-import { toByteArray } from 'react-native-quick-base64';
-
 export async function readFileBytes(uri: string): Promise<Uint8Array> {
-    const base64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
-    return toByteArray(base64);
+  if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`readFileBytes: fetch failed with status ${response.status}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  const { File } = await import('expo-file-system');
+  return new File(uri).bytes();
 }

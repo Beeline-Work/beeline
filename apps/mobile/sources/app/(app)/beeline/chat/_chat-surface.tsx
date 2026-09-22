@@ -3180,6 +3180,7 @@ export function BuzzChatSurface({
         name: asset.name?.trim() || `file-${Date.now()}`,
         mimeType: asset.mimeType ?? 'application/octet-stream',
         size: asset.size ?? 0,
+        source: 'file',
       },
     ]);
   }, [pendingAttachments.length, replacePendingAttachments]);
@@ -4032,6 +4033,7 @@ export function BuzzChatSurface({
           name: file.name || `file-${Date.now()}`,
           mimeType: file.type || 'application/octet-stream',
           size: file.size,
+          source: 'file' as const,
         })),
       ]);
     },
@@ -4054,6 +4056,7 @@ export function BuzzChatSurface({
           name: file.name || `clipboard-${Date.now()}`,
           mimeType: file.type || 'application/octet-stream',
           size: file.size,
+          source: 'file' as const,
         })),
       ]);
     },

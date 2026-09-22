@@ -248,6 +248,7 @@ import {
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import {
   markRoomOpen,
@@ -2183,6 +2184,29 @@ export function BuzzChatSurface({
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
+  // The row a completed notification landing is pointing at, for as long as
+  // the pointer plays. Cleared on its own timer, so the next landing on the
+  // same row is a fresh false→true edge and a re-render is not.
+  const [arrivalFlashMessageId, setArrivalFlashMessageId] = useState<string | null>(null);
+  const arrivalFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageAnchorIdRef = useRef(messageAnchorId);
+  messageAnchorIdRef.current = messageAnchorId;
+  const raiseArrivalFlash = useCallback((messageId: string) => {
+    if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+    setArrivalFlashMessageId(messageId);
+    arrivalFlashTimerRef.current = setTimeout(() => {
+      arrivalFlashTimerRef.current = null;
+      setArrivalFlashMessageId(null);
+      // The cell reads the system setting itself; this timer only has to
+      // outlast the longer of the two shapes it can take.
+    }, arrivalFlashTiming(false).totalMs);
+  }, []);
+  useEffect(
+    () => () => {
+      if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+    },
+    [],
+  );
   useEffect(() => {
     dragEndSequenceRef.current += 1;
     pendingNewMessageLandingRef.current = null;
@@ -2261,8 +2285,20 @@ export function BuzzChatSurface({
     } else {
       completedUnreadLandingRef.current = pending.boundaryId;
     }
+    // The landing is COMPLETE here — the row is on screen, which is the same
+    // rule the badge runs on. A flash fired at row mount would burn off
+    // behind the fold while backward paging was still measuring, and the
+    // reader who followed the notification would arrive to nothing.
+    if (
+      landingFlashesArrival({
+        landedBoundaryId: pending.boundaryId,
+        messageAnchorId: messageAnchorIdRef.current,
+      })
+    ) {
+      raiseArrivalFlash(pending.boundaryId);
+    }
     return true;
-  }, [settleQueueAtBoundary]);
+  }, [raiseArrivalFlash, settleQueueAtBoundary]);
   const observeVisibleTranscriptMessages = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<ChatDisplayMessage>[] }) => {
       visibleTranscriptMessagesRef.current = viewableItems
@@ -4650,6 +4686,7 @@ export function BuzzChatSurface({
     arrivingCardIds: transcriptArrivalObservation.arrivingIds,
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
+    arrivalFlashMessageId,
   });
 
   if (!roomSurface) {

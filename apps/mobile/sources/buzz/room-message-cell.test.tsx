@@ -70,6 +70,48 @@ describe('RoomMessageCell', () => {
     expect(render).toHaveBeenCalledTimes(3);
   });
 
+  it('CHEV-19: lays the arrival pointer under the row it landed on, and only that row', () => {
+    const landed: ChatDisplayMessage = { id: 'msg-9', text: 'Target', isUser: false, timestamp: 1 };
+    const render = vi.fn<RoomMessageRenderer>((item) =>
+      React.createElement('message-row', { text: item.text }),
+    );
+    const grounds = (renderer: ReactTestRenderer) =>
+      renderer.root.findAllByProps({ testID: 'arrival-flash-ground' }, { deep: false });
+
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(RoomMessageCell, {
+          item: landed,
+          render,
+          continued: false,
+          arrivalFlashing: false,
+        }),
+      );
+    });
+    expect(grounds(renderer)).toHaveLength(0);
+
+    act(() => {
+      renderer.update(
+        React.createElement(RoomMessageCell, {
+          item: landed,
+          render,
+          continued: false,
+          arrivalFlashing: true,
+        }),
+      );
+    });
+    expect(grounds(renderer)).toHaveLength(1);
+    // The pointer is behind the row and out of the way: it must not consume a
+    // touch meant for the message, nor be read out as content.
+    expect(grounds(renderer)[0]!.props.pointerEvents).toBe('none');
+    expect(grounds(renderer)[0]!.props.accessibilityElementsHidden).toBe(true);
+    // And the row itself is unchanged by it: the pointer re-renders the cell
+    // it rides, but renders the same message with the same context.
+    expect(render.mock.calls[1]![0]).toBe(landed);
+    expect(render.mock.calls[1]![1]).toEqual(render.mock.calls[0]![1]);
+  });
+
   it('refreshes affected context through FlatList-compatible pure cell boundaries', () => {
     const message: ChatDisplayMessage = {
       id: 'message',

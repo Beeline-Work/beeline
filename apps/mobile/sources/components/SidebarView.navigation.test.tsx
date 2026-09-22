@@ -13,6 +13,12 @@ const route = vi.hoisted(() => ({
 }));
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
+const roomCornersExpanded = vi.hoisted(() => new Map<string, boolean>());
+const saveDesktopRoomCornersExpanded = vi.hoisted(() =>
+  vi.fn(async (roomId: string, expanded: boolean) => {
+    roomCornersExpanded.set(roomId, expanded);
+  }),
+);
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -20,7 +26,7 @@ const chats = vi.hoisted(() =>
     chats:
       workspaceId === 'workspace-a'
         ? [
-            { room: { id: 'room-a', workspaceId, name: 'Alpha' } },
+            { room: { id: 'room-a', workspaceId, name: 'Alpha' }, cornerCount: 1 },
             {
               room: { id: 'dm-a', workspaceId, name: 'Direct' },
               directMessage: { peer: { name: 'Mina' } },
@@ -99,8 +105,22 @@ vi.mock('@/sync/transport/room-view-client', () => ({
       viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
     }));
     chats = chats;
-    corners = vi.fn(async () => ({ corners: [] }));
+    corners = vi.fn(async () => ({
+      corners: [
+        {
+          corner: { id: 'corner-a', name: 'Fix fixture' },
+          state: 'working',
+        },
+      ],
+    }));
   },
+}));
+vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/buzz/desktop-workbench-state')>()),
+  loadDesktopRoomCornersExpanded: vi.fn(
+    async (roomId: string) => roomCornersExpanded.get(roomId) ?? true,
+  ),
+  saveDesktopRoomCornersExpanded,
 }));
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
@@ -217,6 +237,7 @@ describe('desktop Workspace navigation', () => {
     route.pathname = '/beeline/channels';
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
+    roomCornersExpanded.clear();
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -509,6 +530,45 @@ describe('desktop Workspace navigation', () => {
     expect(
       tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState,
     ).toEqual({ selected: true });
+  });
+
+  it('collapses and restores the active Room corner list with an accessible disclosure', async () => {
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="room-corners-toggle" />);
+    });
+    await settle();
+
+    const toggle = tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' });
+    expect(toggle.props.accessibilityLabel).toBe('Hide 1 corner in #Alpha');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: true });
+    expect(tree.root.findByProps({ testID: 'desktop-corner-corner-a' })).toBeDefined();
+
+    act(() => toggle.props.onPress());
+    expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
+    const restore = tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' });
+    expect(restore.props.accessibilityLabel).toBe('Show 1 corner in #Alpha');
+    expect(restore.props.accessibilityState).toEqual({ expanded: false });
+    expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', false);
+
+    act(() => restore.props.onPress());
+    expect(tree.root.findByProps({ testID: 'desktop-corner-corner-a' })).toBeDefined();
+    expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', true);
+  });
+
+  it('restores a saved collapsed Room corner list', async () => {
+    roomCornersExpanded.set('room-a', false);
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="room-corners-collapsed" />);
+    });
+    await settle();
+
+    expect(
+      tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' }).props
+        .accessibilityState,
+    ).toEqual({ expanded: false });
+    expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
   });
 
   it('closes without routing when the current Workspace is picked', () => {

@@ -28,6 +28,7 @@ import {
   ROOMS_LABEL,
   WORKSPACE_LABEL,
   WORKSPACES_LABEL,
+  formatRoomCornerCount,
 } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
@@ -46,9 +47,14 @@ import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
-import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
+import {
+  desktopWorkspaceRoute,
+  loadDesktopRoomCornersExpanded,
+  saveDesktopRoomCornersExpanded,
+} from '@/buzz/desktop-workbench-state';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { subscribeBookmarkChanges } from '@/buzz/bookmark-events';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -137,6 +143,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   shortcut: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
+  roomRowShell: { position: 'relative' },
   roomRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -147,6 +154,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
+  roomRowWithCornerToggle: { paddingRight: 52 },
+  roomCornersToggle: {
+    position: 'absolute',
+    right: 4,
+    top: 10,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 3,
+  },
+  roomCornersTogglePressed: { backgroundColor: theme.colors.surfaceSelected },
+  roomCornersToggleGlyph: { color: theme.colors.textSecondary },
   roomRowCompact: { alignItems: 'center' },
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
   roomStateSlot: { width: 7, height: 7, marginTop: 7 },
@@ -263,6 +283,9 @@ export const SidebarView = React.memo(function SidebarView() {
     () => new Map(),
   );
   const [activeCorners, setActiveCorners] = React.useState<readonly CornerListItem[]>([]);
+  const [roomCornersExpanded, setRoomCornersExpanded] = React.useState<
+    Readonly<Record<string, boolean>>
+  >({});
   const [bookmarkCount, setBookmarkCount] = React.useState(0);
 
   React.useEffect(() => {
@@ -355,6 +378,20 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
     };
   }, [activeRoomId, client, isDesktop, pathname]);
+
+  React.useEffect(() => {
+    if (!isDesktop || !activeRoomId) return;
+    let cancelled = false;
+    void loadDesktopRoomCornersExpanded(activeRoomId).then((expanded) => {
+      if (cancelled) return;
+      setRoomCornersExpanded((current) =>
+        current[activeRoomId] === undefined ? { ...current, [activeRoomId]: expanded } : current,
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoomId, isDesktop]);
 
   React.useEffect(() => {
     if (!identityPubkey) return;
@@ -724,62 +761,100 @@ export const SidebarView = React.memo(function SidebarView() {
                   const preview = roomRowPreview(item, identityPubkey ?? undefined);
                   const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
                   const attention = roomRowNeedsAttention(item);
+                  const active = activeRoomId === item.room.id;
+                  const cornerCount = formatRoomCornerCount(item.cornerCount);
+                  const cornersExpanded = roomCornersExpanded[item.room.id] ?? true;
+                  const showCornerToggle = isDesktop && active && Boolean(cornerCount);
                   return (
                     <React.Fragment key={item.room.id}>
-                      <Pressable
-                        accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: activeRoomId === item.room.id }}
-                        onPress={() => openRoom(item.room.id)}
-                        style={({ pressed }) => [
-                          styles.roomRow,
-                          !isDesktop && styles.roomRowCompact,
-                          activeRoomId === item.room.id && styles.roomRowSelected,
-                          pressed && styles.roomRowSelected,
-                        ]}
-                        testID={`desktop-room-${item.room.id}`}
-                      >
-                        <View
-                          style={[styles.roomStateSlot, !isDesktop && styles.roomStateSlotCompact]}
-                          {...(Platform.OS === 'web'
-                            ? { 'aria-hidden': true }
-                            : { accessibilityElementsHidden: true })}
+                      <View style={styles.roomRowShell}>
+                        <Pressable
+                          accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                          onPress={() => openRoom(item.room.id)}
+                          style={({ pressed }) => [
+                            styles.roomRow,
+                            showCornerToggle && styles.roomRowWithCornerToggle,
+                            !isDesktop && styles.roomRowCompact,
+                            active && styles.roomRowSelected,
+                            pressed && styles.roomRowSelected,
+                          ]}
+                          testID={`desktop-room-${item.room.id}`}
                         >
-                          {(attention || (isDesktop && item.agentState === 'working')) && (
-                            <View
-                              style={[
-                                styles.roomStateMark,
-                                attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
-                              ]}
-                              testID={`desktop-room-state-${item.room.id}`}
-                            />
-                          )}
-                        </View>
-                        <View style={styles.roomCopy}>
-                          <View style={styles.roomTitleLine}>
-                            <Text numberOfLines={1} style={styles.roomTitle}>
-                              <Text style={styles.roomSigil}>{rowName.sigil}</Text>
-                              {rowName.name}
-                            </Text>
-                            <Text style={styles.roomTime}>
-                              {item.latestMessage
-                                ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
-                                : ''}
+                          <View
+                            style={[
+                              styles.roomStateSlot,
+                              !isDesktop && styles.roomStateSlotCompact,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? { 'aria-hidden': true }
+                              : { accessibilityElementsHidden: true })}
+                          >
+                            {(attention || (isDesktop && item.agentState === 'working')) && (
+                              <View
+                                style={[
+                                  styles.roomStateMark,
+                                  attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
+                                ]}
+                                testID={`desktop-room-state-${item.room.id}`}
+                              />
+                            )}
+                          </View>
+                          <View style={styles.roomCopy}>
+                            <View style={styles.roomTitleLine}>
+                              <Text numberOfLines={1} style={styles.roomTitle}>
+                                <Text style={styles.roomSigil}>{rowName.sigil}</Text>
+                                {rowName.name}
+                              </Text>
+                              <Text style={styles.roomTime}>
+                                {item.latestMessage
+                                  ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
+                                  : ''}
+                              </Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.roomFact}>
+                              {hasPreview && preview.attribution === 'self' && (
+                                <Text style={styles.previewSelf}>you: </Text>
+                              )}
+                              {hasPreview && preview.attribution === 'other' && (
+                                <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                              )}
+                              {preview.text}
                             </Text>
                           </View>
-                          <Text numberOfLines={1} style={styles.roomFact}>
-                            {hasPreview && preview.attribution === 'self' && (
-                              <Text style={styles.previewSelf}>you: </Text>
-                            )}
-                            {hasPreview && preview.attribution === 'other' && (
-                              <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                            )}
-                            {preview.text}
-                          </Text>
-                        </View>
-                      </Pressable>
+                        </Pressable>
+                        {showCornerToggle ? (
+                          <Pressable
+                            accessibilityLabel={`${cornersExpanded ? 'Hide' : 'Show'} ${cornerCount} in ${rowName.sigil}${rowName.name}`}
+                            accessibilityRole="button"
+                            accessibilityState={{ expanded: cornersExpanded }}
+                            onPress={() => {
+                              const expanded = !cornersExpanded;
+                              setRoomCornersExpanded((current) => ({
+                                ...current,
+                                [item.room.id]: expanded,
+                              }));
+                              void saveDesktopRoomCornersExpanded(item.room.id, expanded);
+                            }}
+                            style={({ pressed }) => [
+                              styles.roomCornersToggle,
+                              pressed && styles.roomCornersTogglePressed,
+                            ]}
+                            testID={`desktop-room-corners-toggle-${item.room.id}`}
+                          >
+                            <ChevronGlyph
+                              color={styles.roomCornersToggleGlyph.color}
+                              direction={cornersExpanded ? 'up' : 'down'}
+                              size={CHEVRON_ROW_SIZE}
+                              testID={`desktop-room-corners-toggle-glyph-${item.room.id}`}
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
                       {isDesktop &&
-                        activeRoomId === item.room.id &&
+                        active &&
+                        cornersExpanded &&
                         activeCorners.map((corner) => (
                           <DesktopCornerDragSource
                             key={corner.corner.id}

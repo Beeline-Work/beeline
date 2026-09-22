@@ -144,14 +144,26 @@ describe('Room composer status layout', () => {
     // Tauri's Windows shell is a web surface and can be resized below the
     // persistent-sidebar breakpoint. Transcript flow follows the platform,
     // not that width breakpoint, because variable-height inverted web rows
-    // can retain stale transform coordinates and overlap.
+    // can retain stale transform coordinates and overlap. The desktop
+    // transcript (2026-09) no longer renders through FlatList's `inverted`
+    // prop at all — it is a plain scrollable View over real DOM, so there is
+    // no transform-based inversion left to avoid on that path.
     expect(source).toContain('const desktopTranscript = desktopExperience;');
     expect(source).not.toContain('const desktopTranscript = isDesktop;');
     expect(source).not.toContain("const desktopTranscript = Platform.OS === 'web';");
     expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
-    expect(source).toContain('inverted={!desktopTranscript && transcriptMessages.length > 0}');
-    expect(source).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
-    expect(source).toContain('desktopTranscript && styles.messageListContentDesktop');
+    const desktopBranch = source.slice(
+      source.indexOf('{desktopTranscript ? ('),
+      source.indexOf(') : (\n          <FlatList'),
+    );
+    const nativeBranch = source.slice(
+      source.indexOf(') : (\n          <FlatList'),
+      source.indexOf('{newMessageControlShown && ('),
+    );
+    expect(desktopBranch).not.toContain('inverted');
+    expect(nativeBranch).toContain('inverted={transcriptMessages.length > 0}');
+    expect(nativeBranch).not.toContain('scrollToEnd');
+    expect(desktopBranch).toContain('styles.messageListContentDesktop');
   });
 
   it('keeps attachment and system-message height in the measured row flow', () => {

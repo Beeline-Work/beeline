@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import {
-  desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
   scrollFollowOnArrival,
@@ -183,16 +182,13 @@ describe('scrollFollowOnArrival', () => {
 describe('native variable-height history anchoring', () => {
   it('uses measured visible-child frames without eager rendering or fixed row heights', () => {
     const list = chatSource.slice(
-      chatSource.indexOf('<FlatList\n            {...(desktopTranscript'),
+      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
       chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
     );
 
     expect(list).toContain('maintainVisibleContentPosition=');
     expect(list).toContain('minIndexForVisible: 1');
     expect(list).not.toMatch(/\n\s+getItemLayout=/);
-    expect(list).toContain(
-      'desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined',
-    );
   });
 
   it('re-resolves a failed boundary jump after measuring its window', () => {
@@ -247,57 +243,6 @@ describe('native variable-height history anchoring', () => {
     expect(gestureHandlers).toContain('dragEndSequenceRef.current += 1');
     expect(gestureHandlers).toContain('onMomentumScrollEnd');
     expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
-  });
-});
-
-describe('desktopOpenLandingOnContentSizeChange', () => {
-  it('keeps landing through measured growth without consulting the transient tail pin', () => {
-    expect(
-      desktopOpenLandingOnContentSizeChange({
-        active: true,
-        previousHeight: 1_000,
-        nextHeight: 2_225,
-        isUserDragging: false,
-      }),
-    ).toBe('scroll');
-    expect(
-      desktopOpenLandingOnContentSizeChange({
-        active: true,
-        previousHeight: 2_225,
-        nextHeight: 3_325,
-        isUserDragging: false,
-      }),
-    ).toBe('scroll');
-  });
-
-  it('settles when measurement stops growing or the reader takes control', () => {
-    expect(
-      desktopOpenLandingOnContentSizeChange({
-        active: true,
-        previousHeight: 3_325,
-        nextHeight: 3_325,
-        isUserDragging: false,
-      }),
-    ).toBe('settle');
-    expect(
-      desktopOpenLandingOnContentSizeChange({
-        active: true,
-        previousHeight: 2_225,
-        nextHeight: 3_325,
-        isUserDragging: true,
-      }),
-    ).toBe('settle');
-  });
-
-  it('holds once the open landing has settled', () => {
-    expect(
-      desktopOpenLandingOnContentSizeChange({
-        active: false,
-        previousHeight: 2_225,
-        nextHeight: 3_325,
-        isUserDragging: false,
-      }),
-    ).toBe('hold');
   });
 });
 
@@ -447,13 +392,13 @@ describe('the chat screen wires the scroll rule', () => {
     expect(
       roomOpenLandsOnTail({ desktopTranscript: false, messageAnchorId: 'msg-1' }),
     ).toBe(false);
-    // The immediate scrollToEnd can land short while the tail window is
-    // unmeasured (RN Web estimates far frames), so the landing re-runs from
-    // measured content sizes until it settles.
-    expect(chatSource).toContain('desktopOpenLandingRef.current = true');
-    expect(chatSource).toContain('desktopOpenLandingOnContentSizeChange({');
-    expect(chatSource).toContain('onWheel: cancelDesktopOpenLanding');
-    expect(chatSource).toMatch(/scrollToOffset\(\{\s*offset: height,/);
+    // Cold open and append share the same measured-DOM landing: the content
+    // node's own ResizeObserver fires with the full mounted height on
+    // `.observe()`, so the first fire already lands on real DOM instead of
+    // a separate scrollToEnd/onContentSizeChange estimate.
+    expect(chatSource).toContain('shouldFollowDesktopTail');
+    expect(chatSource).toContain('new ResizeObserver(');
+    expect(chatSource).toContain('scrollNode.scrollTop = scrollNode.scrollHeight');
   });
 
   it('follows a composer/keyboard footprint drop while pinned to the tail', () => {

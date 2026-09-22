@@ -10,6 +10,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal/ModalManager';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -124,7 +125,16 @@ export default function RoomWorkflows() {
                     <Text style={styles.workflowName}>{workflow.name}</Text>
                     <Text style={styles.workflowMeta}>{lastRun}</Text>
                   </View>
-                  <Text style={styles.run}>{busy ? 'RUNNING…' : 'RUN ›'}</Text>
+                  <View style={styles.run}>
+                    <Text style={styles.runText}>{busy ? 'RUNNING…' : 'RUN'}</Text>
+                    {!busy ? (
+                      <ChevronGlyph
+                        color={styles.runGlyph.color}
+                        direction="right"
+                        size={CHEVRON_ROW_SIZE}
+                      />
+                    ) : null}
+                  </View>
                 </TouchableOpacity>
               );
             })
@@ -145,14 +155,13 @@ export default function RoomWorkflows() {
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.buzz.bgTerminal },
   header: { paddingHorizontal: 16, paddingTop: 8 },
-  subtitle: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10 },
+  subtitle: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 10 },
   notice: {
     ...Typography.default(),
+    ...theme.buzz.type.meta,
     color: theme.buzz.textMuted,
-    fontSize: 13,
-    lineHeight: 19,
     marginBottom: 2,
   },
   workflowRow: {
@@ -165,9 +174,19 @@ const styles = StyleSheet.create((theme) => ({
     gap: 12,
   },
   workflowCopy: { flex: 1, minWidth: 0, gap: 4 },
-  workflowName: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 14 },
-  workflowMeta: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10 },
-  run: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
-  empty: { ...Typography.default(), color: theme.buzz.textMuted, fontSize: 13, lineHeight: 19 },
-  error: { ...Typography.mono(), color: theme.buzz.danger, fontSize: 11, lineHeight: 17 },
+  workflowName: {
+    ...Typography.default('semiBold'),
+    ...theme.buzz.type.bodyStrong,
+    color: theme.buzz.textPrimary,
+  },
+  workflowMeta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
+  run: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
+  runText: {
+    ...Typography.default('semiBold'),
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.accent,
+  },
+  runGlyph: { color: theme.buzz.accent },
+  empty: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
+  error: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.danger },
 }));

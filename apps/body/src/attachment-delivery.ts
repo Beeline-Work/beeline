@@ -25,14 +25,14 @@ import type { AcpPromptBlock } from './acp.js';
 /** Same ceiling as the artifact path (`read-only-mcp.ts`). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /**
- * Attachment bytes live 24 hours on the server (`apps/server/src/media-ttl.ts`).
- * Past that the file is gone, not missing: the server marks the attachment
+ * Person-uploaded attachment bytes live 24 hours on the server; agent artifact
+ * bytes live seven days (`apps/server/src/media-ttl.ts`). Past the applicable
+ * window the file is gone, not missing: the server marks the attachment
  * `expired` and answers its media URL with 410 Gone. Either fact is reported in
- * those words, so an agent asked about an old picture says it expired instead
- * of "not found", which reads like a bug it should retry.
+ * those words, so an agent asked about an old file says it expired instead of
+ * "not found", which reads like a bug it should retry.
  */
-export const MEDIA_TTL_HOURS = 24;
-const EXPIRED_REASON = `expired: attachments are kept for ${MEDIA_TTL_HOURS} hours and these bytes are past that window`;
+const EXPIRED_REASON = 'expired: these attachment bytes are past their retention window';
 /** One download may not wedge a turn; a slow media read degrades to the URL line. */
 export const FETCH_TIMEOUT_MS = 30_000;
 

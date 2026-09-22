@@ -26,7 +26,7 @@ import {
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
-import { mediaTtlHours } from './media-ttl.js';
+import { ARTIFACT_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -75,13 +75,15 @@ export interface UploadArtifactResult {
   sha256: string;
 }
 
-export interface MediaObjectRead {
-  kind: 'redirect' | 'expired' | 'pending';
-  location?: string;
-}
+export type MediaObjectRead =
+  | { kind: 'redirect'; location: string }
+  | { kind: 'expired'; ttlHours: number }
+  | { kind: 'pending' };
 
 export class ObjectService {
+  /** Person-upload retention, kept public for diagnostics and tests. */
   readonly ttlHours: number;
+  readonly artifactTtlHours: number;
 
   constructor(
     private readonly database: SqlDatabase,
@@ -91,8 +93,14 @@ export class ObjectService {
      *  capped separately and more tightly by `uploadArtifact`. */
     private readonly maximumBytes: number = Number.MAX_SAFE_INTEGER,
     ttlHours: number = mediaTtlHours(),
+    artifactTtlHours: number = ARTIFACT_TTL_HOURS,
   ) {
     this.ttlHours = ttlHours;
+    this.artifactTtlHours = artifactTtlHours;
+  }
+
+  #retentionHours(kind: 'media' | 'artifact'): number {
+    return kind === 'artifact' ? this.artifactTtlHours : this.ttlHours;
   }
 
   #requireStorage(): ObjectStorage {
@@ -164,6 +172,7 @@ export class ObjectService {
     title: string,
     kind: 'media' | 'artifact',
   ): Promise<UploadArtifactResult> {
+    const retentionHours = this.#retentionHours(kind);
     const digest = createHash('sha256').update(bytes).digest('hex');
     const existing = await this.database.query<{
       id: string;
@@ -179,8 +188,10 @@ export class ObjectService {
       // Same bytes again is an upload: restart the TTL window and clear any
       // tombstone so the read path's invariant holds.
       await this.database.query(
-        `UPDATE objects SET expires_at=now()+($2 || ' hours')::interval,title=$3,mime=$4 WHERE id=$1`,
-        [existing.rows[0].id, String(this.ttlHours), title, mimeType],
+        `UPDATE objects
+         SET expires_at=now()+($2 || ' hours')::interval,title=$3,mime=$4,kind=$5
+         WHERE id=$1`,
+        [existing.rows[0].id, String(retentionHours), title, mimeType, kind],
       );
       await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [
         existing.rows[0].id,
@@ -200,9 +211,10 @@ export class ObjectService {
     }>(
       `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ready',now()+($9 || ' hours')::interval)
-       ON CONFLICT(owner_id,sha256) DO UPDATE SET expires_at=EXCLUDED.expires_at,title=EXCLUDED.title,mime=EXCLUDED.mime
+       ON CONFLICT(owner_id,sha256) DO UPDATE SET
+         expires_at=EXCLUDED.expires_at,title=EXCLUDED.title,mime=EXCLUDED.mime,kind=EXCLUDED.kind
        RETURNING id,kind,mime,title,size`,
-      [id, ownerId, kind, key, mimeType, title, bytes.length, digest, String(this.ttlHours)],
+      [id, ownerId, kind, key, mimeType, title, bytes.length, digest, String(retentionHours)],
     );
     await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [stored.rows[0]!.id]);
     return this.#result(stored.rows[0]!, ownerId, digest);
@@ -240,6 +252,7 @@ export class ObjectService {
       throw new Error(`upload size must be between 1 and ${this.maximumBytes} bytes`);
     if (!SHA256_PATTERN.test(input.sha256)) throw new Error('upload sha256 is not a hex digest');
     const digest = input.sha256.toLowerCase();
+    const retentionHours = this.#retentionHours(input.kind);
     const existing = await this.database.query<{ id: string; state: string }>(
       `SELECT id,state FROM objects WHERE owner_id=$1 AND sha256=$2`,
       [agentId, digest],
@@ -247,8 +260,8 @@ export class ObjectService {
     const canonicalUrl = (id: string) => `${this.publicOrigin}/v1/media/${id}`;
     if (existing.rows[0]?.state === 'ready') {
       await this.database.query(
-        `UPDATE objects SET expires_at=now()+($2 || ' hours')::interval WHERE id=$1`,
-        [existing.rows[0].id, String(this.ttlHours)],
+        `UPDATE objects SET expires_at=now()+($2 || ' hours')::interval,kind=$3 WHERE id=$1`,
+        [existing.rows[0].id, String(retentionHours), input.kind],
       );
       await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [
         existing.rows[0].id,
@@ -257,7 +270,7 @@ export class ObjectService {
         objectId: existing.rows[0].id,
         deduped: true,
         url: canonicalUrl(existing.rows[0].id),
-        expiresAt: Date.now() + this.ttlHours * 3_600_000,
+        expiresAt: Date.now() + retentionHours * 3_600_000,
       };
     }
     const key = `${input.kind}/${agentId}/${digest}`;
@@ -266,14 +279,16 @@ export class ObjectService {
       contentType: input.mimeType,
       size: input.size,
     });
-    const expiresAt = Date.now() + this.ttlHours * 3_600_000;
+    const expiresAt = Date.now() + retentionHours * 3_600_000;
     const objectId =
       existing.rows[0]?.id ??
       (
         await this.database.query<{ id: string }>(
           `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',now()+($9 || ' hours')::interval)
-           ON CONFLICT(owner_id,sha256) DO UPDATE SET mime=EXCLUDED.mime,title=EXCLUDED.title
+           ON CONFLICT(owner_id,sha256) DO UPDATE SET
+             kind=EXCLUDED.kind,key=EXCLUDED.key,mime=EXCLUDED.mime,title=EXCLUDED.title,
+             expires_at=EXCLUDED.expires_at
            RETURNING id`,
           [
             randomUUID(),
@@ -284,7 +299,7 @@ export class ObjectService {
             input.title ?? null,
             input.size,
             digest,
-            String(this.ttlHours),
+            String(retentionHours),
           ],
         )
       ).rows[0]!.id;
@@ -300,8 +315,14 @@ export class ObjectService {
     input: FinalizeUploadInput,
   ): Promise<FinalizeUploadResult> {
     const row = (
-      await this.database.query<{ id: string; key: string; size: string; state: string }>(
-        `SELECT id,key,size,state FROM objects WHERE id=$1 AND owner_id=$2`,
+      await this.database.query<{
+        id: string;
+        key: string;
+        kind: 'media' | 'artifact';
+        size: string;
+        state: string;
+      }>(
+        `SELECT id,key,kind,size,state FROM objects WHERE id=$1 AND owner_id=$2`,
         [input.objectId, agentId],
       )
     ).rows[0];
@@ -311,9 +332,10 @@ export class ObjectService {
     if (!head) return { state: 'pending', reason: 'not-found' };
     if (head.size !== Number(row.size)) return { state: 'pending', reason: 'size-mismatch' };
     await this.database.transaction(async (database) => {
+      const retentionHours = this.#retentionHours(row.kind);
       await database.query(
         `UPDATE objects SET state='ready',expires_at=now()+($2 || ' hours')::interval WHERE id=$1`,
-        [row.id, String(this.ttlHours)],
+        [row.id, String(retentionHours)],
       );
       await database.query(`DELETE FROM object_expirations WHERE id=$1`, [row.id]);
     });
@@ -328,10 +350,12 @@ export class ObjectService {
   async readMediaObject(mediaId: string): Promise<MediaObjectRead | undefined> {
     // The tombstone is the fact, not the absence of a row: a swept object
     // answers expired whether or not its row still exists.
-    const expired = await this.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [
-      mediaId,
-    ]);
-    if (expired.rows.length) return { kind: 'expired' };
+    const expired = await this.database.query<{ retention_hours: number }>(
+      `SELECT retention_hours FROM object_expirations WHERE id=$1`,
+      [mediaId],
+    );
+    if (expired.rows[0])
+      return { kind: 'expired', ttlHours: Number(expired.rows[0].retention_hours) };
     const row = (
       await this.database.query<{ key: string; state: string }>(
         `SELECT key,state FROM objects WHERE id=$1`,

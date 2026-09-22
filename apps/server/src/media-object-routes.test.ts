@@ -78,12 +78,12 @@ describe('media object routes', () => {
 
   it('answers 410 with the ttl fact for swept objects', async () => {
     const objects = objectService({
-      readMediaObject: vi.fn(async () => ({ kind: 'expired' })),
+      readMediaObject: vi.fn(async () => ({ kind: 'expired', ttlHours: 168 })),
     } as never);
     const origin = await start({ objectService: objects as ObjectService });
     const response = await fetch(`${origin}/v1/media/${UUID}`, { redirect: 'manual' });
     expect(response.status).toBe(410);
-    await expect(response.json()).resolves.toMatchObject({ error: 'media_expired' });
+    await expect(response.json()).resolves.toEqual({ error: 'media_expired', ttlHours: 168 });
   });
 
   it('never exposes a pending object and a missing id is 404', async () => {

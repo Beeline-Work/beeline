@@ -281,7 +281,8 @@ describe('deleteAccount', () => {
     // Object bytes are gone; the tombstone keeps the "expired" story honest.
     await expectRowCount(`SELECT 1 FROM objects WHERE owner_id=ANY($1)`, [[OWNER, AGENT]], 0);
     await expectRowCount(
-      `SELECT 1 FROM object_expirations WHERE id='88888888-8888-4888-8888-888888888888'`,
+      `SELECT 1 FROM object_expirations
+       WHERE id='88888888-8888-4888-8888-888888888888' AND retention_hours=24`,
       [],
       1,
     );

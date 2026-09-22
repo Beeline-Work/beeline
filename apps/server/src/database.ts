@@ -835,8 +835,11 @@ CREATE INDEX IF NOT EXISTS objects_pending_idx ON objects(created_at) WHERE stat
 -- One row per swept object id, so the media read answers 410 Gone instead of 404.
 CREATE TABLE IF NOT EXISTS object_expirations (
   id uuid PRIMARY KEY,
+  retention_hours integer NOT NULL DEFAULT 24,
   expired_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE object_expirations
+  ADD COLUMN IF NOT EXISTS retention_hours integer NOT NULL DEFAULT 24;
 
 -- The bytea media store is retired: person files share the objects/Tigris path.
 DROP TABLE IF EXISTS legacy_media_urls;

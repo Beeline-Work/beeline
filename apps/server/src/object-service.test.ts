@@ -4,6 +4,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase, type SqlDatabase } from './test-support.js';
 import { ObjectService, isArtifactMimeType } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
+import { ARTIFACT_TTL_HOURS, MEDIA_TTL_HOURS } from './media-ttl.js';
 
 const AGENT = 'c'.repeat(64);
 const OTHER = 'd'.repeat(64);
@@ -79,12 +80,16 @@ describe('ObjectService', () => {
       'text/html',
     );
     const row = (
-      await database.query<{ state: string; title: string }>(
-        `SELECT state,title FROM objects WHERE id=$1`,
+      await database.query<{ state: string; title: string; retention_hours: number }>(
+        `SELECT state,title,
+                EXTRACT(EPOCH FROM (expires_at-now()))/3600 retention_hours
+         FROM objects WHERE id=$1`,
         [result.objectId],
       )
     ).rows[0];
     expect(row).toMatchObject({ state: 'ready', title: 'Mock Page' });
+    expect(Number(row!.retention_hours)).toBeGreaterThan(ARTIFACT_TTL_HOURS - 1);
+    expect(Number(row!.retention_hours)).toBeLessThanOrEqual(ARTIFACT_TTL_HOURS);
   });
 
   it('refuses bad mime, empty bytes, over-cap bytes, and a blank title', async () => {
@@ -111,13 +116,12 @@ describe('ObjectService', () => {
     expect(second.objectId).toBe(first.objectId);
     expect(fake.put).toHaveBeenCalledTimes(1);
     const row = (
-      await database.query<{ state: string }>(
-        `SELECT state, expires_at > now() + interval '23 hours' as fresh FROM objects WHERE id=$1`,
+      await database.query<{ state: string; fresh: boolean }>(
+        `SELECT state, expires_at > now() + interval '167 hours' as fresh FROM objects WHERE id=$1`,
         [first.objectId],
       )
     ).rows[0];
-    expect(row).toMatchObject({ state: 'ready' });
-    expect(row!.state).toBe('ready');
+    expect(row).toEqual({ state: 'ready', fresh: true });
   });
 
   it('streams a person file share: any mime, kind=media, same TTL restart', async () => {
@@ -136,18 +140,53 @@ describe('ObjectService', () => {
       'text/plain',
     );
     const row = (
-      await database.query<{ kind: string; state: string }>(
-        `SELECT kind,state FROM objects WHERE id=$1`,
+      await database.query<{ kind: string; state: string; retention_hours: number }>(
+        `SELECT kind,state,
+                EXTRACT(EPOCH FROM (expires_at-now()))/3600 retention_hours
+         FROM objects WHERE id=$1`,
         [result.objectId],
       )
     ).rows[0];
-    expect(row).toEqual({ kind: 'media', state: 'ready' });
+    expect(row).toMatchObject({ kind: 'media', state: 'ready' });
+    expect(Number(row!.retention_hours)).toBeGreaterThan(MEDIA_TTL_HOURS - 1);
+    expect(Number(row!.retention_hours)).toBeLessThanOrEqual(MEDIA_TTL_HOURS);
     await database.query(`UPDATE objects SET expires_at = now() - interval '1 minute' WHERE id=$1`, [
       result.objectId,
     ]);
     const again = await service.uploadSharedFile(AGENT, bytes, 'text/plain', 'notes.txt');
     expect(again.objectId).toBe(result.objectId);
     expect(fake.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the incoming retention when identical bytes cross upload kinds', async () => {
+    const bytes = Buffer.from(HTML);
+    const media = await service.uploadSharedFile(AGENT, bytes, 'text/html', 'page.html');
+    const artifact = await service.uploadArtifact(AGENT, bytes, 'text/html', 'Page');
+    expect(artifact.objectId).toBe(media.objectId);
+    expect(fake.put).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await database.query<{ artifact: boolean; fresh: boolean }>(
+          `SELECT kind='artifact' artifact,
+                  expires_at > now() + interval '167 hours' fresh
+           FROM objects WHERE id=$1`,
+          [artifact.objectId],
+        )
+      ).rows[0],
+    ).toEqual({ artifact: true, fresh: true });
+
+    const sharedAgain = await service.uploadSharedFile(AGENT, bytes, 'text/html', 'page.html');
+    expect(sharedAgain.objectId).toBe(media.objectId);
+    expect(
+      (
+        await database.query<{ media: boolean; expires_within_day: boolean }>(
+          `SELECT kind='media' media,
+                  expires_at <= now() + interval '24 hours' expires_within_day
+           FROM objects WHERE id=$1`,
+          [media.objectId],
+        )
+      ).rows[0],
+    ).toEqual({ media: true, expires_within_day: true });
   });
 
   it('readOwnedBytes returns storage bytes for a ready object this owner uploaded', async () => {
@@ -187,6 +226,28 @@ describe('ObjectService', () => {
       ])
     ).rows[0];
     expect(row).toMatchObject({ state: 'pending' });
+  });
+
+  it('gives presigned agent artifacts seven days without changing media retention', async () => {
+    const artifact = await service.createUpload(AGENT, {
+      kind: 'artifact',
+      mimeType: 'text/html',
+      size: 10,
+      sha256: sha256(Buffer.from('artifact-window')),
+    });
+    const media = await service.createUpload(AGENT, {
+      kind: 'media',
+      mimeType: 'application/pdf',
+      size: 10,
+      sha256: sha256(Buffer.from('media-window')),
+    });
+    expect(artifact.expiresAt - Date.now()).toBeGreaterThan(
+      (ARTIFACT_TTL_HOURS - 1) * 3_600_000,
+    );
+    expect(media.expiresAt - Date.now()).toBeGreaterThan(
+      (MEDIA_TTL_HOURS - 1) * 3_600_000,
+    );
+    expect(media.expiresAt - Date.now()).toBeLessThanOrEqual(MEDIA_TTL_HOURS * 3_600_000);
   });
 
   it('refuses over-cap createUpload and malformed digests', async () => {
@@ -286,10 +347,13 @@ describe('ObjectService', () => {
       expect.objectContaining({ expiresIn: 600 }),
     );
     await database.query(
-      `INSERT INTO object_expirations(id) VALUES($1)`,
-      [result.objectId],
+      `INSERT INTO object_expirations(id,retention_hours) VALUES($1,$2)`,
+      [result.objectId, ARTIFACT_TTL_HOURS],
     );
-    await expect(service.readMediaObject(result.objectId)).resolves.toEqual({ kind: 'expired' });
+    await expect(service.readMediaObject(result.objectId)).resolves.toEqual({
+      kind: 'expired',
+      ttlHours: ARTIFACT_TTL_HOURS,
+    });
     await database.query(`DELETE FROM object_expirations WHERE id=$1`, [result.objectId]);
     await database.query(`UPDATE objects SET state='pending' WHERE id=$1`, [result.objectId]);
     await expect(service.readMediaObject(result.objectId)).resolves.toEqual({ kind: 'pending' });

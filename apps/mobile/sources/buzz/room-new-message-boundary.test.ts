@@ -5,6 +5,7 @@ import {
   acknowledgeNewMessageQueue,
   boundaryRowIndex,
   compactNewMessageCount,
+  countsAsUnread,
   messageBoundaryIds,
   newMessageControlVisible,
   newestTranscriptRowId,
@@ -14,6 +15,41 @@ import {
 function message(id: string, isUser = false): ChatDisplayMessage {
   return { id, text: id, timestamp: 1, isUser };
 }
+
+/**
+ * The phone's half of the server's one definition of unread
+ * (`apps/server/src/read-cursor.ts`, `unreadMessageSql`). The server admits
+ * `presentation IN ('message','system','card')` authored by somebody other
+ * than the viewer; every row shape below is checked against that rule.
+ */
+describe('what counts as unread', () => {
+  it('agrees with the server about which rows are unread mail', () => {
+    expect(countsAsUnread(message('from-somebody-else'))).toBe(true);
+    // The viewer's own row is never their own unread mail.
+    expect(countsAsUnread(message('mine', true))).toBe(false);
+    // presentation='activity' — an agent narrating the turn it is running.
+    // This is what the queue used to count and the server never did.
+    expect(countsAsUnread({ ...message('narration'), isAgentActivity: true })).toBe(false);
+    // Neither a streaming draft nor its live turn row is a stored message yet.
+    expect(countsAsUnread({ ...message('streaming'), isAgentDraft: true })).toBe(false);
+    expect(countsAsUnread({ ...message('turn'), isAgentLiveTurn: true })).toBe(false);
+  });
+
+  it('keeps a narrating agent from inflating the reader\'s count', () => {
+    const rows = [
+      message('real'),
+      { ...message('narration-a'), isAgentActivity: true },
+      { ...message('narration-b'), isAgentActivity: true },
+    ];
+    const queue = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: rows,
+      arrivingIds: new Set(['real', 'narration-a', 'narration-b']),
+      isPinnedToTail: false,
+    });
+    // One piece of mail arrived, not three.
+    expect(queue).toEqual({ boundaryId: 'real', count: 1 });
+  });
+});
 
 describe('new-message boundary', () => {
   it('resolves an exact row or a relayed message nested inside its host', () => {

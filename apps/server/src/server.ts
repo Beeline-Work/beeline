@@ -551,11 +551,6 @@ export function createBeelineServer(options: ServerOptions): Server {
               roomId,
               options.live.subscribe(roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
-                // A read boundary belongs to one reader. It rides the Room bus
-                // so their other devices — already subscribed here — follow it
-                // live, and it stops at every socket that is not theirs.
-                if (event.type === 'read-mark' && event.identityId !== principal.identityId)
-                  return;
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
                   return;

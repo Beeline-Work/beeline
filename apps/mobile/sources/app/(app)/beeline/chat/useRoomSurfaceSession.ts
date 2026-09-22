@@ -238,8 +238,6 @@ export function useRoomSurfaceSession({
   const outboxRef = useRef<RoomOutbox | null>(null);
   const roomClientRef = useRef<RoomViewClient | null>(null);
   roomClientRef.current = roomClient;
-  const userPubkeyRef = useRef(userPubkey);
-  userPubkeyRef.current = userPubkey;
   const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
@@ -709,13 +707,6 @@ export function useRoomSurfaceSession({
               // A Room watch no longer includes child corners. An ephemeral
               // lane still belongs exclusively to its emitting Room.
               return;
-            } else if (live.type === 'read-mark') {
-              // Our own boundary, moved on one of our other devices. The
-              // server only hands this to our sockets, but the transcript's
-              // divider is ours alone, so check whose it is before moving it.
-              if (live.identityId === userPubkeyRef.current) {
-                setFirstUnreadMessageId(live.firstUnreadMessageId);
-              }
             } else if (live.type === 'presence') {
               applyDecodedOverlay({
                 kind: 'presence',

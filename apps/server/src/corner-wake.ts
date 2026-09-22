@@ -28,18 +28,10 @@ export const CORNER_WAKE_MIN_INTERVAL_MS = 400;
  * wakes — and the daemon's timed poll remains the recovery path regardless.
  */
 export function wakesCorner(event: LiveEvent, agentId: string): boolean {
-  // A reader's own read boundary is the one exception to failing open. It
-  // names no author the filter below could match, and it moves every time a
-  // human scrolls the corner — so letting it through would wake the agent on
-  // reading, which is neither new work nor addressed to it.
-  if (event.type === 'read-mark') return false;
   return !isOwnTurnNarration(event, agentId);
 }
 
-function isOwnTurnNarration(
-  event: Exclude<LiveEvent, { type: 'read-mark' }>,
-  agentId: string,
-): boolean {
+function isOwnTurnNarration(event: LiveEvent, agentId: string): boolean {
   // Only `invalidate` carries a reason; every other variant is itself one of
   // the live-output/presence shapes an agent emits while narrating its turn.
   if (event.type !== 'invalidate') return event.agentId === agentId;

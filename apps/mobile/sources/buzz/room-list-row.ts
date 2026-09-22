@@ -336,18 +336,6 @@ function unreadBadgeLabel(room: Pick<RoomRowInput, 'roomUnread' | 'unreadNew'>):
 }
 
 /**
- * The same chip, read straight off a served deck row. The server counts
- * against the same read mark the row's `unread` is keyed on, so the two always
- * agree; a server that sent no count still says `NEW` rather than a number
- * nobody counted.
- */
-export function roomRowUnreadBadge(
-  item: Pick<ChatListItem, 'unread' | 'unreadCount'>,
-): string | null {
-  return unreadBadgeLabel({ roomUnread: item.unread, unreadNew: item.unreadCount ?? null });
-}
-
-/**
  * A Room is *alive* when an agent is working in one of its corners right now.
  * The single condition the index spends motion on, exported so every
  * consumer agrees about live corner work.

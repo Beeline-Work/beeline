@@ -46,6 +46,28 @@ export function compactNewMessageCount(count: number): string {
 }
 
 /**
+ * WHAT COUNTS AS UNREAD, on the phone. The other half of the server's one
+ * definition in `apps/server/src/read-cursor.ts` (`unreadMessageSql`), which
+ * admits `presentation IN ('message','system','card')` authored by somebody
+ * other than the viewer.
+ *
+ * This queue used to apply no presentation rule at all, so an agent narrating
+ * a turn could inflate the reader's count past anything the server would ever
+ * agree to. A row the server will not call unread must not be queued as new
+ * mail here either.
+ */
+export function countsAsUnread(
+  message: Pick<
+    ChatDisplayMessage,
+    'isUser' | 'isAgentActivity' | 'isAgentDraft' | 'isAgentLiveTurn'
+  >,
+): boolean {
+  return (
+    !message.isUser && !message.isAgentActivity && !message.isAgentDraft && !message.isAgentLiveTurn
+  );
+}
+
+/**
  * Queue only incoming rows that arrived while the reader was away from the
  * tail. The first one owns the boundary; later arrivals increase the compact
  * count without moving it.
@@ -64,7 +86,9 @@ export function queueIncomingMessages(
 ): NewMessageQueue {
   if (isPinnedToTail || arrivingIds.size === 0) return current;
   const incoming = messages.flatMap((message) =>
-    message.isUser ? [] : messageBoundaryIds(message).filter((id) => arrivingIds.has(id)),
+    countsAsUnread(message)
+      ? messageBoundaryIds(message).filter((id) => arrivingIds.has(id))
+      : [],
   );
   if (incoming.length === 0) return current;
   return {

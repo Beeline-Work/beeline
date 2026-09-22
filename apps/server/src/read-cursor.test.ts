@@ -12,13 +12,14 @@ import { createBeelineServer } from './server.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 
 /**
- * The read cursor, end to end over the real HTTP and WebSocket surface: the
- * boundary a phone publishes, the copy the same person's other device
- * receives, the count the deck is served, and mark-unread putting it all back.
+ * The read cursor over the real HTTP and WebSocket surface: the boundary a
+ * phone writes, the count served beside it, mark-unread putting it back, and
+ * the one definition of unread that the cursor and the deck now share.
  *
- * Two sockets stand in for two of ONE person's devices, and a third stands in
- * for the other member of the Room — who must never learn where anybody else
- * is reading.
+ * The server STORES readership; it does not do work for it. A read mark
+ * therefore costs exactly one write and publishes nothing — no live frame, no
+ * invalidation, no refetch on anybody's device. The socket assertions below
+ * are what hold that line.
  */
 const OWNER = createHash('sha256').update('github:owner').digest('hex');
 const OTHER = createHash('sha256').update('github:recipient').digest('hex');
@@ -74,8 +75,6 @@ describe('the read cursor over the live phone surface', () => {
       return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
     });
     const live = new LiveHub();
-    // The live hub is what carries a moved boundary to the viewer's other
-    // devices, so the service under test is wired with one.
     phone = new PhoneService(database, 'http://placeholder', undefined, undefined, live);
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
@@ -110,133 +109,179 @@ describe('the read cursor over the live phone surface', () => {
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
 
+  const cursor = async (token = ownerToken) => {
+    const view = (await (
+      await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, token)
+    ).json()) as {
+      viewer: {
+        readCursor?: {
+          messageId: string | null;
+          firstUnreadMessageId: string | null;
+          unreadCount?: number;
+        };
+      };
+    };
+    return view.viewer.readCursor;
+  };
+
   const deckRow = async (token = ownerToken) => {
     const view = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/chats`, 'GET', undefined, token)
-    ).json()) as { chats: Array<{ room: { id: string }; unread: boolean; unreadCount?: number }> };
+    ).json()) as { chats: Array<{ room: { id: string }; unread: boolean }> };
     return view.chats.find((chat) => chat.room.id === ROOM)!;
-  };
-
-  /** One subscribed device. Read-marks it receives are collected as they land. */
-  const device = async (token: string) => {
-    const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
-      `bearer.${token}`,
-    ]);
-    await new Promise<void>((resolve, reject) => {
-      socket.once('open', () => resolve());
-      socket.once('error', reject);
-    });
-    const marks: Array<{ identityId: string; messageId: string | null; firstUnreadMessageId: string | null }> = [];
-    socket.on('message', (raw) => {
-      const value = JSON.parse(raw.toString()) as Record<string, unknown>;
-      if (value.type === 'read-mark')
-        marks.push(
-          value as unknown as {
-            identityId: string;
-            messageId: string | null;
-            firstUnreadMessageId: string | null;
-          },
-        );
-    });
-    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('subscribe timeout')), 3000);
-      socket.on('message', function onMessage(raw) {
-        if ((JSON.parse(raw.toString()) as { type?: string }).type !== 'subscribed') return;
-        clearTimeout(timer);
-        socket.off('message', onMessage);
-        resolve();
-      });
-    });
-    return { socket, marks };
   };
 
   const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
-  it('serves an unread count, publishes a moved boundary to the viewer\'s own devices only, and takes mark-unread back', async () => {
-    const phoneDevice = await device(ownerToken);
-    const tablet = await device(ownerToken);
-    const somebodyElse = await device(otherToken);
+  it('serves the count beside the boundary, and takes it back on mark-unread', async () => {
+    expect(await cursor()).toEqual({
+      messageId: null,
+      firstUnreadMessageId: MESSAGES[0]!.id,
+      unreadCount: 4,
+    });
+    expect((await deckRow()).unread).toBe(true);
+
+    // The viewport reaches the second message and stops. This is the write the
+    // debounced advancer makes — a mid-transcript row, not the tail.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[1]!.id,
+      firstUnreadMessageId: MESSAGES[2]!.id,
+      unreadCount: 2,
+    });
+
+    // Reaching the newest row settles the Room.
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[3]!.id,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+
+    // Mark-unread from the third message. The monotonic guard that makes
+    // markRead forward-only must not apply here.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[2]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[1]!.id,
+      firstUnreadMessageId: MESSAGES[2]!.id,
+      unreadCount: 2,
+    });
+    expect((await deckRow()).unread).toBe(true);
+
+    // The other member's own cursor was never touched by any of it.
+    expect((await cursor(otherToken))?.unreadCount).toBe(4);
+  });
+
+  it('costs a read mark nothing on the live lane — no frame, no invalidation', async () => {
+    // Two subscribed sockets: the writer's own, and another member's. A read
+    // mark must reach neither, because either would buy a full Room GET.
+    const sockets = await Promise.all(
+      [ownerToken, otherToken].map(async (token) => {
+        const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
+          `bearer.${token}`,
+        ]);
+        await new Promise<void>((resolve, reject) => {
+          socket.once('open', () => resolve());
+          socket.once('error', reject);
+        });
+        const frames: unknown[] = [];
+        socket.on('message', (raw) => {
+          const value = JSON.parse(raw.toString()) as { type?: string };
+          if (value.type !== 'subscribed') frames.push(value);
+        });
+        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('subscribe timeout')), 3000);
+          socket.on('message', function onMessage(raw) {
+            if ((JSON.parse(raw.toString()) as { type?: string }).type !== 'subscribed') return;
+            clearTimeout(timer);
+            socket.off('message', onMessage);
+            resolve();
+          });
+        });
+        return { socket, frames };
+      }),
+    );
     try {
-      // The deck says how much is waiting, not merely THAT something is.
-      const cold = await deckRow();
-      expect(cold.unread).toBe(true);
-      expect(cold.unreadCount).toBe(4);
+      await settle();
+      for (const entry of sockets) entry.frames.length = 0;
 
-      // The phone's viewport reaches the second message and stops there. This
-      // is the write the debounced advancer makes — a mid-transcript row, not
-      // the tail the fetched view happens to end on.
-      expect((await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id })).status).toBe(204);
+      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id });
+      await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[0]!.id });
       await settle();
 
-      // The tablet — the same person, a different device — is told where they
-      // are reading, without asking.
-      expect(tablet.marks).toEqual([
-        {
-          type: 'read-mark',
-          roomId: ROOM,
-          identityId: OWNER,
-          messageId: MESSAGES[1]!.id,
-          firstUnreadMessageId: MESSAGES[2]!.id,
-        },
-      ]);
-      // Nobody else in the Room learns any of it.
-      expect(somebodyElse.marks).toEqual([]);
-
-      // And the deck now counts only what is genuinely still unread.
-      const partlyRead = await deckRow();
-      expect(partlyRead.unread).toBe(true);
-      expect(partlyRead.unreadCount).toBe(2);
-
-      // Reaching the newest row clears the row entirely.
-      expect((await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id })).status).toBe(204);
-      await settle();
-      const caughtUp = await deckRow();
-      expect(caughtUp.unread).toBe(false);
-      expect(caughtUp.unreadCount).toBe(0);
-
-      // Mark-unread from the third message: that message and everything after
-      // it is unread again, and the boundary travels to the other device too.
-      tablet.marks.length = 0;
-      expect((await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[2]!.id })).status).toBe(204);
-      await settle();
-      const reopened = await deckRow();
-      expect(reopened.unread).toBe(true);
-      expect(reopened.unreadCount).toBe(2);
-      expect(tablet.marks).toEqual([
-        {
-          type: 'read-mark',
-          roomId: ROOM,
-          identityId: OWNER,
-          messageId: MESSAGES[1]!.id,
-          firstUnreadMessageId: MESSAGES[2]!.id,
-        },
-      ]);
-      expect(somebodyElse.marks).toEqual([]);
-
-      // The other member's own row was never touched by any of it.
-      const theirs = await deckRow(otherToken);
-      expect(theirs.unreadCount).toBe(4);
+      // Nothing at all: not a delta, not an invalidation, on either socket.
+      expect(sockets.map((entry) => entry.frames)).toEqual([[], []]);
     } finally {
-      for (const open of [phoneDevice, tablet, somebodyElse]) open.socket.close();
+      for (const entry of sockets) entry.socket.close();
     }
   });
 
   it('marks the whole Room unread when nothing precedes the chosen message', async () => {
     await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
-    expect((await deckRow()).unreadCount).toBe(0);
+    expect((await cursor())?.unreadCount).toBe(0);
 
     expect(
       (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[0]!.id }))
         .status,
     ).toBe(204);
-    const all = await deckRow();
-    expect(all.unread).toBe(true);
-    expect(all.unreadCount).toBe(4);
-    expect((await phone.readRoom(ROOM, OWNER))?.viewer.readCursor).toEqual({
+    expect(await cursor()).toEqual({
       messageId: null,
       firstUnreadMessageId: MESSAGES[0]!.id,
+      unreadCount: 4,
     });
+  });
+
+  it('counts the cursor and the deck boolean over one definition of unread', async () => {
+    // An agent narrating a turn writes activity rows. They are the case the
+    // old definitions disagreed on: the cursor's `presentation<>'activity'`
+    // and the deck's allowlist both excluded them, but the phone's own queue
+    // counted them, so a long turn inflated the reader's count past anything
+    // the server would agree to. Nothing counts them now.
+    for (const [index, id] of ['9e', '8f'].entries()) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+         VALUES($1,$2,$3,'narrating','activity',$4)`,
+        [id.padEnd(64, id[1]!), ROOM, AGENT, `2026-09-12 01:00:1${index}.000+00`],
+      );
+    }
+
+    // Still the four real messages, and the Room is still unread.
+    expect((await cursor())?.unreadCount).toBe(4);
+    expect((await deckRow()).unread).toBe(true);
+
+    // Reading the newest real message settles the Room, even though two newer
+    // activity rows sit past the mark. The cursor and the deck agree.
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[3]!.id,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+  });
+
+  it('caps the count rather than scanning a whole abandoned backlog', async () => {
+    for (let index = 0; index < 120; index += 1) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,$5)`,
+        [
+          `c${index.toString().padStart(2, '0')}`.padEnd(64, 'c'),
+          ROOM,
+          AGENT,
+          `bulk ${index}`,
+          new Date(Date.parse('2026-09-12T02:00:00Z') + index * 1000).toISOString(),
+        ],
+      );
+    }
+    expect((await cursor())?.unreadCount).toBe(99);
   });
 
   it('refuses a read or unread write against a Room the caller cannot read', async () => {
@@ -255,7 +300,6 @@ describe('the read cursor over the live phone surface', () => {
       );
       expect(response.status).not.toBe(204);
     }
-    // No mark was written for them either way.
     const marks = await database.query<{ count: string }>(
       `SELECT count(*)::text count FROM room_read_marks WHERE identity_id=$1`,
       [outsider],

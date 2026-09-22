@@ -255,6 +255,12 @@ function readViewer(value: unknown): RoomViewer {
       ? {
           messageId: cursor.messageId as string | null,
           firstUnreadMessageId: cursor.firstUnreadMessageId as string | null,
+          ...field(
+            'unreadCount',
+            integer(cursor.unreadCount) && cursor.unreadCount >= 0
+              ? cursor.unreadCount
+              : undefined,
+          ),
         }
       : undefined;
   return {
@@ -1070,10 +1076,6 @@ function readChat(value: unknown): ChatListItem | null {
   return {
     room,
     unread: item.unread === true,
-    ...field(
-      'unreadCount',
-      integer(item.unreadCount) && item.unreadCount >= 0 ? item.unreadCount : undefined,
-    ),
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
     ...field(

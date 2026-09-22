@@ -62,14 +62,6 @@ export type LiveWireEvent =
       databaseClockAt?: number;
       upperBoundMs: number;
     }
-  /** This viewer's own read boundary, moved on one of their other devices. */
-  | {
-      type: 'read-mark';
-      roomId: string;
-      identityId: string;
-      messageId: string | null;
-      firstUnreadMessageId: string | null;
-    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

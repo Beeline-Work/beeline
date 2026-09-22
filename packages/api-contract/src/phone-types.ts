@@ -416,6 +416,13 @@ export type RoomViewer = {
   readonly readCursor?: {
     readonly messageId: string | null;
     readonly firstUnreadMessageId: string | null;
+    /**
+     * How many messages sit past the mark, counted by the server over the one
+     * definition of unread it keeps (`apps/server/src/read-cursor.ts`) and
+     * capped at 99. Absent on a server old enough not to send it — which is
+     * not the same as zero, and must not be read as "caught up".
+     */
+    readonly unreadCount?: number;
   };
   readonly identity: RoomViewIdentity;
   readonly role: 'owner' | 'admin' | 'member';
@@ -534,15 +541,6 @@ export type ChatListItem = {
   readonly cornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
-  /**
-   * How many messages sit newer than the viewer's read mark, counted by the
-   * server over the same rows `unread` is keyed on (viewer-authored rows never
-   * count). Absent when the server omitted it — the row then knows it is
-   * unread without knowing by how much, and says so rather than inventing a
-   * number. Capped server-side, so a very old mark reports the cap, not a
-   * count nobody would read.
-   */
-  readonly unreadCount?: number;
   readonly repositoryName?: string;
   /**
    * Max-severity rollup of this Room's own conversational turn and every one

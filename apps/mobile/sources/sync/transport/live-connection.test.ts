@@ -359,7 +359,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('ticks each registration with its own first room id', async () => {
+  it('does not poll Room-bearing registrations', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const first: unknown[] = [];
@@ -370,17 +370,13 @@ describe('LiveConnection', () => {
     sockets[0]!.open();
 
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(first).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: ROOM_A, reason: 'poll' } },
-    ]);
-    expect(second).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: ROOM_B, reason: 'poll' } },
-    ]);
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
 
     connection.dispose();
   });
 
-  it('gives a registration created mid-interval a full interval before its first tick', async () => {
+  it('keeps Room-bearing registrations poll-free across multiple intervals', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const early: unknown[] = [];
@@ -392,13 +388,12 @@ describe('LiveConnection', () => {
     await connection.register([{ '#h': [ROOM_B] }], (event) => late.push(event));
 
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(early).toHaveLength(1);
+    expect(early).toHaveLength(0);
     expect(late).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(late).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: ROOM_B, reason: 'poll' } },
-    ]);
+    expect(early).toEqual([]);
+    expect(late).toEqual([]);
 
     connection.dispose();
   });

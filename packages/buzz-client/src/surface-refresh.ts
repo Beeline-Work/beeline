@@ -28,6 +28,7 @@ export class SurfaceRefreshScheduler<T> {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private inFlight = false;
   private dirty = false;
+  private immediatePending = false;
   private firstDirtyAt: number | undefined;
   private lastStartedAt = Number.NEGATIVE_INFINITY;
   private generation = 0;
@@ -56,7 +57,8 @@ export class SurfaceRefreshScheduler<T> {
   async startAfter(listenReady: Promise<unknown>): Promise<void> {
     await listenReady;
     this.ready = true;
-    this.force();
+    if (this.immediatePending) void this.run();
+    else this.force();
   }
 
   signal(): void {
@@ -91,10 +93,23 @@ export class SurfaceRefreshScheduler<T> {
     this.schedule(true);
   }
 
+  /** A committed server event reads now, or directly after the current read. */
+  refreshNow(): void {
+    if (this.disposed) return;
+    if (this.inFlight) this.generation += 1;
+    this.dirty = true;
+    this.immediatePending = true;
+    this.firstDirtyAt ??= this.now();
+    if (this.timer) this.clearTimer(this.timer);
+    this.timer = undefined;
+    if (this.ready && !this.inFlight) void this.run();
+  }
+
   /** Makes every completion from the previous screen generation a no-op. */
   advanceGeneration(): void {
     this.generation += 1;
     this.dirty = false;
+    this.immediatePending = false;
     this.firstDirtyAt = undefined;
     this.expectations = [];
     if (this.timer) this.clearTimer(this.timer);
@@ -124,6 +139,7 @@ export class SurfaceRefreshScheduler<T> {
   private async run(): Promise<void> {
     if (this.disposed || this.inFlight || !this.dirty) return;
     this.dirty = false;
+    this.immediatePending = false;
     this.firstDirtyAt = undefined;
     this.inFlight = true;
     this.lastStartedAt = this.now();
@@ -145,7 +161,10 @@ export class SurfaceRefreshScheduler<T> {
       if (!this.disposed && generation === this.generation) this.options.onError?.(error);
     } finally {
       this.inFlight = false;
-      if (this.dirty) this.schedule(false);
+      if (this.dirty) {
+        if (this.immediatePending) void this.run();
+        else this.schedule(false);
+      }
     }
   }
 }

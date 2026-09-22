@@ -36,10 +36,23 @@ export type LiveWireEvent =
       agentId?: string;
       requestId?: string;
       trace?: LiveWireTrace;
+      deliveryId?: string;
     }
   | { type: 'subscribed'; roomId: string }
-  | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
-  | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }
+  | {
+      type: 'message-delta';
+      roomId: string;
+      message: RoomViewMessage;
+      trace?: LiveWireTrace;
+      reconcilesDelivery?: string;
+    }
+  | {
+      type: 'turn-delta';
+      roomId: string;
+      turn: RoomViewAgentTurn;
+      trace?: LiveWireTrace;
+      reconcilesDelivery?: string;
+    }
   | {
       type: 'trace-painted';
       id: string;

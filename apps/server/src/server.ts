@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { SqlDatabase } from './database.js';
@@ -582,6 +582,18 @@ export function createBeelineServer(options: ServerOptions): Server {
                   ...(wireTrace ? { trace: wireTrace } : {}),
                   reason: `delta-fallback:${event.reason}`,
                 };
+                const deliveryId = wireTrace?.id ?? randomUUID();
+                const invalidationSent = !committedRow;
+                if (invalidationSent && client.readyState === client.OPEN) {
+                  rememberPaintTrace(wireTrace);
+                  client.send(
+                    JSON.stringify({
+                      ...wireEvent,
+                      ...(wireTrace ? { trace: wireTrace } : {}),
+                      deliveryId,
+                    }),
+                  );
+                }
                 // Cross-process notifications carry only the committed row
                 // identity. Resolve every row independently: the result stays
                 // on the direct socket-delta path even when the app pool takes
@@ -617,10 +629,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
                     rememberPaintTrace(wireTrace);
+                    if (!result.delta && invalidationSent) return;
                     client.send(
                       JSON.stringify(
                         result.delta
-                          ? { ...result.delta, ...(wireTrace ? { trace: wireTrace } : {}) }
+                          ? {
+                              ...result.delta,
+                              ...(wireTrace ? { trace: wireTrace } : {}),
+                              ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
+                            }
                           : fallback,
                       ),
                     );
@@ -630,7 +647,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       '[live] committed row delivery failed',
                       error instanceof Error ? error.message : String(error),
                     );
-                    if (client.readyState === client.OPEN) {
+                    if (!invalidationSent && client.readyState === client.OPEN) {
                       rememberPaintTrace(wireTrace);
                       client.send(JSON.stringify(fallback));
                     }

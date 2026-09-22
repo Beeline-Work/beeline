@@ -20,6 +20,7 @@ import {
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -415,7 +416,19 @@ export default function BuzzChannels() {
           // Cold deck without Room ids must not subscribe the Workspace UUID as
           // #h — canReadRoom refuses it and live invalidation never lands.
           if (filters.length === 0) return;
-          const stop = await relay.surfaceSubscribe(filters, () => chatsRefresh?.signal());
+          const stop = await relay.surfaceSubscribe(filters, (event) => {
+            const live =
+              'monolithLive' in event
+                ? (event as MonolithSurfaceEvent).monolithLive
+                : undefined;
+            if (
+              live &&
+              (live.type === 'message-delta' || live.type === 'turn-delta') &&
+              live.reconcilesDelivery
+            )
+              return;
+            chatsRefresh?.signal();
+          });
           if (cancelled || generation !== chatWatchGeneration) {
             stop();
             return;

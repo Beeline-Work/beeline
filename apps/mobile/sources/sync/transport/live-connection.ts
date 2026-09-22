@@ -27,7 +27,7 @@ type Registration = {
   readonly filters: SurfaceFilters;
   readonly listener: SurfaceListener;
   readonly roomIds: ReadonlySet<string>;
-  tickDueAt: number;
+  tickDueAt?: number;
   closed: boolean;
 };
 
@@ -101,7 +101,7 @@ export class LiveConnection {
       filters,
       listener,
       roomIds,
-      tickDueAt: Date.now() + FALLBACK_INTERVAL_MS,
+      ...(roomIds.size === 0 ? { tickDueAt: Date.now() + FALLBACK_INTERVAL_MS } : {}),
       closed: false,
     };
     this.registrations.set(registration.id, registration);
@@ -113,7 +113,7 @@ export class LiveConnection {
       if (this.seenSubscribed.has(roomId)) held.push(roomId);
       else if (previous === 0 && !this.pendingSubscribe.has(roomId)) fresh.push(roomId);
     }
-    this.ensureFallback();
+    if (roomIds.size === 0) this.ensureFallback();
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
     for (const roomId of held) this.replayLateJoin(registration, roomId);
     return this.ensureSocket().then(() => () => this.stop(registration));
@@ -148,6 +148,13 @@ export class LiveConnection {
     if (registration.closed) return;
     registration.closed = true;
     this.registrations.delete(registration.id);
+    if (
+      this.fallbackTimer &&
+      ![...this.registrations.values()].some((item) => item.tickDueAt !== undefined)
+    ) {
+      clearInterval(this.fallbackTimer);
+      this.fallbackTimer = undefined;
+    }
     for (const [traceId, owner] of this.traceOwners) {
       if (owner === registration) this.traceOwners.delete(traceId);
     }
@@ -170,7 +177,12 @@ export class LiveConnection {
     this.fallbackTimer = setInterval(() => {
       const now = Date.now();
       for (const registration of this.registrations.values()) {
-        if (registration.closed || now < registration.tickDueAt) continue;
+        if (
+          registration.closed ||
+          registration.tickDueAt === undefined ||
+          now < registration.tickDueAt
+        )
+          continue;
         registration.tickDueAt = now + FALLBACK_INTERVAL_MS;
         const roomId = [...registration.roomIds][0] ?? '';
         registration.listener({

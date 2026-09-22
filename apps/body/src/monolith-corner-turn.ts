@@ -83,6 +83,7 @@ import { roomMentionDirectory } from './monolith-room-turn.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
+type ReviewerInstructionInput = Parameters<typeof cornerReviewerInstruction>[0];
 
 const execFileAsync = promisify(execFile);
 const TOOL_ARGUMENT_MAX_BYTES = 1_200;
@@ -117,6 +118,12 @@ export function cornerReviewerInstruction(input: {
   const headSha = input.headSha ?? '<head sha>';
   return `Checks are green on PR #${number} at ${headSha}. Review it now with the beeline-review skill against that exact head. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
 }
+
+export const CORNER_REVIEWER_SESSION_INSTRUCTION =
+  "You are this Room's configured reviewer. The active turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge yourself.";
+
+export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
+  'There is no stable green PR head for this active reviewer turn. Do not review or call approve_merge. End this turn without a verdict; the next green transition will wake you.';
 
 /**
  * A Room's sole configured reviewer who also opens its own corner has no
@@ -469,6 +476,8 @@ export class MonolithCornerTurnLoop {
   private yoloMode = false;
   /** The live parent-Room reviewer baked into the current session. */
   private reviewerHandle?: string;
+  /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
+  private reviewerInstructionInput?: ReviewerInstructionInput;
   /** The role-specific second-chance instruction for this session. */
   private cornerTurnEndNudge = CORNER_DELIVERY_NUDGE;
   /** Repository state already given a delivery reminder, until that state changes. */
@@ -662,17 +671,10 @@ export class MonolithCornerTurnLoop {
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
     };
-    let reviewerInstruction = cornerReviewerInstruction(reviewerInput);
-    if (reviewerInstruction) {
-      const restore = await this.options.api.execute('getCornerRestoreState', {
-        cornerId: this.options.cornerId,
-      });
-      reviewerInstruction = cornerReviewerInstruction({
-        ...reviewerInput,
-        pullRequestNumber: restore.lifecycle?.pr?.number,
-        headSha: restore.lifecycle?.pr?.headSha,
-      });
-    }
+    const reviewerInstruction = cornerReviewerInstruction(reviewerInput)
+      ? CORNER_REVIEWER_SESSION_INSTRUCTION
+      : undefined;
+    this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
     const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
     this.cornerTurnEndNudge =
       reviewerInstruction ??
@@ -961,6 +963,48 @@ export class MonolithCornerTurnLoop {
     return opened.sessionId;
   }
 
+  /**
+   * Resolve the review target at prompt time, not session activation time.
+   *
+   * A push can land after a reviewer session starts but before its first
+   * prompt, or while that prompt is running. The active prompt and its bounded
+   * second pass therefore each read the current green lifecycle head. The
+   * server still compares approve_merge's SHA with the current head, so a push
+   * after this read fails closed too.
+   */
+  private async activeReviewerInstruction(): Promise<string | undefined> {
+    const input = this.reviewerInstructionInput;
+    if (!input) return undefined;
+    try {
+      const [restore, localHead] = await Promise.all([
+        this.options.api.execute('getCornerRestoreState', {
+          cornerId: this.options.cornerId,
+        }),
+        execFileAsync('git', ['-C', this.options.worktreePath, 'rev-parse', 'HEAD']).then(
+          ({ stdout }) => stdout.trim(),
+        ),
+      ]);
+      const pr = restore.lifecycle?.pr;
+      if (
+        restore.lifecycle?.checks !== 'passing' ||
+        !pr?.number ||
+        !pr.headSha ||
+        pr.headSha !== localHead
+      )
+        return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
+      return [
+        'Current stable reviewer target for this active turn; it supersedes any older head in the trigger or transcript:',
+        cornerReviewerInstruction({
+          ...input,
+          pullRequestNumber: pr.number,
+          headSha: pr.headSha,
+        }),
+      ].join('\n');
+    } catch {
+      return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
+    }
+  }
+
   /** The scheduler seam: `queue-wait` closes when a slot buys a session. */
   private lifecycle(trace?: TurnTrace): SessionLifecycle {
     return {
@@ -1089,19 +1133,21 @@ export class MonolithCornerTurnLoop {
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
               await this.syncBranch();
-              const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>
-                Promise.all([
-                  api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
-                  this.roster(),
-                  this.attachmentDir && attachments.length
-                    ? deliverAttachments(
-                        attachments,
-                        join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                        this.options.fetchImpl,
-                      )
-                    : Promise.resolve<DeliveredAttachment[]>([]),
-                ]),
-              );
+              const [conversation, roster, delivered, activeReviewerInstruction] =
+                await trace.measure('context-fetch', () =>
+                  Promise.all([
+                    api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
+                    this.roster(),
+                    this.attachmentDir && attachments.length
+                      ? deliverAttachments(
+                          attachments,
+                          join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                          this.options.fetchImpl,
+                        )
+                      : Promise.resolve<DeliveredAttachment[]>([]),
+                    this.activeReviewerInstruction(),
+                  ]),
+                );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1131,6 +1177,7 @@ export class MonolithCornerTurnLoop {
                     'New in the corner since your last turn (the earlier transcript is already in this session):',
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  activeReviewerInstruction,
                   [
                     ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),
                     `Newest trigger:\n${trigger}`,
@@ -1370,9 +1417,10 @@ export class MonolithCornerTurnLoop {
                 // This is the same warm session: identity, soul and merge
                 // authority remain in its system prompt and need not be
                 // repeated in this focused follow-up.
+                if (this.reviewerInstructionInput) await this.syncBranch();
                 result = await runPrompt(
                   this.reviewerHandle
-                    ? this.cornerTurnEndNudge
+                    ? ((await this.activeReviewerInstruction()) ?? this.cornerTurnEndNudge)
                     : checksTurn
                       ? CORNER_YOLO_MERGE_NUDGE
                       : CORNER_DELIVERY_NUDGE,

@@ -12,6 +12,8 @@ import {
   CORNER_AUTHOR_CONTRACT,
   CORNER_CLOSE_POLL_BASE_MS,
   CORNER_DELIVERY_NUDGE,
+  CORNER_REVIEWER_SESSION_INSTRUCTION,
+  CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
   CORNER_YOLO_MERGE_NUDGE,
   cornerClosePollMs,
   cornerHasUndeliveredRepositoryWork,
@@ -147,10 +149,17 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it('boots a non-opener reviewer and retains its fallback after CodeGraph preparation fails', async () => {
+  it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Test']);
+    await writeFile(join(root, 'reviewed.txt'), 'first head\n');
+    await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'first head']);
+    const firstHead = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
+    let lifecycleHead = firstHead;
     const agent = stored('11'.repeat(32), 'Echo');
     const runtime = {
       version: 2,
@@ -203,10 +212,13 @@ describe('corner merge instructions', () => {
                 url: 'https://github.com/acme/widgets/pull/7',
                 title: 'Widget',
                 targetBranch: 'main',
-                headSha: 'a'.repeat(40),
+                headSha: lifecycleHead,
               },
             },
           };
+        if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        if (name.startsWith('post')) return { id: 'write-id', createdAt: 1 };
+        if (name === 'retractAgentLiveOutput') return { id: 'write-id', createdAt: 1 };
         throw new Error(`unexpected operation ${name}`);
       }),
       connection: () => ({
@@ -261,8 +273,8 @@ describe('corner merge instructions', () => {
     expect(
       await (loop as unknown as { sessionIsCurrent(): Promise<boolean> }).sessionIsCurrent(),
     ).toBe(true);
-    expect(input?.systemPrompt).toContain(`Checks are green on PR #7 at ${'a'.repeat(40)}`);
-    expect(input?.systemPrompt).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
+    expect(input?.systemPrompt).toContain(CORNER_REVIEWER_SESSION_INSTRUCTION);
+    expect(input?.systemPrompt).not.toContain(firstHead);
     expect(input?.systemPrompt).not.toContain('reply only with its full URL');
     expect(input?.mcpServers).toContainEqual(
       expect.objectContaining({
@@ -289,6 +301,71 @@ describe('corner merge instructions', () => {
         agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
       ).map((tool) => tool.name),
     ).toContain('approve_merge');
+    const activeInstruction = () =>
+      (
+        loop as unknown as {
+          activeReviewerInstruction(): Promise<string | undefined>;
+        }
+      ).activeReviewerInstruction();
+    const firstInstruction = await activeInstruction();
+    expect(firstInstruction).toContain(`Checks are green on PR #7 at ${firstHead}`);
+    expect(firstInstruction).toContain(`call the approve_merge tool for ${firstHead}`);
+    await writeFile(join(root, 'reviewed.txt'), 'latest head\n');
+    await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'latest head']);
+    const latestHead = (
+      await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])
+    ).stdout.trim();
+    lifecycleHead = latestHead;
+    const refreshedInstruction = await activeInstruction();
+    expect(refreshedInstruction).toContain(`Checks are green on PR #7 at ${latestHead}`);
+    expect(refreshedInstruction).toContain(`call the approve_merge tool for ${latestHead}`);
+    expect(refreshedInstruction).not.toContain(firstHead);
+    lifecycleHead = firstHead;
+    expect(await activeInstruction()).toBe(CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION);
+
+    lifecycleHead = latestHead;
+    vi.spyOn(loop as unknown as { syncBranch(): Promise<void> }, 'syncBranch').mockResolvedValue(
+      undefined,
+    );
+    let promptRun = 0;
+    let newestHead = '';
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+      promptRun += 1;
+      if (promptRun === 1) {
+        await writeFile(join(root, 'reviewed.txt'), 'newest head\n');
+        await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
+        await execFileAsync('git', ['-C', root, 'commit', '-m', 'newest head']);
+        newestHead = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
+        lifecycleHead = newestHead;
+      }
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: `review pass ${promptRun}`,
+        toolCalls: [],
+      };
+    });
+    const trigger = `GitHub passed a check on stale head ${firstHead}`;
+    await (
+      loop as unknown as {
+        prompt(
+          requestId: string,
+          trigger: string,
+          attachments: [],
+          requestedById: undefined,
+          restates: string[],
+        ): Promise<void>;
+      }
+    ).prompt('review-turn', trigger, [], undefined, [trigger]);
+    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
+      `Checks are green on PR #7 at ${latestHead}`,
+    );
+    expect(sessionPrompt.mock.calls[1]?.[1]).toContain(
+      `Checks are green on PR #7 at ${newestHead}`,
+    );
+    expect(sessionPrompt.mock.calls[1]?.[1]).not.toContain(latestHead);
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   });
 });

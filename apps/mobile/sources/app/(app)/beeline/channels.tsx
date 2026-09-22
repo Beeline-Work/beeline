@@ -41,6 +41,7 @@ import {
   roomRowName,
   roomRowNeedsAttention,
   roomRowPreview,
+  roomRowUnreadBadge,
   roomListSections,
   NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
@@ -942,6 +943,7 @@ export default function BuzzChannels() {
             const preview = roomRowPreview(item, chatList.viewer.pubkey);
             const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
             const attention = roomRowNeedsAttention(item);
+            const unreadBadge = roomRowUnreadBadge(item);
             const title = `${heading.sigil}${heading.name}`;
             const age = compactRelativeTime(
               item.latestMessage?.createdAt ?? item.room.updatedAt,
@@ -953,7 +955,7 @@ export default function BuzzChannels() {
             const row = (
               <View style={styles.row}>
                 <TouchableOpacity
-                  accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
+                  accessibilityLabel={`${title}${unreadBadge ? `, ${unreadBadge} unread` : ''}${attention ? ', needs you' : ''}`}
                   testID={`room-${item.room.id}`}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
@@ -987,7 +989,20 @@ export default function BuzzChannels() {
                   </View>
                 </TouchableOpacity>
                 <View style={styles.gutter}>
-                  <Text style={styles.age}>{age}</Text>
+                  {/* The gutter carries one fact. An unread Room's is how much
+                      is waiting — the server's own count against the same read
+                      mark the attention square reads; a read Room's is its
+                      age. */}
+                  {unreadBadge ? (
+                    <Text
+                      style={[styles.age, styles.unreadBadge]}
+                      testID={`room-unread-${item.room.id}`}
+                    >
+                      {unreadBadge}
+                    </Text>
+                  ) : (
+                    <Text style={styles.age}>{age}</Text>
+                  )}
                 </View>
                 <View style={styles.cornerToggleSlot}>
                   {(item.cornerCount ?? 0) > 0 && (
@@ -1355,6 +1370,11 @@ const styles = StyleSheet.create((theme) => {
       paddingRight: 4,
     },
     age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
+    // The count occupies the age's slot and borrows its metrics outright, so
+    // an unread row cannot shift its neighbours and the two can never drift
+    // apart. Only the colour differs: it is the attention square's number, so
+    // it takes the attention square's colour.
+    unreadBadge: { color: hull.accent },
     // Reserved whether or not the Room has corners, so the age column keeps
     // one straight right edge down the whole index.
     cornerToggleSlot: {

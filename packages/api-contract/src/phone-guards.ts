@@ -1070,6 +1070,10 @@ function readChat(value: unknown): ChatListItem | null {
   return {
     room,
     unread: item.unread === true,
+    ...field(
+      'unreadCount',
+      integer(item.unreadCount) && item.unreadCount >= 0 ? item.unreadCount : undefined,
+    ),
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
     ...field(

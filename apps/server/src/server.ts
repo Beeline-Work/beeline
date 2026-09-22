@@ -551,6 +551,11 @@ export function createBeelineServer(options: ServerOptions): Server {
               roomId,
               options.live.subscribe(roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
+                // A read boundary belongs to one reader. It rides the Room bus
+                // so their other devices — already subscribed here — follow it
+                // live, and it stops at every socket that is not theirs.
+                if (event.type === 'read-mark' && event.identityId !== principal.identityId)
+                  return;
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
                   return;
@@ -1128,6 +1133,14 @@ async function route(
     const input = await body(request);
     if (typeof input.messageId !== 'string') throw new Error('messageId is required');
     await options.phone.markRead(match[1]!, input.messageId, identityId!);
+    json(response, 204, {});
+    return;
+  }
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/unread$/);
+  if (method === 'POST' && match) {
+    const input = await body(request);
+    if (typeof input.messageId !== 'string') throw new Error('messageId is required');
+    await options.phone.markUnread(match[1]!, input.messageId, identityId!);
     json(response, 204, {});
     return;
   }

@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
+import { readViewerCursor } from './read-cursor.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 
@@ -69,6 +70,12 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.id, OLD.id)
       );
+    WHEN 'room_read_marks' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', COALESCE(NEW.room_id, OLD.room_id),
+        'identityId', COALESCE(NEW.identity_id, OLD.identity_id)
+      );
     WHEN 'memberships' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -135,7 +142,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'permission_authority',
+    'corner_facts', 'permission_authority', 'room_read_marks',
     'agent_grants', 'agent_schedules', 'agent_commands'
   ] LOOP
     IF NOT EXISTS (
@@ -370,6 +377,23 @@ export class PostgresLiveListener {
         });
         return;
       }
+      return;
+    }
+    if (payload.table === 'room_read_marks' && payload.identityId) {
+      // The reader's own boundary moved on some machine. Resolve it here and
+      // hand it to that identity's sockets on THIS machine; `server.ts` drops
+      // it at every socket that is not theirs. A deleted mark is a real
+      // boundary too — mark-unread with nothing before the target removes the
+      // row, which reads as "the whole Room is unread".
+      const cursor = await readViewerCursor(this.database, payload.roomId, payload.identityId);
+      if (!cursor) return;
+      this.live.publish({
+        type: 'read-mark',
+        roomId: payload.roomId,
+        identityId: payload.identityId,
+        messageId: cursor.messageId,
+        firstUnreadMessageId: cursor.firstUnreadMessageId,
+      });
       return;
     }
     if (payload.table === 'agent_config' && payload.agentId) {

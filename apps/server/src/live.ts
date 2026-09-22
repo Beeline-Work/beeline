@@ -91,6 +91,19 @@ export type LiveEvent =
         | { type: 'message'; row: CommittedMessageLiveRow; startedAt?: number }
         | { type: 'turn'; row: CommittedTurnLiveRow; startedAt?: number };
     }
+  /**
+   * One viewer's own read boundary moved. It is published on the Room's bus
+   * like everything else, but it is private to `identityId`: the socket layer
+   * hands it only to that identity's own sockets, so a reader's other devices
+   * follow along and nobody else in the Room learns where they are reading.
+   */
+  | {
+      type: 'read-mark';
+      roomId: string;
+      identityId: string;
+      messageId: string | null;
+      firstUnreadMessageId: string | null;
+    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

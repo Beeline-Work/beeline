@@ -114,6 +114,7 @@ import {
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { answerRoomChoice, hiddenWakeCardSql, skipRoomChoice } from './room-choice.js';
+import { readViewerCursor, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -166,6 +167,12 @@ const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
 export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
 const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
+/**
+ * Highest unread tally the deck is served. The row compacts anything above its
+ * own badge cap anyway, so counting further buys the reader nothing and makes
+ * a long-abandoned Room's scan grow with its whole backlog.
+ */
+export const UNREAD_COUNT_CAP = 99;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
@@ -312,21 +319,6 @@ interface CornerRow extends RoomRow {
   app_instance_id: string | null;
   app_manifest: unknown | null;
 }
-// Correlated with the authorized Room and viewer in both Room read paths.
-const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
-  'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
-  'firstUnreadMessageId',(
-    SELECT message.id FROM messages message
-    WHERE message.room_id=room.id AND message.author_id<>$2
-      AND message.presentation<>'activity'
-      AND ${hiddenWakeCardSql('message')}
-      AND (message.created_at,message.id)>(
-        COALESCE((SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'-infinity'::timestamptz),
-        COALESCE((SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'')
-      )
-    ORDER BY message.created_at,message.id LIMIT 1
-  ))`;
-
 interface TopLevelRoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member';
@@ -1040,6 +1032,7 @@ export class PhoneService {
         peer_presence_updated_at: Date | null;
         peer_activity_at: Date | null;
         unread: boolean;
+        unread_count: number | null;
         working: boolean;
         needs_you: boolean;
         closed: boolean;
@@ -1054,7 +1047,7 @@ export class PhoneService {
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
-        NULL::timestamptz peer_activity_at,false unread,
+        NULL::timestamptz peer_activity_at,false unread,NULL::int unread_count,
         false agents_offline,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
@@ -1144,11 +1137,12 @@ export class PhoneService {
       ),
       this.optionalEnrichment(
         'chat-read-cursor',
-        this.enrichmentDatabase.query<{ room_id: string; unread: boolean }>(
+        this.enrichmentDatabase.query<{ room_id: string; unread: boolean; unread_count: number }>(
           `SELECT room.id room_id,(latest.id IS NOT NULL AND (
              mark.message_created_at IS NULL OR latest.id<>mark.message_id AND
              (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)
-           )) unread
+           )) unread,
+           tally.unread_count
            FROM rooms room
            LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
            LEFT JOIN LATERAL(
@@ -1158,20 +1152,41 @@ export class PhoneService {
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true
+           LEFT JOIN LATERAL(
+             -- Counted over exactly the rows \`unread\` is keyed on, and stopped
+             -- at the cap: past it the number is no longer something a deck row
+             -- would show, and the scan would grow without bound behind a very
+             -- old mark.
+             SELECT count(*)::int unread_count FROM (
+               SELECT 1 FROM messages
+               WHERE room_id=room.id AND presentation IN ('message','system','card')
+                 AND ${hiddenWakeCardSql()}
+                 AND author_id IS DISTINCT FROM $2
+                 AND (created_at,id)>(
+                   COALESCE(mark.message_created_at,'-infinity'::timestamptz),
+                   COALESCE(mark.message_id,'')
+                 )
+               LIMIT $3
+             ) capped
+           ) tally ON true
            WHERE room.id=ANY($1::uuid[])`,
-          [roomIds, viewerId],
+          [roomIds, viewerId, UNREAD_COUNT_CAP],
         ),
       ),
     ]);
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
-    const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item.unread]) ?? []);
+    const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
     for (const room of rooms.rows) {
       const item = presenceByRoom.get(room.id);
       room.peer_presence_body = item?.peer_presence_body ?? null;
       room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
       room.peer_activity_at = item?.peer_activity_at ?? null;
       room.agents_offline = item?.agents_offline ?? false;
-      room.unread = cursorByRoom.get(room.id) ?? false;
+      const cursor = cursorByRoom.get(room.id);
+      room.unread = cursor?.unread ?? false;
+      // The enrichment read is optional; when it did not run the row keeps no
+      // count at all rather than claiming zero unread.
+      room.unread_count = cursor ? (cursor.unread_count ?? 0) : null;
     }
     return {
       workspace: {
@@ -1233,6 +1248,7 @@ export class PhoneService {
             }
           : {}),
         unread: row.unread,
+        ...(row.unread_count === null ? {} : { unreadCount: row.unread_count }),
         ...(row.repository_key
           ? {
               repositoryName:
@@ -2985,6 +3001,84 @@ export class PhoneService {
       WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
       [roomId, viewerId, messageIdValue],
     );
+    await this.publishReadCursor(roomId, viewerId);
+  }
+
+  /**
+   * Put the boundary back in front of `messageIdValue`, so the Room reads
+   * unread from that message onward. The mark lands on the newest countable
+   * row strictly older than the target; when nothing precedes it the mark is
+   * removed entirely and the whole Room is unread again.
+   *
+   * Unlike `markRead` this is not monotonic — moving the boundary backwards is
+   * the entire point — so it writes unconditionally.
+   */
+  async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
+    const message = await this.database.query<{ exists: boolean }>(
+      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
+      [messageIdValue, roomId],
+    );
+    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
+      throw new Error('message not found');
+    const previous = (
+      await this.database.query<{ id: string; created_at: Date }>(
+        `SELECT earlier.id,earlier.created_at FROM messages target
+         JOIN messages earlier ON earlier.room_id=target.room_id
+           AND (earlier.created_at,earlier.id)<(target.created_at,target.id)
+           AND earlier.presentation<>'activity'
+           AND ${hiddenWakeCardSql('earlier')}
+         WHERE target.id=$1 AND target.room_id=$2
+         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1`,
+        [messageIdValue, roomId],
+      )
+    ).rows[0];
+    if (previous) {
+      await this.database.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         VALUES($1,$2,$3,$4)
+         ON CONFLICT(room_id,identity_id) DO UPDATE
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()`,
+        [roomId, viewerId, previous.created_at, previous.id],
+      );
+    } else {
+      await this.database.query(
+        `DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
+        [roomId, viewerId],
+      );
+    }
+    await this.publishReadCursor(roomId, viewerId);
+  }
+
+  /**
+   * Hand the viewer's settled boundary to their OWN other devices. The event
+   * rides the Room bus because that is the lane those devices are already
+   * subscribed to; `server.ts` is what keeps it private to this identity.
+   *
+   * This is the same-process half, exactly as a committed message row has one:
+   * a device on THIS machine is repainted without waiting on the database
+   * round trip, and `postgres-live.ts` carries the same boundary to devices on
+   * every other machine. A reader landing on both paths applies one identical
+   * boundary twice, which is nothing. A failed publish costs the other device
+   * its live update, never this write.
+   */
+  private async publishReadCursor(roomId: string, viewerId: string): Promise<void> {
+    if (!this.live) return;
+    try {
+      const cursor = await readViewerCursor(this.database, roomId, viewerId);
+      if (!cursor) return;
+      this.live.publish({
+        type: 'read-mark',
+        roomId,
+        identityId: viewerId,
+        messageId: cursor.messageId,
+        firstUnreadMessageId: cursor.firstUnreadMessageId,
+      });
+    } catch (error) {
+      console.error(
+        '[live] read cursor publish failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   async uploadMedia(

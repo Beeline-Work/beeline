@@ -587,6 +587,8 @@ export function BuzzChatSurface({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    advanceReadCursor,
+    markUnreadFrom,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -2234,9 +2236,12 @@ export function BuzzChatSurface({
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
       observeVisibleMessages(visibleTranscriptMessagesRef.current);
+      // The same report is what moves the read mark. A row that never entered
+      // the viewport is never read, however far below it the transcript runs.
+      advanceReadCursor(transcriptMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [completePendingNewMessageLanding, observeVisibleMessages],
+    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages],
   );
   const landAtNewMessageBoundary = useCallback(
     (boundaryId: string, acknowledgeQueue: boolean) => {
@@ -2832,6 +2837,24 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
+  const handleMarkUnread = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (message.isAgentActivity || message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      try {
+        await markUnreadFrom(messageId);
+        AccessibilityInfo.announceForAccessibility('Marked unread from this message');
+        refreshSignal.force();
+      } catch (error) {
+        AccessibilityInfo.announceForAccessibility('Mark unread failed');
+        Modal.alert(
+          'Could not mark unread',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [markUnreadFrom, refreshSignal],
+  );
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
     // A live draft is the turn still writing — it settles into the reply the
     // actions would target, so it offers none.
@@ -5739,6 +5762,18 @@ export function BuzzChatSurface({
               if (target) void beginForward(target);
             }}
             testID="message-forward-action"
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel="Mark unread from this message"
+            label="Mark unread"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleMarkUnread(target);
+            }}
+            testID="message-mark-unread-action"
           />
         ) : null}
         <HullActionSheetCancel

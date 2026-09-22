@@ -250,14 +250,18 @@ export default async function (pi) {
         label: labelOf(tool.name),
         description: typeof tool.description === 'string' ? tool.description : tool.name,
         parameters: schema,
-        async execute(_toolCallId, params, signal) {
+        async execute(toolCallId, params, signal) {
           const result = await callServer(
             server,
             {
               jsonrpc: '2.0',
               id: 1,
               method: 'tools/call',
-              params: { name: tool.name, arguments: params ?? {} },
+              params: {
+                name: tool.name,
+                arguments: params ?? {},
+                _meta: { beelineToolCallId: toolCallId },
+              },
             },
             signal,
           );

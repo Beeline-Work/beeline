@@ -607,6 +607,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 export type CreateCornerInput = TurnOutputAuthority &
   RoomInput & {
     readonly requestId: string;
+    /** Stable for one tool call, distinct between separate calls in the same turn. */
+    readonly idempotencyKey?: string;
     /** The corner's title on every surface, limited to 3 whitespace-delimited words. */
     readonly name: string;
     /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */

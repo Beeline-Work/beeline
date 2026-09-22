@@ -223,7 +223,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     expect(result.content[0]?.text).toBe('You now react to joined in this Room.');
     expect(await readCalls()).toEqual([
       {
-        params: { name: 'subscribe_events', arguments: { kinds: ['joined'] } },
+        params: {
+          name: 'subscribe_events',
+          arguments: { kinds: ['joined'] },
+          _meta: { beelineToolCallId: 'call-1' },
+        },
         surface: 'agent',
       },
     ]);

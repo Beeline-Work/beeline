@@ -1881,13 +1881,12 @@ describe('monolith integration', () => {
     expect(answeredRoom.messages).toContainEqual(
       expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
     );
-    const drafted = next(socket, 'draft');
     await daemonOperation(
       'postAgentDraft',
       { agentId: AGENT, roomId: ROOM, turnId: 'turn-1', text: 'Working' },
       daemonToken,
     );
-    expect(await drafted).toEqual(expect.objectContaining({ type: 'draft', text: 'Working' }));
+    expect(await new PhoneService(database, origin).liveDraftSnapshot(ROOM)).toEqual([]);
     const toolRequestId = 'tool-request';
     expect(
       (

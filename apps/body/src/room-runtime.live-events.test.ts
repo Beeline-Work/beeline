@@ -113,6 +113,52 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
+  it('serves a title-only human corner so a tagged command can wake the agent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-human-corner-'));
+    roots.push(root);
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-human',
+          objective: '',
+          title: 'Release notes',
+          kind: 'human',
+          closeRequested: false,
+          lane: 'no_code',
+        };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      await coordinator.applyMembershipEvent({
+        roomId: 'corner-human',
+        parentRoomId: 'room-1',
+        openedBy: 'human-owner',
+      });
+      await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('corner-human'));
+      expect(execute).toHaveBeenCalledWith('getAgentCommands', { roomId: 'corner-human' });
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
   it('reads nothing for an archived corner a membership push inherited', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-archived-'));
     roots.push(root);

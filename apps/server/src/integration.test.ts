@@ -4661,6 +4661,35 @@ describe('monolith integration', () => {
       corner: { name: 'Release notes' },
       initiator: { pubkey: HUMAN, kind: 'human' },
     });
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      cornerId,
+      objective: '',
+      title: 'Release notes',
+      kind: 'human',
+      lane: 'no_code',
+    });
+
+    const taggedMessageId = '4'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: taggedMessageId,
+          text: '@bee draft the release notes',
+          mentions: [AGENT],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ agent_id: string; reason: string; state: string }>(
+          `SELECT agent_id,reason,state FROM agent_commands WHERE source_message_id=$1`,
+          [taggedMessageId],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: AGENT, reason: 'human_tag', state: 'pending' }]);
 
     const otherLogin = 'human-corner-member';
     const otherId = createHash('sha256').update(`github:${otherLogin}`).digest('hex');

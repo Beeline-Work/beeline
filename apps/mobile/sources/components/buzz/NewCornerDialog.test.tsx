@@ -8,6 +8,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Linking: { openURL: vi.fn() },
     Modal: host('Modal'),
     Platform: { OS: 'android' },
     Pressable: host('Pressable'),
@@ -28,11 +29,12 @@ vi.mock('./MonoHull', () => ({ HullSurface: 'HullSurface' }));
 
 import { HUMAN_CORNER_TITLE_MAX_LENGTH, NewCornerDialog } from './NewCornerDialog';
 
-function mount(error?: string) {
+function mount(error?: string, apps: React.ComponentProps<typeof NewCornerDialog>['apps'] = []) {
   const submit = vi.fn();
   const close = vi.fn();
   function Harness() {
     const [title, setTitle] = useState('');
+    const [selectedAppId, setSelectedAppId] = useState<string>();
     return (
       <NewCornerDialog
         visible
@@ -42,6 +44,9 @@ function mount(error?: string) {
         error={error}
         onCreate={() => submit(title.trim())}
         onClose={close}
+        apps={apps}
+        selectedAppId={selectedAppId}
+        setSelectedAppId={setSelectedAppId}
       />
     );
   }
@@ -70,5 +75,23 @@ describe('NewCornerDialog', () => {
   it('keeps a server refusal visible in the dialog', () => {
     const { host } = mount('only the creator can close this corner');
     expect(host('create-corner-error').props.accessibilityRole).toBe('alert');
+  });
+
+  it('offers zero or one installed app without requiring one', () => {
+    const { host } = mount(undefined, [
+      {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        manifest: {
+          version: 1,
+          slug: 'release-board',
+          title: 'Release board',
+          developer: 'Bee Labs',
+          humanUi: { kind: 'broker', capability: 'release-board.ui' },
+        },
+      },
+    ]);
+    expect(host('create-corner-app-none').props.accessibilityState.checked).toBe(true);
+    act(() => host('create-corner-app-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').props.onPress());
+    expect(host('create-corner-app-none').props.accessibilityState.checked).toBe(false);
   });
 });

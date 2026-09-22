@@ -1,6 +1,6 @@
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
-import type { CornerAppView } from '@beeline/api-contract/phone';
+import type { CornerAppManifest, CornerAppView } from '@beeline/api-contract/phone';
 import { CornerAppScreen } from '@/components/buzz/CornerAppScreen';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -10,6 +10,7 @@ export default function CornerAppRoute() {
   const { roomId, slug } = useLocalSearchParams<{ roomId?: string; slug?: string }>();
   const [app, setApp] = React.useState<CornerAppView>();
   const [busyAction, setBusyAction] = React.useState<string>();
+  const [manifest, setManifest] = React.useState<CornerAppManifest>();
 
   React.useEffect(() => {
     let live = true;
@@ -21,7 +22,10 @@ export default function CornerAppRoute() {
         baseUrl: await getEffectiveRelayUrl(),
         identity,
       }).room(roomId);
-      if (live) setApp(view.cornerApps?.find((candidate) => candidate.slug === slug));
+      if (live) {
+        setApp(view.cornerApps?.find((candidate) => candidate.slug === slug));
+        setManifest(view.boundApp?.manifest.slug === slug ? view.boundApp.manifest : undefined);
+      }
     })();
     return () => {
       live = false;
@@ -30,7 +34,7 @@ export default function CornerAppRoute() {
 
   const run = React.useCallback(
     async (prompt: string) => {
-      if (!roomId || !app || busyAction) return;
+      if (!roomId || !app?.authorId || busyAction) return;
       setBusyAction(prompt);
       try {
         const identity = await loadBuzzIdentity();
@@ -53,8 +57,14 @@ export default function CornerAppRoute() {
     <CornerAppScreen
       app={app}
       busyAction={busyAction}
-      onAction={(prompt) => void run(prompt)}
+      onAction={app?.authorId ? (prompt) => void run(prompt) : undefined}
       onBack={() => router.back()}
+      unavailableTitle={manifest?.title}
+      unavailableMessage={
+        manifest?.humanUi?.kind === 'broker'
+          ? 'This app requires its permissioned UI broker, which is not connected on this device.'
+          : undefined
+      }
     />
   );
 }

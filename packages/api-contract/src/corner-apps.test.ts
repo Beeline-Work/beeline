@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readCornerAppDefinition } from './corner-apps.js';
+import { readCornerAppDefinition, readCornerAppManifest } from './corner-apps.js';
 
 describe('Corner App definition', () => {
   const app = {
@@ -28,5 +28,52 @@ describe('Corner App definition', () => {
     { ...app, blocks: [{ type: 'action', label: 'Run', prompt: '' }] },
   ])('rejects executable or malformed definitions', (candidate) => {
     expect(readCornerAppDefinition(candidate)).toBeNull();
+  });
+});
+
+describe('Corner App manifest', () => {
+  const manifest = {
+    version: 1,
+    slug: 'release-board',
+    title: 'Release board',
+    developer: 'Example developer',
+    humanUi: { kind: 'broker', capability: 'release-board.ui' },
+    agent: { kind: 'broker', capability: 'release-board.agent' },
+    permissions: ['github.read'],
+  };
+
+  it('keeps human UI and agent broker capabilities separate', () => {
+    expect(readCornerAppManifest(manifest)).toEqual(manifest);
+  });
+
+  it('does not treat broker capability names as URLs or executable input', () => {
+    expect(
+      readCornerAppManifest({
+        ...manifest,
+        humanUi: { kind: 'broker', capability: 'https://example.com/app' },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a native definition whose slug differs from its manifest', () => {
+    expect(
+      readCornerAppManifest({
+        ...manifest,
+        humanUi: {
+          kind: 'native',
+          definition: {
+            version: 1,
+            slug: 'deploy-board',
+            title: 'Deploy board',
+            command: 'deploy-board',
+            blocks: [],
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a null agent declaration without throwing', () => {
+    expect(readCornerAppManifest({ ...manifest, agent: null })).toBeNull();
   });
 });

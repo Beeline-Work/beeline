@@ -591,6 +591,22 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('passes an optional installed Corner App binding when creating a corner', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'app-corner-id' }), { status: 200 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+    const appInstallationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    await transport.createHumanCorner(ROOM, 'Release board', appInstallationId);
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/createHumanCorner',
+      expect.objectContaining({
+        body: JSON.stringify({ roomId: ROOM, title: 'Release board', appInstallationId }),
+      }),
+    );
+  });
+
   it('returns the server refusal when a corner close request fails', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),

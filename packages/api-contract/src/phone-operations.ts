@@ -228,7 +228,10 @@ export type CancelAgentTurnInput = RoomInput & {
   readonly requestId: string;
   readonly agentId: string;
 };
-export type CreateHumanCornerInput = RoomInput & { readonly title: string };
+export type CreateHumanCornerInput = RoomInput & {
+  readonly title: string;
+  readonly appInstallationId?: string;
+};
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;
   readonly requestId: string;

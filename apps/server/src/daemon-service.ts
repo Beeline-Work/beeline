@@ -22,6 +22,7 @@ import {
   AGENT_TO_AGENT_HOP_CAP,
   classifyTurnSilence,
   cornerTextRefusal,
+  readCornerAppDefinition,
   normalizeCornerText,
   shouldCompletePendingFailedCommand,
 } from '@beeline/api-contract/daemon';
@@ -100,7 +101,11 @@ import {
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool } from './wallet.js';
-import { noteFirstSilence, TURN_FAILURE_REASON_MAX, turnSilenceLockKey } from './turn-silence-notice.js';
+import {
+  noteFirstSilence,
+  TURN_FAILURE_REASON_MAX,
+  turnSilenceLockKey,
+} from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 import { notifyConnectorHelper } from './postgres-live.js';
 
@@ -200,6 +205,8 @@ export class DaemonService {
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
+      'putCornerApp',
+      'requestCornerAppOpen',
     ]);
     if (
       !this.commandTransaction &&
@@ -722,6 +729,16 @@ export class DaemonService {
           input as Input<'postCornerPlan'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'putCornerApp':
+        return (await this.putCornerApp(
+          input as Input<'putCornerApp'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'requestCornerAppOpen':
+        return (await this.requestCornerAppOpen(
+          input as Input<'requestCornerAppOpen'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'postTargetBranchProposal':
         return (await this.targetProposal(
           input as Input<'postTargetBranchProposal'>,
@@ -775,19 +792,52 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getWalletToolState':
-        return (await agentWalletTool(this.database, 'state', authenticatedAgentId)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'state',
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getWalletToolBalance':
-        return (await agentWalletTool(this.database, 'balance', authenticatedAgentId, input as Input<'getWalletToolBalance'>)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'balance',
+          authenticatedAgentId,
+          input as Input<'getWalletToolBalance'>,
+        )) as Output<Name>;
       case 'getWalletToolChains':
-        return (await agentWalletTool(this.database, 'chains', authenticatedAgentId)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'chains',
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getWalletToolHistory':
-        return (await agentWalletTool(this.database, 'history', authenticatedAgentId, input as Input<'getWalletToolHistory'>)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'history',
+          authenticatedAgentId,
+          input as Input<'getWalletToolHistory'>,
+        )) as Output<Name>;
       case 'getWalletToolQuote':
-        return (await agentWalletTool(this.database, 'quote', authenticatedAgentId, input as Input<'getWalletToolQuote'>)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'quote',
+          authenticatedAgentId,
+          input as Input<'getWalletToolQuote'>,
+        )) as Output<Name>;
       case 'walletPay':
-        return (await agentWalletTool(this.database, 'pay', authenticatedAgentId, input as Input<'walletPay'>)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'pay',
+          authenticatedAgentId,
+          input as Input<'walletPay'>,
+        )) as Output<Name>;
       case 'walletSwap':
-        return (await agentWalletTool(this.database, 'swap', authenticatedAgentId, input as Input<'walletSwap'>)) as Output<Name>;
+        return (await agentWalletTool(
+          this.database,
+          'swap',
+          authenticatedAgentId,
+          input as Input<'walletSwap'>,
+        )) as Output<Name>;
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
@@ -905,12 +955,24 @@ export class DaemonService {
     const assignments: ConnectorAssignment[] = [];
     for (const row of connectors) {
       if (row.status === 'installing')
-        assignments.push({ kind: 'install', connectorId: row.id, connectorType: row.connector_type as never });
+        assignments.push({
+          kind: 'install',
+          connectorId: row.id,
+          connectorType: row.connector_type as never,
+        });
       if (row.status === 'disconnected')
-        assignments.push({ kind: 'uninstall', connectorId: row.id, connectorType: row.connector_type as never });
+        assignments.push({
+          kind: 'uninstall',
+          connectorId: row.id,
+          connectorType: row.connector_type as never,
+        });
       for (const op of row.pending_ops ?? []) {
         if (op === 'sync')
-          assignments.push({ kind: 'sync', connectorId: row.id, connectorType: row.connector_type as never });
+          assignments.push({
+            kind: 'sync',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+          });
         else if (op.startsWith('revoke-grants:'))
           assignments.push({
             kind: 'revoke-grants',
@@ -1089,8 +1151,7 @@ export class DaemonService {
         [agentId, connectorId ?? null],
       )
     ).rows[0];
-    if (!live)
-      return { connectorId: '', status: 'disconnected', steps: [] };
+    if (!live) return { connectorId: '', status: 'disconnected', steps: [] };
     return {
       connectorId: live.id,
       status: live.status as ConnectorStatus['status'],
@@ -1272,7 +1333,8 @@ export class DaemonService {
     return { id: input.requestId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
-  private async bootstrap(agentId: string) {    const workspaces = await this.database.query<{ workspace_id: string }>(
+  private async bootstrap(agentId: string) {
+    const workspaces = await this.database.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
       [agentId],
     );
@@ -1788,7 +1850,8 @@ export class DaemonService {
       )
     ).rows[0];
     if (!target) throw new Error('corner reviewer approval denied');
-    if (!target.pull_request_number || !target.head_sha) throw new Error('corner has no pull request');
+    if (!target.pull_request_number || !target.head_sha)
+      throw new Error('corner has no pull request');
     if (target.head_sha !== input.headSha)
       throw new Error('pull request head changed; review the current head before approving');
     await recordCornerMergeApproval(this.database, {
@@ -2614,9 +2677,7 @@ export class DaemonService {
       ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
     return this.writeResult(
-      silence?.hiccupRestart
-        ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
-        : undefined,
+      silence?.hiccupRestart ? { hiccupRestart: true, hiccupAttempt: silence.attempt } : undefined,
     );
   }
   /**
@@ -3124,6 +3185,72 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  private async putCornerApp(input: Input<'putCornerApp'>, agentId: string) {
+    await this.access(input.cornerId, agentId);
+    const definition = readCornerAppDefinition(input.definition);
+    if (!definition) throw new Error('corner app definition is invalid');
+    const saved = (
+      await this.database.query<{ revision: number; updated_at: Date }>(
+        `INSERT INTO corner_apps(corner_id,slug,author_agent_id,definition)
+         VALUES($1,$2,$3,$4::jsonb)
+         ON CONFLICT(corner_id,slug) DO UPDATE SET
+           author_agent_id=EXCLUDED.author_agent_id,
+           definition=EXCLUDED.definition,
+           revision=corner_apps.revision+1,
+           updated_at=now()
+         RETURNING revision,updated_at`,
+        [input.cornerId, definition.slug, agentId, JSON.stringify(definition)],
+      )
+    ).rows[0]!;
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.cornerId,
+      reason: 'corner-app',
+      agentId,
+    });
+    return {
+      id: id(),
+      createdAt: seconds(saved.updated_at),
+      slug: definition.slug,
+      revision: saved.revision,
+    };
+  }
+  private async requestCornerAppOpen(input: Input<'requestCornerAppOpen'>, agentId: string) {
+    await this.access(input.cornerId, agentId);
+    const app = (
+      await this.database.query<{ title: string; revision: number }>(
+        `SELECT definition->>'title' title,revision FROM corner_apps
+         WHERE corner_id=$1 AND slug=$2`,
+        [input.cornerId, input.slug],
+      )
+    ).rows[0];
+    if (!app) throw new Error('corner app not found');
+    const agent = await this.identity(agentId);
+    const messageId = id();
+    await systemLine(this.database, {
+      id: messageId,
+      roomId: input.cornerId,
+      subject: { kind: 'agent', id: agentId, name: agent.name },
+      verb: 'opened an app',
+      object: app.title,
+      presentation: 'card',
+      requestId: input.requestId,
+      cardType: 'corner-app',
+      card: { slug: input.slug, title: app.title, revision: app.revision },
+    });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.cornerId,
+      reason: 'corner-app',
+      agentId,
+    });
+    return {
+      id: messageId,
+      createdAt: Math.floor(Date.now() / 1000),
+      slug: input.slug,
+      revision: app.revision,
+    };
+  }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const messageId = id();
@@ -3265,7 +3392,8 @@ export class DaemonService {
         }
       : owner;
     const grantId = randomUUID();
-    const auto = context.yolo_mode && kind !== 'budget' && kind !== 'mcp' && escalations.length === 0;
+    const auto =
+      context.yolo_mode && kind !== 'budget' && kind !== 'mcp' && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -3600,7 +3728,8 @@ export class DaemonService {
               paired: {
                 status: row.status,
                 helperName: row.helper_name,
-                onThisMachine: (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
+                onThisMachine:
+                  (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
               },
             }
           : {}),
@@ -3769,7 +3898,12 @@ export class DaemonService {
       reason: 'connector-offer',
       agentId,
     });
-    return { offerId: result.offerId, status: 'pending', messageId: result.messageId, joined: result.joined };
+    return {
+      offerId: result.offerId,
+      status: 'pending',
+      messageId: result.messageId,
+      joined: result.joined,
+    };
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
@@ -4213,6 +4347,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postCornerLifecycle: true,
   postCornerRemoteState: true,
   postCornerPlan: true,
+  putCornerApp: true,
+  requestCornerAppOpen: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
   askRoomChoice: true,

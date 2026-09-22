@@ -120,3 +120,19 @@ export function availableSlashVerbs(
         verb.label.toLowerCase().includes(normalizedQuery)),
   ).map(({ available: _available, ...verb }) => verb);
 }
+
+/** Corner-owned commands arrive with RoomView and need no hardcoded client inventory. */
+export function availableCornerAppCommands(
+  apps: readonly CornerAppView[],
+  query: string,
+): CornerAppView[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return apps.filter(
+    (app) =>
+      !normalizedQuery ||
+      app.command.startsWith(normalizedQuery) ||
+      app.title.toLowerCase().includes(normalizedQuery) ||
+      app.description?.toLowerCase().includes(normalizedQuery),
+  );
+}
+import type { CornerAppView } from '@beeline/api-contract/phone';

@@ -276,25 +276,25 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_address',
     description:
-      'Show your connected owner\'s wallet: the EVM address (and the Solana address when there is one) and whether a wallet is linked at all. Call this before wallet_pay when you need an address to receive funds.',
+      "Show your connected owner's wallet: the EVM address (and the Solana address when there is one) and whether a wallet is linked at all. Call this before wallet_pay when you need an address to receive funds.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'wallet_balance',
     description:
-      'Read your connected owner\'s wallet balances: the total USD value and every holding. This is the wallet you spend from; there is no other limit on spending than what the balance holds.',
+      "Read your connected owner's wallet balances: the total USD value and every holding. This is the wallet you spend from; there is no other limit on spending than what the balance holds.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'wallet_chains',
     description:
-      'List the chains your owner\'s wallet can pay and swap on, with the network fee on each and whether the fee is sponsored (free to send).',
+      "List the chains your owner's wallet can pay and swap on, with the network fee on each and whether the fee is sponsored (free to send).",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'wallet_history',
     description:
-      'Read your owner\'s wallet ledger, oldest first: every transaction in and out, who spent (agents are named), the counterparty, chain and the balance that remained.',
+      "Read your owner's wallet ledger, oldest first: every transaction in and out, who spent (agents are named), the counterparty, chain and the balance that remained.",
     inputSchema: {
       type: 'object',
       properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } },
@@ -319,7 +319,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_pay',
     description:
-      'Send crypto from your connected owner\'s wallet to one address. Requires the owner\'s live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. The only other refusal is insufficient funds. Every send is written to the @wallet ledger.',
+      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. The only other refusal is insufficient funds. Every send is written to the @wallet ledger.",
     inputSchema: {
       type: 'object',
       required: ['asset', 'amount', 'to'],
@@ -335,7 +335,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_swap',
     description:
-      'Swap one asset for another inside your owner\'s wallet (e.g. usdc to eth). Same grant and ledger rules as wallet_pay.',
+      "Swap one asset for another inside your owner's wallet (e.g. usdc to eth). Same grant and ledger rules as wallet_pay.",
     inputSchema: {
       type: 'object',
       required: ['fromAsset', 'toAsset', 'amount'],
@@ -556,13 +556,109 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         html: {
           type: 'string',
-          description: 'The document as text. Use for text/html and image/svg+xml (and small text/markdown).',
+          description:
+            'The document as text. Use for text/html and image/svg+xml (and small text/markdown).',
         },
         bytes: {
           type: 'string',
           description: 'The artifact content base64-encoded. Use for binary formats.',
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'publish_corner_app',
+    description:
+      'Create or replace one native Corner App shared with every member of this corner. The app is declarative: headings, text, fields, notices, and prompt actions only. Its command becomes a dynamic /slash-command without a client release.',
+    inputSchema: {
+      type: 'object',
+      required: ['slug', 'title', 'command', 'blocks'],
+      properties: {
+        slug: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+        title: { type: 'string', minLength: 1, maxLength: 80 },
+        description: { type: 'string', minLength: 1, maxLength: 240 },
+        command: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+        blocks: {
+          type: 'array',
+          maxItems: 40,
+          items: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['type', 'text'],
+                properties: {
+                  type: { const: 'heading' },
+                  text: { type: 'string', minLength: 1, maxLength: 120 },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['type', 'text'],
+                properties: {
+                  type: { const: 'text' },
+                  text: { type: 'string', minLength: 1, maxLength: 4000 },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['type', 'items'],
+                properties: {
+                  type: { const: 'fields' },
+                  items: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 24,
+                    items: {
+                      type: 'object',
+                      required: ['label', 'value'],
+                      properties: {
+                        label: { type: 'string', minLength: 1, maxLength: 80 },
+                        value: { type: 'string', minLength: 1, maxLength: 500 },
+                      },
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['type', 'text'],
+                properties: {
+                  type: { const: 'notice' },
+                  text: { type: 'string', minLength: 1, maxLength: 1000 },
+                  tone: { type: 'string', enum: ['neutral', 'warning'] },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['type', 'label', 'prompt'],
+                properties: {
+                  type: { const: 'action' },
+                  label: { type: 'string', minLength: 1, maxLength: 80 },
+                  prompt: { type: 'string', minLength: 1, maxLength: 2000 },
+                },
+                additionalProperties: false,
+              },
+            ],
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'open_corner_app',
+    description:
+      'Ask everyone reading this corner to open one persisted Corner App. This posts an app row they can enter; it never executes app content.',
+    inputSchema: {
+      type: 'object',
+      required: ['slug'],
+      properties: { slug: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' } },
       additionalProperties: false,
     },
   },
@@ -840,6 +936,7 @@ export function agentToolsFor(
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
     if (tool.name === 'close_corner') return cornerTurn;
+    if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
@@ -1708,10 +1805,22 @@ function sniffRasterImageMime(bytes: Buffer): FetchImageMime | undefined {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'image/jpeg';
   }
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
     return 'image/png';
   }
-  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
     return 'image/gif';
   }
   if (
@@ -1742,7 +1851,13 @@ function resolveFetchedImageMime(contentType: string, bytes: Buffer): FetchImage
 
 function fetchedImageFileName(url: URL, mime: FetchImageMime): string {
   const ext =
-    mime === 'image/jpeg' ? '.jpg' : mime === 'image/png' ? '.png' : mime === 'image/gif' ? '.gif' : '.webp';
+    mime === 'image/jpeg'
+      ? '.jpg'
+      : mime === 'image/png'
+        ? '.png'
+        : mime === 'image/gif'
+          ? '.gif'
+          : '.webp';
   const raw = basename(url.pathname)
     .replace(/[^\w.-]+/g, '_')
     .replace(/^\.+/, '');
@@ -1764,7 +1879,9 @@ export async function fetchImage(
     fetched = await fetchBoundedBytes(parsed.href, deps.fetchImpl ?? fetch);
   } catch (error) {
     if (error instanceof BoundedSizeError) {
-      throw new Error(`image exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit (${error.bytes} bytes)`);
+      throw new Error(
+        `image exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit (${error.bytes} bytes)`,
+      );
     }
     if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
       throw new Error(`image fetch timed out after ${FETCH_TIMEOUT_MS / 1000} seconds`);
@@ -1776,7 +1893,10 @@ export async function fetchImage(
   }
   if (fetched.bytes.length === 0) throw new Error('image fetch returned no bytes');
   const mime = resolveFetchedImageMime(fetched.mimeType, fetched.bytes);
-  const resolved = resolveWriteScratchPath(deps.root, join('fetched-images', fetchedImageFileName(parsed, mime)));
+  const resolved = resolveWriteScratchPath(
+    deps.root,
+    join('fetched-images', fetchedImageFileName(parsed, mime)),
+  );
   writeFileSync(resolved, fetched.bytes);
   return JSON.stringify({ path: resolved, mime, size: fetched.bytes.length });
 }
@@ -1873,13 +1993,17 @@ export async function postArtifact(
   const encoded = args.bytes;
   const contentArgs = (html !== undefined ? 1 : 0) + (encoded !== undefined ? 1 : 0);
   if (pathArg !== undefined && contentArgs > 0) {
-    throw new Error('pass either path (a file already in your session) or html/bytes content, not both');
+    throw new Error(
+      'pass either path (a file already in your session) or html/bytes content, not both',
+    );
   }
   if (contentArgs > 1) {
     throw new Error('pass html (the document as text) or bytes (base64), not both');
   }
   if (pathArg === undefined && contentArgs === 0) {
-    throw new Error('pass a file path, or exactly one of html (the document as text) or bytes (base64)');
+    throw new Error(
+      'pass a file path, or exactly one of html (the document as text) or bytes (base64)',
+    );
   }
   let bytes: Buffer;
   let fileName: string;
@@ -1914,7 +2038,9 @@ export async function postArtifact(
   let title = stringArg(args, 'title')?.trim();
   if (!title) {
     if (pathArg === undefined) {
-      throw new Error('title must be a non-empty string (or post by path to default it to the file name)');
+      throw new Error(
+        'title must be a non-empty string (or post by path to default it to the file name)',
+      );
     }
     title = fileName;
   }
@@ -2318,7 +2444,12 @@ export async function workbenchStatus(
       offerable: boolean;
       paired?: { status: string; helperName: string; onThisMachine: boolean };
     }>;
-    connections?: Array<{ connectorType: string; service: string | null; label: string; state: string }>;
+    connections?: Array<{
+      connectorType: string;
+      service: string | null;
+      label: string;
+      state: string;
+    }>;
     machine?: { machineId: string; name: string };
   };
   const who = view.addressee?.handle
@@ -2607,6 +2738,33 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return fetchImage(args);
     case 'post_artifact':
       return postArtifact(args);
+    case 'publish_corner_app': {
+      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+      if (!cornerId) throw new Error('publish_corner_app requires a corner turn');
+      const result = await daemonExecute('putCornerApp', {
+        cornerId,
+        definition: {
+          version: 1,
+          slug: args.slug,
+          title: args.title,
+          ...(typeof args.description === 'string' ? { description: args.description } : {}),
+          command: args.command,
+          blocks: args.blocks,
+        },
+      });
+      return `published /${String(args.command)} at revision ${String(result.revision ?? '?')}`;
+    }
+    case 'open_corner_app': {
+      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+      if (!cornerId) throw new Error('open_corner_app requires a corner turn');
+      const context = await activeCommandContext();
+      const result = await daemonExecute('requestCornerAppOpen', {
+        cornerId,
+        slug: args.slug,
+        requestId: context.requestId,
+      });
+      return `posted app ${String(result.slug ?? args.slug)} at revision ${String(result.revision ?? '?')}`;
+    }
     case 'create_schedule':
       return createSchedule(args);
     case 'subscribe_events':

@@ -52,6 +52,7 @@ import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './ag
 import { isConnectorOfferStatus, type ConnectorOfferCardView } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
 import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
+import { readCornerAppDefinition, type CornerAppView } from './corner-apps.js';
 
 /**
  * Phone surface readers project a known-safe view from a wire payload.
@@ -283,7 +284,9 @@ function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
   return readList(value, readWatchFilter, WATCH_FILTER_LIMIT) ?? [];
 }
 
-function readAttachment(value: unknown): NonNullable<RoomViewMessage['attachments']>[number] | null {
+function readAttachment(
+  value: unknown,
+): NonNullable<RoomViewMessage['attachments']>[number] | null {
   const item = record(value);
   if (
     !item ||
@@ -350,7 +353,9 @@ function readActivity(value: unknown): RoomViewActivity | null {
     ...field('thoughtMs', integer(item.thoughtMs) ? item.thoughtMs : undefined),
     ...field(
       'rollup',
-      rollup && Object.values(rollup).every(integer) ? (rollup as Record<string, number>) : undefined,
+      rollup && Object.values(rollup).every(integer)
+        ? (rollup as Record<string, number>)
+        : undefined,
     ),
     ...field(
       'observed',
@@ -527,7 +532,10 @@ function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | n
     ...field('votes', integer(item.votes) ? item.votes : undefined),
     ...field(
       'share',
-      typeof item.share === 'number' && Number.isFinite(item.share) && item.share >= 0 && item.share <= 1
+      typeof item.share === 'number' &&
+        Number.isFinite(item.share) &&
+        item.share >= 0 &&
+        item.share <= 1
         ? item.share
         : undefined,
     ),
@@ -581,7 +589,10 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     ),
     ...field('closesAt', integer(item.closesAt) ? item.closesAt : undefined),
     ...field('answeredBy', readIdentityOnly(item.answeredBy)),
-    ...field('selectedOptionId', choiceLetter(item.selectedOptionId) ? item.selectedOptionId : undefined),
+    ...field(
+      'selectedOptionId',
+      choiceLetter(item.selectedOptionId) ? item.selectedOptionId : undefined,
+    ),
     ...field('outcome', oneOf(item.outcome, ['winner', 'tie', 'no-votes'])),
     ...field('footer', typeof item.footer === 'string' ? item.footer : undefined),
   };
@@ -662,6 +673,38 @@ function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner'
     return null;
   }
   return { id: item.id, state: item.state };
+}
+
+function readMessageCornerApp(value: unknown): NonNullable<RoomViewMessage['cornerApp']> | null {
+  const item = record(value);
+  return item &&
+    typeof item.slug === 'string' &&
+    typeof item.title === 'string' &&
+    integer(item.revision)
+    ? { slug: item.slug, title: item.title, revision: item.revision }
+    : null;
+}
+
+function readCornerApp(value: unknown): CornerAppView | null {
+  const item = record(value);
+  const definition = readCornerAppDefinition(item);
+  if (
+    !item ||
+    !definition ||
+    !hex64(item.authorId) ||
+    typeof item.authorName !== 'string' ||
+    !integer(item.revision) ||
+    !integer(item.updatedAt)
+  )
+    return null;
+  return {
+    ...definition,
+    authorId: item.authorId,
+    authorName: item.authorName,
+    ...(typeof item.authorHandle === 'string' ? { authorHandle: item.authorHandle } : {}),
+    revision: item.revision,
+    updatedAt: item.updatedAt,
+  };
 }
 
 function readPermission(value: unknown): NonNullable<RoomViewMessage['permission']> | null {
@@ -752,7 +795,11 @@ function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact
   ) {
     return null;
   }
-  if (item.type === 'corner-complete' && item.outcome !== 'landed' && item.outcome !== 'abandoned') {
+  if (
+    item.type === 'corner-complete' &&
+    item.outcome !== 'landed' &&
+    item.outcome !== 'abandoned'
+  ) {
     return null;
   }
   const pullRequest = record(item.pullRequest);
@@ -899,6 +946,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('activity', readList(item.activity, readActivity)),
     ...field('durableFact', oneOf(item.durableFact, ['failure', 'merge', 'action'])),
     ...field('corner', readMessageCorner(item.corner)),
+    ...field('cornerApp', readMessageCornerApp(item.cornerApp)),
     ...field('permission', readPermission(item.permission)),
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
@@ -969,7 +1017,13 @@ function readWorkspace(value: unknown): ChatListWorkspace | null {
 function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> | null {
   const item = record(value);
   const author = readIdentity(item?.author);
-  if (!item || !hex64(item.id) || typeof item.text !== 'string' || !integer(item.createdAt) || !author) {
+  if (
+    !item ||
+    !hex64(item.id) ||
+    typeof item.text !== 'string' ||
+    !integer(item.createdAt) ||
+    !author
+  ) {
     return null;
   }
   return {
@@ -998,21 +1052,24 @@ function readChat(value: unknown): ChatListItem | null {
     unread: item.unread === true,
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
-    ...field('agentsOffline', typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined),
+    ...field(
+      'agentsOffline',
+      typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined,
+    ),
     ...field('closed', typeof item.closed === 'boolean' ? item.closed : undefined),
     ...field('latestMessage', readLatest(item.latestMessage)),
-    ...field('repositoryName', typeof item.repositoryName === 'string' ? item.repositoryName : undefined),
-    ...field('agentState', oneOf(item.agentState, ['needs-you', 'working'])),
     ...field(
-      'directMessage',
-      peer ? { peer, ...field('presence', projectedPresence) } : undefined,
+      'repositoryName',
+      typeof item.repositoryName === 'string' ? item.repositoryName : undefined,
     ),
+    ...field('agentState', oneOf(item.agentState, ['needs-you', 'working'])),
+    ...field('directMessage', peer ? { peer, ...field('presence', projectedPresence) } : undefined),
   };
 }
 
-function readCheck(value: unknown): NonNullable<
-  NonNullable<CornerLifecycleView['checksSummary']>['checks']
->[number] | null {
+function readCheck(
+  value: unknown,
+): NonNullable<NonNullable<CornerLifecycleView['checksSummary']>['checks']>[number] | null {
   const item = record(value);
   if (
     !item ||
@@ -1148,7 +1205,8 @@ function readDirectMessage(
   viewerPubkey: string,
 ): { readonly participants: readonly [string, string] } | undefined {
   const item = record(value);
-  if (!item || !Array.isArray(item.participants) || item.participants.length !== 2) return undefined;
+  if (!item || !Array.isArray(item.participants) || item.participants.length !== 2)
+    return undefined;
   const left = item.participants[0];
   const right = item.participants[1];
   if (!hex64(left) || !hex64(right)) return undefined;
@@ -1198,7 +1256,8 @@ function readComposerCommand(value: unknown): AgentComposerCommand | null {
 function readAgentYolo(value: unknown): AgentYoloView | null {
   const item = record(value);
   const setBy = record(item?.setBy);
-  if (!item || typeof item.enabled !== 'boolean' || typeof item.canChange !== 'boolean') return null;
+  if (!item || typeof item.enabled !== 'boolean' || typeof item.canChange !== 'boolean')
+    return null;
   return {
     enabled: item.enabled,
     canChange: item.canChange,
@@ -1211,7 +1270,8 @@ function readAgentYolo(value: unknown): AgentYoloView | null {
 function readAgentAccess(value: unknown): AgentAccessView | null {
   const item = record(value);
   const owner = record(item?.owner);
-  if (!item || !isAgentAccessPolicy(item.policy) || typeof item.canChange !== 'boolean') return null;
+  if (!item || !isAgentAccessPolicy(item.policy) || typeof item.canChange !== 'boolean')
+    return null;
   return {
     policy: item.policy,
     canChange: item.canChange,
@@ -1280,6 +1340,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerPlan', readPlan(item.cornerPlan)),
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
+    ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
   };
 }
 
@@ -1346,10 +1407,7 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only')
       ? {
           visibility: managerSettings.visibility as 'public' | 'invite-only',
-          ...field(
-            'rooms',
-            readList(managerSettings.rooms, readManagedRoom, ROOM_VIEW_CHAT_LIMIT),
-          ),
+          ...field('rooms', readList(managerSettings.rooms, readManagedRoom, ROOM_VIEW_CHAT_LIMIT)),
           ...field(
             'roomsTruncated',
             typeof managerSettings.roomsTruncated === 'boolean'
@@ -1446,10 +1504,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   const commands = readList(item.commands, readComposerCommand, 200) ?? [];
   const soul = record(item.soul);
   const projectedSoul =
-    soul &&
-    nonempty(soul.name) &&
-    nonempty(soul.instructions) &&
-    nonempty(soul.avatarSeed)
+    soul && nonempty(soul.name) && nonempty(soul.instructions) && nonempty(soul.avatarSeed)
       ? {
           name: soul.name,
           instructions: soul.instructions,
@@ -1504,7 +1559,12 @@ export function isInviteView(value: unknown): value is InviteView {
 
 export function readAgentPairingClaimWireView(value: unknown): AgentPairingClaimWireView | null {
   const item = record(value);
-  if (!item || !uuid(item.workspaceId) || !hex64(item.pairedBy) || typeof item.joined !== 'boolean') {
+  if (
+    !item ||
+    !uuid(item.workspaceId) ||
+    !hex64(item.pairedBy) ||
+    typeof item.joined !== 'boolean'
+  ) {
     return null;
   }
   return {

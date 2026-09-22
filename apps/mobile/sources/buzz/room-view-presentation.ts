@@ -99,7 +99,8 @@ function mergeNewerCommittedMessages(
   if (extras.length === 0) return next;
   return [...next, ...extras]
     .sort(
-      (left, right) => messageTimeMs(left) - messageTimeMs(right) || left.id.localeCompare(right.id),
+      (left, right) =>
+        messageTimeMs(left) - messageTimeMs(right) || left.id.localeCompare(right.id),
     )
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
@@ -267,6 +268,7 @@ export type ChatDisplayMessage = {
   roomUpdate?: { digest?: string };
   reference?: RoomViewMessage['reference'];
   corner?: { subchannelId: string; agentPubkey?: string; state: CornerState };
+  cornerApp?: NonNullable<RoomViewMessage['cornerApp']>;
   agentTurn?: {
     requestId: string;
     agentPubkey: string;
@@ -396,6 +398,7 @@ export function displayRoomMessage(
           },
         }
       : {}),
+    ...(message.cornerApp ? { cornerApp: { ...message.cornerApp } } : {}),
     ...(message.targetBranch
       ? {
           targetBranchProposal: {

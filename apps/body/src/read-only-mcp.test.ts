@@ -46,7 +46,13 @@ describe('corner lifecycle tool surfaces', () => {
     for (const tools of [corner, reviewerCorner]) {
       const names = tools.map((tool) => tool.name);
       expect(names).toContain('close_corner');
+      expect(names).toContain('publish_corner_app');
+      expect(names).toContain('open_corner_app');
       expect(names).not.toContain('open_corner');
+    }
+    for (const tools of [room, directMessage]) {
+      expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
+      expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
     }
   });
 });

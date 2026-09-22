@@ -122,8 +122,7 @@ export interface GrantRunResult {
 
 /** The kernel's own words when the read-only bind refuses a write. */
 const WRITE_REFUSED = /Read-only file system|EROFS/;
-const BWRAP_START_FAILURE =
-  /bwrap:.*(?:namespace|uid map|mount|operation not permitted|permission denied)|bubblewrap.*(?:namespace|permission)|No permissions to create (?:a )?new namespace/i;
+const SANDBOX_STARTED_SCRIPT = ['printf "%s\\n" "$1" >&2', 'shift', 'exec "$@"'].join('\n');
 
 export const ROOM_SANDBOX_UNAVAILABLE =
   'this Room cannot run granted commands: a Room promises a read-only filesystem and that ' +
@@ -292,9 +291,13 @@ export class GrantCommandRunner {
     // plainly; a Room may not, so it spawns into the very mount table an
     // ordinary Room session gets — whole host readable, writable only in its own
     // scratch and home overlay.
-    const spawn = surfaceAllows(policy.surface, 'run-host-command')
+    const runsOnHost = surfaceAllows(policy.surface, 'run-host-command');
+    const sandboxMarker = runsOnHost
+      ? undefined
+      : `[beeline-sandbox-started:${randomBytes(16).toString('hex')}]`;
+    const spawn = runsOnHost
       ? { command: argv[0]!, args: argv.slice(1) }
-      : roomSandboxCommand(policy, room.cwd, argv);
+      : roomSandboxCommand(policy, room.cwd, argv, sandboxMarker!);
     const outcome = await new Promise<{
       exitCode: number | null;
       signal?: string;
@@ -332,11 +335,15 @@ export class GrantCommandRunner {
     });
     // The record says what happened: a refused write is the Room boundary doing
     // its job, and the agent is told where the work belongs instead.
-    const writeRefused =
-      !surfaceAllows(policy.surface, 'run-host-command') && WRITE_REFUSED.test(outcome.output);
-    const sandboxFailure =
-      !surfaceAllows(policy.surface, 'run-host-command') &&
-      (outcome.exitCode === null || BWRAP_START_FAILURE.test(outcome.output));
+    const sandboxStarted = sandboxMarker ? outcome.output.includes(sandboxMarker) : true;
+    if (sandboxMarker && sandboxStarted) {
+      outcome.output = outcome.output.replace(`${sandboxMarker}\n`, '').replace(sandboxMarker, '');
+    }
+    const writeRefused = !runsOnHost && WRITE_REFUSED.test(outcome.output);
+    // The marker is emitted only after bubblewrap has built the namespace and
+    // started its child. Command output is evidence about the command, never
+    // evidence that bubblewrap itself failed to start.
+    const sandboxFailure = !runsOnHost && !sandboxStarted;
     const output = capOutput(
       scrubSecrets(
         writeRefused ? `${outcome.output.trimEnd()}\n${ROOM_WRITE_REFUSED_NOTE}` : outcome.output,
@@ -447,6 +454,7 @@ function roomSandboxCommand(
   policy: GrantWritePolicy,
   cwd: string,
   argv: readonly string[],
+  sandboxMarker: string,
 ): { command: string; args: string[] } {
   if (!policy.bwrapPath) throw new Error(ROOM_SANDBOX_UNAVAILABLE);
   return wrapAgentCommand({
@@ -461,8 +469,8 @@ function roomSandboxCommand(
       ...(policy.scratch ? { tmpDir: policy.scratch } : {}),
       ...(policy.maskPaths ? { maskPaths: policy.maskPaths } : {}),
     },
-    command: argv[0]!,
-    args: argv.slice(1),
+    command: '/bin/sh',
+    args: ['-c', SANDBOX_STARTED_SCRIPT, 'beeline-grant-sandbox', sandboxMarker, ...argv],
   });
 }
 

@@ -183,6 +183,7 @@ import { selectWorkingAgents } from '@/buzz/room-indicators';
 import {
   roomBottomChromeStyles,
   TURN_LINE_BAR_MARGIN_BOTTOM,
+  TURN_LINE_BOX_HEIGHT,
   TURN_LINE_ROW_MIN_HEIGHT,
 } from '@/buzz/room-bottom-chrome';
 import {
@@ -5938,7 +5939,9 @@ const styles = StyleSheet.create((theme) => {
       position: 'relative',
     },
     desktopStatusSlot: {
-      minHeight: 28,
+      // The shared thinking line is a 24px row plus the fixed 9px gap.
+      // Holding that full box while idle keeps the desktop composer still.
+      minHeight: TURN_LINE_BOX_HEIGHT,
       justifyContent: 'center',
     },
     desktopStatusText: {

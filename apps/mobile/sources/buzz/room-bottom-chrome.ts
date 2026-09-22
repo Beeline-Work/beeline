@@ -40,6 +40,9 @@ export const COMPOSER_TOP_GAP = TURN_LABEL_LINE_HEIGHT / 2;
 /** The thinking line keeps the fixed composer-top gap below its row. */
 export const TURN_LINE_BAR_MARGIN_BOTTOM = COMPOSER_TOP_GAP;
 
+/** Complete thinking-line box, including the fixed air before the composer. */
+export const TURN_LINE_BOX_HEIGHT = TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM;
+
 export function roomBottomChromeStyles(hull: { bgTerminal: string; border: string }) {
   return {
     stack: {

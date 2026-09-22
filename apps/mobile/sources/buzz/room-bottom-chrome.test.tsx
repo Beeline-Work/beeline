@@ -68,6 +68,7 @@ import { phoneTranscriptTailPadding } from './room-scroll-follow';
 import {
   COMPOSER_TOP_GAP,
   TURN_LINE_BAR_MARGIN_BOTTOM,
+  TURN_LINE_BOX_HEIGHT,
   TURN_LINE_ROW_MIN_HEIGHT,
   TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
@@ -215,6 +216,7 @@ describe('the Room turn line paints the transcript margin', () => {
     const speakerChangeMargin = groknight.messagePaddingVertical * 4;
     expect(COMPOSER_TOP_GAP).toBe(TURN_LABEL_LINE_HEIGHT / 2);
     expect(gap).toBe(speakerChangeMargin + COMPOSER_TOP_GAP);
+    expect(gap).toBe(TURN_LINE_BOX_HEIGHT);
     expect(gap).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
     expect(ROOM_OPEN_LIST_TAIL_PADDING + groknight.messagePaddingVertical).toBe(gap);
   });

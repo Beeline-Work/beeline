@@ -39,6 +39,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { TURN_LINE_BOX_HEIGHT } from '@/buzz/room-bottom-chrome';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
@@ -703,15 +704,17 @@ function CornerCockpit({
       {detail && detail.room.archived === false ? (
         <View style={styles.cockpitComposer}>
           {sendError ? <Text style={styles.error}>{sendError}</Text> : null}
-          {ack && (
-            <TurnProgressLine
-              label={ack.label}
-              startedAt={ack.startedAt}
-              onStop={ack.stop ? () => void stop() : undefined}
-              stopping={stopping}
-              testID="desktop-work-corner-progress"
-            />
-          )}
+          <View style={styles.cockpitStatusSlot} testID="desktop-work-corner-status-slot">
+            {ack && (
+              <TurnProgressLine
+                label={ack.label}
+                startedAt={ack.startedAt}
+                onStop={ack.stop ? () => void stop() : undefined}
+                stopping={stopping}
+                testID="desktop-work-corner-progress"
+              />
+            )}
+          </View>
           <ConversationComposer
             onStop={ack?.stop ? stop : undefined}
             value={input}
@@ -847,6 +850,7 @@ const styles = StyleSheet.create((theme) => ({
   transcriptContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 12 },
   focusedMessage: { backgroundColor: theme.buzz.bgHighlight },
   cockpitComposer: { paddingHorizontal: 16, paddingBottom: 12 },
+  cockpitStatusSlot: { minHeight: TURN_LINE_BOX_HEIGHT, justifyContent: 'center' },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
   loadingBlock: { alignItems: 'center', justifyContent: 'center', padding: 16 },
   error: {

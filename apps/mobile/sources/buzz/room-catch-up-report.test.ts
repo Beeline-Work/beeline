@@ -205,6 +205,56 @@ describe('the catch-up report', () => {
     ]);
   });
 
+  it('CHEV-13: names the person who asked for an edit, not the agent that filed it', () => {
+    // A permission card is authored by the agent that wants the edit and
+    // carries its requester by pubkey. Attributing the card to its author put
+    // the agent's name against a decision a person had asked for.
+    const card = {
+      ...said('new-1', 'Hoots', 5),
+      writePermission: {
+        permissionId: 'p1',
+        requestId: 'r1',
+        agentPubkey: 'pk-Hoots',
+        requesterPubkey: 'pk-lunchbox',
+        tool: 'edit',
+        repository: 'beeline',
+        status: 'pending' as const,
+      },
+    };
+    const messages = [said('new-0', 'Sol', 0), card];
+    const base = { messages, boundaryId: 'new-0', newestId: 'new-1', viewerPubkey: VIEWER };
+
+    expect(
+      buildCatchUpReport({
+        ...base,
+        identities: new Map([['pk-lunchbox', { pubkey: 'pk-lunchbox', name: 'lunchboxfortwo' }]]),
+      })?.needsYou,
+    ).toEqual([
+      {
+        id: 'new-1:write-permission',
+        kind: 'decision',
+        text: 'Repository edit waiting on you: beeline',
+        requesterName: 'lunchboxfortwo',
+        at: at(5),
+      },
+    ]);
+
+    // An unresolvable requester is not the author by default. Saying "Hoots"
+    // here would be naming the wrong person, which is worse than naming none.
+    expect(buildCatchUpReport(base)?.needsYou[0]?.requesterName).toBe('Someone');
+
+    // When the requester IS the author, the row's own identity answers it.
+    expect(
+      buildCatchUpReport({
+        ...base,
+        messages: [
+          messages[0]!,
+          { ...card, writePermission: { ...card.writePermission, requesterPubkey: 'pk-Hoots' } },
+        ],
+      })?.needsYou[0]?.requesterName,
+    ).toBe('Hoots');
+  });
+
   it('CHEV-06: leaves out what is not waiting on this reader', () => {
     const answered = {
       ...said('new-1', 'Nerd', 5),

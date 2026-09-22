@@ -53,7 +53,10 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
     id: 'catch-up',
     command: 'catch-up',
     label: 'Catch up',
-    description: 'Jump to the first unread message',
+    // The verb opens the catch-up report over the unread range, which is what
+    // the strip and the badge open. It used to scroll to the first unread row
+    // and say so; the report is where that row is now described.
+    description: 'See what you missed',
     available: 'canCatchUp',
   },
   {

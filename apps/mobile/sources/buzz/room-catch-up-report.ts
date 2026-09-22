@@ -101,27 +101,36 @@ function messageLine(text: string): string {
  * Everything the catch-up sheet renders, composed from the range's own rows.
  *
  * There is no summarizer in this codebase to call: the merged `/catch-up`
- * composer verb is a jump to the first unread row (`_chat-surface.tsx`), and
- * no path anywhere turns a message range into prose. So the Summary block is
- * stated from what the range demonstrably holds — who spoke, what was opened,
- * what landed — and the Needs you block from the asks the transcript already
- * carries: an open choice the reader is an elector of, a repository edit
- * waiting on them, a message that mentions them. Nothing here is inferred.
+ * composer verb was a jump to the first unread row, and no path anywhere
+ * turns a message range into prose. So the Summary block is stated from what
+ * the range demonstrably holds — who spoke, what was opened, what landed —
+ * and the Needs you block from the asks the transcript already carries: an
+ * open choice the reader is an elector of, a repository edit waiting on them,
+ * a message that mentions them. Nothing here is inferred.
  *
- * This function is the single seam both surfaces go through. A model-backed
- * summarizer replaces its body and neither the strip nor the badge changes.
+ * This function is the single seam all three doors go through — the verb, the
+ * strip, the badge. A model-backed summarizer replaces its body and none of
+ * them change.
  */
 export function buildCatchUpReport({
   messages,
   boundaryId,
   newestId,
   viewerPubkey,
+  identities,
 }: {
   /** The transcript in chronological order, exactly as the list folds it. */
   messages: readonly ChatDisplayMessage[];
   boundaryId: string | null;
   newestId: string | null;
   viewerPubkey: string | null;
+  /**
+   * Who a pubkey belongs to, for the asks whose requester is NOT the row's
+   * author. A permission card is written by the agent that wants the edit and
+   * names its requester by pubkey; attributing the card to its author put the
+   * agent's name against a decision a person had asked for.
+   */
+  identities?: ReadonlyMap<string, CatchUpAuthor>;
 }): CatchUpReport | null {
   if (!boundaryId || !newestId) return null;
   const from = boundaryRowIndex(messages, boundaryId);
@@ -187,12 +196,20 @@ export function buildCatchUpReport({
       message.writePermission.repository &&
       message.writePermission.purpose !== 'squire-spending'
     ) {
+      // The card is written by the agent that wants the edit; the person who
+      // asked for it is `requesterPubkey`, and the two are routinely
+      // different. Only the author's own row may be attributed to the author.
+      const { requesterPubkey } = message.writePermission;
+      const requester =
+        requesterPubkey === message.authorIdentity?.pubkey
+          ? catchUpAuthorOf(message)
+          : (identities?.get(requesterPubkey) ?? null);
       return [
         {
           id: `${message.id}:write-permission`,
           kind: 'decision',
           text: `Repository edit waiting on you: ${message.writePermission.repository}`,
-          requesterName,
+          requesterName: requester?.name ?? 'Someone',
           at: message.timestamp,
         },
       ];

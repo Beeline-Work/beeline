@@ -43,11 +43,24 @@ describe('the chat surface unread-divider wiring', () => {
     );
     expect(landing).toContain('scrollToNewestMessage()');
     expect(landing).not.toContain('landAtNewMessageBoundary');
-    // The strip is the sheet's door now, so the landing at the first unread
-    // row lives in the merged `/catch-up` composer verb and only there.
-    expect(chatSource).toContain(
-      "case 'catch-up':\n          if (firstUnreadMessageId) landAtNewMessageBoundary(firstUnreadMessageId, false);",
+  });
+
+  it('CHEV-14: all three catch-up doors go through the one report', () => {
+    // The composer verb, the strip, and the badge long-press open the same
+    // sheet over the same range. The verb used to scroll to the first unread
+    // row on its own, which is a fourth answer about a Room the other two
+    // were already describing.
+    expect(chatSource).toContain("case 'catch-up':\n          openCatchUpSheet();");
+    expect(chatSource).toContain('onOpenCatchUp={openCatchUpSheet}');
+    const report = chatSource.slice(
+      chatSource.indexOf('buildCatchUpReport({'),
+      chatSource.indexOf('const openCatchUpSheet'),
     );
+    expect(report).toContain('boundaryId: catchUpBoundaryId');
+    expect(report).toContain('newestId: newestTranscriptMessageId');
+    // Requester identities reach that seam, for the asks a row's author did
+    // not make (a permission card names its requester by pubkey).
+    expect(report).toContain('identities: conversationIdentities');
   });
 
   it('CHEV-02: the pill is gone from the surface, plate, label and all', () => {

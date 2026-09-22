@@ -70,3 +70,16 @@ stays closed.
 reopening the same sheet. The screen-reader equivalent is the registered
 `catchUp` accessibility action on the same control, which a screenshot cannot
 show; it is pinned in `RoomCatchUp.design.test.ts` (CHEV-09).
+
+`08-catch-up-verb-closed.png` / `09-sheet-from-catch-up-verb.png` — the third
+door. The row carries the production palette entry verbatim (`/catch-up — See
+what you missed`, from `buzz/slash-verbs.ts`); pressing it runs the same
+`openCatchUpSheet` the surface's `case 'catch-up'` now runs, and the readout
+reads `door: /catch-up verb` over the same `3 msgs · 07:44–09:02` report. The
+verb scrolled to the first unread row before this.
+
+Frame `09` also carries the attribution fix: the repository-edit row reads
+`lunchboxfortwo · 08:00`, the person who ASKED for the edit. That card is
+authored by the agent `Sol (@sol-two)` and names its requester by pubkey, so
+attributing it to its author — what the sheet did before — put the agent's
+name against a decision a person had asked for.

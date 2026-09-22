@@ -2113,11 +2113,15 @@ export function BuzzChatSurface({
             boundaryId: catchUpBoundaryId,
             newestId: newestTranscriptMessageId,
             viewerPubkey: userPubkey ?? null,
+            // The roster the bylines already resolve against, so an ask whose
+            // requester is not the row's author is still named correctly.
+            identities: conversationIdentities,
           })
         : null,
     [
       catchUpBoundaryId,
       catchUpSheetVisible,
+      conversationIdentities,
       foldedMessages,
       newestTranscriptMessageId,
       userPubkey,
@@ -4198,8 +4202,12 @@ export function BuzzChatSurface({
         case 'poll':
           if (latestOpenPoll) landAtNewMessageBoundary(latestOpenPoll.id, false);
           return;
+        // The third door into catch-up, and the same one: the verb opens the
+        // report over the same unread range the strip and the badge open it
+        // over, so the composer cannot say something different about a Room
+        // than the two controls sitting in it.
         case 'catch-up':
-          if (firstUnreadMessageId) landAtNewMessageBoundary(firstUnreadMessageId, false);
+          openCatchUpSheet();
           return;
         case 'schedule':
           if (!canManageWorkspace || !activeCommunityId) return;
@@ -4254,13 +4262,13 @@ export function BuzzChatSurface({
       activeCommunityId,
       canManageWorkspace,
       decodedId,
-      firstUnreadMessageId,
       handleCloseCorner,
       handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
       landAtNewMessageBoundary,
       latestOpenPoll,
+      openCatchUpSheet,
       pendingCornerRequest,
       pendingTargetBranchProposal,
       storedRoomName,

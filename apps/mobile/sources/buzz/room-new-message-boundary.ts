@@ -3,11 +3,18 @@ import type { ChatDisplayMessage } from './room-view-presentation';
 export type NewMessageQueue = {
   /** The exact message id the divider represents; relay reports may be nested in a host row. */
   boundaryId: string | null;
-  /** Arrivals queued while the reader stayed in history during this visit. */
+  /**
+   * Arrivals queued while the reader stayed in history during THIS visit, and
+   * the only honest count in the product: it never claims to know what
+   * arrived while they were away. The badge is the one thing that draws it.
+   */
   count: number;
 };
 
-export const EMPTY_NEW_MESSAGE_QUEUE: NewMessageQueue = { boundaryId: null, count: 0 };
+export const EMPTY_NEW_MESSAGE_QUEUE: NewMessageQueue = {
+  boundaryId: null,
+  count: 0,
+};
 
 /** Folding may place a relayed message inside its host card. The divider belongs to the host row. */
 export function messageContainsBoundary(
@@ -40,7 +47,7 @@ export function boundaryRowIndex(
   return messages.findIndex((message) => messageContainsBoundary(message, boundaryId));
 }
 
-/** One fixed-width label; double digits never widen or reflow the control. */
+/** One fixed-width label; double digits never widen or reflow the badge. */
 export function compactNewMessageCount(count: number): string {
   return count > 9 ? '9+' : String(Math.max(1, count));
 }
@@ -48,7 +55,7 @@ export function compactNewMessageCount(count: number): string {
 /**
  * Queue only incoming rows that arrived while the reader was away from the
  * tail. The first one owns the boundary; later arrivals increase the compact
- * count without moving it.
+ * count without moving it, and name themselves for the catch-up strip.
  */
 export function queueIncomingMessages(
   current: NewMessageQueue,
@@ -67,25 +74,25 @@ export function queueIncomingMessages(
     message.isUser ? [] : messageBoundaryIds(message).filter((id) => arrivingIds.has(id)),
   );
   if (incoming.length === 0) return current;
+  // A zero count means the previous batch was visited. Its divider may stay
+  // in the ledger, but the next batch starts a new earliest-new boundary.
+  const carried = current.count > 0 ? current : EMPTY_NEW_MESSAGE_QUEUE;
   return {
-    // A zero count means the previous batch was visited. Its divider may stay
-    // in the ledger, but the next batch starts a new earliest-new boundary.
     boundaryId: current.count > 0 ? current.boundaryId : incoming[0]!,
-    count: current.count + incoming.length,
+    count: carried.count + incoming.length,
   };
 }
 
-/** Hide the control after its landing while retaining that batch's jump target. */
+/** Clear the badge after its landing while retaining that batch's jump target. */
 export function acknowledgeNewMessageQueue(current: NewMessageQueue): NewMessageQueue {
   return current.count > 0 ? { ...current, count: 0 } : current;
 }
 
 /**
- * The control is a way to reach a newer message the reader cannot see, so
- * actual viewport visibility decides it — never tail distance. A reader
- * parked a finger's width above the tail is still looking straight at the
- * newest message, and Slack shows them nothing; any visible pixel of that
- * row answers the only question this control exists to ask.
+ * Viewport visibility of the newest row decides every one of the three rules
+ * below — never tail distance. A reader parked a finger's width above the
+ * tail is still looking straight at the newest message, and Slack shows them
+ * nothing there.
  *
  * `messages` is in transcript order, so the newest row is its last entry on
  * both lists: the phone reverses that array for its inverted FlatList, but
@@ -97,9 +104,55 @@ export function newestTranscriptRowId(
   return messages.at(-1)?.id ?? null;
 }
 
-export function newMessageControlVisible(
+/**
+ * The disc is a way back to newest, so it shows whenever the newest row is
+ * off screen — with or without a queue behind it. The pill it replaces only
+ * ever appeared for unread mail, which left a reader who had scrolled up to
+ * re-read something with no way back down but their own thumb.
+ *
+ * `hasObservedVisibility` is the list's first viewability pass. Before it
+ * runs nothing is known about the viewport, and a disc drawn on that silence
+ * would flash over every Room at open.
+ */
+export function newestJumpDiscVisible({
+  newestMessageId,
+  newestMessageVisible,
+  hasObservedVisibility,
+}: {
+  newestMessageId: string | null;
+  newestMessageVisible: boolean;
+  hasObservedVisibility: boolean;
+}): boolean {
+  return hasObservedVisibility && newestMessageId !== null && !newestMessageVisible;
+}
+
+/**
+ * The badge counts what the reader has not seen, so seeing the newest row
+ * clears it — reaching newest under their own finger settles the count
+ * exactly as a tap on the disc would, and the disc itself stays for as long
+ * as newest is off screen.
+ */
+export function newMessageBadgeCount(
   queue: NewMessageQueue,
   newestMessageVisible: boolean,
-): boolean {
-  return queue.count > 0 && queue.boundaryId !== null && !newestMessageVisible;
+): number {
+  return newestMessageVisible ? 0 : queue.count;
+}
+
+/**
+ * The strip stands for the server's unread cursor and nothing else, which is
+ * the same gate the `/catch-up` verb runs on (`canCatchUp`). It used to be
+ * drawn from the live queue, whose count only ever knew about arrivals during
+ * this visit — a strip sourced from that could not describe what the reader
+ * missed while away, which is the one thing it exists to describe.
+ *
+ * Only the cursor. Retiring it alongside the NEW MESSAGES divider was tried
+ * and is wrong: the divider retires the moment the newest row is seen, and a
+ * Room that opens at its tail sees that row immediately, so the strip
+ * vanished before the reader could reach for it in exactly the Room that
+ * needed it. The cursor clears when the session marks the Room read, and the
+ * strip goes with it.
+ */
+export function catchUpStripVisible(firstUnreadMessageId: string | null): boolean {
+  return firstUnreadMessageId !== null;
 }

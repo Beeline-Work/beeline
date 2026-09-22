@@ -17,7 +17,18 @@ it.skipIf(!existsSync(chrome))(
     const shims: Record<string, string> = {
       'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
       export const StyleSheet = { create: factory => factory({ buzz: beelineThemes[new URLSearchParams(location.search).get('theme')] }) };`,
-      'react-native-reanimated': 'export const useReducedMotion = () => true;',
+      // The transcript row now carries the arrival flash, so this bundle
+      // needs the animation surface that rides with it: a shared value the
+      // effect can write, a style hook that reads it, and the two timing
+      // helpers. Held still — this proof measures caption and row POSITIONS,
+      // and a running animation would move what it is trying to measure.
+      'react-native-reanimated': `import React from 'react'; import { View } from 'react-native';
+      export const useReducedMotion = () => true;
+      export const useSharedValue = initial => ({ value: initial });
+      export const useAnimatedStyle = factory => factory();
+      export const withTiming = toValue => toValue;
+      export const withDelay = (_delayMs, animation) => animation;
+      export default { View: props => React.createElement(View, props) };`,
       '@expo/vector-icons': 'export const Ionicons = () => null;',
       './IdentityMark': 'export const IdentityMark = () => null;',
       './MonoMarkdown': `import React from 'react'; import { Text } from 'react-native';

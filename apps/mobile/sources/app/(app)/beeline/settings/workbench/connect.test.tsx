@@ -256,6 +256,21 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-sign-in' })).toBeDefined();
   });
 
+  it('names Tailscale on its sign-in action and passes that name to the overlay', async () => {
+    searchParams.params.connectorId = 'tailscale';
+    const renderer = await render();
+    await pair(renderer);
+    await untilSignin(renderer);
+    const button = renderer.root.findByProps({ testID: 'connect-sign-in' });
+    expect(button.findByType('Text').props.children).toEqual(['Sign in to ', 'Tailscale']);
+
+    await act(async () => {
+      button.props.onPress();
+      await Promise.resolve();
+    });
+    expect(navigation.push.mock.calls.at(-1)?.[0].params.connectorName).toBe('Tailscale');
+  });
+
   it('sign-in is a full-screen route, never a browser call inside the step list', async () => {
     const renderer = await render();
     await pair(renderer);
@@ -272,6 +287,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(route.pathname).toBe('/beeline/settings/workbench/connect-signin');
     expect(route.params.method).toBe('streamed');
     expect(route.params.url).toContain('https://');
+    expect(route.params.connectorName).toBe('Trusty Squire');
   });
 
   it('shows where the sign-in page opened, from the helper report', async () => {

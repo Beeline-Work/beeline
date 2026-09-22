@@ -151,17 +151,15 @@ export class ConnectorAssignmentLoop {
     this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
-    this.installGoogle =
-      options.installGoogle ??
-      ((connectorType, onProgress, sharedCredentials) =>
-        installGoogleTool({
-          connectorType,
-          home: this.googleHome(),
-          onProgress,
-          resolvedCredentials: sharedCredentials
-            ? sharedCredentials()
-            : this.resolveGoogleCredentials(),
-        }));
+    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress, sharedCredentials) =>
+      installGoogleTool({
+        connectorType,
+        home: this.googleHome(),
+        onProgress,
+        resolvedCredentials: sharedCredentials
+          ? sharedCredentials()
+          : this.resolveGoogleCredentials(),
+      }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.readVaultFn = options.readVault ?? readVault;
@@ -339,11 +337,7 @@ export class ConnectorAssignmentLoop {
       } else {
         await this.runInstall(assignment.connectorId);
       }
-    } else if (
-      assignment.kind === 'sync' &&
-      assignment.connectorType !== 'tailscale' &&
-      !isGoogleToolConnectorType(assignment.connectorType)
-    ) {
+    } else if (assignment.kind === 'sync' && assignment.connectorType !== 'tailscale') {
       await this.runSync();
     } else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
@@ -353,11 +347,7 @@ export class ConnectorAssignmentLoop {
   private async runTailscaleInstall(connectorId: string): Promise<void> {
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', {
-          agentId: this.agentId,
-          connectorId,
-          steps,
-        });
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }
@@ -408,11 +398,7 @@ export class ConnectorAssignmentLoop {
   ): Promise<void> {
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', {
-          agentId: this.agentId,
-          connectorId,
-          steps,
-        });
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }
@@ -473,11 +459,7 @@ export class ConnectorAssignmentLoop {
     }
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', {
-          agentId: this.agentId,
-          connectorId,
-          steps,
-        });
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }

@@ -9,7 +9,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { ConnectorSignIn, ConnectorStep } from '@beeline/api-contract/daemon';
 
@@ -105,6 +105,7 @@ async function readStatus(run: TailscaleCommandRunner): Promise<TailscaleStatus 
 async function ensureInstalled(
   run: TailscaleCommandRunner,
   onProgress: (steps: readonly ConnectorStep[]) => void,
+  platform: NodeJS.Platform,
 ): Promise<{ ok: true; steps: ConnectorStep[] } | { ok: false; result: InstallTailscaleResult }> {
   const version = await run('tailscale', ['version']);
   if (version.code === 0) {
@@ -113,7 +114,7 @@ async function ensureInstalled(
       steps: [step('Tailscale installed', 'done', { output: version.stdout.trim() })],
     };
   }
-  if (process.platform !== 'linux') {
+  if (platform !== 'linux') {
     const reason = 'Tailscale is not installed; install the Tailscale app on this helper and retry';
     return {
       ok: false,
@@ -176,13 +177,18 @@ export async function installTailscale(
     readonly run?: TailscaleCommandRunner;
     readonly onProgress?: (steps: readonly ConnectorStep[]) => void;
     readonly operator?: string;
+    /** Test seam for platform-specific installation and privilege handling. */
+    readonly platform?: NodeJS.Platform;
+    /** Test seam for the Linux root path. */
+    readonly getuid?: () => number;
     /** Reuse the open browser ceremony while polling for completed sign-in. */
     readonly signIn?: ConnectorSignIn;
   } = {},
 ): Promise<InstallTailscaleResult> {
   const run = options.run ?? runTailscaleCommand;
   const onProgress = options.onProgress ?? (() => {});
-  const installed = await ensureInstalled(run, onProgress);
+  const platform = options.platform ?? process.platform;
+  const installed = await ensureInstalled(run, onProgress, platform);
   if (!installed.ok) return installed.result;
 
   const current = await readStatus(run);
@@ -207,12 +213,23 @@ export async function installTailscale(
     step('Tailnet signed in', 'running', { command: 'tailscale up' }),
   ];
   onProgress(steps);
-  const operator = options.operator ?? process.env.USER;
+  let accountUsername: string | undefined;
+  try {
+    accountUsername = userInfo().username;
+  } catch {
+    // Some minimal containers cannot resolve the current account. Root still
+    // has direct CLI access; non-root callers get the actionable command error.
+  }
+  const operator = [options.operator, process.env.USER, accountUsername].find(
+    (candidate): candidate is string =>
+      typeof candidate === 'string' && /^[A-Za-z_][A-Za-z0-9_-]*$/u.test(candidate),
+  );
   const upArgs = ['tailscale', 'up', '--timeout=10s'];
-  if (operator && /^[A-Za-z_][A-Za-z0-9_-]*$/u.test(operator))
-    upArgs.push(`--operator=${operator}`);
+  if (operator) upArgs.push(`--operator=${operator}`);
+  const getuid = options.getuid ?? process.getuid;
+  const root = getuid?.() === 0;
   const up =
-    process.platform === 'linux'
+    platform === 'linux' && !root
       ? await run('sudo', ['-n', ...upArgs])
       : await run('tailscale', upArgs.slice(1));
 

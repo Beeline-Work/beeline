@@ -35,8 +35,8 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
 
   it('offer_connector accepts only offerable kinds: never the wallet', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'offer_connector')!;
-    const kinds = (tool.inputSchema.properties as { connectorType: { enum: string[] } })
-      .connectorType.enum;
+    const kinds = (tool.inputSchema.properties as { connectorType: { enum: string[] } }).connectorType
+      .enum;
     expect(kinds).toContain('trusty-squire');
     expect(kinds).toContain('google-gmail');
     expect(kinds).not.toContain('wallet');
@@ -48,9 +48,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(tool.description).toContain('ONE affirmative action');
     expect(tool.description).toContain('Only that person or a Workspace admin can accept');
     expect(tool.description).toContain('Your turn pauses on the card');
-    expect(tool.description).toContain(
-      'research it first and say so in your reply BEFORE calling this',
-    );
+    expect(tool.description).toContain('research it first and say so in your reply BEFORE calling this');
     expect(tool.description).toContain('This is setup, not authority');
   });
 
@@ -88,17 +86,12 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
               connectorType: 'tailscale',
               name: 'Tailscale',
               purpose: 'Network.',
-              available: false,
-              offerable: false,
+              available: true,
+              offerable: true,
             },
           ],
           connections: [
-            {
-              connectorType: 'trusty-squire',
-              service: '1inch',
-              label: '1inch API key',
-              state: 'active',
-            },
+            { connectorType: 'trusty-squire', service: '1inch', label: '1inch API key', state: 'active' },
           ],
         },
         ops,
@@ -110,11 +103,11 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(text).toContain(
       '- trusty-squire (Trusty Squire): not added — you may offer it with offer_connector. A credential vault.',
     );
-    expect(text).toContain(
-      '- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.',
-    );
+    expect(text).toContain('- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.');
     expect(text).toContain('- wallet (Wallet): not added — added only from the Workbench page.');
-    expect(text).toContain('- tailscale (Tailscale): not available yet.');
+    expect(text).toContain(
+      '- tailscale (Tailscale): not added — you may offer it with offer_connector. Network.',
+    );
     expect(text).toContain('- 1inch API key (1inch) via trusty-squire');
     // Names only: nothing in the view carries a value, and the text prints nothing but names.
     expect(text).not.toMatch(/secret|password|token=/i);
@@ -140,9 +133,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(reply).toContain('your turn is paused on this offer');
     expect(reply).toContain('Do not ask them to open Settings or the Workbench page');
     // The room turn recognises that reply as a pause, exactly like a grant card.
-    expect(pendingGrantToolCall({ title: 'beeline-agent.offer_connector', content: reply })).toBe(
-      true,
-    );
+    expect(pendingGrantToolCall({ title: 'beeline-agent.offer_connector', content: reply })).toBe(true);
     const joined = await offerConnector(
       { connectorType: 'trusty-squire', reason: 'provision the 1inch API key into its vault' },
       deps({ offerId: 'o-1', status: 'pending', messageId: 'm-1', joined: true }),
@@ -154,12 +145,12 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
   it('refuses a non-offerable kind and an empty reason before the server is called', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const answer = deps({ offerId: 'never' }, ops);
-    await expect(
-      offerConnector({ connectorType: 'wallet', reason: 'hold funds' }, answer),
-    ).rejects.toThrow('connectorType must be one of');
-    await expect(
-      offerConnector({ connectorType: 'trusty-squire', reason: '  ' }, answer),
-    ).rejects.toThrow('reason must be a non-empty string');
+    await expect(offerConnector({ connectorType: 'wallet', reason: 'hold funds' }, answer)).rejects.toThrow(
+      'connectorType must be one of',
+    );
+    await expect(offerConnector({ connectorType: 'trusty-squire', reason: '  ' }, answer)).rejects.toThrow(
+      'reason must be a non-empty string',
+    );
     await expect(
       offerConnector({ connectorType: 'trusty-squire', reason: 'x'.repeat(201) }, answer),
     ).rejects.toThrow('reason is too long');
@@ -176,9 +167,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
         object: { text: 'Trusty Squire' },
       },
     });
-    expect(prompt).toContain(
-      'This is the answer to your connector offer: @zeke added Trusty Squire.',
-    );
+    expect(prompt).toContain('This is the answer to your connector offer: @zeke added Trusty Squire.');
     expect(prompt).toContain('Adding Trusty Squire now.');
     expect(prompt).not.toContain('grant');
     const grant = resumePrompt({

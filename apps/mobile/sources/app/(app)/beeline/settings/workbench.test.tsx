@@ -126,7 +126,9 @@ describe('Workbench settings screen', () => {
     expect(squire.props.title).toBe('Trusty Squire');
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
+    expect(squire.props.trailingPress.testID).toBe(
+      'workbench-connector-trusty-squire-connect',
+    );
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.action).toBe('Connect');
     expect(wallet.props.value).toBeUndefined();

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { userInfo } from 'node:os';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   installTailscale,
   type TailscaleCommandResult,
@@ -16,6 +17,8 @@ function runner(results: readonly TailscaleCommandResult[]) {
 }
 
 describe('installTailscale', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('accepts an already connected helper and reports its account', async () => {
     const command = runner([
       { code: 0, stdout: '1.90.6', stderr: '' },
@@ -53,7 +56,12 @@ describe('installTailscale', () => {
       { code: 1, stdout: needsLogin, stderr: '' },
     ]);
 
-    const result = await installTailscale({ run: command.run, operator: 'beeline' });
+    const result = await installTailscale({
+      run: command.run,
+      operator: 'beeline',
+      platform: 'linux',
+      getuid: () => 1000,
+    });
 
     expect(result).toMatchObject({
       status: 'installing',
@@ -69,14 +77,14 @@ describe('installTailscale', () => {
     });
   });
 
-  it('reports a bounded install failure instead of claiming a connection', async () => {
+  it('reports a bounded Linux install failure instead of claiming a connection', async () => {
     const command = runner([
       { code: null, stdout: '', stderr: 'not found' },
       { code: 0, stdout: '', stderr: '' },
       { code: 1, stdout: '', stderr: 'sudo: a password is required' },
     ]);
 
-    const result = await installTailscale({ run: command.run });
+    const result = await installTailscale({ run: command.run, platform: 'linux' });
 
     expect(result).toMatchObject({
       status: 'error',
@@ -85,6 +93,60 @@ describe('installTailscale', () => {
     });
     expect(command.calls[1]?.command).toBe('curl');
     expect(command.calls[2]?.command).toBe('sh');
+  });
+
+  it('resolves the non-root operator from the account when USER is unset', async () => {
+    vi.stubEnv('USER', '');
+    const needsLogin = JSON.stringify({ BackendState: 'NeedsLogin' });
+    const command = runner([
+      { code: 0, stdout: '1.90.6', stderr: '' },
+      { code: 1, stdout: needsLogin, stderr: '' },
+      {
+        code: 1,
+        stdout: 'https://login.tailscale.com/a/root-helper',
+        stderr: '',
+      },
+      { code: 1, stdout: needsLogin, stderr: '' },
+    ]);
+
+    const result = await installTailscale({
+      run: command.run,
+      platform: 'linux',
+      getuid: () => 1000,
+    });
+
+    expect(result.status).toBe('installing');
+    expect(command.calls[2]).toEqual({
+      command: 'sudo',
+      args: ['-n', 'tailscale', 'up', '--timeout=10s', `--operator=${userInfo().username}`],
+    });
+  });
+
+  it('runs tailscale directly as root when sudo is unavailable', async () => {
+    const needsLogin = JSON.stringify({ BackendState: 'NeedsLogin' });
+    const command = runner([
+      { code: 0, stdout: '1.90.6', stderr: '' },
+      { code: 1, stdout: needsLogin, stderr: '' },
+      {
+        code: 1,
+        stdout: 'https://login.tailscale.com/a/root-helper',
+        stderr: '',
+      },
+      { code: 1, stdout: needsLogin, stderr: '' },
+    ]);
+
+    const result = await installTailscale({
+      run: command.run,
+      operator: 'root',
+      platform: 'linux',
+      getuid: () => 0,
+    });
+
+    expect(result.status).toBe('installing');
+    expect(command.calls[2]).toEqual({
+      command: 'tailscale',
+      args: ['up', '--timeout=10s', '--operator=root'],
+    });
   });
 
   it('reuses an open login ceremony while polling instead of running up again', async () => {

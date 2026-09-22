@@ -354,6 +354,7 @@ export default function ConnectTrustySquireScreen() {
                         // The paired ROW id, so the overlay polls this
                         // machine's connector — not any row of the type.
                         connectorId: install.connectorId,
+                        connectorName,
                         url: signIn.url,
                         method: signIn.method,
                         ...(offerId ? { offerId } : {}),
@@ -364,7 +365,7 @@ export default function ConnectTrustySquireScreen() {
                   style={styles.signInButton}
                   testID="connect-sign-in"
                 >
-                  <Text style={styles.signInText}>Sign in to Squire</Text>
+                  <Text style={styles.signInText}>Sign in to {connectorName}</Text>
                 </TouchableOpacity>
                 {connectorSignInLocationLine(install.signIn.browserLocation) ? (
                   <Text style={styles.signInLocation} testID="connect-sign-in-location">

@@ -126,15 +126,13 @@ describe('Workbench settings screen', () => {
     expect(squire.props.title).toBe('Trusty Squire');
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe(
-      'workbench-connector-trusty-squire-connect',
-    );
+    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.action).toBe('Connect');
     expect(wallet.props.value).toBeUndefined();
     const tailscale = renderer.root.findByProps({ testID: 'workbench-connector-tailscale-head' });
-    expect(tailscale.props.value).toBe('soon');
-    expect(tailscale.props.action).toBeUndefined();
+    expect(tailscale.props.value).toBeUndefined();
+    expect(tailscale.props.action).toBe('Connect');
   });
 
   it('connects a tool from its row and keeps the accordion for the facts', async () => {

@@ -20,7 +20,7 @@ export type { WalletLedgerEntry };
 
 export type { ConnectorStatus, ConnectorStep };
 
-/** Connector types the Workbench can provision. Phase 1: Trusty Squire only. */
+/** Connector types known to the Workbench. */
 export const CONNECTOR_KINDS = [
   'trusty-squire',
   'wallet',
@@ -42,6 +42,7 @@ export function isConnectorKind(value: unknown): value is ConnectorKind {
  */
 export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'trusty-squire',
+  'tailscale',
   'google-gmail',
   'google-calendar',
   'google-drive',

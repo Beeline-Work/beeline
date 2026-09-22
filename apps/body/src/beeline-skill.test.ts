@@ -276,7 +276,8 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain(
       'YouTube Analytics answers only the channel owner account, not a manager',
     );
-    expect(markdown).toContain('Tailscale is not available yet');
+    expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
+    expect(markdown).toContain('tailscale file cp');
   });
 
   // R5: earlier skill text sent the person to Settings → Workbench → Tools

@@ -41,7 +41,7 @@ export type ConnectorCatalogEntry = WorkbenchCatalogEntry;
 const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'trusty-squire', name: 'Trusty Squire', available: true },
   { connectorType: 'wallet', name: 'Wallet', available: true },
-  { connectorType: 'tailscale', name: 'Tailscale', available: false },
+  { connectorType: 'tailscale', name: 'Tailscale', available: true },
   { connectorType: 'google-gmail', name: 'Gmail', available: true },
   { connectorType: 'google-calendar', name: 'Google Calendar', available: true },
   { connectorType: 'google-drive', name: 'Google Drive', available: true },

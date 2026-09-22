@@ -176,7 +176,7 @@ describe('mock Workbench source', () => {
     expect(view.connectors.map((connector) => [connector.id, connector.available])).toEqual([
       ['trusty-squire', true],
       ['wallet', true],
-      ['tailscale', false],
+      ['tailscale', true],
       ['google-gmail', true],
       ['google-calendar', true],
       ['google-drive', true],

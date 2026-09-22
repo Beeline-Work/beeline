@@ -26,6 +26,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * the ONE logical Google entry — the four tool connectors behind one grant. */
 const CONNECTOR_NAMES: Record<string, string> = {
   'trusty-squire': 'Trusty Squire',
+  tailscale: 'Tailscale',
   google: 'Google Workspace',
   'google-gmail': 'Gmail',
   'google-calendar': 'Google Calendar',

@@ -190,7 +190,8 @@ export class MockWorkbenchSource implements WorkbenchSource {
           id: 'tailscale',
           name: 'Tailscale',
           description: CONNECTOR_DESCRIPTIONS['tailscale'],
-          available: false,
+          available: true,
+          status: 'disconnected',
         },
         {
           id: 'google-gmail',

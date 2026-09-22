@@ -796,6 +796,28 @@ describe('workbench connectors', () => {
     });
   });
 
+  it('pairs Tailscale on the selected helper and queues its installer', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'tailscale',
+      helperAgentId: HELPER,
+    })) as { connectorId: string; status: { status: string } };
+
+    expect(paired.status.status).toBe('installing');
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    expect(queue.body.assignments).toContainEqual({
+      kind: 'install',
+      connectorId: paired.connectorId,
+      connectorType: 'tailscale',
+    });
+    const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      catalog: { connectorType: string; available: boolean }[];
+    };
+    expect(view.catalog).toContainEqual(
+      expect.objectContaining({ connectorType: 'tailscale', available: true }),
+    );
+  });
+
   it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {
     // The single Google connect entry pairs the whole set: one grant, four
     // server-side tool rows, so the entry's repair state tops up every

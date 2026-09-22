@@ -7976,7 +7976,7 @@ describe('monolith integration', () => {
     // The wallet is created only from the Workbench page; it has no offer shape.
     expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(false);
     expect(status.catalog.find((entry) => entry.connectorType === 'tailscale')?.offerable).toBe(
-      false,
+      true,
     );
 
     // Refusals at offer time are the tool's error, not a card.

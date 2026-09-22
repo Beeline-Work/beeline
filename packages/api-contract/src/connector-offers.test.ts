@@ -22,7 +22,7 @@ describe('connector offers (R5)', () => {
     );
     expect(isOfferableConnectorKind('trusty-squire')).toBe(true);
     expect(isOfferableConnectorKind('wallet')).toBe(false);
-    expect(isOfferableConnectorKind('tailscale')).toBe(false);
+    expect(isOfferableConnectorKind('tailscale')).toBe(true);
     expect(isOfferableConnectorKind('nonsense')).toBe(false);
     expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'connecting', 'accepted']);
     expect(CONNECTOR_OFFER_WINDOW_MS).toBe(2 * 60_000);
@@ -46,6 +46,7 @@ describe('connector offers (R5)', () => {
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
     expect(connectorOfferActionLabel('Trusty Squire')).toBe('Add Trusty Squire');
     expect(connectorPurpose('google-youtube')).toContain('channel owner account, not a manager');
+    expect(connectorPurpose('tailscale')).toContain('Taildrop file exchange');
   });
 
   it('round-trips the hidden decision line the daemon resumes on', () => {

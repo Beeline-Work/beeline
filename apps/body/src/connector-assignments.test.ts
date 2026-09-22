@@ -67,8 +67,7 @@ async function settle(): Promise<void> {
 }
 
 const connectedInstall =
-  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) =>
-  async (options) => {
+  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) => async (options) => {
     const steps = [
       { id: 'prereq', label: 'prerequisites', status: 'done' as const },
       { id: 'install', label: 'trusty-squire 1.4.2 installed', status: 'done' as const },
@@ -82,6 +81,49 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('routes a Tailscale assignment through its own sign-in ceremony', async () => {
+    const api = apiMock([{ kind: 'install', connectorId: 'tail-1', connectorType: 'tailscale' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      install: async () => {
+        throw new Error('must not run the Squire installer');
+      },
+      installTailscale: async ({ onProgress }) => {
+        await onProgress([{ label: 'Tailnet signed in', status: 'running' }]);
+        return {
+          status: 'installing',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+          signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/test' },
+        };
+      },
+    });
+
+    await loop.runOnce();
+    await settle();
+
+    expect(api.calls.filter((call) => call.op === 'postConnectorStatus')).toEqual([
+      {
+        op: 'postConnectorStatus',
+        input: {
+          agentId: 'agent-1',
+          connectorId: 'tail-1',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+        },
+      },
+      {
+        op: 'postConnectorStatus',
+        input: {
+          agentId: 'agent-1',
+          connectorId: 'tail-1',
+          steps: [{ label: 'Tailnet signed in', status: 'running' }],
+          signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/test' },
+        },
+      },
+    ]);
+    loop.stop();
+  });
+
   it('drains immediately on wake without waiting for the recovery poll', async () => {
     const api = apiMock([]);
     let scheduled = 0;
@@ -157,7 +199,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({ errorMessage: 'npx failed' });
   });
 
@@ -175,7 +220,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({
       signIn: { method: 'streamed-page', url: 'https://squire.example/vnc' },
     });
@@ -495,7 +543,9 @@ describe('ConnectorAssignmentLoop', () => {
   });
 
   it('routes Google tool connectors through the Google installer without vault reporting', async () => {
-    const api = apiMock([{ kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' }]);
+    const api = apiMock([
+      { kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' },
+    ]);
     const googleCalls: string[] = [];
     const squireCalls: string[] = [];
     const loop = new ConnectorAssignmentLoop({
@@ -588,7 +638,13 @@ describe('ConnectorAssignmentLoop', () => {
         if (connectorType === 'google-gmail') {
           return {
             status: 'error' as const,
-            steps: [{ label: 'authorized with Google', status: 'failed' as const, reason: 'scope refused' }],
+            steps: [
+              {
+                label: 'authorized with Google',
+                status: 'failed' as const,
+                reason: 'scope refused',
+              },
+            ],
             errorMessage: 'scope refused',
           };
         }
@@ -601,9 +657,7 @@ describe('ConnectorAssignmentLoop', () => {
     await settle();
     expect(installed).toEqual(['google-drive']);
     expect(
-      api.calls.some(
-        (call) => call.op === 'installConnector' && call.input.connectorId === 'g2',
-      ),
+      api.calls.some((call) => call.op === 'installConnector' && call.input.connectorId === 'g2'),
     ).toBe(true);
     expect(
       api.calls.some(

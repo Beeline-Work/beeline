@@ -1224,6 +1224,14 @@ it('keeps Room drafts private while preserving liveness, final replies, and corn
       ).rowCount,
     ).toBe(0);
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'draft', roomId: R }));
+    // During a two-machine rollout, an older server can leave a Room draft
+    // behind. Reconnecting readers must not recover that stale prose.
+    await db.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,$3,'draft','{"text":"Stale Room draft"}'::jsonb)`,
+      [R, A, roomCommand!.turnRequestId],
+    );
+    expect(await phone.liveDraftSnapshot(R)).toEqual([]);
     expect(
       (
         await db.query<{ status: string }>(
@@ -1263,6 +1271,9 @@ it('keeps Room drafts private while preserving liveness, final replies, and corn
       ).rowCount,
     ).toBe(1);
     expect(events).toContainEqual(
+      expect.objectContaining({ type: 'draft', roomId: C, text: 'Corner draft' }),
+    );
+    expect(await phone.liveDraftSnapshot(C)).toContainEqual(
       expect.objectContaining({ type: 'draft', roomId: C, text: 'Corner draft' }),
     );
     expect(

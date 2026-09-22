@@ -841,6 +841,7 @@ export class PhoneService {
       body: { text?: unknown } | null;
     }>(
       `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
+       JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
        JOIN agent_turns t ON t.room_id=o.room_id AND t.request_id=o.turn_id AND t.agent_id=o.agent_id
        WHERE o.room_id=$1 AND o.kind='draft'
          AND t.status='working' AND t.created_at>now()-interval '90 seconds'

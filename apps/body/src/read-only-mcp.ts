@@ -500,7 +500,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. An optional app slug binds an already-installed Corner App as the corner surface; it does not generate an app. Pass lane="no_code" in a repository Room when the objective produces no code change. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" in a repository Room when the objective produces no code change. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -522,11 +522,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
           enum: ['code', 'no_code'],
           description:
             'Defaults to "code". Use "no_code" for an objective that produces no code change: the corner skips the worktree, the commit, the pull request and the merge, and delivers artifacts plus a reply tagging you.',
-        },
-        app: {
-          type: 'string',
-          pattern: '^[a-z][a-z0-9-]{0,31}$',
-          description: 'Optional slug of a Corner App already installed in this Workspace.',
         },
       },
       additionalProperties: false,
@@ -1516,7 +1511,6 @@ async function openCorner(args: JsonObject): Promise<string> {
     throw new Error('lane must be "code" or "no_code"');
   }
   const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
-  const app = stringArg(args, 'app');
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {
@@ -1532,7 +1526,6 @@ async function openCorner(args: JsonObject): Promise<string> {
     name,
     objective,
     lane,
-    ...(app ? { app } : {}),
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,

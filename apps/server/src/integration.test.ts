@@ -2111,44 +2111,6 @@ describe('monolith integration', () => {
     socket.close();
   });
 
-  it('binds an installed app selected by open_corner', async () => {
-    const installationId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-    await database.query(
-      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
-       VALUES($1,$2,$3,$4,$5::jsonb)`,
-      [
-        installationId,
-        WORKSPACE,
-        HUMAN,
-        AGENT,
-        JSON.stringify({
-          version: 1,
-          slug: 'release-board',
-          title: 'Release board',
-          developer: 'Bee Labs',
-          humanUi: { kind: 'broker', capability: 'release-board.ui' },
-        }),
-      ],
-    );
-    const created = await daemonOperation('createCorner', {
-      roomId: ROOM,
-      requestId: 'corner-app-request',
-      name: 'Release board',
-      objective: 'Track release readiness in the installed app',
-      app: 'release-board',
-    });
-    expect(created.status).toBe(200);
-    const { cornerId } = (await created.json()) as { cornerId: string };
-    expect(
-      (
-        await database.query<{ installation_id: string }>(
-          `SELECT installation_id FROM corner_app_bindings WHERE corner_id=$1`,
-          [cornerId],
-        )
-      ).rows[0]?.installation_id,
-    ).toBe(installationId);
-  });
-
   it('lets a Workspace member open a corner inherited from a public Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

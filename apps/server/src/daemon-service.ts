@@ -3960,19 +3960,6 @@ export class DaemonService {
           [parentCommand.root_source_message_id],
         )
       ).rows[0]?.author_id;
-      const appInstallation = input.app
-        ? (
-            await db.query<{ id: string }>(
-              `SELECT id FROM corner_app_installations
-               WHERE workspace_id=$1 AND manifest->>'slug'=$2
-               ORDER BY connected_at DESC,id LIMIT 1 FOR SHARE`,
-              [parent.workspace_id, input.app],
-            )
-          ).rows[0]
-        : undefined;
-      if (input.app && !appInstallation) {
-        throw new Error(`Corner App ${input.app} is not installed in this Workspace`);
-      }
       await db.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [
@@ -4006,13 +3993,6 @@ export class DaemonService {
          VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
         [cornerId, agentId, commissionedBy ?? null, objective, input.requestId, lane],
       );
-      if (appInstallation) {
-        await db.query(
-          `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
-           VALUES($1,$2,$3,$4)`,
-          [cornerId, appInstallation.id, randomUUID(), agentId],
-        );
-      }
       // The objective is the OPENER's work. Every other agent is copied in as a
       // member so it can read the corner and answer when tagged, but it gets no
       // intake command: #1206 fanned the objective out to every agent member and

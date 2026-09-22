@@ -16,8 +16,9 @@ describe('permission-aware composer entry commands', () => {
 
   it('routes each entry to its existing native action instead of sending command text', () => {
     expect(chat).toContain("case 'build':");
-    expect(chat).toContain("params: { roomId: decodedId, create: '1' }");
-    expect(corners).toContain("useState(create === '1')");
+    expect(chat).toContain('params: { roomId: decodedId }');
+    expect(corners).toContain('useState(false)');
+    expect(corners).not.toContain("create === '1'");
     expect(chat).toContain("case 'poll':");
     expect(chat).toContain('landAtNewMessageBoundary(latestOpenPoll.id, false)');
     expect(chat).toContain("case 'catch-up':");

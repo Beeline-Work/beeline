@@ -4148,7 +4148,7 @@ export function BuzzChatSurface({
         case 'build':
           router.push({
             pathname: '/beeline/corners/[roomId]',
-            params: { roomId: decodedId, create: '1' },
+            params: { roomId: decodedId },
           } as Href);
           return;
         case 'poll':

@@ -203,19 +203,6 @@ describe('open_corner over the grok wire', () => {
     expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'no_code' });
   }, 30_000);
 
-  it('binds an installed app slug without asking the corner to generate one', async () => {
-    const door = await daemonDoor();
-    const { result } = await callTool(door.origin, {
-      name: 'Release board',
-      objective: 'Track the current release readiness for this Room',
-      app: 'release-board',
-    });
-    expect(result?.isError).toBeUndefined();
-    expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
-      app: 'release-board',
-    });
-  }, 30_000);
-
   it('carries the no-code lane of a repository Room through to createCorner', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {

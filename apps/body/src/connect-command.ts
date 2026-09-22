@@ -485,7 +485,6 @@ export async function collectConnectWizard(
     forProvider?: ConnectProvider,
     forKey?: string,
   ): Promise<string | undefined> => {
-    if (!catalog.effort) return undefined;
     let axis = catalog.effort;
     if (model !== catalog.currentValue) {
       const reread = await loadModels({
@@ -497,7 +496,7 @@ export async function collectConnectWizard(
       }).catch(() => undefined);
       axis = reread?.effort ?? axis;
     }
-    if (!axis.options.length) return undefined;
+    if (!axis?.options.length) return undefined;
     const picked = await prompts.select<string>({
       message: brass('Choose reasoning effort'),
       options: axis.options.map((choice) => ({

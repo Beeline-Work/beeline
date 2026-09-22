@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
+import { COMPOSER_TOP_GAP } from './room-bottom-chrome';
 
 /**
  * The captain's scroll rule for the transcript (2026-09): whenever a new
@@ -24,16 +25,17 @@ import { useLayoutEffect, useRef } from 'react';
 export type ScrollFollowDecision = 'scroll' | 'hold';
 
 /**
- * Ordinary inverted-list tail. It is the speaker-change margin (24px) minus the
- * newest row's own 6px bottom padding, so the visual gap under the newest
- * message is the same 24px whether or not the turn line paints over it.
+ * Ordinary inverted-list tail. It is the speaker-change margin (24px), plus
+ * the fixed 9px composer-top gap, minus the newest row's own 6px bottom
+ * padding. The visual gap under the newest message is therefore the same 33px
+ * whether or not the turn line paints over it.
  */
-const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 18;
+const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 18 + COMPOSER_TOP_GAP;
 
 /**
  * The inverted phone transcript's visual-tail padding. Always the ordinary
- * speaker-change margin, and this function's whole job is to be the one place
- * that says so.
+ * speaker-change margin plus the fixed composer-top gap, and this function's
+ * whole job is to be the one place that says so.
  *
  * It must never be keyed on whether a turn line is showing. Growing the tail
  * while an agent works and shrinking it afterwards is a step the reader sees

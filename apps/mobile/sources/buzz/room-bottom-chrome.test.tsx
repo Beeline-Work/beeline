@@ -66,8 +66,10 @@ import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
 import {
+  COMPOSER_TOP_GAP,
   TURN_LINE_BAR_MARGIN_BOTTOM,
   TURN_LINE_ROW_MIN_HEIGHT,
+  TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
 } from './room-bottom-chrome';
 
@@ -86,9 +88,6 @@ import {
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const layout = roomBottomChromeStyles(beelineThemes.obsidian);
-
-/** The line's own 18px ink sits 3px inside the 24px box either side. */
-const TURN_LINE_INK_HEIGHT = 18;
 
 const px = (value: unknown): number => Number(value ?? 0);
 
@@ -178,7 +177,7 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
-  it('sits on the transcript surface, unfenced, flush on the composer', () => {
+  it('sits on the transcript surface, unfenced, above the fixed composer gap', () => {
     const styles = roomBottomChromeStyles({ bgTerminal: '#111', border: '#333' });
     // No rule and no second surface: the line is painted into space the
     // transcript already owns, so fencing it off would read as a new panel.
@@ -208,14 +207,14 @@ describe('the Room turn line paints the transcript margin', () => {
     expect(working).toBe(idle);
   });
 
-  it('leaves that gap at the ordinary speaker-change margin', () => {
+  it('adds exactly half the thinking-label height above the composer', () => {
     const gap = newestMessageToComposerGap({ lineShown: true });
-    // The ordinary speaker-change margin is the byline row's extra 12px over
-    // the compact run plus the compact 12px: 24px. The tail (18) + the newest
-    // row's own bottom padding (6) is that margin, and the line's box is
-    // exactly it, so the line fits with no strip reserved and nothing added.
+    // The ordinary speaker-change margin is 24px. The fixed 9px above the
+    // composer is half the thinking label's 18px line box, so the complete
+    // gap is 33px in both idle and working states.
     const speakerChangeMargin = groknight.messagePaddingVertical * 4;
-    expect(gap).toBe(speakerChangeMargin);
+    expect(COMPOSER_TOP_GAP).toBe(TURN_LABEL_LINE_HEIGHT / 2);
+    expect(gap).toBe(speakerChangeMargin + COMPOSER_TOP_GAP);
     expect(gap).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
     expect(ROOM_OPEN_LIST_TAIL_PADDING + groknight.messagePaddingVertical).toBe(gap);
   });
@@ -227,8 +226,10 @@ describe('the Room turn line paints the transcript margin', () => {
     // own text box bottom, and its ink is inset 3px further.
     expect(box).toBeLessThanOrEqual(gap);
     expect(box).toBe(TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM);
-    expect(TURN_LINE_INK_HEIGHT).toBeLessThanOrEqual(box);
-    // The ink clears the message by construction: the box's 3px inset.
-    expect((box - TURN_LINE_INK_HEIGHT) / 2).toBeGreaterThan(0);
+    expect(TURN_LABEL_LINE_HEIGHT).toBeLessThanOrEqual(TURN_LINE_ROW_MIN_HEIGHT);
+    // The ink clears the message within its 24px row, then keeps the authored
+    // 9px gap before the composer.
+    expect((TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2).toBeGreaterThan(0);
+    expect(TURN_LINE_BAR_MARGIN_BOTTOM).toBe(COMPOSER_TOP_GAP);
   });
 });

@@ -8,6 +8,7 @@ import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
   TURN_LINE_BAR_MARGIN_BOTTOM,
   TURN_LINE_ROW_MIN_HEIGHT,
+  TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
 } from '@/buzz/room-bottom-chrome';
 
@@ -165,10 +166,10 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
  * hidden duplicate of the line mounted purely to measure it.
  *
  * Neither was necessary: the room between the newest message and the composer
- * is already the ordinary speaker-change margin, and the line's box is exactly
- * that margin. Painting into space that exists costs no height, so there is
- * nothing to reserve, nothing to measure, and nothing for the transcript to
- * move by.
+ * is already the ordinary speaker-change margin plus the fixed composer-top
+ * gap, and the line's box is exactly that space. Painting into reserved space
+ * costs no conditional height, so there is nothing to measure and nothing for
+ * the transcript to move by.
  */
 export function TurnBandSlot({
   children,
@@ -224,7 +225,7 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       color: groknight.accent,
       fontSize: 12,
-      lineHeight: 18,
+      lineHeight: TURN_LABEL_LINE_HEIGHT,
       letterSpacing: 0.4,
     },
     counter: {
@@ -232,11 +233,11 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
       color: groknight.accent,
       fontSize: 12,
-      lineHeight: 18,
+      lineHeight: TURN_LABEL_LINE_HEIGHT,
     },
     // One discoverable stop action, shared by Room and corner working lines.
     // Its height is the row's own: `minHeight: 26` used to make the line 26px
-    // and push it past the 24px margin its box must fit inside.
+    // and push it past the 24px speaker-change portion of its box.
     stop: {
       minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       justifyContent: 'center',

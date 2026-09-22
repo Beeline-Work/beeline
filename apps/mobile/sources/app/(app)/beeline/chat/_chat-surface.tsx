@@ -4766,8 +4766,9 @@ export function BuzzChatSurface({
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
               // Inverted list: paddingTop is the visual tail. Always the
-              // ordinary speaker-change margin — the thinking line is
-              // absolute, painted over it, not a padding reserve.
+              // ordinary speaker-change margin plus the fixed composer-top
+              // gap — the thinking line is absolute and paints over that
+              // invariant tail rather than changing it when mounted.
               !desktopTranscript &&
                 !isArchived && {
                   paddingTop: phoneTranscriptTailPadding({
@@ -5129,7 +5130,8 @@ export function BuzzChatSurface({
                 anchored to this stack's top edge, so it takes no height from
                 the list whether or not an agent is working and cannot cover
                 the newest row — the line's box is exactly the speaker-change
-                margin the transcript already leaves. The slot is mounted
+                margin plus the fixed composer-top gap the transcript always
+                leaves. The slot is mounted
                 whether or not a line is showing; `pointerEvents="box-none"`
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}

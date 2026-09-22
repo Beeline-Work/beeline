@@ -81,9 +81,36 @@ const change = (database: RecordingDatabase, input: Record<string, unknown>) =>
     )
     .then(() => database.notifies);
 
+const refresh = (database: RecordingDatabase) =>
+  new PhoneService(database, 'http://local.test')
+    .execute('refreshAgentModelCatalog', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER)
+    .then(() => database.notifies);
+
 const wake = (notify: Notify) => notify.payload;
 
 describe('a model/effort selection change wakes the agent daemon', () => {
+  it('clears stale choices and wakes the daemon for an explicit catalog refresh', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      const notifies = await refresh(recorder);
+      expect(notifies.map(wake)).toEqual([
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_A, agentId: AGENT },
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_B, agentId: AGENT },
+      ]);
+      expect(
+        (
+          await database.query<{ model_catalog: unknown[] }>(
+            `SELECT model_catalog FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.model_catalog,
+      ).toEqual([]);
+    } finally {
+      await database.close();
+    }
+  });
+
   it('publishes one agent-config wake per Room when the selection changes', async () => {
     const database = await fixture();
     try {

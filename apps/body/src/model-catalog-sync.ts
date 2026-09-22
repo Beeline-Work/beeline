@@ -41,6 +41,8 @@ export interface ModelCatalogSyncInput {
   runtimeDir: string;
   runtimeSelection?: Selection;
   startupUnavailable?: 'model' | 'effort' | 'selection';
+  /** Re-post even when the local snapshot hash matches (a phone refresh clears the server copy first). */
+  force?: boolean;
   fetchCatalog?: CatalogFetcher;
   timeoutMs?: number;
   log?: (line: string) => void;
@@ -117,7 +119,7 @@ export async function syncAgentModelCatalog(
       : withEffectiveCurrentValues(catalog, selection);
     const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
-    if (previous.trim() === hash) return 'unchanged';
+    if (!input.force && previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
       agentId: input.agentId,
       workspaceId: input.workspaceId,

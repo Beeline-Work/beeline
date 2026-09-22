@@ -39,6 +39,26 @@ const client = vi.hoisted(() => ({
   setAgentModelConfig: vi.fn(async (_workspaceId: string, _pubkey: string, input: any) => {
     state.agent = { ...state.agent, selected: { ...state.agent.selected, ...input } };
   }),
+  refreshAgentModelCatalog: vi.fn(async () => {
+    const model = state.agent.selected?.model ?? 'sonnet';
+    state.agent = {
+      ...state.agent,
+      catalog: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: model,
+          options: [{ id: 'sonnet' }, { id: 'opus' }],
+        },
+        {
+          id: 'effort',
+          category: 'reasoning_effort',
+          currentValue: model === 'opus' ? 'xhigh' : 'low',
+          options: model === 'opus' ? [{ id: 'medium' }, { id: 'xhigh' }] : [{ id: 'low' }],
+        },
+      ],
+    };
+  }),
   setAgentSoul: vi.fn(async (_workspaceId: string, pubkey: string, soul: any) => {
     state.agent = {
       ...state.agent,
@@ -642,10 +662,11 @@ describe('Members workspace management', () => {
       model: 'opus',
       effort: null,
     });
-    // After a model switch the old model's effort axis no longer applies.
+    // After a model switch the row requests that model's live effort catalog.
     await press(renderer, 'model-axis-effort');
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
+    expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {
@@ -703,13 +724,26 @@ describe('Members workspace management', () => {
     expect(client.setAgentModelConfig).not.toHaveBeenCalled();
   });
 
-  it('offers no synthetic effort choices without a live catalog', async () => {
+  it('refreshes missing effort choices from the live catalog', async () => {
     state.agent = { ...baseAgent(), catalog: [], selected: undefined };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
     await press(renderer, 'model-axis-effort');
-    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-low' })).toHaveLength(0);
+    expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
+    expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
+  });
+
+  it('shows an actionable effort refresh failure instead of doing nothing', async () => {
+    state.agent = { ...baseAgent(), catalog: [], selected: { model: 'sonnet' } };
+    client.refreshAgentModelCatalog.mockRejectedValueOnce(new Error('agent offline'));
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'model-axis-effort');
+
+    expect(renderer.root.findByProps({ testID: 'model-axis-error-effort' }).props.children).toBe(
+      'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.',
+    );
   });
 
   it('marks a persisted model that failed live startup validation', async () => {

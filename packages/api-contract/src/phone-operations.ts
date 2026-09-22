@@ -78,6 +78,7 @@ export type PhoneOperationMap = {
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
+  refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
   removeAgent: { input: WorkspaceAgentInput; output: void };

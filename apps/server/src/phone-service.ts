@@ -2675,6 +2675,9 @@ export class PhoneService {
       case 'updateAgentModelSelection':
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
         return undefined as Output<Name>;
+      case 'refreshAgentModelCatalog':
+        await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
+        return undefined as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
@@ -4640,6 +4643,39 @@ export class PhoneService {
           cardType: 'agent-model',
           card: { agentId: input.agentId, axis: change.axis, value },
         });
+      }
+    });
+  }
+  private async refreshAgentModelCatalog(
+    input: Input<'refreshAgentModelCatalog'>,
+    viewerId: string,
+  ) {
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    await this.database.transaction(async (database) => {
+      // Empty the stale snapshot first. A successful daemon probe replaces it;
+      // a failed probe therefore cannot leave the phone offering choices for
+      // the wrong model.
+      await database.query(
+        `UPDATE agents SET model_catalog='[]'::jsonb,updated_at=now() WHERE agent_id=$1`,
+        [input.agentId],
+      );
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT membership.room_id FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.identity_id=$1 AND membership.workspace_id=$2
+           AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
+        [input.agentId, input.workspaceId],
+      );
+      for (const room of rooms.rows) {
+        await database.query(`SELECT pg_notify($1, $2)`, [
+          POSTGRES_LIVE_CHANNEL,
+          JSON.stringify({
+            table: 'agent_config',
+            operation: 'UPDATE',
+            roomId: room.room_id,
+            agentId: input.agentId,
+          }),
+        ]);
       }
     });
   }
@@ -7089,6 +7125,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'claimAgentPairing',
   'updateAgentSoul',
   'updateAgentModelSelection',
+  'refreshAgentModelCatalog',
   'updateAgentYolo',
   'updateAgentAccessPolicy',
   'removeAgent',

@@ -145,6 +145,18 @@ describe('syncAgentModelCatalog', () => {
     });
     expect(second).toBe('unchanged');
     expect(api.posted).toHaveLength(1);
+
+    const forced = await syncAgentModelCatalog({
+      api: api as never,
+      agent: { command, args: [] },
+      agentEnv: { PATH: process.env.PATH ?? '', HOME: runtimeDir },
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeDir,
+      force: true,
+    });
+    expect(forced).toBe('posted');
+    expect(api.posted).toHaveLength(2);
   });
 
   it('posts an empty catalog with the runtime selection when the harness advertises nothing', async () => {

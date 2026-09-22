@@ -302,10 +302,29 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let catalogRefresh: Promise<void> | undefined;
+  const refreshCatalog = (): Promise<void> => {
+    catalogRefresh ??= syncAgentModelCatalog({
+      api: daemonApi,
+      agent,
+      agentEnv: config.agentEnv,
+      agentId: runtime.agent.publicKey,
+      workspaceId: runtime.communityId,
+      runtimeDir,
+      ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
+      force: true,
+    })
+      .then(() => undefined)
+      .finally(() => {
+        catalogRefresh = undefined;
+      });
+    return catalogRefresh;
+  };
   let stoppingStatus = 'daemon stopped';
   try {
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
+      onConfigChanged: refreshCatalog,
       onHiccupRestart: (attempt) => {
         const delay = hiccupBackoffMs(attempt);
         console.warn(

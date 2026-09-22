@@ -164,6 +164,9 @@ class MonolithClientAdapter {
       ...selection,
     });
   }
+  refreshAgentModelCatalog(workspaceId: string, agentId: string) {
+    return this.transport.operation('refreshAgentModelCatalog', { workspaceId, agentId });
+  }
   removeAgent(workspaceId: string, agentId: string) {
     return this.transport.operation('removeAgent', { workspaceId, agentId });
   }

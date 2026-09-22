@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyAgentModelSelection,
+  applyAgentModelSelectionWithUpdatedCatalog,
   advertisedChoiceId,
   assertModelConfigOptionAllowed,
   assertModelSelectionAdvertised,
@@ -301,6 +302,61 @@ describe('applyAgentModelSelection — the set path', () => {
     expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'high');
   });
 
+  it('validates persisted effort against the catalog refreshed by its model switch', async () => {
+    const astraCatalog = {
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'gpt-6-astra',
+          options: [{ value: 'gpt-5.6-sol' }, { value: 'gpt-6-astra' }],
+        },
+        {
+          id: 'reasoning_effort',
+          category: 'thought_level',
+          currentValue: 'high',
+          options: [{ value: 'high' }, { value: 'xhigh' }],
+        },
+      ],
+    };
+    const initial = parseAdvertisedConfigOptions({
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'gpt-5.6-sol',
+          options: [{ value: 'gpt-5.6-sol' }, { value: 'gpt-6-astra' }],
+        },
+        {
+          id: 'reasoning_effort',
+          category: 'thought_level',
+          currentValue: 'medium',
+          options: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }],
+        },
+      ],
+    });
+    const setConfigOption = vi.fn(async () => astraCatalog);
+
+    const applied = await applyAgentModelSelectionWithUpdatedCatalog(
+      { setConfigOption },
+      'restart-session',
+      initial,
+      {
+        model: 'gpt-6-astra',
+        effort: 'xhigh',
+      },
+    );
+
+    expect(setConfigOption.mock.calls).toEqual([
+      ['restart-session', 'model', 'gpt-6-astra'],
+      ['restart-session', 'reasoning_effort', 'xhigh'],
+    ]);
+    expect(applied.find((axis) => axis.category === 'thought_level')?.options).toEqual([
+      { id: 'high' },
+      { id: 'xhigh' },
+    ]);
+  });
+
   it('rejects an unknown or retired model before calling the harness setter', async () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
     await expect(
@@ -316,7 +372,7 @@ describe('applyAgentModelSelection — the set path', () => {
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown effort before applying either axis', async () => {
+  it('rejects an unknown effort after applying a model when no refreshed catalog is returned', async () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
     await expect(
       applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
@@ -324,7 +380,8 @@ describe('applyAgentModelSelection — the set path', () => {
         effort: 'xhigh',
       }),
     ).rejects.toMatchObject({ label: 'effort', value: 'xhigh', reason: 'not-advertised' });
-    expect(setConfigOption).not.toHaveBeenCalled();
+    expect(setConfigOption).toHaveBeenCalledOnce();
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'sonnet');
   });
 
   it('preserves provider retirement guidance when an advertised model is refused', async () => {

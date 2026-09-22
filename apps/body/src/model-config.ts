@@ -486,23 +486,32 @@ export interface ModelConfigSettable {
  * immediately before every call — a `mode`/`fast-mode` axis is refused here
  * even if an upstream filtering step were skipped.
  *
- * Values are checked before any setter call. A harness refusal for an exact
- * advertised value is surfaced as typed unavailability so provider retirement
- * redirects and other useful recovery guidance are not collapsed into a
- * generic turn failure.
+ * Values are checked immediately before their setter call. A successful model
+ * setter may return refreshed model-specific axes; those become the authority
+ * for the following effort check and are returned to catalog callers. A
+ * harness refusal for an exact advertised value is surfaced as typed
+ * unavailability so provider retirement redirects and other useful recovery
+ * guidance are not collapsed into a generic turn failure.
  */
-export async function applyAgentModelSelection(
+export async function applyAgentModelSelectionWithUpdatedCatalog(
   client: ModelConfigSettable,
   sessionId: string,
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string },
-): Promise<void> {
-  assertModelSelectionAdvertised(advertisedOptions, selection);
+): Promise<AgentModelConfigOption[]> {
+  let currentOptions = advertisedOptions;
   for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
-    const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
+    const axis = currentOptions.find((option) => target.categories.includes(option.category));
     if (!axis) continue;
-    assertModelConfigAxisAllowed(axis.id, advertisedOptions);
+    assertModelConfigAxisAllowed(axis.id, currentOptions);
+    if (!axis.options.some((choice) => choice.id === target.value)) {
+      throw new ModelSelectionUnavailableError({
+        label: target.label as ModelSelectionLabel,
+        value: target.value,
+        reason: 'not-advertised',
+      });
+    }
     try {
       if (axis.id === GROK_SESSION_MODEL_AXIS_ID) {
         if (!client.setModel) throw new Error('ACP client does not support session/set_model');
@@ -514,7 +523,11 @@ export async function applyAgentModelSelection(
           );
         }
       } else {
-        await client.setConfigOption(sessionId, axis.id, target.value);
+        const updated = await client.setConfigOption(sessionId, axis.id, target.value);
+        const refreshed = filterAllowedModelConfigOptions(
+          parseAdvertisedConfigOptions(updated, selection.model),
+        );
+        if (refreshed.length > 0) currentOptions = refreshed;
       }
     } catch (error) {
       throw new ModelSelectionUnavailableError({
@@ -525,4 +538,14 @@ export async function applyAgentModelSelection(
       });
     }
   }
+  return currentOptions;
+}
+
+export async function applyAgentModelSelection(
+  client: ModelConfigSettable,
+  sessionId: string,
+  advertisedOptions: AgentModelConfigOption[],
+  selection: { model?: string; effort?: string },
+): Promise<void> {
+  await applyAgentModelSelectionWithUpdatedCatalog(client, sessionId, advertisedOptions, selection);
 }

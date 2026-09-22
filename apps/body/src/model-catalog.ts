@@ -14,7 +14,7 @@ import type { AgentModelConfigOption } from './model-types.js';
 import { AcpClient } from './acp.js';
 import type { AgentCommand } from './agent-command.js';
 import {
-  applyAgentModelSelection,
+  applyAgentModelSelectionWithUpdatedCatalog,
   agentArgsWithModelSelection,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
@@ -145,7 +145,12 @@ export async function fetchAgentModelCatalog(
     selection,
     async ({ client, sessionId, raw, catalog }) => ({
       raw,
-      catalog: await filterModelChoicesByLiveValidation(client, sessionId, catalog),
+      catalog: await filterModelChoicesByLiveValidation(
+        client,
+        sessionId,
+        catalog,
+        selection?.model,
+      ),
     }),
     limits,
   );
@@ -154,25 +159,35 @@ export async function fetchAgentModelCatalog(
 /**
  * An advertised model is only a candidate. Exercise every candidate through
  * the same setter used by startup validation before it reaches a human picker.
- * Refused choices disappear; non-model axes retain the harness's own catalog.
+ * Refused choices disappear. When the preferred model's setter refreshes
+ * model-specific axes, retain those axes for publication.
  */
 export async function filterModelChoicesByLiveValidation(
   client: Pick<AcpClient, 'setConfigOption' | 'setModel'>,
   sessionId: string,
   catalog: AgentModelConfigOption[],
+  preferredModelId?: string,
 ): Promise<AgentModelConfigOption[]> {
   const modelAxis = catalog.find((axis) => axis.category === 'model');
   if (!modelAxis) return catalog;
   const available: AgentModelConfigOption['options'] = [];
+  const preferred = preferredModelId ?? modelAxis.currentValue;
+  let preferredCatalog: AgentModelConfigOption[] | undefined;
   for (const choice of modelAxis.options) {
     try {
-      await applyAgentModelSelection(client, sessionId, catalog, { model: choice.id });
+      const updated = await applyAgentModelSelectionWithUpdatedCatalog(client, sessionId, catalog, {
+        model: choice.id,
+      });
       available.push(choice);
+      if (choice.id === preferred) preferredCatalog = updated;
     } catch {
       // Fail closed: a picker choice must have completed the live setter.
     }
   }
-  return catalog.map((axis) => (axis === modelAxis ? { ...axis, options: available } : axis));
+  const effective = preferredCatalog ?? catalog;
+  return effective.map((axis) =>
+    axis.category === 'model' ? { ...axis, options: available } : axis,
+  );
 }
 
 /**
@@ -192,8 +207,13 @@ export async function validateAgentModelSelection(
     agentEnv,
     selection,
     async ({ client, sessionId, raw, catalog }) => {
-      await applyAgentModelSelection(client, sessionId, catalog, selection);
-      return { raw, catalog };
+      const applied = await applyAgentModelSelectionWithUpdatedCatalog(
+        client,
+        sessionId,
+        catalog,
+        selection,
+      );
+      return { raw, catalog: applied };
     },
   );
 }

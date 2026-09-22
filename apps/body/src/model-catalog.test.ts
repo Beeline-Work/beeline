@@ -121,6 +121,57 @@ describe('agent model catalog filtering', () => {
     );
     expect(filtered[0]?.options).toEqual([{ id: 'claude-sonnet-5' }]);
   });
+
+  it("publishes the selected live model's refreshed effort choices", async () => {
+    const catalog: AgentModelConfigOption[] = [
+      {
+        id: 'model',
+        category: 'model',
+        currentValue: 'gpt-5.6-sol',
+        options: [{ id: 'gpt-5.6-sol' }, { id: 'gpt-6-astra', name: 'GPT-6 Astra' }],
+      },
+      {
+        id: 'reasoning_effort',
+        category: 'thought_level',
+        currentValue: 'medium',
+        options: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }],
+      },
+    ];
+    const setConfigOption = async (_sessionId: string, _configId: string, value: string) => ({
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: value,
+          options: [{ value: 'gpt-5.6-sol' }, { value: 'gpt-6-astra', name: 'GPT-6 Astra' }],
+        },
+        {
+          id: 'reasoning_effort',
+          category: 'thought_level',
+          currentValue: value === 'gpt-6-astra' ? 'high' : 'medium',
+          options:
+            value === 'gpt-6-astra'
+              ? [{ value: 'high' }, { value: 'xhigh' }]
+              : [{ value: 'low' }, { value: 'medium' }, { value: 'high' }],
+        },
+      ],
+    });
+
+    const filtered = await filterModelChoicesByLiveValidation(
+      { setConfigOption, setModel: async () => undefined } as never,
+      'restart-session',
+      catalog,
+      'gpt-6-astra',
+    );
+
+    expect(filtered.find((axis) => axis.category === 'thought_level')?.options).toEqual([
+      { id: 'high' },
+      { id: 'xhigh' },
+    ]);
+    expect(filtered.find((axis) => axis.category === 'model')?.options).toEqual(
+      catalog[0]?.options,
+    );
+  });
 });
 
 describe('bounded catalog probe', () => {

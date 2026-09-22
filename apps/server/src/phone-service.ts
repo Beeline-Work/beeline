@@ -2568,6 +2568,11 @@ export class PhoneService {
           input as Input<'createHumanCorner'>,
           viewerId,
         )) as Output<Name>;
+      case 'createCornerAppBuild':
+        return (await this.createCornerAppBuild(
+          input as Input<'createCornerAppBuild'>,
+          viewerId,
+        )) as Output<Name>;
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
@@ -4014,7 +4019,8 @@ export class PhoneService {
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
            JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
-           WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+           WHERE room.id=$1 AND room.parent_id IS NULL AND room.direct_participants IS NULL
+             AND room.archived_at IS NULL
            FOR SHARE OF room,room_member,workspace_member,viewer`,
           [input.roomId, viewerId],
         )
@@ -4046,6 +4052,81 @@ export class PhoneService {
     });
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
+  }
+  private async createCornerAppBuild(input: Input<'createCornerAppBuild'>, viewerId: string) {
+    const description =
+      typeof input.description === 'string' ? input.description.replace(/\s+/g, ' ').trim() : '';
+    if (!description) throw new Error('app description is required');
+    if (description.length > 2_000)
+      throw new Error('app description must be at most 2000 characters');
+    const title = normalizeHumanCornerTitle(`App · ${description.slice(0, 72)}`);
+    const id = randomUUID();
+    const sourceMessageId = messageId();
+    await this.database.transaction(async (database) => {
+      const target = (
+        await database.query<{ workspace_id: string }>(
+          `SELECT room.workspace_id
+           FROM rooms room
+           JOIN memberships viewer_member ON viewer_member.room_id=room.id
+             AND viewer_member.identity_id=$2 AND viewer_member.removed_at IS NULL
+           JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
+           JOIN memberships agent_member ON agent_member.room_id=room.id
+             AND agent_member.identity_id=$3 AND agent_member.removed_at IS NULL
+           JOIN identities agent ON agent.id=$3 AND agent.kind='agent'
+           WHERE room.id=$1 AND room.parent_id IS NULL AND room.direct_participants IS NULL
+             AND room.archived_at IS NULL
+           FOR SHARE OF room,viewer_member,viewer,agent_member,agent`,
+          [input.roomId, viewerId, input.agentId],
+        )
+      ).rows[0];
+      if (!target) throw new Error('agent not found in room');
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+         VALUES($1,$2,$3,$4,$5)`,
+        [id, target.workspace_id, input.roomId, input.agentId, title],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
+         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
+        [input.roomId, id],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner')
+         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
+         DO UPDATE SET role='owner',removed_at=NULL`,
+        [target.workspace_id, id, input.agentId],
+      );
+      await database.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,lane,lifecycle)
+         VALUES($1,$2,$3,$4,'no_code','{"lifecycle":"working","checks":"unknown"}')`,
+        [id, input.agentId, viewerId, description],
+      );
+      const instruction =
+        `Build a Corner App for this request: ${description}\n\n` +
+        'Publish it in this corner with publish_corner_app, then call open_corner_app so the persisted app has a durable OPEN row.';
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,attachments)
+         VALUES($1,$2,$3,$4,'[]'::jsonb)`,
+        [sourceMessageId, id, viewerId, instruction],
+      );
+      const command = await createAgentCommand(database, {
+        roomId: id,
+        agentId: input.agentId,
+        sourceMessageId,
+        reason: 'corner_app_build',
+      });
+      if (!command) throw new Error('agent not found in room');
+    });
+    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
+    this.live?.publish({
+      type: 'invalidate',
+      roomId: id,
+      reason: 'corner',
+      agentId: input.agentId,
+    });
+    return { id, title };
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
@@ -7060,6 +7141,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomSchedule',
   'cancelAgentTurn',
   'createHumanCorner',
+  'createCornerAppBuild',
   'requestCornerClose',
   'decideWritePermission',
   'decideAgentGrant',

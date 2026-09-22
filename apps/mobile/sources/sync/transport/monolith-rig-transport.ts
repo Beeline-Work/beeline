@@ -415,6 +415,12 @@ export class MonolithRigTransport {
       (value) => (value as { id: string }).id,
     );
   }
+  createCornerAppBuild(roomId: string, agentId: string, description: string) {
+    return this.operation('createCornerAppBuild', { roomId, agentId, description }) as Promise<{
+      id: string;
+      title: string;
+    }>;
+  }
   roomRepositorySet(roomId: string, input: RoomRepositoryInput): Promise<RoomRepository> {
     return this.operation('setRoomRepository', {
       roomId,

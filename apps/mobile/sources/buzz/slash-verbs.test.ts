@@ -12,6 +12,7 @@ import {
 
 const allAvailable: SlashVerbAvailability = {
   canBuild: true,
+  canMakeApp: true,
   canAnswerPoll: true,
   canCatchUp: true,
   canManageSchedules: true,
@@ -46,6 +47,7 @@ describe('Buzz composer built-in slash verbs', () => {
     );
     expect(verbs.map((verb) => verb.command)).toEqual([
       'build',
+      'make-app',
       'schedule',
       'workflow',
       'open-corner',
@@ -56,7 +58,7 @@ describe('Buzz composer built-in slash verbs', () => {
   });
 
   it('filters by command or visible control label as the person types', () => {
-    expect(availableSlashVerbs(allAvailable, 'app')).toEqual([]);
+    expect(availableSlashVerbs(allAvailable, 'app').map((verb) => verb.id)).toEqual(['make-app']);
     expect(availableSlashVerbs(allAvailable, 'target').map((verb) => verb.id)).toEqual([
       'change-target-branch',
     ]);
@@ -65,6 +67,7 @@ describe('Buzz composer built-in slash verbs', () => {
 
   it.each([
     ['canBuild', 'build'],
+    ['canMakeApp', 'make-app'],
     ['canAnswerPoll', 'poll'],
     ['canCatchUp', 'catch-up'],
     ['canManageSchedules', 'schedule'],
@@ -114,6 +117,7 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
     expect(commands).toEqual([...BEELINE_SLASH_COMMANDS]);
     expect(commands).toEqual([
       'build',
+      'make-app',
       'poll',
       'catch-up',
       'schedule',

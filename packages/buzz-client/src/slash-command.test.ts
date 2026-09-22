@@ -51,6 +51,7 @@ describe('BEELINE_SLASH_COMMANDS', () => {
   it('is exactly the composer verbs backed by Beeline actions', () => {
     expect([...BEELINE_SLASH_COMMANDS]).toEqual([
       'build',
+      'make-app',
       'poll',
       'catch-up',
       'schedule',
@@ -72,7 +73,7 @@ describe('BEELINE_SLASH_COMMANDS', () => {
 
   it('renders a slash-prefixed list for the daemon notice copy', () => {
     expect(beelineSlashCommandList()).toBe(
-      '/build, /poll, /catch-up, /schedule, /workflow, /open-corner, /rename, /change-target-branch, /add-agent, /invite, /close-corner',
+      '/build, /make-app, /poll, /catch-up, /schedule, /workflow, /open-corner, /rename, /change-target-branch, /add-agent, /invite, /close-corner',
     );
   });
 });

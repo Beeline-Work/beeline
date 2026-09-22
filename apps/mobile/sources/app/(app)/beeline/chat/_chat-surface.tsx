@@ -333,6 +333,7 @@ import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph'
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
+import { MakeCornerAppSheet } from '@/components/buzz/MakeCornerAppSheet';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -489,6 +490,7 @@ export function BuzzChatSurface({
     parent,
     title,
     returnTo,
+    buildingAppAgent,
   } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
@@ -498,6 +500,7 @@ export function BuzzChatSurface({
     parent?: string;
     title?: string;
     returnTo?: string;
+    buildingAppAgent?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const messageAnchorId = (notificationMessageId ?? notificationTarget ?? '').trim();
@@ -633,6 +636,9 @@ export function BuzzChatSurface({
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
+  const [makeAppVisible, setMakeAppVisible] = useState(false);
+  const [makeAppBusy, setMakeAppBusy] = useState(false);
+  const [makeAppError, setMakeAppError] = useState<string>();
   /** Per-Room+agent command lists (undefined = unresolved, empty = advertises none). */
   const [agentCommandsByScope, setAgentCommandsByScope] = useState<
     Record<string, readonly AgentComposerCommand[]>
@@ -1779,6 +1785,13 @@ export function BuzzChatSurface({
               !viewerIsAgent &&
               roomSurface?.viewer.permissions.send,
           ),
+          canMakeApp: Boolean(
+            !isCorner &&
+            !isDirectMessage &&
+            !viewerIsAgent &&
+            roomSurface?.viewer.permissions.send &&
+            (roomSurface?.members ?? []).some((member) => member.identity.kind === 'agent'),
+          ),
           canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
           canCatchUp: Boolean(firstUnreadMessageId),
           canManageSchedules: Boolean(
@@ -1824,6 +1837,7 @@ export function BuzzChatSurface({
       targetBranchActionId,
       viewerChannelRole,
       viewerIsAgent,
+      roomSurface?.members,
       roomSurface?.repositoryResolution,
       roomSurface?.viewer.permissions.send,
     ],
@@ -4110,6 +4124,36 @@ export function BuzzChatSurface({
     scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
+  const createCornerAppBuild = useCallback(
+    async (agentId: string, description: string) => {
+      if (makeAppBusy) return;
+      setMakeAppBusy(true);
+      setMakeAppError(undefined);
+      try {
+        const result = await monolithPhoneOperation('createCornerAppBuild', {
+          roomId: decodedId,
+          agentId,
+          description,
+        });
+        setMakeAppVisible(false);
+        router.push({
+          pathname: '/beeline/chat/[channelId]',
+          params: {
+            channelId: result.id,
+            parent: decodedId,
+            title: result.title,
+            buildingAppAgent: agentId,
+          },
+        } as unknown as Href);
+      } catch (caught) {
+        setMakeAppError(phoneOperationFailureReason(caught, 'Could not create the app corner.'));
+      } finally {
+        setMakeAppBusy(false);
+      }
+    },
+    [decodedId, makeAppBusy],
+  );
+
   const dismissSlashMenu = useCallback(() => {
     clearSlashComposer();
     void Haptics.selectionAsync();
@@ -4142,6 +4186,10 @@ export function BuzzChatSurface({
             pathname: '/beeline/corners/[roomId]',
             params: { roomId: decodedId, create: '1' },
           } as Href);
+          return;
+        case 'make-app':
+          setMakeAppError(undefined);
+          setMakeAppVisible(true);
           return;
         case 'poll':
           if (latestOpenPoll) landAtNewMessageBoundary(latestOpenPoll.id, false);
@@ -4214,6 +4262,30 @@ export function BuzzChatSurface({
       storedRoomName,
     ],
   );
+
+  useEffect(() => {
+    if (!isFocused || !buildingAppAgent || !parentChannelId) return;
+    const app = roomSurface?.cornerApps?.find(
+      (candidate) => candidate.authorId === buildingAppAgent,
+    );
+    if (!app) return;
+    router.replace({
+      pathname: '/beeline/corner-app/[slug]',
+      params: {
+        slug: app.slug,
+        roomId: decodedId,
+        returnParent: parentChannelId,
+        returnTitle: displayRoomName,
+      },
+    } as unknown as Href);
+  }, [
+    buildingAppAgent,
+    decodedId,
+    displayRoomName,
+    isFocused,
+    parentChannelId,
+    roomSurface?.cornerApps,
+  ]);
 
   const openCornerApp = useCallback(
     (slug: string) => {
@@ -5641,6 +5713,19 @@ export function BuzzChatSurface({
         onPickDocument={() => void pickDocument()}
         onPickPhoto={() => void pickPhoto()}
         onPickPasted={desktopExperience ? undefined : () => void pasteImage()}
+      />
+
+      <MakeCornerAppSheet
+        agents={(roomSurface?.members ?? [])
+          .filter((member) => member.identity.kind === 'agent')
+          .map((member) => member.identity)}
+        busy={makeAppBusy}
+        error={makeAppError}
+        onClose={() => {
+          if (!makeAppBusy) setMakeAppVisible(false);
+        }}
+        onCreate={(agentId, description) => void createCornerAppBuild(agentId, description)}
+        visible={makeAppVisible}
       />
 
       <HullActionSheetModal

@@ -344,7 +344,7 @@ export const RepoPicker = memo(function RepoPicker({
           style={styles.actionRow}
           testID={`${testIDPrefix}-add-account`}
         >
-          <Text style={styles.actionText}>＋ Add an account or organization</Text>
+          <Text style={styles.actionText}>＋ Add repositories, accounts, or organizations</Text>
         </TouchableOpacity>
       )}
       {onUnlink && unlinkRepositoryName ? (

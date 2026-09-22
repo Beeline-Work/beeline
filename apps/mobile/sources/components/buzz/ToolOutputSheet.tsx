@@ -24,8 +24,8 @@ export type ToolOutputSheetProps = {
   subtitle?: string;
   detail: string | null | undefined;
   /**
-   * When set (including `null` for an unlabeled fence), render Two Inks and
-   * wrap. Omitted for tool output, which stays plain wrapped machine text.
+   * When set, render Two Inks and wrap. Omitted for ordinary tool output,
+   * which stays plain wrapped machine text.
    */
   language?: string | null;
   visible: boolean;
@@ -34,9 +34,8 @@ export type ToolOutputSheetProps = {
 };
 
 /**
- * The one output surface: title, optional subtitle, a scrollable selectable
- * wrapping body, and a Copy row. Fenced code reuses this sheet so a long
- * fence opens the same place a tool call does (C88 / C-over-B).
+ * Tool output surface: title, optional subtitle, a scrollable selectable
+ * wrapping body, and a Copy row.
  */
 export function ToolOutputSheet({
   title,
@@ -85,8 +84,8 @@ export function ToolOutputSheet({
           </Text>
         )}
       </ScrollView>
-      {/* The subtitle already carries the byte size; the row reports only
-          whether the press landed. */}
+      {/* The subtitle carries any context; the row reports only whether the
+          press landed. */}
       <HullActionSheetRow
         label="Copy output"
         metadata={copied ? 'Copied' : undefined}

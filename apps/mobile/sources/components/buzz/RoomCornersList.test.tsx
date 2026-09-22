@@ -58,6 +58,12 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return { StateCircle: (props: any) => ReactModule.createElement('StateCircle', props) };
 });
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 function corner(id: string, state: CornerListItem['state'], name = id): CornerListItem {
   return {
@@ -84,14 +90,28 @@ function text(tree: ReactTestRenderer): string {
     .replace(/\s+/g, ' ');
 }
 
-function render(corners: readonly CornerListItem[]) {
+function render(
+  corners: readonly CornerListItem[],
+  extra: Partial<React.ComponentProps<typeof RoomCornersList>> = {},
+) {
   let tree!: ReactTestRenderer;
   act(() => {
     tree = create(
-      <RoomCornersList corners={corners} parentRoomName="#alpha" parentRoomId="room-1" />,
+      <RoomCornersList
+        corners={corners}
+        parentRoomName="#alpha"
+        parentRoomId="room-1"
+        {...extra}
+      />,
     );
   });
   return tree;
+}
+
+function pressable(tree: ReactTestRenderer, testID: string) {
+  return tree.root
+    .findAllByType('Pressable' as any)
+    .find((node: any) => node.props.testID === testID);
 }
 
 beforeAll(() => {
@@ -179,7 +199,11 @@ describe('RoomCornersList', () => {
     ['archived', 'idle', 'ghost', 'ledgerGhost'],
   ] as const)('renders %s with its state word, circle and tone', (state, visual, tone, color) => {
     const tree = render([corner('live', state, 'Fix fixture')]);
-    const row = tree.root.findByType('Pressable' as any);
+    // Narrowed by testID as well as type: the archived footer is a Pressable
+    // too, and it stands on every list.
+    const row = tree.root
+      .findAllByType('Pressable' as any)
+      .find((node: any) => node.props.testID === 'room-corner-live');
     const circle = tree.root.findByType('StateCircle' as any);
     const label = row
       .findAllByType('Text' as any)
@@ -313,6 +337,110 @@ describe('RoomCornersList', () => {
 function resolvedStyle(style: any): Record<string, any> {
   return Object.assign({}, ...[style].flat(Infinity).filter(Boolean));
 }
+
+describe('RoomCornersList archived footer', () => {
+  const NOW_MS = 1_000_000_000_000;
+  const NOW_SECONDS = NOW_MS / 1000;
+  const closed = (id: string, name: string, agoSeconds: number): CornerListItem => ({
+    ...corner(id, 'archived', name),
+    closedAt: NOW_SECONDS - agoSeconds,
+  });
+  const cornerRowIds = (tree: ReactTestRenderer) =>
+    tree.root
+      .findAllByType('Pressable' as any)
+      .map((node: any) => String(node.props.testID ?? ''))
+      .filter((testID: string) => /^room-corner-/.test(testID));
+
+  it('stands the door open on every Room, including one with no live corners', () => {
+    const onShowArchived = vi.fn();
+    const tree = render([], { onShowArchived });
+    const door = pressable(tree, 'room-corners-archived');
+    expect(door).toBeTruthy();
+    expect(door.props.accessibilityRole).toBe('button');
+    expect(door.props.disabled).toBe(false);
+    expect(text(tree)).toContain('Archived corners');
+    // The empty Room still says it is empty: the door reports nothing about
+    // whether there IS closed work until someone asks for it.
+    expect(tree.root.findByProps({ testID: 'room-corners-empty' })).toBeTruthy();
+    act(() => door.props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
+  });
+
+  it('stands beside the see-more rather than replacing it', () => {
+    const tree = render([corner('live', 'working'), corner('done', 'archived')]);
+    expect(text(tree)).toContain('archived · 1');
+    expect(pressable(tree, 'room-corners-more')).toBeTruthy();
+    expect(pressable(tree, 'room-corners-archived')).toBeTruthy();
+  });
+
+  it('says the fetch was heard while it is in flight', () => {
+    const onShowArchived = vi.fn();
+    const tree = render([corner('live', 'working')], {
+      archived: { status: 'loading' },
+      onShowArchived,
+    });
+    expect(text(tree)).toContain('Loading archived corners…');
+    expect(tree.root.findByProps({ testID: 'room-corners-archived-loading' })).toBeTruthy();
+    // Disabled, so a second tap cannot start a second fetch.
+    expect(pressable(tree, 'room-corners-archived').props.disabled).toBe(true);
+  });
+
+  it('lands the fetched corners under the door, each stamped with its closure age', () => {
+    const tree = render([corner('live', 'working')], {
+      nowMs: NOW_MS,
+      archived: {
+        status: 'ready',
+        corners: [
+          closed('recent', 'Recent work', 2 * 60 * 60),
+          closed('older', 'Older work', 3 * 86_400),
+        ],
+      },
+    });
+    expect(cornerRowIds(tree)).toEqual([
+      'room-corner-live',
+      'room-corner-recent',
+      'room-corner-older',
+    ]);
+    expect(text(tree)).toContain('Archived corners · 2');
+    expect(pressable(tree, 'room-corner-recent').props.accessibilityLabel).toContain(
+      'closed 2h ago',
+    );
+    expect(pressable(tree, 'room-corner-older').props.accessibilityLabel).toContain(
+      'closed 3d ago',
+    );
+    // A live corner has no closure, so it carries no stamp.
+    expect(pressable(tree, 'room-corner-live').props.accessibilityLabel).not.toContain('closed');
+  });
+
+  it('retires the empty state once archived work is on screen', () => {
+    const tree = render([], {
+      nowMs: NOW_MS,
+      archived: { status: 'ready', corners: [closed('done', 'Landed work', 86_400)] },
+    });
+    expect(tree.root.findAllByProps({ testID: 'room-corners-empty' })).toHaveLength(0);
+    expect(cornerRowIds(tree)).toEqual(['room-corner-done']);
+  });
+
+  it('names a Room whose archive is genuinely empty', () => {
+    const tree = render([corner('live', 'working')], {
+      archived: { status: 'ready', corners: [] },
+    });
+    expect(text(tree)).toContain('No archived corners');
+  });
+
+  it('offers the retry in the footer when the fetch failed', () => {
+    const onShowArchived = vi.fn();
+    const tree = render([corner('live', 'working')], {
+      archived: { status: 'error', reason: 'Beeline is offline' },
+      onShowArchived,
+    });
+    const door = pressable(tree, 'room-corners-archived');
+    expect(text(tree)).toContain('Beeline is offline. Tap to retry');
+    expect(door.props.disabled).toBe(false);
+    act(() => door.props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
+  });
+});
 
 describe('RoomCornersHeader', () => {
   it.each([0, 1, 2])('renders the slab header and accessible count for %s corners', (count) => {

@@ -102,8 +102,10 @@ export class RoomViewClient {
     return this.get(`/room/${encodeURIComponent(roomId)}`, readRoomView);
   }
 
-  corners(roomId: string): Promise<CornerListView> {
-    return this.get(`/room/${encodeURIComponent(roomId)}/corners`, readCornerListView);
+  /** `archived` reads the Room's closed corners instead of its live ones. */
+  corners(roomId: string, options: { readonly archived?: boolean } = {}): Promise<CornerListView> {
+    const query = options.archived ? '?archived=1' : '';
+    return this.get(`/room/${encodeURIComponent(roomId)}/corners${query}`, readCornerListView);
   }
 
   history(

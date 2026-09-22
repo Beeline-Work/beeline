@@ -1162,6 +1162,7 @@ function readCorner(value: unknown): CornerListItem | null {
     lifecycle,
     state: item.state,
     ...field('stateAt', integer(item.stateAt) ? item.stateAt : undefined),
+    ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
     ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('agent', readIdentityOnly(item.agent)),

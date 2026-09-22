@@ -24,6 +24,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { NewCornerDialog } from '@/components/buzz/NewCornerDialog';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -37,6 +38,7 @@ export default function BuzzCorners() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
   useEffect(() => {
@@ -95,6 +97,28 @@ export default function BuzzCorners() {
     () => (surface ? (displayRoomIndexTitle(surface.room.name) ?? surface.room.name) : 'Room'),
     [surface],
   );
+
+  /**
+   * Closed corners are not in the live surface, so the archived footer pays
+   * for its own read the first time it is tapped. A read already in flight or
+   * already landed is not repeated; a failed one is, because the footer offers
+   * the retry in its own label.
+   */
+  const loadArchived = async () => {
+    if (archived.status === 'loading' || archived.status === 'ready') return;
+    setArchived({ status: 'loading' });
+    try {
+      const identity = (await loadBuzzIdentity()) as Identity | null;
+      if (!identity) throw new Error('Beeline identity is unavailable');
+      const relayUrl = await getEffectiveRelayUrl();
+      const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
+        archived: true,
+      });
+      setArchived({ status: 'ready', corners: archivedCornersByClosure(view.corners) });
+    } catch (reason) {
+      setArchived({ status: 'error', reason: phoneOperationFailureReason(reason) });
+    }
+  };
 
   const closeCreate = () => {
     if (creating) return;
@@ -189,6 +213,8 @@ export default function BuzzCorners() {
           // The list runs to the bottom edge, so it clears the gesture bar
           // itself rather than tucking its last row under it.
           bottomInset={insets.bottom}
+          archived={archived}
+          onShowArchived={() => void loadArchived()}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();

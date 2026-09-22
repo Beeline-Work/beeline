@@ -1520,10 +1520,17 @@ export class PhoneService {
     };
   }
 
+  /**
+   * The Room's corner list. `archived` swaps the live set for the closed one:
+   * the phone's corners screen reads the live list on open and asks for the
+   * closed list only when a reader taps the archived footer, so a Room with
+   * years of finished work never pays for it on the default read.
+   */
   async readCorners(
     roomId: string,
     viewerId: string,
     roomViewFamilyOrder = false,
+    archived = false,
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
       RoomRow & {
@@ -1542,7 +1549,7 @@ export class PhoneService {
     const room = parent.rows[0];
     if (!room) return null;
     const [rows, viewerIdentity] = await Promise.all([
-      this.cornerRows(roomId, viewerId, roomViewFamilyOrder),
+      this.cornerRows(roomId, viewerId, roomViewFamilyOrder, archived),
       this.requireIdentity(viewerId),
     ]);
     return {
@@ -1749,7 +1756,16 @@ export class PhoneService {
     roomId: string,
     viewerId: string,
     roomViewFamilyOrder = false,
+    archived = false,
   ): Promise<CornerRow[]> {
+    // The archived list is ordered by when work CLOSED, not when it opened: a
+    // corner opened first can close last, and a reader looking for what just
+    // finished expects it at the top.
+    const order = archived
+      ? 'ORDER BY c.archived_at DESC,c.id DESC'
+      : roomViewFamilyOrder
+        ? ''
+        : 'ORDER BY c.created_at DESC,c.id DESC';
     return (
       await this.database.query<CornerRow>(
         `
@@ -1778,10 +1794,10 @@ export class PhoneService {
         SELECT status,created_at FROM agent_turns WHERE room_id=c.id
         ORDER BY created_at DESC LIMIT 1
       ) turn ON true
-      WHERE c.parent_id=$1 AND c.archived_at IS NULL AND EXISTS(
+      WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-      ) ${roomViewFamilyOrder ? '' : 'ORDER BY c.created_at DESC,c.id DESC'}`,
+      ) ${order}`,
         [roomId, viewerId],
       )
     ).rows;
@@ -1809,6 +1825,9 @@ export class PhoneService {
           hasLiveWorkingTurn && corner.latest_turn_created_at
             ? unix(corner.latest_turn_created_at)
             : unix(corner.updated_at),
+        // `updated_at` moves with any later write, so the closure stamp reads
+        // the archive time itself rather than the row's last touch.
+        ...(corner.archived_at ? { closedAt: unix(corner.archived_at) } : {}),
         ...(corner.initiator_id && corner.initiator_name
           ? {
               initiator: {

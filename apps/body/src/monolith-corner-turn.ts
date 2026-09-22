@@ -22,6 +22,7 @@ import {
 } from './agent-home.js';
 import { grantedHostRoutesFromList, grantedHostRouteWires } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
   attachmentPromptLines,
@@ -800,6 +801,11 @@ export class MonolithCornerTurnLoop {
       agentLabel: harnessLabel,
       autoApprovePermissions: true,
       permissionHandler: () => Promise.resolve('allow'),
+      onCommands: agentCommandCatalogPublisher({
+        api: this.options.api,
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+      }),
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,

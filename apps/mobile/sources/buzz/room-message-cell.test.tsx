@@ -173,4 +173,36 @@ describe('RoomMessageCell', () => {
     expect(renderer.root.findAllByType('day-caption-wrap' as any)).toHaveLength(0);
     expect(renderer.root.findByType('message-row' as any).props.id).toBe('later');
   });
+
+  it('places the first-new divider on the exact boundary row', () => {
+    const message: ChatDisplayMessage = {
+      id: 'host',
+      text: 'New fact',
+      isUser: false,
+      timestamp: 1,
+      foldedIds: ['host', 'first-new'],
+    };
+    const render: RoomMessageRenderer = (item) =>
+      React.createElement('message-row', { id: item.id });
+    let renderer!: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(RoomMessageCell, {
+          item: message,
+          render,
+          continued: false,
+          startsNewMessages: true,
+        }),
+      );
+    });
+
+    expect(
+      renderer.root.findAll(
+        (node: { type: unknown; props: Record<string, unknown> }) =>
+          node.type === 'View' && node.props.testID === 'new-messages-divider',
+      ),
+    ).toHaveLength(1);
+    expect(renderer.root.findByType('message-row' as any).props.id).toBe('host');
+  });
 });

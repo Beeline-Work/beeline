@@ -90,8 +90,12 @@ function toConnection(
     // placeholder, so the screens can tell "no service reported" from one.
     ...(dto.service ? { service: dto.service } : {}),
     hosts: dto.allowedHosts,
+    fieldNames: dto.fieldNames,
     ...(dto.faviconDomain ? { faviconDomain: dto.faviconDomain } : {}),
     state: dto.state,
+    ...(dto.stale ? { stale: true } : {}),
+    ...(dto.lastSyncedAt !== undefined ? { lastSyncedAt: dto.lastSyncedAt } : {}),
+    createdAt: dto.createdAt,
     ownerId: viewerId,
   };
 }
@@ -235,6 +239,9 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         .map((grant) => ({
           grantId: grant.grantId,
           createdAt: grant.createdAt,
+          ...(grant.rateLimitPerHour !== undefined
+            ? { rateLimitPerHour: grant.rateLimitPerHour }
+            : {}),
           ...(grant.spendCapUsd !== undefined ? { spendCapUsd: grant.spendCapUsd } : {}),
         })),
       spendCap: connectionSpendCap(detail.grants),
@@ -244,6 +251,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         action: entry.operation,
         ...(entry.statusCode !== undefined ? { status: String(entry.statusCode) } : {}),
         ...(entry.bytes !== undefined ? { bytes: ledgerBytes(entry.bytes) } : {}),
+        ...(entry.grant ? { grant: entry.grant } : {}),
       })),
     };
   }

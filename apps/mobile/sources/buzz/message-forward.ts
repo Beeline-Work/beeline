@@ -1,17 +1,26 @@
 import type { AttachmentReference } from '@beeline/api-contract/phone';
-import type { ChatListItem, WorkspaceView } from '@beeline/buzz-client';
+import type { ChatListItem, RoomViewIdentity, WorkspaceView } from '@beeline/buzz-client';
 import { previewHandle, roomRowName } from '@/buzz/room-list-row';
 
 const FORWARD_CAPTION = /\n\n(FORWARDED FROM #[^\n]+)$/;
 
-export function formatForwardedMessage(text: string, roomName: string): string {
-  const quote = text
+type ForwardAuthor = Pick<RoomViewIdentity, 'name' | 'handle'>;
+
+export function formatForwardedMessage(
+  text: string,
+  roomName: string,
+  author: ForwardAuthor,
+): string {
+  const existingForward = forwardedMessageParts(text);
+  const quote = existingForward.body
     .trim()
     .split('\n')
     .map((line) => `> ${line}`)
     .join('\n');
   const normalizedRoomName = roomName.trim().replace(/^#+/, '');
-  return `${quote}\n\nFORWARDED FROM #${normalizedRoomName}`;
+  const caption =
+    existingForward.caption ?? `FORWARDED FROM #${normalizedRoomName} · @${previewHandle(author)}`;
+  return `${quote}\n\n${caption}`;
 }
 
 export function forwardedMessageParts(text: string): { body: string; caption?: string } {
@@ -27,20 +36,24 @@ export type ForwardedMessage = {
 
 /**
  * Forward a message into another Room. The forwarded message carries the
- * source message's attachments: the media references are Room-agnostic, so
- * re-sending them re-shares the same file without a re-upload. Dropping them
- * here is what made "forward" send the quoted text while the file silently
- * never arrived.
+ * source message's attachments and provenance. The media references are
+ * Room-agnostic, so re-sending them re-shares the same file without a
+ * re-upload. An already-forwarded message keeps its first source and author,
+ * rather than being re-attributed to the person who forwarded it again.
  */
 export async function forwardMessageToRoom(
   send: (input: ForwardedMessage) => Promise<unknown>,
   roomId: string,
-  message: { text: string; attachments?: readonly AttachmentReference[] },
+  message: {
+    text: string;
+    author: ForwardAuthor;
+    attachments?: readonly AttachmentReference[];
+  },
   sourceRoomName: string,
 ): Promise<void> {
   await send({
     roomId,
-    text: formatForwardedMessage(message.text, sourceRoomName),
+    text: formatForwardedMessage(message.text, sourceRoomName, message.author),
     attachments: message.attachments?.length ? message.attachments : undefined,
   });
 }

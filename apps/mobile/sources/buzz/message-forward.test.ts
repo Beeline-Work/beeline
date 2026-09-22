@@ -10,23 +10,46 @@ import type { ChatListItem } from '@beeline/buzz-client';
 
 describe('message forwarding', () => {
   it('quotes every source line and separates the Room caption', () => {
-    const text = formatForwardedMessage('first\nsecond', 'general');
-    expect(text).toBe('> first\n> second\n\nFORWARDED FROM #general');
+    const text = formatForwardedMessage('first\nsecond', 'general', {
+      name: 'Alice Example',
+      handle: '@alice@usebeeline.app',
+    });
+    expect(text).toBe('> first\n> second\n\nFORWARDED FROM #general · @alice');
     expect(forwardedMessageParts(text)).toEqual({
       body: '> first\n> second',
-      caption: 'FORWARDED FROM #general',
+      caption: 'FORWARDED FROM #general · @alice',
     });
-    expect(formatForwardedMessage('first', '#general')).toBe(
-      '> first\n\nFORWARDED FROM #general',
+    expect(formatForwardedMessage('first', '#general', { name: 'Alice Example' })).toBe(
+      '> first\n\nFORWARDED FROM #general · @Alice Example',
     );
+  });
+
+  it('keeps the original Room and poster when a forwarded message is forwarded again', () => {
+    const original = formatForwardedMessage('ship it', 'general', {
+      name: 'Alice',
+      handle: 'alice',
+    });
+    const forwardedAgain = formatForwardedMessage(original, 'decisions', {
+      name: 'Bob',
+      handle: 'bob',
+    });
+
+    expect(forwardedAgain).toBe('> > ship it\n\nFORWARDED FROM #general · @alice');
+    expect(forwardedAgain).not.toContain('#decisions');
+    expect(forwardedAgain).not.toContain('@bob');
   });
 
   it('posts the quoted source into the chosen Room', async () => {
     const send = vi.fn(async () => undefined);
-    await forwardMessageToRoom(send, 'room-two', { text: 'ship it' }, 'general');
+    await forwardMessageToRoom(
+      send,
+      'room-two',
+      { text: 'ship it', author: { name: 'Alice', handle: 'alice' } },
+      'general',
+    );
     expect(send).toHaveBeenCalledWith({
       roomId: 'room-two',
-      text: '> ship it\n\nFORWARDED FROM #general',
+      text: '> ship it\n\nFORWARDED FROM #general · @alice',
     });
   });
 
@@ -40,20 +63,30 @@ describe('message forwarding', () => {
         size: 12,
       },
     ];
-    await forwardMessageToRoom(send, 'room-two', { text: '', attachments }, 'general');
+    await forwardMessageToRoom(
+      send,
+      'room-two',
+      { text: '', author: { name: 'Alice', handle: 'alice' }, attachments },
+      'general',
+    );
     expect(send).toHaveBeenCalledWith({
       roomId: 'room-two',
-      text: '> \n\nFORWARDED FROM #general',
+      text: '> \n\nFORWARDED FROM #general · @alice',
       attachments,
     });
   });
 
   it('omits the attachment field when the source message has none', async () => {
     const send = vi.fn(async () => undefined);
-    await forwardMessageToRoom(send, 'room-two', { text: 'hi', attachments: [] }, 'general');
+    await forwardMessageToRoom(
+      send,
+      'room-two',
+      { text: 'hi', author: { name: 'Alice', handle: 'alice' }, attachments: [] },
+      'general',
+    );
     expect(send).toHaveBeenCalledWith({
       roomId: 'room-two',
-      text: '> hi\n\nFORWARDED FROM #general',
+      text: '> hi\n\nFORWARDED FROM #general · @alice',
     });
   });
 });

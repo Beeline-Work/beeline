@@ -1617,6 +1617,8 @@ export class DaemonService {
     const row = (
       await this.database.query<{
         objective: string;
+        title: string;
+        kind: 'agent' | 'human';
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
@@ -1626,10 +1628,11 @@ export class DaemonService {
         pull_request_number: number | null;
         approval_head_sha: string | null;
       }>(
-        `SELECT fact.objective,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+        `SELECT fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
+         JOIN rooms room ON room.id=fact.corner_id
          LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
          LEFT JOIN identities requester ON requester.id=fact.commissioned_by
          WHERE fact.corner_id=$1`,
@@ -1639,6 +1642,7 @@ export class DaemonService {
     return {
       cornerId,
       objective: row?.objective ?? '',
+      ...(row ? { title: row.title, kind: row.kind } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
@@ -1754,7 +1758,7 @@ export class DaemonService {
         soul: { name: string; instructions: string } | null;
         selected_model: string | null;
         selected_effort: string | null;
-        commands: Array<{ name: string; description?: string }>;
+        commands: Array<{ name: string; description?: string; inputHint?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
       }>(

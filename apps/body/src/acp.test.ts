@@ -1190,7 +1190,68 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeCommandCatalogAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-commands-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-command-catalog-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0', method: 'session/update', params: {
+        sessionId: 'command-session', update: {
+          sessionUpdate: 'available_commands_update', availableCommands: [
+            { name: 'model', description: 'Show or change the agent model' },
+            { name: 'usage', description: 'Show usage status' },
+            { name: 'status', input: { hint: 'model and account details' } },
+            { name: 'permissions', description: 'Show permission rules' },
+          ],
+        },
+      },
+    });
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'command-session' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
+  it('forwards the full model, usage, status, and permission command snapshot', async () => {
+    const snapshots: unknown[] = [];
+    const client = new AcpClient({
+      agentCommand: await fakeCommandCatalogAgent(),
+      agentEnv: {},
+      onCommands: (commands) => snapshots.push(commands),
+    });
+    try {
+      await client.start();
+      await client.sessionNew({ cwd: tmpdir() });
+      expect(snapshots).toEqual([
+        [
+          { name: 'model', description: 'Show or change the agent model' },
+          { name: 'usage', description: 'Show usage status' },
+          { name: 'status', inputHint: 'model and account details' },
+          { name: 'permissions', description: 'Show permission rules' },
+        ],
+      ]);
+    } finally {
+      await client.stop();
+    }
+  });
+
   it('native-loads an idle-evicted Codex conversation without rebuilding its re-prime', async () => {
     const binary = await fakePersistentConversationAgent();
     const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });

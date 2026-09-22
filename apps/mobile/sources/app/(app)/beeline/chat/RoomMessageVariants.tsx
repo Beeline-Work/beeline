@@ -1167,16 +1167,16 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
       ? [
           {
             label: 'Corner →',
+            primary: true,
             accessibilityRole: 'link',
             onPress: () => onOpenCorner(fact.cornerId),
-            testID: 'corner-summary-card-secondary-action',
+            testID: 'corner-summary-card-primary-action',
           },
           {
             label: 'View ↗',
-            primary: true,
             accessibilityRole: 'link',
             onPress: () => onOpenUrl(fact.pullRequest!.url),
-            testID: 'corner-summary-card-primary-action',
+            testID: 'corner-summary-card-secondary-action',
           },
         ]
       : [

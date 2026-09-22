@@ -3,7 +3,8 @@ import { useLayoutEffect, useRef } from 'react';
 /**
  * The captain's scroll rule for the transcript (2026-09): whenever a new
  * message or live card mutation arrives for the open Room or corner, the
- * viewport follows it to the newest end. A cold open follows the same tail
+ * viewport follows only while the reader is already at the newest end.
+ * Reading history is never interrupted. A cold open follows the same tail
  * landing the platform's list already gives: `openLandsOnTail` is true where
  * an inverted list puts the newest row in view by itself, and a chronological
  * list (the desktop transcript) asks for one scroll call instead.
@@ -93,7 +94,7 @@ export function roomOpenLandsOnTail({
 export function scrollFollowOnArrival({
   previousNewestId,
   nextNewestId,
-  isPinnedToTail: _isPinnedToTail,
+  isPinnedToTail,
   isUserDragging,
   openLandsOnTail = true,
 }: {
@@ -101,8 +102,7 @@ export function scrollFollowOnArrival({
   previousNewestId: string | null;
   /** Newest row id in this commit; null when the transcript is empty. */
   nextNewestId: string | null;
-  /** The pre-arrival position is intentionally observed but does not gate a
-   *  new Room message: both tail and history must land on the new row. */
+  /** The reader was already at (or within the threshold of) the newest end. */
   isPinnedToTail: boolean;
   /** A drag (or its momentum) is in progress right now. */
   isUserDragging: boolean;
@@ -117,6 +117,7 @@ export function scrollFollowOnArrival({
   // chronological list shows its oldest row there and must scroll to the
   // tail to match the same landing.
   if (previousNewestId === null) return openLandsOnTail ? 'hold' : 'scroll';
+  if (!isPinnedToTail) return 'hold';
   // Never fight the user's finger mid-drag.
   if (isUserDragging) return 'hold';
   return 'scroll';

@@ -392,6 +392,9 @@ export type CornerRestoreResult = {
   readonly cornerId: string;
   /** Immutable objective from the authoritative corner fact. */
   readonly objective: string;
+  /** Human-created corners are title-only; their title supplies runtime context after a tag. */
+  readonly title?: string;
+  readonly kind?: 'agent' | 'human';
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;
@@ -549,7 +552,11 @@ export type PostAgentToolMandateInput = AgentRoomInput & {
 };
 export type PostAgentCommandsInput = AgentInput & {
   readonly workspaceId: string;
-  readonly commands: readonly { readonly name: string; readonly description?: string }[];
+  readonly commands: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly inputHint?: string;
+  }[];
 };
 export type PostAgentModelCatalogInput = AgentInput & {
   readonly workspaceId: string;

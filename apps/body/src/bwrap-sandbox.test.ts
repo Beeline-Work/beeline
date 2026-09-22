@@ -526,13 +526,21 @@ describe('feature detection falls back rather than failing the daemon', () => {
       run: () => ({
         status: 1,
         stderr:
-          'bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces.',
+          'bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces.',
       }),
     });
     expect(result.path).toBeUndefined();
     expect(result.advisory).toMatch(/Ubuntu AppArmor may be blocking/);
-    expect(result.advisory).toMatch(/Keep the system-wide restriction enabled/);
-    expect(result.advisory).toMatch(/apps\/body\/README\.md/);
+    expect(result.advisory).toMatch(/reinstall the Beeline user unit/);
+    expect(result.advisory).toMatch(/transitions to unconfined/);
+  });
+
+  it('reports a status-only self-test failure instead of an empty reason', () => {
+    const result = detectBwrapSandbox({
+      env: { PATH: '/usr/bin' },
+      run: () => ({ status: 23, stderr: '' }),
+    });
+    expect(result.advisory).toContain('self-test failed (exit 23)');
   });
 
   it('honours the runtime.json off-switch without probing at all', () => {

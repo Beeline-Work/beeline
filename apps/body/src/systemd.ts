@@ -53,8 +53,13 @@ TimeoutStartSec=90s
 TimeoutStopSec=10min
 KillMode=control-group
 UMask=0077
-NoNewPrivileges=yes
-PrivateTmp=yes
+# A desktop-launched user manager may inherit Ubuntu's unprivileged_userns
+# AppArmor profile. Without an explicit transition every agent inherits it too,
+# so /usr/bin/bwrap cannot enter its package-provided bwrap profile.
+# Do not set NoNewPrivileges or PrivateTmp on this outer service: systemd applies
+# either before AppArmorProfile, which blocks this transition. Bubblewrap sets
+# no-new-privs and a private /tmp inside each agent sandbox it creates.
+AppArmorProfile=-unconfined
 
 [Install]
 WantedBy=default.target

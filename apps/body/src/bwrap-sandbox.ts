@@ -603,12 +603,13 @@ export function detectBwrapSandbox(
   });
   const result = run(probe.command, probe.args);
   if (result.status !== 0) {
-    const detail = (result.stderr ?? '').trim().split('\n').pop() ?? `exit ${result.status}`;
+    const detail =
+      (result.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? `exit ${result.status}`;
     const appArmorRemediation =
-      /No permissions to create new namespace|setting up uid map: Permission denied|userns_create/i.test(
+      /No permissions to create (?:a )?new namespace|setting up uid map: Permission denied|userns_create/i.test(
         result.stderr ?? '',
       )
-        ? ' Ubuntu AppArmor may be blocking unprivileged user namespaces. Keep the system-wide restriction enabled; install a narrow userns profile for /usr/bin/bwrap as documented in apps/body/README.md, then restart the agent.'
+        ? " Ubuntu AppArmor may be blocking unprivileged user namespaces. If the agent's user service inherited an AppArmor profile, reinstall the Beeline user unit and restart the agent; the unit explicitly transitions to unconfined before /usr/bin/bwrap enters Ubuntu's bwrap profile."
         : '';
     return {
       advisory: `harness OS sandbox UNAVAILABLE: ${bwrapPath} self-test failed (${detail}); ACP children run unconfined and the Room read-only rule rests on the permission handler alone.${appArmorRemediation}`,

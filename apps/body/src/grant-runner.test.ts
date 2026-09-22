@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -87,6 +87,10 @@ async function harness(
   await writeFile(join(cwd, 'exit3.mjs'), 'process.exit(3);\n');
   await writeFile(join(cwd, 'seven.mjs'), 'console.log(7);\n');
   await writeFile(join(cwd, 'one.mjs'), '\n');
+  await writeFile(
+    join(cwd, 'sandbox-looking-exit.mjs'),
+    "console.error('bwrap: setting up mount namespace: Permission denied');\nprocess.exit(7);\n",
+  );
   await writeFile(
     join(cwd, 'write.mjs'),
     "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2] ?? 'evil.txt', 'x');\nconsole.log('wrote');\n",
@@ -329,6 +333,24 @@ roomDescribe('a granted command in a top-level Room', () => {
     expect(readFileSync(note, 'utf8')).toBe('x');
   });
 
+  it('reports a command exit even when its output looks like a bubblewrap startup error', async () => {
+    const { runner, calls } = await harness(
+      [grant({ target: `${process.execPath} sandbox-looking-exit.mjs` })],
+      undefined,
+      roomPolicy(),
+    );
+    const result = await runner.run({
+      roomId: ROOM,
+      argv: [process.execPath, 'sandbox-looking-exit.mjs'],
+    });
+    expect(result.exitCode).toBe(7);
+    expect(result.sandboxFailure).toBeUndefined();
+    expect(result.output).toContain('bwrap: setting up mount namespace: Permission denied');
+    expect(result.output).not.toContain('beeline-sandbox-started');
+    const row = calls.find((call) => call.name === 'postAgentActivity')!;
+    expect((row.input.activity as Array<{ status: string }>)[0]!.status).toBe('exit 7');
+  });
+
   it('lets the same write through in a corner, where writes belong', async () => {
     const { runner, cwd } = await harness([grant({ target: `${process.execPath} write.mjs` })]);
     const result = await runner.run({ roomId: ROOM, argv: [process.execPath, 'write.mjs'] });
@@ -368,6 +390,53 @@ describe('a Room with no usable sandbox', () => {
       ROOM_SANDBOX_UNAVAILABLE,
     );
     expect(calls.some((call) => call.name === 'postAgentActivity')).toBe(false);
+  });
+
+  it('reports a disappeared bubblewrap executable as a sandbox failure, not a command exit', async () => {
+    const { runner, calls } = await harness(
+      [grant({ target: `${process.execPath} one.mjs` })],
+      undefined,
+      () => ({ surface: 'room', bwrapPath: '/definitely/missing/bwrap' }),
+    );
+    const result = await runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] });
+    expect(result.exitCode).toBeNull();
+    expect(result.sandboxFailure).toBe(true);
+    expect(result.output).toContain('ENOENT');
+    const row = calls.find((call) => call.name === 'postAgentActivity')!;
+    expect((row.input.activity as Array<{ status: string }>)[0]!.status).toBe('sandbox failed');
+  });
+
+  it('does not let command output impersonate a sandbox startup failure', async () => {
+    let fakeBwrap = '';
+    const { runner, calls, cwd } = await harness(
+      [grant({ target: `${process.execPath} sandbox-looking-exit.mjs` })],
+      undefined,
+      () => ({ surface: 'room', bwrapPath: fakeBwrap }),
+    );
+    fakeBwrap = join(cwd, 'fake-bwrap.mjs');
+    await writeFile(
+      fakeBwrap,
+      [
+        '#!/usr/bin/env node',
+        "import { spawnSync } from 'node:child_process';",
+        "const separator = process.argv.indexOf('--');",
+        "const child = spawnSync(process.argv[separator + 1], process.argv.slice(separator + 2), { stdio: 'inherit' });",
+        'if (child.error) console.error(child.error.message);',
+        'process.exit(child.status ?? 127);',
+        '',
+      ].join('\n'),
+    );
+    await chmod(fakeBwrap, 0o755);
+    const result = await runner.run({
+      roomId: ROOM,
+      argv: [process.execPath, 'sandbox-looking-exit.mjs'],
+    });
+    expect(result.exitCode).toBe(7);
+    expect(result.sandboxFailure).toBeUndefined();
+    expect(result.output).toContain('bwrap: setting up mount namespace: Permission denied');
+    expect(result.output).not.toContain('beeline-sandbox-started');
+    const row = calls.find((call) => call.name === 'postAgentActivity')!;
+    expect((row.input.activity as Array<{ status: string }>)[0]!.status).toBe('exit 7');
   });
 });
 

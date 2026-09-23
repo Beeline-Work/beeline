@@ -2078,6 +2078,51 @@ describe('thin monolith corner turn', () => {
     expect(activity.output).not.toContain('middle line that is omitted');
     expect(JSON.stringify(activity)).not.toContain('super-secret');
 
+    const encoded = await cornerToolActivity(
+      {
+        id: 'encoded',
+        kind: 'execute',
+        title: 'Bash',
+        status: 'completed',
+        content: JSON.stringify({ formatted_output: '  first\n\nsecond\n' + 'é'.repeat(4000) }),
+      },
+      '/worktree',
+    );
+    expect(encoded.output).toContain('  first\n\nsecond');
+    expect(encoded.output).not.toContain('formatted_output');
+    expect(Buffer.byteLength(encoded.output!)).toBeLessThanOrEqual(3200);
+    expect(encoded.output).not.toContain('\ufffd');
+
+    const rawOnly = await cornerToolActivity(
+      {
+        id: 'raw-only',
+        kind: 'execute',
+        title: 'Bash',
+        status: 'completed',
+        rawOutput: { output: { text: 'first\n\nsecond' } },
+      },
+      '/worktree',
+    );
+    expect(rawOnly.output).toBe('first\n\nsecond');
+
+    const grokError = await cornerToolActivity(
+      {
+        id: 'grok-error',
+        kind: 'execute',
+        title: 'open_corner',
+        status: 'failed',
+        rawOutput: {
+          type: 'MCP',
+          tool_name: 'open_corner',
+          server_name: 'beeline-agent',
+          output: { Error: 'the objective is 43 words; the limit is 24' },
+          is_error: true,
+        },
+      },
+      '/worktree',
+    );
+    expect(grokError.output).toBe('the objective is 43 words; the limit is 24');
+
     await expect(
       cornerToolActivity(
         {

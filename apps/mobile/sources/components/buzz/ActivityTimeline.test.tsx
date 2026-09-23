@@ -18,6 +18,10 @@ vi.mock('react-native', async () => {
   };
 });
 
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
 vi.mock('./MonoHull', () => ({
   PixelLoader: (props: any) => React.createElement('PixelLoader', props),
 }));
@@ -342,6 +346,9 @@ describe('the output sheet', () => {
     const sheet = renderer.root.findByProps({ testID: 'tool-output-sheet' });
     expect(sheet.props.visible).toBe(true);
     expect(sheet.props.title).toBe('npm test');
+    const scroll = renderer.root.findByProps({ testID: 'tool-output-scroll' });
+    expect(scroll.props.style[1].maxHeight).toBeLessThan(844);
+    expect(scroll.props.nestedScrollEnabled).toBe(true);
     // The WHOLE output, not a six-line slice with a more-tap.
     const text = renderedText(renderer);
     for (const line of ['line 1', 'line 7', 'line 9']) expect(text).toContain(line);

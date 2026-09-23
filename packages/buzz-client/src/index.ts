@@ -483,10 +483,7 @@ export type {
   WorkspaceView,
 } from './room-view.js';
 export type { KnownMessageReference } from './reply-proof.js';
-export {
-  SurfaceRefreshScheduler,
-  SURFACE_REFRESH_MINIMUM_INTERVAL_MS,
-} from './surface-refresh.js';
+export { SurfaceRefreshScheduler } from './surface-refresh.js';
 export type { SurfaceRefreshOptions } from './surface-refresh.js';
 export { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
 export type { LiveOverlay } from './live-overlay.js';

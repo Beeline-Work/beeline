@@ -1,278 +1,247 @@
-# Fanout and client performance audit — the viewport read cursor
+# Fanout and client performance audit — on-glass measurement
 
 Date: 2026-09-22
 Author: Niglet
-Extends: [`fanout-performance-audit-2026-09-20.md`](./fanout-performance-audit-2026-09-20.md)
-Scope: the surface #1609 changed — scroll on the chat transcript — measured
-against the same two product targets, plus a re-rank.
+Extends: [`fanout-performance-audit-2026-09-18.md`](./fanout-performance-audit-2026-09-18.md)
+Scope: close the two gaps the 09-18 audit returned open — the 150 ms live
+interaction target and the 450 ms page-load target — on a real Android device
+running Hermes, and re-rank.
 
-Measured against `369b43ba` ("Advance the read cursor from the viewport",
-#1609) with this branch rebased onto it.
+## Status
 
-Scroll used to be a pure-render interaction on the chat surface. #1609 made it
-able to originate a server write, so it moved into this audit's scope. Four
-things were named for measurement; all four are answered below, plus the
-re-baseline the merge asks for.
+**BOTH GAPS CLOSED.** Both targets are missed, both misses are now isolated to a
+named line of code, and the ranking below is ordered by measured contribution.
 
-## What actually merged
+| Target | Surface | Measured on glass | Verdict |
+| --- | --- | --- | --- |
+| 450 ms page load | Cold Room open, tap to painted message | **893 ms** p50 (881–1015, n=6) | **missed by 443 ms** |
+| 450 ms page load | Warm Room open (surface cache hit) | **158 ms** p50 (157–161, n=5) | met |
+| 150 ms interaction | Open Room, live message | **219, 238 ms** (n=2) | **missed by ~75 ms** |
+| 150 ms interaction | Room deck, live message | **580, 644, 557 ms** (n=3) | **missed by ~430 ms** |
 
-The rebase was not a no-op and nearly went wrong. `origin/main` in this
-worktree had **no fetch refspec configured** (`git config --get-all
-remote.origin.fetch` returned nothing), so `git fetch origin main` moved
-`FETCH_HEAD` and left `refs/remotes/origin/main` pinned at `1b3f8e67`. Read
-against that stale ref, `useRoomSurfaceSession.ts:897` still held the single
-open-time `markRead(channelId, latest.id)` and none of the viewport code
-existed — the merge looked like it had not landed. It had: GitHub's `main` was
-already `369b43ba`. Fetching with an explicit refspec fixed it. Anyone else
-measuring in a corner worktree should check this before concluding a merge is
-missing.
+The 09-18 audit could not measure any of these because it had no authenticated
+device. It does now — see [Rig](#rig).
 
-Shape of the merged code, for the record:
+## What the misses are
 
-- `apps/mobile/sources/buzz/read-cursor-advance.ts` — `ReadCursorAdvancer`,
-  trailing-edge debounce at `READ_CURSOR_DEBOUNCE_MS = 400`, forward-only.
-- `_chat-surface.tsx:2227` — `advanceReadCursor(chronologicalMessagesRef.current,
-  visibleTranscriptMessagesRef.current)` inside `observeVisibleTranscriptMessages`,
-  which is the `onViewableItemsChanged` prop at `_chat-surface.tsx:5137` and is
-  also driven by the desktop `IntersectionObserver` at `_chat-surface.tsx:2288`.
-- `useRoomSurfaceSession.ts:279` — the advancer in a `useRef`, publishing via
-  `void roomClientRef.current?.markRead(...).catch(() => undefined)`.
-- `useRoomSurfaceSession.ts:958-970` — the open-time `markRead` is gone.
+**Page load.** 537 ms of the 893 ms cold open is one server read, and almost all
+of that read is one SQL sub-select that scans the Room's whole roster once per
+message and compiles a regex per member. **G8** below.
 
-## How this was measured
+**Interaction.** The deck pays the 500 ms `SurfaceRefreshScheduler` floor
+(`packages/buzz-client/src/surface-refresh.ts:46`); the open Room bypasses it
+with a forced refresh and lands at ~230 ms. The 320–425 ms between the two
+surfaces is the floor's remainder. **G1** below, previously unisolated, now
+isolated on glass.
 
-Two suites, both against the real modules, no reimplementation:
+Removing either does not on its own meet its target. The deck without the floor
+would land near the open Room's ~230 ms, still 80 ms over. The cold open without
+G8 measured 452–493 ms, still 2–43 ms over.
 
-- `apps/mobile/sources/buzz/read-cursor-cost.test.ts` — the real
-  `ReadCursorAdvancer` against a 5,000-message corpus shaped like a real
-  transcript (roughly every sixth row carrying `foldedIds`, every eleventh
-  carrying `relayReports`, which is what makes `messageBoundaryIds` allocate).
-- `apps/mobile/sources/buzz/read-cursor-rerender.test.tsx` — render counts under
-  `react-test-renderer`, driving the real advancer and the real
-  `useNewMessageControl`.
-- `apps/server/src/read-cursor-cost.test.ts` — the released HTTP routes against
-  PGlite with a 5,000-message Room, every row authored by the other member so
-  every row counts as unread for the reader.
+## Rig
 
-**Engine caveat, stated up front.** The client numbers are node/V8 on x86, not
-Hermes on a phone. Hermes is slower than V8 on array-heavy code; the multiplier
-is not measured here, so treat the client costs as a floor, not a ceiling.
-Getting a Hermes number was attempted and failed — see "What could not be
-measured".
+Everything below the client's render call is released code. Nothing is mocked.
 
-## 1. Cost per visibility callback
+- **Device.** `redroid-clubgg`, Android 11, x86_64, Hermes, **release** APK built
+  from this branch with `EXPO_PUBLIC_ROOM_OPEN_TRACE=1`.
+- **Sign-in.** The Play review link (`beeline://review/<secret>`), the released
+  `POST /v1/auth/review/exchange` path. No GitHub OAuth, which is what blocked
+  every earlier attempt at an authenticated device.
+- **Server.** `createBeelineServer` with the real `PhoneService`, `LiveHub`,
+  `PostgresLiveListener` and `ReviewAccess`, against **PostgreSQL 17** holding
+  the audit corpus: 243 Rooms, 5,265 messages, 5,066 of them in the measured
+  Room, 501 identities.
+- **Transport.** The server runs inside the device's own network namespace, so
+  the phone reaches it at `127.0.0.1:8099`.
 
-The question was what the cursor logic added to a callback that runs inside the
-scroll frame budget. Frame budget at 60 Hz is 16.67 ms.
+### What this rig understates
 
-| Transcript | Scrolling reader p50 / p95 | Reader sitting at the tail p50 / p95 |
-|---|---|---|
-| 200 rows | 0.039 / 0.064 ms | 0.025 / 0.045 ms |
-| 1,000 rows | 0.066 / 0.114 ms | 0.070 / 0.082 ms |
-| 5,000 rows | 0.155 / 0.350 ms | 0.343 / 0.419 ms |
+- **Zero network latency.** Every figure here is a floor. A real network adds to
+  all of them.
+- **Host contention.** Load average was 20–29 throughout. Absolute milliseconds
+  are noisy. The controlled comparisons (roster 501 vs 1; deck vs open Room) are
+  not — each pair ran back to back under the same load.
+- **15 Hz panel.** The device reports a 66.67 ms vsync period, so its own
+  `Janky frames` verdict is against that budget and does **not** transfer to a
+  60 Hz phone. Raw frame durations do.
+- **iOS untouched.**
 
-Worst measured p95 across every run is 0.676 ms — **4% of one frame**, on V8, on
-the deepest transcript this product has.
+## Page load, phase by phase
 
-Run-to-run variance is real and not hidden: across five runs the 5,000-row
-tail-seated p95 came back at 0.383, 0.419, 0.469, 0.608 and 0.676 ms, with p50
-steady at 0.34–0.37 ms every time. Call it **0.4–0.7 ms p95**. These are five
-runs on a shared box, not a baseline — the same caveat the 2026-09-20 PGlite
-numbers carry. The table above is one recorded run.
+`markRoomOpen` traces, medians of six cold opens (`pm clear` → review sign-in →
+tap the Room). Elapsed from `nav-dispatch`.
 
-Two things worth naming anyway.
+| Phase | ms elapsed | Δ |
+| --- | ---: | ---: |
+| `nav-dispatch` | 0 | |
+| `route-mount` | 38 | 38 |
+| `identity-ready` | 55 | 15 |
+| `cache-read-end` (miss) | 55 | 0 |
+| `occupancy-yield-end` | 136 | **80** |
+| `auth-ready` | 136 | 0 |
+| `watch-ready` | 137 | 1 |
+| `room-read-start` | 201 | 64 |
+| `room-read-end` | 738 | **537** |
+| `fresh-apply` | 740 | 2 |
+| `layout-chrome` | 839 | 99 |
+| `newest-frame` | **893** | 54 |
 
-It is **linear in transcript length, not in viewport size**.
-`newestVisibleMessageId` runs `chronological.findIndex(row => row.id ===
-message.id)` once per visible row, so the candidate selection alone is
-O(visible × transcript). `#advances` then runs up to two more full-transcript
-`findIndex` passes, each calling `messageBoundaryIds(row)` on every row it
-visits — and that function allocates two or three arrays per row and dedupes
-them with `ids.indexOf(id) === index`, which is quadratic in the ids per row.
+Read weight at `newest-frame`: 30 messages, 200 members, 83,557 bytes.
 
-And the **worst case is the common case**. A reader sitting at the tail costs
-more than a reader scrolling (0.343 ms p50 vs 0.155 ms) because the `findIndex`
-for the already-published boundary has to walk the entire array to reach the
-tail. A Room opens at its tail.
+### The controlled experiment
 
-Neither is urgent at today's numbers. Both are cheap to remove: RN's `ViewToken`
-already carries `index`, so ranking could read it instead of re-finding every
-row. Ranked as **G6**.
+Same device, same build, same Room, same 5,066-message transcript. Only the
+Room's roster changed.
 
-## 2. Debounce behaviour under a fast flick
+| Room roster | cold tap-to-paint | of which, Room read |
+| ---: | ---: | ---: |
+| 501 | 881, 881, 892, 895, 899, 1015 ms | 536–538 ms |
+| 1 | 480, 452, 493 ms | 69, 69, 80 ms |
 
-Trailing edge, forward-only. Every report clears the pending timer and restarts
-it, and the publish happens only when the viewport holds still for 400 ms.
+**The roster costs 413 ms of tap-to-paint** on a Room whose transcript did not
+change.
 
-| Drive | Result |
-|---|---|
-| 3,000 ms sustained scroll, 75 viewability reports, no rest | **0 writes during the flick, 1 write at rest** |
-| Three 600 ms legs with a rest after each | **3 writes**, one per rest |
-| 195 reports scrolling back UP after one forward write | **0 further writes** |
+## G8 — the mention scan (new, P1)
 
-One write at rest, not a trickle. Not leading-edge, not per-batch. The upward
-case costs nothing because `#advances` rejects a candidate behind the published
-boundary before the timer is ever armed.
+`PhoneService.topLevelRoomRows` awaits three concurrent enrichments before it
+returns. One of them, `message-tags`, runs `taggedIdentityIdsSql` over the
+30-message window:
 
-The standing rule for this Room — the server stores readership, it does not do
-work for it — holds. #1609's own second commit removed the cross-device live
-publish, the `room_read_marks` notify trigger and its listener branch, and the
-corner-wake exemption. A read mark is one write and nothing else: no live frame,
-no invalidation, no refetch, no agent woken.
+```
+apps/server/src/phone-service.ts:1773   optionalEnrichment('message-tags', …)
+apps/server/src/message-mentions.ts     taggedIdentityIdsSql
+```
 
-## 3. Whether the write is off the interaction path
+Postgres `log_min_duration_statement` caught it directly:
 
-It is. `useRoomSurfaceSession.ts:280` publishes with `void
-roomClientRef.current?.markRead(...).catch(() => undefined)` — no await, result
-discarded. `RoomViewClient.markRead` is `.then(() => undefined)`: the response
-body is never read, never guarded, never fed to a cache.
+```
+LOG:  duration: 480.416 ms  execute <unnamed>: SELECT m.id,ARRAY(
+        SELECT tagged_member.identity_id FROM memberships tagged_member
+        JOIN identities tagged ON tagged.id=tagged_member.identity_id
+        WHERE … AND m.text ~ ('(^|[^[:alnum:]_.-])@' ||
+          regexp_replace(btrim(ltrim(tagged.handle,'@')),'([.-])','\&','g') ||
+          '[.-]*($|[^[:alnum:]_.-])') …
+      ) tagged_ids FROM messages m WHERE m.id=ANY($1::text[])
+```
 
-Driven with a publish whose promise never settles, the next viewability callback
-still completes in 0.000 ms with that write outstanding. Nothing in the advancer
-holds a promise.
+`EXPLAIN (ANALYZE, BUFFERS)` names the node:
 
-## 4. Re-render fanout from cursor state
+```
+SubPlan 1
+  ->  Nested Loop Anti Join  (actual time=25.169..25.169 rows=0 loops=30)
+        ->  Bitmap Heap Scan on memberships tagged_member  (rows=500 loops=30)
+        ->  Materialize  (loops=15000)
+              ->  Seq Scan on identities tagged  (actual time=24.824 loops=30)
+                    Filter: (… AND m.text ~ (… handle …))
+                    Rows Removed by Filter: 501
+```
 
-None from the cursor.
+The regex is built from the **member's handle**, so it cannot be hoisted out of
+the scan: Postgres compiles and runs one regex per member per message.
+**30 × 501 = 15,030 regex evaluations on every Room open.** The planner's
+`rows=3` / `rows=2` estimates are off by ~100×, which is why it picks the nested
+loop.
 
-| Drive | Renders |
-|---|---|
-| 50 forward viewport reports moving the cursor | **0** |
-| One write published and settled | **0** |
-| `useNewMessageControl` in the same callback, 50 reports away from the tail | 1 |
-| `useNewMessageControl`, reaching the tail | 1 |
+Route timings, `GET /v1/phone/rooms/:id`, five runs each after a warm-up:
 
-The advancer lives in a `useRef` and keeps `#pending`/`#published` in private
-class fields, so an advancing cursor is invisible to React by construction. The
-one render away from the tail is `hasObservedVisibility` flipping false→true on
-the first report ever; after that React bails out of the identical `setState`.
-Reaching the tail costs one more. Both belong to #1606's disc and divider, not
-to the cursor.
+| Room roster | response bytes | p50 |
+| ---: | ---: | ---: |
+| 1 | 17,837 | 37 ms |
+| 25 | 23,291 | 509 ms |
+| 100 | 40,391 | 573 ms |
+| 250 | 66,741 | 537 ms |
+| 501 | 83,558 | 581 ms |
 
-The one place cursor work does reach React state is `markUnreadFrom` →
-`setFirstUnreadMessageId`, which feeds `dividerMessageId` to every row. That is
-mark-unread — a deliberate, reader-initiated repaint, once.
+It is a step, not a slope: **25 members already costs 509 ms**, and it barely
+grows after that. Any Room with more than a handful of members pays it, and
+`spans` attributes all of it to `data`:
 
-## Server cost of the new write
+```
+[slow-operation] {"operation":"phone.read_room","durationMs":577,
+                  "spans":{"data":577,"media":0,"projection":0}}
+```
 
-| Path | p50 | p95 | Budget |
-|---|---:|---:|---:|
-| `POST /v1/phone/rooms/:id/read`, 5,000-message Room | 4.85 ms | 6.86 ms | 500 ms |
-| `GET /v1/phone/rooms/:id`, mark at the tail | 21.76 ms | 27.74 ms | 500 ms |
-| `GET /v1/phone/rooms/:id`, no mark at all (the count scan runs to the 99 cap) | 21.10 ms | 25.38 ms | 500 ms |
+**Fix direction** (not implemented here): invert the loop. Extract the `@handle`
+tokens from the 30 message texts once — one `regexp_matches` per message, 30
+total — then resolve those handles against the roster with an indexed lookup.
+That replaces 15,030 regex evaluations with 30.
 
-Thirty sequential read marks — thirty rests, a long reading session — total
-137.7 ms of server time.
+## G1 — the deck floor (isolated on glass)
 
-The `unreadCount` subquery #1609 added to `VIEWER_READ_CURSOR_SQL` did not move
-the Room read: 27.74 ms p95 here against the 29.4 ms p95 this audit already had
-for a 5,000-message Room. The `LIMIT 99` cap does its job.
+Screen recordings (`screenrecord --bugreport`, per-frame millisecond overlay).
+`sent` is when `POST /v1/phone/operations/sendRoomMessage` was issued from
+another identity; `painted` is the first recorded frame showing the message.
 
-`markRead` spends **3 statements** where one would do: an existence probe, an
-access probe, then an upsert whose `SELECT` re-finds the same row the existence
-probe just found. Ranked as **G7**.
+| Surface | sent | painted | latency |
+| --- | --- | --- | ---: |
+| Open Room | 02:08:55.361 | 02:08:55.580 | **219 ms** |
+| Open Room | 02:12:11.675 | 02:12:11.913 | **238 ms** |
+| Deck | 02:10:01.329 | 02:10:01.909 | **580 ms** |
+| Deck | 02:10:38.209 | 02:10:38.853 | **644 ms** |
+| Deck | 02:11:19.156 | 02:11:19.713 | **557 ms** |
 
-## The sweep suite had gone blind, and what that cost
+The previous recorded frame in each run is 1.2–3.8 s earlier — the screen is
+static until the update, so the painted frame is the update, not a coincidence.
 
-`live-fanout-sweep.test.ts` — this audit's own evidence for G2 and G3 — hung for
-its full 300 s timeout after the rebase. It is worth writing down what it turned
-out to be, because the failure mode is one any live-path test here can hit.
+The deck sits 320–425 ms above the open Room on the same device, same server,
+same message shape. `SurfaceRefreshScheduler` waits out the remainder of its
+500 ms floor for a surface that only signals; a forced refresh bypasses it. The
+09-18 audit's estimate that the floor, not query work, is what costs the deck
+its target is confirmed on glass, with ~80 ms of paint on top.
 
-Isolation, in order:
+## The read cursor on Hermes
 
-- It hangs at `369b43ba` (current main) and at `126439d2` (its parent), so it is
-  **not** #1609.
-- It passes at `4bde9a49`, this branch's original base from 2026-09-20. So
-  something on main in between changed live delivery.
-- Instrumenting the socket showed the readers receiving **no frame at all** —
-  not a wrong one, none.
+`#1609` moved the read mark onto the transcript's viewability pass, so scroll can
+now originate a server write. Earlier measurement of that path was node/V8 only.
+`dumpsys gfxinfo` during sustained scroll of the 5,066-message Room:
 
-The cause is #1584, "Fix delayed open Room delivery". For a write with no
-committed row — every phone-originated human message — the socket now sends an
-id-only invalidation **immediately**, ahead of row resolution, and then
-`if (!result.delta && invalidationSent) return;` suppresses the follow-up. So the
-reader gets exactly one early frame and nothing after it.
+| Run | frames | p50 | p90 | p95 | p99 | Slow UI thread | Missed vsync |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 30-message window | 99 | 5 ms | 6 ms | 7 ms | 105 ms | 0 | 0 |
+| after 3 history pages | 99 | 6 ms | 20 ms | 27 ms | 38 ms | 0 | 0 |
 
-The suite attached its listener *after* `await send(...)` resolved and waited for
-a `message-delta`. Both halves were wrong under #1584: the only frame had already
-gone out, and it was not a delta. The suite now records deliveries from the
-moment each socket subscribes and counts either shape as the reader being told.
+No sustained UI-thread stall. Against a 60 Hz budget the second run's 27 ms p95
+would jank, but that run also paginated history mid-scroll, and this panel is
+15 Hz so the device cannot arbitrate. **Scroll on glass never reached the 5,000
+loaded rows the V8 measurement modelled** — three history pages is as deep as the
+list got. G6 stays ranked on the V8 evidence, not on this.
 
-**This is a test defect, not a product defect** — the product behaviour #1584
-ships is intentional and is what makes the reader's row arrive sooner. But it
-means G2 and G3 were, until this run, being asserted by a suite that could no
-longer observe the thing it measures.
+## G9 — the enrichment deadline (new, P3)
 
-Re-measured against `369b43ba` with the suite fixed, both hold **unchanged**:
-
-| Finding | 2026-09-20 | 2026-09-22 |
-|---|---|---|
-| G2 — statements per tagged agent | 8 → 35, 6.75 per mention | 8 → 35, 6.75 per mention |
-| G3 — statements, 1 reader vs 8 | 9 vs 16, 1 per reader | 9 vs 16, 1 per reader |
-
-G3's elapsed also grew with attachment as before: 14.8 ms at one reader, 42.7 ms
-at eight.
-
-## Re-baseline
-
-The open-time `markRead` is gone from the fetch-apply path
-(`useRoomSurfaceSession.ts:958-970`), so a Room open issues one fewer request.
-
-It should not be credited against the 450 ms page-load gap, and the reason
-matters: that call was already `void`-ed and fire-and-forget, so it never
-entered the reader's wait for paint. Removing it takes one concurrent request
-off the wire at open — which matters on a congested link and does not matter to
-a paint trace. Cold-open traces taken before #1609 remain usable for the
-page-load target. The 737 ms cold first open (G5) stands as measured.
-
-## What this does NOT explain
-
-The trigger placed this merge "squarely in the unproven 150 ms interaction gap."
-It is in the gap, and it is small: **0.4–0.7 ms at the worst measured p95** against
-a miss of 517 ms on the open Room and 583 ms on the deck. The read cursor is not
-why the 150 ms target is missed, and fixing G6 and G7 would not move it.
-
-G1 remains unisolated. The open Room already does row deltas and still burns
-half a second between delta and pixel, and nothing measured here accounts for it.
-
-## What could not be measured
-
-**No Hermes number, and no scroll on the glass.** A release APK was built from
-this rebased branch (`fc94cdc2`, gradle `assembleRelease`, non-debuggable,
-Hermes bytecode) and installed on the x86 emulator. It launches and reports its
-own build sha. It is **signed out**, and signing in needs a GitHub OAuth round
-trip with credentials not available here, so there is no account and no Room with
-a deep transcript to scroll. Without that, `dumpsys gfxinfo framestats` has
-nothing to record.
-
-So item 1 is answered on V8 and unproven on Hermes. That gap is real and I am not
-going to paper over it with a made-up multiplier — the last audit round was
-correctly failed for labelling a transport number as paint.
-
-Two smaller notes on the state of the tooling here, both hit during this run:
-
-- `packages/api-contract/dist` was stale. Every server suite that imports
-  `@beeline/api-contract/phone` failed with `readCornerAppManifest is not a
-  function` — a 503 on `GET /v1/phone/rooms/:id`, not a product bug. Rebuilding
-  the package fixed it. The existing `live-interaction-latency.test.ts` failed
-  the same way until then.
-- `apps/mobile/android/local.properties` pointed at `/tmp/asdk`, which no longer
-  exists. `/srv/tools/android-sdk` is present but not writable, so expo-updates'
-  NDK install fails against it; `/home/alan/android-sdk` works.
+`OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000` (`apps/server/src/phone-service.ts:168`)
+is the guard that degrades a slow enrichment rather than blocking the read. It
+sits at **more than twice the 450 ms page-load target**, so it cannot protect
+that target: G8's 480–755 ms passes under it on every open and is always paid in
+full.
 
 ## Ranking
 
-Existing findings carried forward, the two new ones inserted by severity.
+| # | ID | Sev | Finding | Measured cost | Status |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | **G8** | **P1** | `message-tags` enrichment runs 30 × roster regex evaluations per Room open | **413 ms** of the 443 ms page-load miss | **new** |
+| 2 | G1 | P1 | Deck live update waits out the 500 ms `SurfaceRefreshScheduler` floor | **320–425 ms** of the ~430 ms deck interaction miss | **isolated on glass** |
+| 3 | G5 | P2 | Cold first Room open over budget | 893 ms vs 450 ms; G8 is 413 ms of it | **re-baselined** |
+| 4 | G2 | P2 | `routeHumanMention` serial inside the send transaction | 6.75 statements per mention | unchanged |
+| 5 | G3 | P2 | One extra Room read per attached reader per human message | 1 statement per reader | unchanged |
+| 6 | G4 | P3 | `readAgent` scans the unbounded Workspace roster | — | unchanged |
+| 7 | G6 | P3 | `ReadCursorAdvancer.observe` is O(visible × transcript) on the scroll path | 0.4–0.7 ms p95 at 5,000 rows (V8) | unchanged |
+| 8 | G7 | P3 | `markRead` spends 3 statements where 1 would do | 3 statements per scroll rest | unchanged |
+| 9 | **G9** | **P3** | Optional-enrichment deadline (1,000 ms) sits above the 450 ms page-load target | guard never fires on G8 | **new** |
 
-| # | ID | Sev | Finding | Status |
-|---|---|---|---|---|
-| 1 | G1 | P1 | 150 ms missed on the glass — deck 583 ms p50, open Room 517 ms p50. Cause unisolated. | unchanged |
-| 2 | G5 | P2 | Cold first Room open 737 ms against 450 ms; warm is 330–377 ms. | unchanged, re-baseline does not affect it |
-| 3 | G2 | P2 | `routeHumanMention` runs serially inside the send transaction. | unchanged |
-| 4 | G3 | P2 | One extra Room read per attached reader, per human message. | unchanged |
-| 5 | G4 | P3 | `readAgent` scans the unbounded roster. | unchanged |
-| 6 | **G6** | **P3** | `ReadCursorAdvancer.observe` is O(visible × transcript) plus up to two allocating full-transcript scans, on the scroll path. 0.4–0.7 ms p95 at 5,000 rows on V8, worst for a reader at the tail, unmeasured on Hermes. Fix: rank by `ViewToken.index` instead of re-finding each row. | new |
-| 7 | **G7** | **P3** | `PhoneService.markRead` costs 3 statements per write where 1 would do. Scroll now originates these. | new |
+G8 is ranked first: it is the largest single measured contribution to either
+target, it is one sub-select, and the Room does not have to be busy to pay it —
+25 members is enough.
 
-G1 and G5 remain the two worth their own corners. G6 and G7 are small enough to
-ride along with other work on their files.
+G1 keeps P1 because it is the only miss on the surface every phone opens first,
+but it now ranks below G8 on measured milliseconds.
+
+## Not closed
+
+- **Neither target is met even with its top finding fixed.** G8 removed leaves a
+  cold open at 452–493 ms against 450 ms; G1 removed leaves the deck near the
+  open Room's ~230 ms against 150 ms. Both need a second round.
+- **All client figures are a floor** — zero network latency, and a contended host.
+- **iOS is unmeasured.**
+- **Sample sizes are small** — n=6 cold opens, n=3 deck recordings, n=2 open-Room
+  recordings. Enough to separate 893 from 480, or 580 from 230; not enough for a
+  p95.

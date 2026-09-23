@@ -6,10 +6,11 @@ Scope: server live fanout, Room/deck hot reads, push delivery, client paint evid
 
 ## Status
 
-**Superseded on the two open gaps by
-[`fanout-performance-audit-2026-09-20.md`](./fanout-performance-audit-2026-09-20.md),**
-which measures P1 and F5 end to end and re-ranks. The P1 estimate below (~662 ms)
-is superseded by a measured 504.9 ms p95.
+**The two open gaps below are closed by
+[`fanout-performance-audit-2026-09-22.md`](./fanout-performance-audit-2026-09-22.md),**
+which measures both targets on a real Hermes device and re-ranks. Both are
+missed: cold Room open 893 ms against 450 ms, deck live update 580 ms against
+150 ms. The ~662 ms P1 estimate below is superseded by those measurements.
 
 **PARTIAL — returned without closing two product gaps.** Landed and accepted: F1 subscription batching, F2 listener-owned presence fanout, F3 200-Room width corpus + many-corner gate + `explainHotRead`, F4 push concurrency, multi-Room batch auth. Latency floors: live-delta deadline 150 ms (server wait alone); `SurfaceRefreshScheduler` 500 ms (~2 GETs/s, pool-safe). Same-process force stays immediate.
 

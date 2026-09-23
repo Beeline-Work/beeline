@@ -25,6 +25,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   WELCOME_ROOM_ID,
   ROOM_VIEW_MESSAGE_LIMIT,
+  type RoomHistoryView,
   type RoomView,
 } from '@beeline/api-contract/phone';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
@@ -2452,6 +2453,52 @@ describe('monolith integration', () => {
       }),
     );
     expect(roomView.messages.map((message) => message.id)).not.toContain('0'.repeat(63) + '1');
+  });
+
+  it('pages every earlier corner row when the opening boundary shares its second', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'same-second-history',
+      name: 'Same second history',
+      objective: 'Keep every earlier transcript row.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const ids = Array.from({ length: ROOM_VIEW_MESSAGE_LIMIT * 2 + 2 }, (_, index) =>
+      (index + 1).toString(16).padStart(64, '0'),
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT id,$1,$2,'Same-second row ' || ordinal,
+              '2040-01-01T00:00:00Z'::timestamptz + ordinal * interval '1 millisecond'
+       FROM unnest($3::text[]) WITH ORDINALITY AS inserted(id,ordinal)`,
+      [cornerId, HUMAN, ids],
+    );
+
+    const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    expect(corner.messages.map((message) => message.id)).toEqual(ids.slice(32));
+
+    const boundary = corner.messages[0]!;
+    const firstPage = (await (
+      await request(
+        `/v1/phone/rooms/${cornerId}/history?before=${boundary.createdAt},${boundary.id}`,
+      )
+    ).json()) as RoomHistoryView;
+    expect(firstPage.messages.map((message) => message.id)).toEqual(ids.slice(2, 32));
+    expect(firstPage.nextBefore).toEqual({
+      createdAt: firstPage.messages[0]!.createdAt,
+      id: firstPage.messages[0]!.id,
+    });
+
+    const oldestPage = (await (
+      await request(
+        `/v1/phone/rooms/${cornerId}/history?before=${firstPage.nextBefore!.createdAt},${firstPage.nextBefore!.id}`,
+      )
+    ).json()) as RoomHistoryView;
+    expect(oldestPage.messages.map((message) => message.id)).toEqual(
+      expect.arrayContaining(ids.slice(0, 2)),
+    );
+    expect(oldestPage.nextBefore).toBeUndefined();
   });
 
   it('rejects durable output activity in a top-level Room', async () => {

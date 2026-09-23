@@ -133,6 +133,16 @@ export class AgentTurnStream {
     if (snapshot.length <= this.persisted.length) return;
     if (!this.latest.startsWith(snapshot)) return;
     this.persisted = snapshot;
+    // A snapshot waiting on the wire was measured against the OLD offset, so
+    // it still carries the head this save just took. Letting it go out would
+    // publish narration the reader can already scroll to back under the
+    // answer — the duplicate the offset exists to remove — and it would do it
+    // AFTER the save, which is the one moment the lane is supposed to be
+    // right. So the queue is recomputed from the stream, and dropped outright
+    // when nothing of it is unsaved: no draft at all beats a stale one.
+    const tail = this.closed ? '' : sanitizeAgentReply(this.unsavedTail);
+    this.pending = tail || undefined;
+    if (this.pending !== undefined) this.publishPending();
   }
 
   /** How much of this turn's stream a durable record already carries. */

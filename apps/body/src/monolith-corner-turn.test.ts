@@ -947,7 +947,9 @@ describe('corner close-request polling cadence', () => {
       .filter((write) => write.name === 'postAgentDraft')
       .map((write) => write.input.text);
     expect(draftTexts).toContain('Inspecting');
-    expect(draftTexts.at(-1)).toBe('I inspected the code.\n\nThe fix is ready.');
+    // The lane ends on the unsaved tail: `I inspected the code.` is the Update
+    // row asserted above, so the draft gives it up and shows the rest alone.
+    expect(draftTexts.at(-1)).toBe('The fix is ready.');
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
       expect(draft.input.turnId).toBe('human-msg');
     }
@@ -1332,10 +1334,18 @@ describe('corner close-request polling cadence', () => {
       .map((write) => write.input.text);
 
     expect(ledger).toEqual([FIRST, SECOND]);
-    // Once the first sentence was saved the draft stopped showing it: what the
-    // reader watches move is the tail no durable row carries yet.
-    expect(drafts.at(-1)).toBe(`${SECOND} ${CLOSING}`);
-    expect(drafts.at(-1)).not.toContain(FIRST);
+    // What the reader watches, frame by frame: the stream grows, and each time
+    // a sentence reaches the ledger the draft gives it up on the spot rather
+    // than waiting for the next delta to stop repeating it.
+    expect(drafts).toEqual([
+      FIRST, //                   nothing saved yet
+      `${FIRST}\n\n${SECOND}`, // still nothing saved
+      SECOND, //                  FIRST reached the ledger
+      `${SECOND} ${CLOSING}`, //  the closing run carries on
+      CLOSING, //                 SECOND reached the ledger
+    ]);
+    // No draft published after a save repeats what that save took.
+    expect(drafts.slice(drafts.indexOf(SECOND)).join('\n')).not.toContain(FIRST);
     // And the reply is the remainder: the offset reached INTO the closing run,
     // so the sentence the ledger took from it is gone and the rest survives.
     expect(replies).toEqual([CLOSING]);

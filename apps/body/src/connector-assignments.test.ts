@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
@@ -659,7 +662,7 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
-  it('runs Google installs only after this drain’s Squire work settles', async () => {
+  it('runs Google OAuth installs independently of Squire work', async () => {
     let releaseSquire!: () => void;
     const squireGate = new Promise<void>((resolve) => {
       releaseSquire = resolve;
@@ -688,12 +691,27 @@ describe('ConnectorAssignmentLoop', () => {
     });
     void loop.runOnce();
     await settle();
-    expect(events).toEqual(['squire-start']);
+    expect(events).toEqual(['squire-start', 'google-start']);
     releaseSquire();
-    for (let index = 0; index < 50 && !events.includes('google-start'); index += 1) {
+    for (let index = 0; index < 50 && !events.includes('squire-end'); index += 1) {
       await settle();
     }
-    expect(events).toEqual(['squire-start', 'squire-end', 'google-start']);
+    expect(events).toEqual(['squire-start', 'google-start', 'squire-end']);
+    loop.stop();
+  });
+
+  it('clears the YouTube token when its product is unpaired', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-youtube-unpair-'));
+    const path = join(home, 'google-credentials.json');
+    writeFileSync(path, JSON.stringify({ accessToken: 'old-token' }));
+    const api = apiMock([
+      { kind: 'uninstall', connectorId: 'yt', connectorType: 'google-youtube' },
+      { kind: 'refresh-google-grant', connectorId: 'mail', connectorType: 'google-gmail' },
+    ]);
+    const loop = new ConnectorAssignmentLoop({ api: api as never,
+      agentId: 'agent-1', googleHome: home, mcp });
+    await loop.runOnce();
+    expect(existsSync(path)).toBe(false);
     loop.stop();
   });
 

@@ -19,6 +19,7 @@ import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
+import type { GoogleOAuth } from './google-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
 
@@ -55,6 +56,7 @@ export interface ServerOptions {
    *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
+  googleOAuth?: GoogleOAuth;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
@@ -727,6 +729,24 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (method === 'GET' && url.pathname === '/v1/google/oauth/callback') {
+    if (!options.googleOAuth) { json(response, 503, { error: 'Google OAuth is unavailable' }); return; }
+    const state = url.searchParams.get('state');
+    const code = url.searchParams.get('code');
+    if (!state) { json(response, 400, { error: 'Google authorization was not completed' }); return; }
+    const completed = code
+      ? await options.googleOAuth.complete(state, code)
+      : (await options.googleOAuth.cancel(state), false);
+    response.writeHead(completed ? 200 : 400, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(code && completed
+      ? '<p>Google Workspace connected. Return to Beeline.</p>'
+      : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>');
+    return;
+  }
   if (options.authHandler && url.pathname.startsWith('/auth/')) {
     options.authHandler(request, response);
     return;

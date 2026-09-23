@@ -243,8 +243,9 @@ export default function ConnectTrustySquireScreen() {
         {noHelpers && !offerCeremony ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
-              Squire runs on a helper. Every agent on that helper can use its connections, within
-              the grants you set.
+              {connectorId.startsWith('google-')
+                ? 'Google Workspace connects on a helper. Choose the machine that will hold your Google access.'
+                : 'Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.'}
             </Text>
             <Text style={styles.empty} testID="connect-no-helper-empty">
               No helpers found

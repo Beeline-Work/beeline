@@ -35,6 +35,17 @@ Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to 
 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
+Google Workspace connections use Beeline's own confidential web OAuth client. Configure
+`BEELINE_GOOGLE_CLIENT_ID`, `BEELINE_GOOGLE_CLIENT_SECRET`, and
+`BEELINE_GOOGLE_TOKEN_KEY` (32 random bytes, base64 encoded) on the server,
+and register `${PUBLIC_ORIGIN}/v1/google/oauth/callback` as the client's exact
+authorized redirect URI in Google Cloud. Keep the encryption key stable across
+releases: it protects stored refresh tokens. Without all three values, the
+Google products are unavailable in Workbench. Consent requests Gmail, Calendar,
+Drive, and YouTube scopes; each product is installed and reports status
+separately. Enable the corresponding APIs and complete Google's verification
+for restricted scopes before offering this outside test users.
+
 The browser client is hosted separately at `https://web.usebeeline.app`. Set
 `BEELINE_WEB_APP_ORIGINS=https://web.usebeeline.app` in production so the server
 answers that exact origin's API preflights and admits its exact

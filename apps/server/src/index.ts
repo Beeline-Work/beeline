@@ -23,6 +23,7 @@ import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
+import { GoogleOAuth } from './google-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
@@ -157,6 +158,12 @@ async function main() {
     publicOrigin,
     mediaExpiryMediaMaximumBytes,
   );
+  const googleOAuth = process.env.BEELINE_GOOGLE_CLIENT_ID &&
+    process.env.BEELINE_GOOGLE_CLIENT_SECRET && process.env.BEELINE_GOOGLE_TOKEN_KEY
+    ? new GoogleOAuth(database, process.env.BEELINE_GOOGLE_CLIENT_ID,
+        process.env.BEELINE_GOOGLE_CLIENT_SECRET, publicOrigin,
+        process.env.BEELINE_GOOGLE_TOKEN_KEY)
+    : undefined;
   const mediaExpiry = objectStorage
     ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
         storage: objectStorage,
@@ -176,6 +183,7 @@ async function main() {
     false,
     enrichmentDatabase,
     objectService,
+    googleOAuth,
   );
   const daemon = new DaemonService(
     database,
@@ -187,6 +195,7 @@ async function main() {
     process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     process.env.FLY_MACHINE_ID,
     github ? (input) => github!.prChecksStatus(input) : undefined,
+    googleOAuth,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -205,6 +214,7 @@ async function main() {
   });
   const server = createBeelineServer({
     database,
+    googleOAuth,
     healthDatabase,
     auth,
     phone,

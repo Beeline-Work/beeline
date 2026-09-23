@@ -174,7 +174,7 @@ export default function WorkbenchScreen() {
                 <GoogleEntryRow
                   key="google"
                   connectors={connectors}
-                  onPressConnect={() => connectConnector('google')}
+                  onPressConnect={(id) => connectConnector(id)}
                 />
               );
             }

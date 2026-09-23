@@ -817,7 +817,7 @@ export class RoomRuntimeCoordinator {
   private youtubeAccessToken(): string | undefined {
     if (this.youtubeToken === undefined) {
       const home = process.env.BEELINE_AGENT_HOME ?? process.cwd();
-      const resolved = loadManualGoogleCredentials(home, process.env);
+      const resolved = loadManualGoogleCredentials(home);
       this.youtubeToken = resolved.source === 'manual' ? resolved.credentials.accessToken : null;
     }
     return this.youtubeToken ?? undefined;

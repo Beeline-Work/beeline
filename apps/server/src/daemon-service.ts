@@ -169,6 +169,7 @@ export class DaemonService {
     private readonly prChecksStatus?: (
       input: Input<'getPrChecksStatus'>,
     ) => Promise<Output<'getPrChecksStatus'>>,
+    private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -326,6 +327,7 @@ export class DaemonService {
           this.livePaintDiagnostics,
           this.liveDiagnosticServerInstance,
           this.prChecksStatus,
+          this.googleOAuth,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -679,6 +681,11 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'getGoogleOAuthGrant': {
+        const credentials = await this.googleOAuth?.grantForHelper(
+          (input as Input<'getGoogleOAuthGrant'>).connectorId, authenticatedAgentId);
+        return (credentials ? { status: 'ready', credentials } : { status: 'pending' }) as Output<Name>;
+      }
       case 'installConnector':
         return (await this.connectorInstall(
           input as Input<'installConnector'>,
@@ -971,6 +978,9 @@ export class DaemonService {
           connectorId: row.id,
           connectorType: row.connector_type as never,
         });
+      if (row.status === 'connected' && row.connector_type === 'google-youtube')
+        assignments.push({ kind: 'refresh-google-grant', connectorId: row.id,
+          connectorType: row.connector_type as never });
       for (const op of row.pending_ops ?? []) {
         if (op === 'sync')
           assignments.push({
@@ -3776,9 +3786,10 @@ export class DaemonService {
         connectorType: entry.connectorType,
         name: entry.name,
         purpose: connectorPurpose(entry.connectorType),
-        available: entry.available,
+        available: entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
         offerable:
-          entry.available && !context.isCorner && isOfferableConnectorKind(entry.connectorType),
+          entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth))
+            && !context.isCorner && isOfferableConnectorKind(entry.connectorType),
         ...(row
           ? {
               paired: {
@@ -4406,6 +4417,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
+  getGoogleOAuthGrant: true,
   installConnector: true,
   postConnectorStatus: true,
   postConnectorVault: true,

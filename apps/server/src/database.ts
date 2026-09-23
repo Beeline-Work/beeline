@@ -1169,6 +1169,20 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 
+CREATE TABLE IF NOT EXISTS google_oauth_attempts (
+  state text PRIMARY KEY,
+  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  expires_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS google_oauth_grants (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  machine_id text NOT NULL,
+  sealed_grant text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
+);
+
 -- Per-machine unique: one connector per (workspace, owner, type, machine).
 -- NULL machine_id (legacy agents before this migration) are each their own
 -- machine; PostgreSQL treats NULL as distinct in unique indexes.

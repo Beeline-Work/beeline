@@ -165,7 +165,7 @@ function googleEntryTools(
   ).filter((tool): tool is WorkbenchConnector => tool !== undefined);
 }
 
-/** The single Google entry's state across its four tool connectors: fully
+/** The Google group state across its four tool connectors: fully
  * connected → `connected`; any install in flight → `installing`; any tool
  * error → `error`; SOME connected (a top-up is available) → `repair`; none
  * connected → `connect`. */
@@ -217,11 +217,11 @@ export function googleEntryConnector(
  *  Tools the catalog does not list are omitted. */
 export function googleToolRows(
   connectors: readonly WorkbenchConnector[],
-): readonly { id: GoogleToolId; name: string; status: WorkbenchConnectorStatus }[] {
+): readonly WorkbenchConnector[] {
   return GOOGLE_CONNECTOR_ORDER.flatMap((id) => {
     const tool = connectors.find((connector) => connector.id === id);
     if (!tool) return [];
-    return [{ id, name: tool.name, status: tool.status ?? 'disconnected' }];
+    return [{ ...tool, status: tool.status ?? 'disconnected' }];
   });
 }
 

@@ -31,11 +31,12 @@ import type {
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
+import { unlinkSync } from 'node:fs';
 import {
   installGoogleTool,
   isGoogleToolConnectorType,
-  loadManualGoogleCredentials,
-  readGoogleCredentialsFromVault,
+  persistManualGoogleCredentials,
+  manualGoogleCredentialsSearchPaths,
   type InstallGoogleToolResult,
   type ResolvedGoogleCredentials,
 } from './connector-google.js';
@@ -158,7 +159,7 @@ export class ConnectorAssignmentLoop {
         onProgress,
         resolvedCredentials: sharedCredentials
           ? sharedCredentials()
-          : this.resolveGoogleCredentials(),
+          : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
       }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
@@ -255,7 +256,17 @@ export class ConnectorAssignmentLoop {
       this.log(`connector assignments unavailable: ${describe(error)}`);
       return;
     }
-    const squireWork: Promise<void>[] = [];
+    const youtubeRows = assignments.filter((assignment) =>
+      assignment.connectorType === 'google-youtube');
+    if (youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
+      youtubeRows.every((assignment) => assignment.kind === 'uninstall')) {
+      try {
+        unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          this.log(`could not clear Google grant: ${describe(error)}`);
+      }
+    }
     let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
       const key = `${assignment.kind}:${assignment.connectorId}`;
@@ -273,18 +284,13 @@ export class ConnectorAssignmentLoop {
       }
       if (this.inFlight.has(key)) continue;
       this.inFlight.add(key);
-      squireWork.push(
-        this.handle(assignment)
-          .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
-          .finally(() => this.inFlight.delete(key)),
-      );
+      void this.handle(assignment)
+        .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
+        .finally(() => this.inFlight.delete(key));
     }
     if (googleBatch) {
-      // A Google vault lookup must not race a Squire connect for the one
-      // browser claim: wait for this drain's Squire work to settle first.
       const keys = googleBatch.map((assignment) => `${assignment.kind}:${assignment.connectorId}`);
-      void Promise.all(squireWork)
-        .then(() => this.runGoogleBatch(googleBatch!))
+      void this.runGoogleBatch(googleBatch)
         .catch((error) => this.log(`google connector installs failed: ${describe(error)}`))
         .finally(() => {
           for (const key of keys) this.inFlight.delete(key);
@@ -299,7 +305,8 @@ export class ConnectorAssignmentLoop {
    * tool alone, never its siblings. */
   private async runGoogleBatch(batch: readonly ConnectorAssignment[]): Promise<void> {
     let shared: Promise<ResolvedGoogleCredentials> | undefined;
-    const sharedCredentials = () => (shared ??= this.resolveGoogleCredentials());
+    const sharedCredentials = () =>
+      (shared ??= this.resolveGoogleCredentials(batch[0]!.connectorId));
     for (const assignment of batch) {
       await this.runGoogleInstall(
         assignment.connectorId,
@@ -313,15 +320,19 @@ export class ConnectorAssignmentLoop {
    * drain: the Squire one-click vault path first, then the manual
    * credentials path. Never rejects — a failure resolves as an unusable
    * grant each install reports through its own steps. */
-  private resolveGoogleCredentials(): Promise<ResolvedGoogleCredentials> {
+  private resolveGoogleCredentials(connectorId: string): Promise<ResolvedGoogleCredentials> {
     return (async () => {
       try {
-        const oneClick = await readGoogleCredentialsFromVault(this.squire());
-        if (oneClick.source === 'squire') return oneClick;
+        const grant = await this.api.execute('getGoogleOAuthGrant', {
+          agentId: this.agentId, connectorId,
+        });
+        if (grant.status === 'ready' && grant.credentials)
+          return { source: 'beeline', credentials: grant.credentials };
       } catch (error) {
-        this.log(`google one-click grant lookup failed: ${describe(error)}`);
+        this.log(`Google grant lookup failed: ${describe(error)}`);
+        return { source: 'error', reason: 'Beeline could not read the Google grant; retry the connection' };
       }
-      return loadManualGoogleCredentials(this.googleHome(), process.env);
+      return { source: 'pending', reason: 'waiting for Google sign-in' };
     })();
   }
 
@@ -339,6 +350,10 @@ export class ConnectorAssignmentLoop {
       }
     } else if (assignment.kind === 'sync' && assignment.connectorType !== 'tailscale') {
       await this.runSync();
+    } else if (assignment.kind === 'refresh-google-grant') {
+      const grant = await this.resolveGoogleCredentials(assignment.connectorId);
+      if ('credentials' in grant)
+        persistManualGoogleCredentials(this.googleHome(), grant.credentials);
     } else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
   }
@@ -404,7 +419,15 @@ export class ConnectorAssignmentLoop {
       }
     };
     const result = await this.installGoogle(connectorType, report, sharedCredentials);
+    if (result.status === 'installing') return;
     if (result.status === 'error') {
+      if (connectorType === 'google-youtube') {
+        try { unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+            this.log(`could not clear YouTube grant: ${describe(error)}`);
+        }
+      }
       await this.api.execute('postConnectorStatus', {
         agentId: this.agentId,
         connectorId,

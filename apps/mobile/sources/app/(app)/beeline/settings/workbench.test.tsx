@@ -159,23 +159,19 @@ describe('Workbench settings screen', () => {
     );
   });
 
-  it('folds the four Google tool rows into the ONE Google entry whose Connect button sits on the row', async () => {
+  it('keeps a Google account group with a separate Connect action per product', async () => {
     const renderer = await render();
-    // Exactly ONE Google row; the four tool kinds never render their own rows.
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
     expect(entry.props.value).toBeUndefined();
-    expect(entry.props.action).toBe('Connect');
-    expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
-    expect(renderer.root.findAllByProps({ testID: /^google-entry-tool-/ })).toHaveLength(0);
-    // The entry hands off with the LOGICAL google id; the source resolves it
-    // to the first not-yet-connected tool before the server call.
-    act(() => {
-      entry.props.trailingPress.onPress();
-    });
+    expect(entry.props.action).toBeUndefined();
+    act(() => entry.props.onPress());
+    const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
+    expect(gmail.props.action).toBe('Connect');
+    act(() => gmail.props.trailingPress.onPress());
     const push = navigation.push.mock.calls.at(-1)![0];
     expect(push.pathname).toBe('/beeline/settings/workbench/connect');
-    expect(push.params.connectorId).toBe('google');
+    expect(push.params.connectorId).toBe('google-gmail');
   });
 
   it('collapses an expanded cell on a second tap', async () => {
@@ -283,12 +279,15 @@ describe('Workbench settings screen', () => {
     expect(squire.props.action).toBe('Connect');
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
-    expect(google.props.action).toBe('Connect');
-    expect(google.props.trailingPress).toBeDefined();
+    expect(google.props.action).toBeUndefined();
     expect(google.props.descriptionTone).toBe('danger');
     expect(google.props.description).toContain(
       'another Trusty Squire session is already using the browser',
     );
+    act(() => google.props.onPress());
+    const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
+    expect(gmail.props.action).toBe('Connect');
+    expect(gmail.props.descriptionTone).toBe('danger');
   });
 
   it('creates a wallet from Connect and opens the dashboard', async () => {

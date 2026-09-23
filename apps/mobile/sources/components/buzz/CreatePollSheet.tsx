@@ -137,8 +137,8 @@ export function CreatePollSheet({
 const styles = StyleSheet.create((theme) => ({
   content: { maxHeight: 430 },
   label: {
+    ...theme.buzz.type.meta,
     color: theme.buzz.textPrimary,
-    fontSize: 14,
     fontWeight: '600',
     marginTop: 16,
     marginBottom: 6,
@@ -148,7 +148,7 @@ const styles = StyleSheet.create((theme) => ({
   optionInput: { flex: 1 },
   remove: { minHeight: 44, justifyContent: 'center' },
   add: { minHeight: 44, justifyContent: 'center' },
-  actionText: { color: theme.buzz.textPrimary, fontSize: 13 },
+  actionText: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
   times: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   time: {
     minHeight: 44,

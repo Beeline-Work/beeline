@@ -2744,6 +2744,69 @@ describe('Room message variant components', () => {
     ).toBe(2);
   });
 
+  it('keeps a long poll question and every option within the card at larger text sizes', () => {
+    const prompt =
+      'Which of these approaches should we take for the next release when the integration needs more time?';
+    const renderer = render(
+      <ChoiceCard
+        message={message({
+          choice: {
+            choiceId: 'long-poll',
+            mode: 'poll',
+            status: 'open',
+            agent: { pubkey: 'agent', kind: 'agent', name: 'Foxy' },
+            prompt,
+            options: [
+              {
+                optionId: 'A',
+                letter: 'A',
+                label: 'Wait for the complete integration and its long verification cycle',
+                consequence: 'The release moves later',
+              },
+              {
+                optionId: 'B',
+                letter: 'B',
+                label: 'Ship the already verified changes',
+                consequence: 'The integration follows in another release',
+              },
+            ],
+            electorate: ['human'],
+            votedCount: 0,
+            electorateCount: 1,
+            responses: [],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={vi.fn()}
+        onSkip={vi.fn()}
+      />,
+    );
+    const title = renderer.root.findByProps({ testID: 'choice-long-poll-title' });
+    expect(title.props.children).toBe(prompt);
+    expect(title.props.numberOfLines).toBeUndefined();
+    const options = renderer.root.findByProps({ testID: 'choice-long-poll-choices' });
+    expect(options.props.style.paddingBottom).toBeGreaterThan(0);
+    for (const optionId of ['A', 'B']) {
+      const option = renderer.root.findByProps({ testID: `transcript-card-choice-${optionId}` });
+      expect(
+        option.findAll(
+          (node: ReactTestInstance) =>
+            node.type === 'Text' &&
+            typeof node.props.children === 'string' &&
+            node.props.children.length > 30 &&
+            node.props.numberOfLines === undefined,
+        ),
+      ).not.toHaveLength(0);
+      const letter = renderer.root.findByProps({
+        testID: `transcript-card-choice-letter-${optionId}`,
+      });
+      expect(letter.props.style[0].minHeight).toBeGreaterThan(0);
+      expect(letter.props.style[0].height).toBeUndefined();
+    }
+  });
+
   it('opens the message actions sheet on long press while retaining tap dismissal', () => {
     // The row's long press is the message actions sheet — reactions, copy,
     // reply, forward — which deliberately claims what native text selection

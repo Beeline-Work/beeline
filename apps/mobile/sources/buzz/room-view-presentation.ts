@@ -105,23 +105,31 @@ function mergeNewerCommittedMessages(
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
 
-/** A read that raced a turn delta must not walk that agent's turn backwards:
- * no follow-up read comes after a delta to correct it. */
+/** A read that raced a turn delta must not walk that agent's turn backwards
+ * or drop it: no follow-up read comes after a delta to correct it. The server
+ * only omits an agent's latest turn past the bound, which the merge reapplies. */
 function keepNewerAgentTurns(
   previous: readonly RoomViewAgentTurn[],
   next: readonly RoomViewAgentTurn[],
 ): readonly RoomViewAgentTurn[] {
   // A projected view may omit the list; there is then nothing to keep.
   if (!previous?.length || !next) return next;
-  const previousByAgent = new Map(previous.map((turn) => [turn.agentPubkey, turn]));
-  let kept = false;
-  const merged = next.map((turn) => {
-    const held = previousByAgent.get(turn.agentPubkey);
-    if (!held || held.createdAt <= turn.createdAt) return turn;
-    kept = true;
-    return held;
+  const nextByAgent = new Map(next.map((turn) => [turn.agentPubkey, turn]));
+  const held = previous.filter((turn) => {
+    const current = nextByAgent.get(turn.agentPubkey);
+    return !current || current.createdAt < turn.createdAt;
   });
-  return kept ? merged : next;
+  if (held.length === 0) return next;
+  const heldAgents = new Set(held.map((turn) => turn.agentPubkey));
+  const merged = [...next.filter((turn) => !heldAgents.has(turn.agentPubkey)), ...held]
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+    )
+    .slice(0, ROOM_VIEW_AGENT_LIMIT);
+  const unchanged =
+    merged.length === next.length && merged.every((turn, index) => turn === next[index]);
+  return unchanged ? next : merged;
 }
 
 export function reconcileRoomView(previous: RoomView | null, next: RoomView): RoomView {

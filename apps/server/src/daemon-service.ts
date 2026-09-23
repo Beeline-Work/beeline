@@ -1102,7 +1102,9 @@ export class DaemonService {
    *
    * Status, helper, and pairing generation are revalidated in the UPDATE so a
    * disconnect or re-pair that lands between a stale helper's read and write
-   * cannot overwrite the newer lifecycle.
+   * cannot overwrite the newer lifecycle. An omitted generation is generation
+   * 1: a pre-generation helper can still report against the first pairing and
+   * cannot match a later one.
    */
   private async connectorStatusReport(
     input: Input<'postConnectorStatus'>,
@@ -1121,7 +1123,7 @@ export class DaemonService {
          WHERE id=$1::uuid
            AND helper_agent_id=$8
            AND status='installing'
-           AND ($9::int IS NULL OR pairing_generation=$9)
+           AND pairing_generation=$9
          RETURNING id`,
         [
           input.connectorId,
@@ -1132,7 +1134,7 @@ export class DaemonService {
           input.signIn ? JSON.stringify(input.signIn) : null,
           input.signIn !== undefined,
           agentId,
-          input.pairingGeneration ?? null,
+          input.pairingGeneration ?? 1,
         ],
       )
     ).rows[0];

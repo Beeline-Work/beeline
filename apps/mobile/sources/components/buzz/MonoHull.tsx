@@ -613,12 +613,10 @@ export function CornerGlyph({
 export function HullLivePulse({
   active = true,
   children,
-  pointerEvents,
   style,
 }: {
   active?: boolean;
   children: React.ReactNode;
-  pointerEvents?: ViewProps['pointerEvents'];
   style?: StyleProp<ViewStyle>;
 }) {
   const { progress, still } = useLiveCycle(active);
@@ -628,11 +626,7 @@ export function HullLivePulse({
       opacity: LIVE_PULSE_FLOOR + (1 - LIVE_PULSE_FLOOR) * Math.sin(progress.value * Math.PI) ** 2,
     };
   });
-  return (
-    <Animated.View pointerEvents={pointerEvents} style={[style, pulse]}>
-      {children}
-    </Animated.View>
-  );
+  return <Animated.View style={[style, pulse]}>{children}</Animated.View>;
 }
 
 /**

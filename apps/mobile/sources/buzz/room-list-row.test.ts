@@ -791,6 +791,12 @@ const room = {
 };
 const ada = { pubkey: PEER, kind: 'human' as const, name: 'Ada', handle: 'ada@usebeeline.app' };
 const beebee = { pubkey: PEER, kind: 'agent' as const, name: 'Beebee' };
+const squire = {
+  pubkey: 's'.repeat(64),
+  kind: 'human' as const,
+  name: 'Trusty Squire',
+  handle: 'trusty-squire',
+};
 const imageAttachment: AttachmentReference = {
   url: 'https://usebeeline.app/media/photo',
   name: 'photo.png',
@@ -842,6 +848,13 @@ describe('roomRowName — the sigil is the name’s first glyph', () => {
 });
 
 describe('previewHandle', () => {
+  it('uses the connector name instead of its machine handle', () => {
+    expect(previewHandle(squire)).toBe('Trusty Squire');
+    expect(roomRowName({ room, directMessage: { peer: squire } })).toEqual({
+      sigil: '@',
+      name: 'Trusty Squire',
+    });
+  });
   it('uses the local part of a nip05 handle, stripping any leading @', () => {
     expect(previewHandle({ name: 'Ada', handle: '@ada@usebeeline.app' })).toBe('ada');
   });
@@ -852,6 +865,21 @@ describe('previewHandle', () => {
 });
 
 describe('roomRowPreview — attribution', () => {
+  it('attributes a warm cached grant DM to Trusty Squire even with an old agent author', () => {
+    expect(
+      roomRowPreview(
+        {
+          directMessage: { peer: squire },
+          latestMessage: message(beebee, '@Beebee asked you for Squire'),
+        },
+        VIEWER,
+      ),
+    ).toEqual({
+      attribution: 'other',
+      handle: 'Trusty Squire',
+      text: '@Beebee asked you for Squire',
+    });
+  });
   it('reads `you:` for the viewer’s own last message', () => {
     expect(roomRowPreview({ latestMessage: message({ ...ada, pubkey: VIEWER }) }, VIEWER)).toEqual({
       attribution: 'self',

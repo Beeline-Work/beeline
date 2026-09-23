@@ -14,6 +14,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { routeSystemCommand } from './agent-command.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -1112,7 +1113,9 @@ export class GitHubOperations {
                 ? { consequence: check.conclusion }
                 : {}),
             },
-            `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
+            becamePassing
+              ? `github:checks:green:${check.headSha}`
+              : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
             database,
           );
         });
@@ -1164,6 +1167,15 @@ export class GitHubOperations {
       card: { source: 'github', dedupe },
     });
     if (note.inserted) this.onRoomChanged?.(roomId);
+    // A previously written green fact can outlive a lost dispatch. Its note
+    // remains idempotent, but the command routing must be retried.
+    if (!note.inserted && phrase.kind === 'check-passed')
+      await routeSystemCommand(database, {
+        roomId,
+        sourceMessageId: note.id,
+        kind: 'check-passed',
+        targets: [],
+      });
   }
 
   private async mergeCorner(

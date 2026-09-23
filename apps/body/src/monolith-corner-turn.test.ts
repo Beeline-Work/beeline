@@ -332,10 +332,12 @@ describe('corner merge instructions', () => {
       undefined,
     );
     let promptRun = 0;
+    let moveHeadOnPrompt = false;
     let newestHead = '';
     const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
       promptRun += 1;
-      if (promptRun === 1) {
+      if (moveHeadOnPrompt) {
+        moveHeadOnPrompt = false;
         await writeFile(join(root, 'reviewed.txt'), 'newest head\n');
         await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
         await execFileAsync('git', ['-C', root, 'commit', '-m', 'newest head']);
@@ -349,6 +351,30 @@ describe('corner merge instructions', () => {
         toolCalls: [],
       };
     });
+    const stableTrigger = `GitHub passed a check on ${latestHead}`;
+    await (
+      loop as unknown as {
+        prompt(
+          requestId: string,
+          trigger: string,
+          attachments: [],
+          requestedById: undefined,
+          restates: string[],
+        ): Promise<void>;
+      }
+    ).prompt('stable-review-turn', stableTrigger, [], undefined, [stableTrigger]);
+    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
+      `Checks are green on PR #7 at ${latestHead}`,
+    );
+    expect(sessionPrompt.mock.calls[1]?.[1]).toContain(
+      `Checks are green on PR #7 at ${latestHead}`,
+    );
+    expect(api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage')[0]?.[1]).toEqual(
+      expect.objectContaining({ text: 'review pass 2' }),
+    );
+
+    moveHeadOnPrompt = true;
     const trigger = `GitHub passed a check on stale head ${firstHead}`;
     await (
       loop as unknown as {
@@ -361,14 +387,17 @@ describe('corner merge instructions', () => {
         ): Promise<void>;
       }
     ).prompt('review-turn', trigger, [], undefined, [trigger]);
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
-    expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
+    expect(sessionPrompt).toHaveBeenCalledTimes(4);
+    expect(sessionPrompt.mock.calls[2]?.[1]).toContain(
       `Checks are green on PR #7 at ${latestHead}`,
     );
-    expect(sessionPrompt.mock.calls[1]?.[1]).toContain(
+    expect(sessionPrompt.mock.calls[3]?.[1]).toContain(
       `Checks are green on PR #7 at ${newestHead}`,
     );
-    expect(sessionPrompt.mock.calls[1]?.[1]).not.toContain(latestHead);
+    expect(sessionPrompt.mock.calls[3]?.[1]).not.toContain(latestHead);
+    const durableReplies = api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage');
+    expect(durableReplies).toHaveLength(2);
+    expect(durableReplies[1]?.[1]).toEqual(expect.objectContaining({ text: 'review pass 4' }));
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   });
 });

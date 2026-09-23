@@ -522,8 +522,6 @@ export class MonolithCornerTurnLoop {
   private pinnedProviderOverride?: string;
   /** The merge authority baked into the current session. */
   private yoloMode = false;
-  /** The live parent-Room reviewer baked into the current session. */
-  private reviewerHandle?: string;
   /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
   private reviewerInstructionInput?: ReviewerInstructionInput;
   /** The role-specific second-chance instruction for this session. */
@@ -714,7 +712,6 @@ export class MonolithCornerTurnLoop {
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     this.yoloMode = configuration.yoloMode;
-    this.reviewerHandle = configuration.reviewerHandle;
     const opener = this.options.openedBy
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
       : undefined;
@@ -1494,11 +1491,20 @@ export class MonolithCornerTurnLoop {
                   : undefined;
               const needsDeliveryNudge =
                 deliveryState !== undefined && deliveryState !== this.lastDeliveryNudgeState;
+              let refreshedReviewerInstruction: string | undefined;
+              let reviewerSecondPass = false;
+              let reviewerTargetChanged = false;
+              if (!explained && checksTurn && this.reviewerInstructionInput) {
+                reviewerSecondPass = true;
+                await this.syncBranch();
+                refreshedReviewerInstruction = await this.activeReviewerInstruction();
+                reviewerTargetChanged = refreshedReviewerInstruction !== activeReviewerInstruction;
+              }
               let replyBeforeNudge = '';
               if (
                 !explained &&
                 (needsDeliveryNudge ||
-                  (checksTurn && (this.yoloMode || Boolean(this.reviewerHandle))))
+                  (checksTurn && (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 // The flush comes first: it is what puts this run's narration
@@ -1510,10 +1516,9 @@ export class MonolithCornerTurnLoop {
                 // This is the same warm session: identity, soul and merge
                 // authority remain in its system prompt and need not be
                 // repeated in this focused follow-up.
-                if (this.reviewerInstructionInput) await this.syncBranch();
                 result = await runPrompt(
-                  this.reviewerHandle
-                    ? ((await this.activeReviewerInstruction()) ?? this.cornerTurnEndNudge)
+                  this.reviewerInstructionInput
+                    ? (refreshedReviewerInstruction ?? this.cornerTurnEndNudge)
                     : checksTurn
                       ? CORNER_YOLO_MERGE_NUDGE
                       : CORNER_DELIVERY_NUDGE,
@@ -1538,8 +1543,11 @@ export class MonolithCornerTurnLoop {
                 answer = durableReplyText(explained.recoveredText);
                 fromStream = false;
               }
-              const withNudgeReply = (text: string): string =>
-                [replyBeforeNudge, text].filter(Boolean).join('\n\n');
+              const withNudgeReply = (text: string): string => {
+                if (reviewerSecondPass)
+                  return text || (reviewerTargetChanged ? '' : replyBeforeNudge);
+                return [replyBeforeNudge, text].filter(Boolean).join('\n\n');
+              };
               // The dedupe inside the flush compares a pending narration with
               // the answer as it stands BEFORE any cut: that comparison is how
               // a narration duplicating the whole answer gets dropped instead

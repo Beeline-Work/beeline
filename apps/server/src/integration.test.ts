@@ -33,7 +33,7 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { MCP_GRANT_CREATOR_ONLY_MESSAGE } from '@beeline/api-contract/agent-grants';
+import { connectorIdentityId } from './workbench.js';
 import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
@@ -7680,7 +7680,7 @@ describe('monolith integration', () => {
     const ask = (await (
       await operation(
         'sendRoomMessage',
-        { roomId: ROOM, text: '@Bee deploy the preview', mentions: [AGENT] },
+        { roomId: ROOM, text: '@bee deploy the preview', mentions: [AGENT] },
         memberToken,
       )
     ).json()) as { messageId: string };
@@ -7751,20 +7751,16 @@ describe('monolith integration', () => {
     expect(card.card.requester.pubkey).toBe(memberId);
     expect(card.card.grants.map((grant) => grant.status)).toEqual(['pending', 'pending']);
     expect(card.card.grants[1]!.expiresAt).toEqual(expect.any(Number));
-    // The card is a tagged mention of the owner, so the ordinary push fires once.
-    expect(await pushes.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledWith(
-      'grant-owner-device-1234567890123456789012',
-      expect.objectContaining({
-        text: '@bee asked @owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
-      }),
-    );
+    // Room cards do not trigger a push by themselves. Squire approval instead
+    // reaches its owner through the connector DM's direct-message push path.
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
     // The phone reads the card as a validated grantRequest message.
     const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(isRoomView(room)).toBe(true);
     const cardMessage = room.messages.find((message) => message.grantRequest);
     expect(cardMessage?.grantRequest?.grants).toHaveLength(2);
-    expect(cardMessage?.mentionPubkeys).toEqual([HUMAN]);
+    expect(cardMessage?.mentionPubkeys).toBeUndefined();
 
     // A plain member cannot answer; nothing changes.
     const refused = await operation(
@@ -8446,8 +8442,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('answers an mcp route card owner-only, re-scoping an everyone agent to its creator', async () => {
-    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+  it('routes Squire approval to its owner without changing shared agent access', async () => {
     const adminToken = await phoneToken('mcp-grant-admin');
     const adminId = createHash('sha256').update('github:mcp-grant-admin').digest('hex');
     await operation('addWorkspaceMember', {
@@ -8455,160 +8450,181 @@ describe('monolith integration', () => {
       memberId: adminId,
       role: 'admin',
     });
+    const memberToken = await phoneToken('squire-requester');
+    const requesterId = createHash('sha256').update('github:squire-requester').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: requesterId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
+    await database.query(
+      `UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb WHERE agent_id=$1`,
+      [AGENT],
+    );
+    const sourceId = createHash('sha256').update('squire-source').digest('hex');
     expect(
       (
-        await operation('updateAgentAccessPolicy', {
-          workspaceId: WORKSPACE,
-          agentId: AGENT,
-          policy: 'everyone',
-        })
-      ).status,
-    ).toBe(204);
-    const accessLines = async () =>
-      (
-        await database.query<{
-          room_id: string;
-          text: string;
-          author_id: string;
-          direct_participants: string[] | null;
-        }>(
-          `SELECT message.room_id,message.text,message.author_id,room.direct_participants
-           FROM messages message JOIN rooms room ON room.id=message.room_id
-           WHERE message.presentation='system' AND message.card_type='agent-access'
-           ORDER BY message.created_at,message.room_id`,
+        await operation(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: sourceId,
+            text: '@bee use Squire',
+            mentions: [AGENT],
+          },
+          memberToken,
         )
-      ).rows;
-    const before = await accessLines();
-    const policy = async () =>
+      ).status,
+    ).toBe(200);
+    const route = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        requestId: sourceId,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'use the owner vault',
+      })
+    ).json()) as { grantId: string; messageId: string };
+    const card = (
+      await database.query<{
+        room_id: string;
+        author_id: string;
+        text: string;
+        card: {
+          owner: { pubkey: string };
+          requester: { pubkey: string };
+          sourceRoomId: string;
+          sourceMessageId?: string;
+          grants: Array<{ target: string; status: string }>;
+        };
+      }>(`SELECT room_id,author_id,text,card FROM messages WHERE id=$1`, [route.messageId])
+    ).rows[0]!;
+    expect(card.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(card.room_id).not.toBe(ROOM);
+    expect(card.card.owner.pubkey).toBe(HUMAN);
+    expect(card.card.sourceRoomId).toBe(ROOM);
+    expect(card.card.sourceMessageId).toBe(sourceId);
+    expect(card.card.requester.pubkey).toBe(requesterId);
+    expect(card.text).toContain('@owner');
+    expect(card.card.grants).toEqual([
+      expect.objectContaining({ target: 'squire', status: 'pending' }),
+    ]);
+    expect(
+      (
+        await operation(
+          'decideAgentGrant',
+          { grantId: route.grantId, decision: 'always' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await operation(
+          'decideAgentGrant',
+          { grantId: route.grantId, decision: 'deny' },
+          memberToken,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await operation('decideAgentGrant', { grantId: route.grantId, decision: 'always' })).status,
+    ).toBe(200);
+    expect(
       (
         await database.query<{ access_policy: { type: string } }>(
           `SELECT access_policy FROM agents WHERE agent_id=$1`,
           [AGENT],
         )
-      ).rows[0]!.access_policy.type;
-
-    const route = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'route Trusty Squire into this agent home',
-      })
-    ).json()) as { grantId: string };
-
-    // A Workspace admin is authority enough for every other kind, and not for
-    // this one: a host route is the owner's own machine.
-    const byAdmin = await operation(
-      'decideAgentGrant',
-      { grantId: route.grantId, decision: 'always' },
-      adminToken,
-    );
-    expect(byAdmin.status).toBe(403);
-    expect(await byAdmin.json()).toEqual({ error: "Only the agent's owner can change this" });
+      ).rows[0]!.access_policy.type,
+    ).toBe('everyone');
     expect(
       (
-        await database.query<{ status: string }>(
-          `SELECT status FROM agent_grants WHERE id::text=$1`,
-          [route.grantId],
+        await database.query<{ card: { grants: Array<{ status: string }> } }>(
+          `SELECT card FROM messages WHERE id=$1`,
+          [route.messageId],
         )
-      ).rows,
-    ).toEqual([{ status: 'pending' }]);
-    expect(await policy()).toBe('everyone');
-
-    // The owner accepts, and acceptance re-scopes the agent: one line in each
-    // active person's read-only @system DM, with no shared-Room fan-out.
-    const accepted = await operation('decideAgentGrant', {
-      grantId: route.grantId,
-      decision: 'always',
-    });
-    expect(accepted.status).toBe(200);
-    expect(await policy()).toBe('creator');
-    const rescoped = (await accessLines()).slice(before.length);
-    const humanRecipients = (
-      await database.query<{ identity_id: string }>(
-        `SELECT membership.identity_id FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id
-         WHERE membership.workspace_id=$1 AND membership.room_id IS NULL
-           AND membership.removed_at IS NULL AND identity.kind='human'
-           AND identity.hidden_from_roster=false ORDER BY membership.identity_id`,
-        [WORKSPACE],
-      )
-    ).rows.map((row) => row.identity_id);
-    expect(humanRecipients.length).toBeGreaterThan(0);
-    expect(rescoped).toHaveLength(humanRecipients.length);
+      ).rows[0]!.card.grants[0]!.status,
+    ).toBe('approved');
+    const otherWorkspace = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const otherRoom = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,visibility)
+       VALUES($1,$2,$3,'Other Room','invite-only')`,
+      [otherRoom, otherWorkspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [otherWorkspace, AGENT, otherRoom],
+    );
+    const outside = (await (
+      await daemonOperation('listAgentGrants', {
+        agentId: AGENT,
+        roomId: otherRoom,
+      })
+    ).json()) as { grants: Array<{ grantId: string }> };
+    expect(outside.grants.map((grant) => grant.grantId)).not.toContain(route.grantId);
     expect(
-      rescoped
-        .map((row) => row.direct_participants)
-        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-    ).toEqual(
-      humanRecipients
-        .map((recipient) => [SYSTEM_IDENTITY_ID, recipient].sort())
-        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-    );
-    expect(new Set(rescoped.map((row) => row.author_id))).toEqual(new Set([SYSTEM_IDENTITY_ID]));
-    expect(new Set(rescoped.map((row) => row.text))).toEqual(
-      new Set(['@owner changed who may address @bee · only @owner may ask now']),
-    );
+      (await operation('decideAgentGrant', { grantId: route.grantId, decision: 'once' })).status,
+    ).toBe(409);
 
-    // Already creator-scoped: a second route is accepted with no policy write
-    // and no second line.
     const second = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
         kind: 'mcp',
-        target: 'files-mcp',
-        reason: 'route the operator file server in',
+        target: 'squire',
+        reason: 'another exact request',
       })
     ).json()) as { grantId: string };
     expect(
-      (await operation('decideAgentGrant', { grantId: second.grantId, decision: 'always' })).status,
+      (await operation('decideAgentGrant', { grantId: second.grantId, decision: 'once' })).status,
     ).toBe(200);
-    expect(await policy()).toBe('creator');
-    expect(await accessLines()).toHaveLength(before.length + rescoped.length);
-
-    // Revoking is owner-only too.
-    const revokeByAdmin = await operation(
-      'revokeAgentGrant',
-      { grantId: second.grantId },
-      adminToken,
+    const liveBefore = (await (
+      await daemonOperation('listAgentGrants', {
+        agentId: AGENT,
+        roomId: ROOM,
+      })
+    ).json()) as { grants: Array<{ grantId: string }> };
+    expect(liveBefore.grants.map((grant) => grant.grantId)).toContain(second.grantId);
+    expect((await daemonOperation('consumeAgentGrant', { grantId: second.grantId })).status).toBe(
+      200,
     );
-    expect(revokeByAdmin.status).toBe(403);
+    expect((await daemonOperation('consumeAgentGrant', { grantId: second.grantId })).status).toBe(
+      404,
+    );
+    const liveAfter = (await (
+      await daemonOperation('listAgentGrants', {
+        agentId: AGENT,
+        roomId: ROOM,
+      })
+    ).json()) as { grants: Array<{ grantId: string }> };
+    expect(liveAfter.grants.map((grant) => grant.grantId)).not.toContain(second.grantId);
+    expect(
+      (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,
+    ).toBe(403);
     expect((await operation('revokeAgentGrant', { grantId: second.grantId })).status).toBe(200);
-
-    // An allowlist agent is refused with the reason, and the card stays pending.
-    await operation('updateAgentAccessPolicy', {
-      workspaceId: WORKSPACE,
-      agentId: AGENT,
-      policy: 'allowlist',
-      allow: [HUMAN],
-    });
-    const third = (await (
+    const denied = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
         kind: 'mcp',
         target: 'squire',
-        reason: 'route Trusty Squire into this agent home',
+        reason: 'request to decline',
       })
-    ).json()) as { grantId: string };
-    const refused = await operation('decideAgentGrant', {
-      grantId: third.grantId,
-      decision: 'always',
-    });
-    expect(refused.status).toBe(403);
-    expect(await refused.json()).toEqual({ error: MCP_GRANT_CREATOR_ONLY_MESSAGE });
+    ).json()) as { grantId: string; messageId: string };
+    expect(
+      (await operation('decideAgentGrant', { grantId: denied.grantId, decision: 'deny' })).status,
+    ).toBe(200);
     expect(
       (
-        await database.query<{ status: string }>(
-          `SELECT status FROM agent_grants WHERE id::text=$1`,
-          [third.grantId],
+        await database.query<{ card: { grants: Array<{ status: string }> } }>(
+          `SELECT card FROM messages WHERE id=$1`,
+          [denied.messageId],
         )
-      ).rows,
-    ).toEqual([{ status: 'pending' }]);
-    expect(await policy()).toBe('allowlist');
-    // NO is always the owner's to give, whatever the policy.
-    expect(
-      (await operation('decideAgentGrant', { grantId: third.grantId, decision: 'deny' })).status,
-    ).toBe(200);
+      ).rows[0]!.card.grants[0]!.status,
+    ).toBe('denied');
   });
 
   /**

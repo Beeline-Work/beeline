@@ -387,6 +387,9 @@ export type GrantRequestCardView = {
   readonly owner: RoomViewIdentity;
   readonly requester: RoomViewIdentity;
   readonly grants: readonly AgentGrantView[];
+  /** The message that caused a Squire route ask, when this card is in the owner's connector DM. */
+  readonly sourceRoomId?: string;
+  readonly sourceMessageId?: string;
 };
 
 /** One lettered question or Room poll. Options are plates, never ledger rows. */

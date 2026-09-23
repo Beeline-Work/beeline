@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 import {
+  claimGrantedHostRoutes,
   grantedMcpServerNames,
   grantedHostRoutesFromList,
   grantedHostRouteWires,
@@ -15,6 +16,24 @@ import {
 import { squireHostRewriteEnv } from './squire-host.js';
 
 describe('granted MCP host routes', () => {
+  it('claims a Once route for one activation and refuses an unclaimable route', async () => {
+    const claimed: string[] = [];
+    const names = await claimGrantedHostRoutes(
+      {
+        grants: [
+          { grantId: 'one', kind: 'mcp', target: 'squire', status: 'once' },
+          { grantId: 'bad', kind: 'mcp', target: 'browser', status: 'once' },
+          { grantId: 'standing', kind: 'mcp', target: 'files', status: 'approved' },
+        ],
+      },
+      async (grantId) => {
+        if (grantId === 'bad') throw new Error('already used');
+        claimed.push(grantId);
+      },
+    );
+    expect(names).toEqual(['squire', 'files']);
+    expect(claimed).toEqual(['one']);
+  });
   it('collects mcp grant targets and drops them from the host gate', () => {
     expect(
       grantedMcpServerNames([

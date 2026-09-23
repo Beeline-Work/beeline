@@ -317,6 +317,31 @@ describe('phone surface readers', () => {
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
 
+  it('preserves a Squire request source link through the Room message reader', () => {
+    const sourceMessageId = 'd'.repeat(64);
+    const grantRequest = {
+      agent,
+      owner: identity,
+      requester: identity,
+      grants: [grant],
+      sourceRoomId: roomId,
+      sourceMessageId,
+    };
+    const view = readRoomView({
+      ...currentRoom,
+      messages: [{ ...message, grantRequest }],
+    });
+    expect(view?.messages[0]?.grantRequest).toMatchObject({ sourceRoomId: roomId, sourceMessageId });
+
+    const invalid = readRoomViewMessage({
+      ...message,
+      grantRequest: { ...grantRequest, sourceMessageId: 'not-a-message-id' },
+    });
+    expect(invalid?.grantRequest).toBeDefined();
+    expect(invalid?.grantRequest?.sourceRoomId).toBeUndefined();
+    expect(invalid?.grantRequest?.sourceMessageId).toBeUndefined();
+  });
+
   it('keeps a native installed Corner App without a linked developer identity', () => {
     const app = {
       version: 1,

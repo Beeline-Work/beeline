@@ -60,7 +60,6 @@ import {
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
-  MCP_GRANT_CREATOR_ONLY_MESSAGE,
   type AgentGrantDecision,
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
@@ -4816,7 +4815,8 @@ export class PhoneService {
   }
   /**
    * The owner's tap on a grant card. Authorization is the yolo axis: the agent's
-   * owner or a Workspace manager, decided here and never on the phone. The
+   * owner or a Workspace manager (owner alone for host MCP), decided here and
+   * never on the phone. The
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
@@ -4828,9 +4828,22 @@ export class PhoneService {
     if (!decision) throw new Error('grant decision is invalid');
     const grant = await this.requireGrantAuthority(input.grantId, viewerId);
     if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
-    if (grant.kind === 'mcp' && decision !== 'deny') {
-      await this.assertMcpGrantAcceptable(grant.agent_id, grant.workspace_id, viewerId);
-    }
+    // Existing pending Squire cards may still live in the source Room. Find
+    // the card by its exact grant id so an upgrade settles either placement.
+    const cardRoomId =
+      (
+        await this.database.query<{ room_id: string }>(
+          `SELECT message.room_id FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         WHERE room.workspace_id=$2 AND message.card_type='grant-request'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(message.card->'grants') entry
+             WHERE entry->>'grantId'=$1
+           )
+         ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
+          [input.grantId, grant.workspace_id],
+        )
+      ).rows[0]?.room_id ?? grant.room_id;
     const status: AgentGrantStatus =
       decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
     const decider = await this.requireIdentity(viewerId);
@@ -4843,7 +4856,7 @@ export class PhoneService {
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
       await this.settleGrantCard(database, {
-        roomId: grant.room_id,
+        roomId: cardRoomId,
         grantId: input.grantId,
         status,
         decidedBy: decider,
@@ -4879,6 +4892,8 @@ export class PhoneService {
         card: { grantId: input.grantId, status },
       });
     });
+    if (cardRoomId !== grant.room_id)
+      this.live?.publish({ type: 'invalidate', roomId: cardRoomId, reason: 'grant' });
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
   /** Revoke is one tap on the profile; a command rule stops matching at once. */
@@ -4971,6 +4986,12 @@ export class PhoneService {
     if (!grant) throw new Error('grant not found');
     if (grant.kind === 'mcp') {
       if (grant.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+      const member = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL`,
+        [grant.workspace_id, viewerId],
+      );
+      if (!member.rowCount) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
       return grant;
     }
     if (grant.owner_id !== viewerId) {
@@ -4981,54 +5002,6 @@ export class PhoneService {
       if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
     }
     return grant;
-  }
-  /**
-   * Host MCP routes are creator-scoped. Accepting on an everyone agent
-   * re-scopes it to the owner; any other policy is refused with the reason.
-   */
-  private async assertMcpGrantAcceptable(agentId: string, workspaceId: string, viewerId: string) {
-    const row = (
-      await this.database.query<{
-        access_policy: unknown;
-        owner_id: string;
-        agent_name: string;
-        owner_handle: string | null;
-        viewer_handle: string | null;
-      }>(
-        `SELECT a.access_policy,a.owner_id,agent.name agent_name,owner.handle owner_handle,
-                viewer.handle viewer_handle
-         FROM agents a
-         JOIN identities agent ON agent.id=a.agent_id
-         JOIN identities owner ON owner.id=a.owner_id
-         JOIN identities viewer ON viewer.id=$2
-         WHERE a.agent_id=$1`,
-        [agentId, viewerId],
-      )
-    ).rows[0];
-    if (!row) throw new Error('agent not found');
-    const policy = parseAgentAccessPolicy(row.access_policy).type;
-    if (policy === 'creator') return;
-    if (policy !== 'everyone') throw new Error(MCP_GRANT_CREATOR_ONLY_MESSAGE);
-    await this.database.transaction(async (database) => {
-      const changed = await database.query(
-        `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
-         WHERE agent_id=$1 AND access_policy<>$2::jsonb`,
-        [agentId, JSON.stringify(agentAccessPolicyRecord('creator'))],
-      );
-      if (!changed.rowCount) return;
-      await workspaceSystemLine(database, {
-        workspaceId,
-        subject: {
-          kind: 'person',
-          id: viewerId,
-          name: personMention(row.viewer_handle) ?? 'Someone',
-        },
-        verb: 'changed who may address',
-        object: { text: row.agent_name, id: agentId },
-        consequence: `only ${personMention(row.owner_handle) ?? 'the owner'} may ask now`,
-        cardType: 'agent-access',
-      });
-    });
   }
   /**
    * Start the connector offer's full sign-in ceremony. Authorization is

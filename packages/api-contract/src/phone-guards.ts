@@ -479,7 +479,15 @@ function readGrantRequest(value: unknown): GrantRequestCardView | null {
   ) {
     return null;
   }
-  return { agent, owner, requester, grants };
+  return {
+    agent,
+    owner,
+    requester,
+    grants,
+    ...(uuid(item.sourceRoomId) && hex64(item.sourceMessageId)
+      ? { sourceRoomId: item.sourceRoomId, sourceMessageId: item.sourceMessageId }
+      : {}),
+  };
 }
 
 export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardView | null {

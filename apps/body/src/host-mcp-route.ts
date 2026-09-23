@@ -53,6 +53,35 @@ export function grantedHostRoutesFromList(result: unknown): string[] {
   );
 }
 
+/** A Once host route belongs to one activation. Claim it before mounting it,
+ * so a later session cannot inherit the same approval. */
+export async function claimGrantedHostRoutes(
+  result: unknown,
+  consumeOnce: (grantId: string) => Promise<unknown>,
+): Promise<string[]> {
+  if (!result || typeof result !== 'object' || !('grants' in result)) return [];
+  const grants = (result as { grants?: unknown }).grants;
+  if (!Array.isArray(grants)) return [];
+  const mounted: Array<{ kind: string; target: string }> = [];
+  for (const entry of grants) {
+    if (!entry || typeof entry !== 'object') continue;
+    const grant = entry as Record<string, unknown>;
+    if (grant.kind !== 'mcp' || typeof grant.target !== 'string') continue;
+    if (grant.status === 'once') {
+      if (typeof grant.grantId !== 'string' || !grant.grantId) continue;
+      try {
+        await consumeOnce(grant.grantId);
+      } catch {
+        continue;
+      }
+    } else if (grant.status !== 'approved') {
+      continue;
+    }
+    mounted.push({ kind: 'mcp', target: grant.target });
+  }
+  return grantedMcpServerNames(mounted);
+}
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)

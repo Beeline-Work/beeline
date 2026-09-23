@@ -26,14 +26,14 @@
  *
  * Two guards keep a fresh connect attempt working (captain, 2026-09-17):
  *
- * - VERSION: the connect package spec is pinned to the release whose `--json`
- *   report this reader consumes (`SQUIRE_CONNECT_VERSION`; `@latest` still
- *   prints prose). Before connect runs, the version npx actually resolves is
- *   verified against that spec on the registry (`npm view`). A stale local
- *   copy (an npx cache or local node_modules shadow serving, say, an older
- *   RC) is re-resolved with `--prefer-online`, and if the cache still refuses
- *   to move, connect runs the exact release resolved at runtime — never a
- *   stale copy.
+ * - VERSION: the connect package spec tracks the `latest` dist-tag
+ *   (`SQUIRE_CONNECT_VERSION`), which carries the machine-readable `--json`
+ *   report this reader consumes (1.1.16 and later). Before connect runs, the
+ *   version npx actually resolves is verified against that spec on the
+ *   registry (`npm view`). A stale local copy (an npx cache or local
+ *   node_modules shadow serving an older release or RC) is re-resolved with
+ *   `--prefer-online`, and if the cache still refuses to move, connect runs
+ *   the exact release resolved at runtime — never a stale copy.
  *
  * - SESSION: two claims, one authority. The spawned connect process owns the
  *   helper's in-memory claim (`activeConnectSession`). Squire itself records
@@ -74,17 +74,19 @@ export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
-/** The one Squire connect package, pinned to the release that carries the
+/** The one Squire connect package, tracked at the release that carries the
  *  machine-readable `--json` connect report the helper reads. */
 export const SQUIRE_MCP_NAME = '@trusty-squire/mcp';
 
 /**
- * The Squire release whose `connect --json` writes the typed report this
- * helper consumes. Pinned on purpose: `@latest` still resolves a release
- * that prints prose, and this reader no longer reads prose. A stale npx
- * cache is still caught by `resolveSquireConnectSpec` before connect runs.
+ * The npm dist-tag the Squire connect package tracks. `latest` carries the
+ * typed `connect --json` report this helper consumes (1.1.16 and later), so
+ * a Squire promote reaches the fleet with no Beeline change. A stale npx
+ * cache is still caught by `resolveSquireConnectSpec` before connect runs:
+ * the version npx actually resolves is re-checked against this dist-tag on
+ * the registry.
  */
-export const SQUIRE_CONNECT_VERSION = '1.1.16-rc.4';
+export const SQUIRE_CONNECT_VERSION = 'latest';
 export const SQUIRE_CONNECT_PACKAGE = `${SQUIRE_MCP_NAME}@${SQUIRE_CONNECT_VERSION}`;
 
 /**
@@ -730,8 +732,8 @@ export async function currentSquireRelease(run: ShellRunner): Promise<string | u
 }
 
 /**
- * What `npx` must be told to run the pinned Squire release whose `--json`
- * connect report this helper reads. The plain spec is used when the resolved
+ * What `npx` must be told to run the Squire release whose `--json` connect
+ * report this helper reads. The plain spec is used when the resolved
  * version already matches the registry (or the registry could not be asked);
  * a stale npx copy is re-resolved with `--prefer-online`.
  */

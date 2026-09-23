@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
+  Platform,
   type AppStateStatus,
   Pressable,
   type PressableProps,
@@ -760,7 +761,10 @@ export function NewMessageMaterialize({
   // navigating back into the Room) is closed by the session reveal registry.
   const animateRef = useRef<boolean | null>(null);
   if (animateRef.current === null) {
-    animateRef.current = enabled && (messageId === undefined || !hasMessageRevealed(messageId));
+    // Reanimated's web entering layout can leave a message wrapper absolutely
+    // positioned after reconciliation, collapsing its transcript row.
+    animateRef.current =
+      Platform.OS !== 'web' && enabled && (messageId === undefined || !hasMessageRevealed(messageId));
   }
   const animate = animateRef.current;
   // Mark after commit, not during render: a render that React discards must

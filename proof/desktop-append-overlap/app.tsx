@@ -5,6 +5,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { shouldFollowDesktopTail, useScrollFollowOnArrival } from '../../apps/mobile/sources/buzz/room-scroll-follow';
 import { ArtifactCard } from '../../apps/mobile/sources/components/buzz/ArtifactCard';
 import { AttachmentCard } from '@proof/photo-card';
+import { NewMessageMaterialize } from '../../apps/mobile/sources/components/buzz/MonoHull';
 
 // Deterministic variable-height rows, like real ledger entries.
 const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42, 66];
@@ -40,25 +41,27 @@ function Row({ msg }: { msg: Msg }) {
     return () => clearTimeout(timer);
   }, [msg.kind]);
   return (
-    <View
-      style={{
-        minHeight: msg.h,
-        paddingVertical: 6,
-        marginBottom: 9,
-        borderWidth: 1,
-        borderColor: '#3a3a44',
-        backgroundColor: '#16161c',
-      }}
-    >
-      <Text
-        style={{ color: '#d7d7df', fontSize: 13 }}
-      >{`message ${msg.id} · height ${msg.h}`}</Text>
-      {msg.kind === 'photo' ? (
-        <AttachmentCard attachment={{ ...ARTIFACT_ATTACHMENT, thumbnailUrl: imageReady ? IMAGE_URI : undefined }} isDesktop />
-      ) : msg.kind === 'artifact' ? (
-        <ArtifactCard attachment={ARTIFACT_ATTACHMENT as any} isDesktop />
-      ) : null}
-    </View>
+    <NewMessageMaterialize enabled={msg.id.startsWith('sent')} messageId={msg.id}>
+      <View
+        style={{
+          minHeight: msg.h,
+          paddingVertical: 6,
+          marginBottom: 9,
+          borderWidth: 1,
+          borderColor: '#3a3a44',
+          backgroundColor: '#16161c',
+        }}
+      >
+        <Text
+          style={{ color: '#d7d7df', fontSize: 13 }}
+        >{`message ${msg.id} · height ${msg.h}`}</Text>
+        {msg.kind === 'photo' ? (
+          <AttachmentCard attachment={{ ...ARTIFACT_ATTACHMENT, thumbnailUrl: imageReady ? IMAGE_URI : undefined }} isDesktop />
+        ) : msg.kind === 'artifact' ? (
+          <ArtifactCard attachment={ARTIFACT_ATTACHMENT as any} isDesktop />
+        ) : null}
+      </View>
+    </NewMessageMaterialize>
   );
 }
 
@@ -195,6 +198,11 @@ function App() {
       });
       let overlaps = 0;
       let minimumRowGap = Infinity;
+      const collapsedRows = rects.filter((rect) => rect.height <= 0.5).length;
+      const minimumRowHeight = rects.reduce((minimum, rect) => Math.min(minimum, rect.height), Infinity);
+      const absoluteRowWrappers = rows.filter((row) =>
+        row.firstElementChild && getComputedStyle(row.firstElementChild).position === 'absolute',
+      ).length;
       for (let i = 1; i < rects.length; i++) {
         const gap = rects[i].top - rects[i - 1].bottom;
         minimumRowGap = Math.min(minimumRowGap, gap);
@@ -215,6 +223,9 @@ function App() {
         tailGap: tailGap === null ? null : Math.round(tailGap),
         newestRowVisible,
         overlaps,
+        collapsedRows,
+        minimumRowHeight: Number.isFinite(minimumRowHeight) ? minimumRowHeight : null,
+        absoluteRowWrappers,
         imageBounds,
         minimumRowGap: Number.isFinite(minimumRowGap) ? minimumRowGap : null,
         newestRowBounds: rects.length

@@ -44,10 +44,13 @@ try {
         newestRowBounds: bounds.newestRowBounds,
         minimumRowGap: bounds.minimumRowGap,
         overlaps: bounds.overlaps,
+        collapsedRows: bounds.collapsedRows,
+        absoluteRowWrappers: bounds.absoluteRowWrappers,
         imageBounds: bounds.imageBounds,
         newestRowVisible: bounds.newestRowVisible,
       }));
-      if (bounds.overlaps || bounds.minimumRowGap < -0.5 ||
+      if (bounds.overlaps || bounds.collapsedRows || bounds.absoluteRowWrappers ||
+          bounds.minimumRowGap < -0.5 ||
           bounds.imageBounds.some((image) => image.outsideRow) ||
           (phase === 'after-load' && bounds.imageBounds.some((image) => !image.loaded)) ||
           !bounds.newestRowVisible || bounds.tailGap > 1) process.exitCode = 1;
@@ -72,6 +75,8 @@ try {
       newestRowBounds: bounds.newestRowBounds,
       minimumRowGap: bounds.minimumRowGap,
       overlaps: bounds.overlaps,
+      collapsedRows: bounds.collapsedRows,
+      absoluteRowWrappers: bounds.absoluteRowWrappers,
       imageCount: bounds.imageBounds.length,
       unloadedImages: bounds.imageBounds.filter((image) => !image.loaded).length,
       imagesOutsideRows: bounds.imageBounds.filter((image) => image.outsideRow).length,
@@ -81,11 +86,54 @@ try {
       scrollHeight: bounds.scrollHeight,
       gapLog: bounds.gapLog,
     }));
-    if (bounds.overlaps || bounds.minimumRowGap < -0.5 ||
+    if (bounds.overlaps || bounds.collapsedRows || bounds.absoluteRowWrappers ||
+        bounds.minimumRowGap < -0.5 ||
         bounds.imageBounds.some((image) => image.outsideRow) ||
         (phase === 'burst-after-load' && bounds.imageBounds.some((image) => !image.loaded)) ||
         !bounds.newestRowVisible || bounds.tailGap > 1) process.exitCode = 1;
   }
+  await page.waitForTimeout(2300);
+  const settledPicture = await page.evaluate(() => {
+    window.__measure('picture-and-text-settled');
+    return JSON.parse(document.getElementById('log').textContent.trim().split('\n').at(-1));
+  });
+  console.log(JSON.stringify({
+    phase: 'picture-and-text-settled',
+    rows: settledPicture.rows,
+    collapsedRows: settledPicture.collapsedRows,
+    minimumRowHeight: settledPicture.minimumRowHeight,
+    minimumRowGap: settledPicture.minimumRowGap,
+    overlaps: settledPicture.overlaps,
+    absoluteRowWrappers: settledPicture.absoluteRowWrappers,
+    imagesOutsideRows: settledPicture.imageBounds.filter((image) => image.outsideRow).length,
+  }));
+  if (settledPicture.collapsedRows || settledPicture.absoluteRowWrappers ||
+      settledPicture.overlaps || settledPicture.minimumRowGap < -0.5 ||
+      settledPicture.imageBounds.some((image) => image.outsideRow)) process.exitCode = 1;
+
+  const textUrl = new URL(proofUrl);
+  textUrl.searchParams.set('count', '0');
+  if (process.env.NO_SEND_COMMIT) textUrl.searchParams.set('no-send-commit', '');
+  await page.goto(textUrl.href);
+  await page.waitForFunction(() => document.getElementById('status')?.textContent === 'ready');
+  for (let send = 0; send < 3; send++) await page.evaluate(() => window.__sendOne());
+  await page.waitForTimeout(2300);
+  const settledText = await page.evaluate(() => {
+    window.__measure('text-only-settled');
+    return JSON.parse(document.getElementById('log').textContent.trim().split('\n').at(-1));
+  });
+  console.log(JSON.stringify({
+    phase: 'text-only-settled',
+    rows: settledText.rows,
+    collapsedRows: settledText.collapsedRows,
+    minimumRowHeight: settledText.minimumRowHeight,
+    minimumRowGap: settledText.minimumRowGap,
+    overlaps: settledText.overlaps,
+    absoluteRowWrappers: settledText.absoluteRowWrappers,
+  }));
+  if (settledText.rows !== 3 || settledText.collapsedRows ||
+      settledText.absoluteRowWrappers || settledText.overlaps ||
+      settledText.minimumRowGap < -0.5) process.exitCode = 1;
   await page.close();
 } finally {
   await browser.close();

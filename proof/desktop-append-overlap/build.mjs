@@ -19,7 +19,12 @@ const artifactServiceStubs = new Set([
 await build({
   entryPoints: [path.join(here, 'app.tsx')],
   bundle: true,
-  define: { 'process.env.NODE_ENV': '"development"' },
+  define: {
+    'process.env.NODE_ENV': '"development"',
+    'process.env.JEST_WORKER_ID': 'undefined',
+    __DEV__: 'true',
+    global: 'globalThis',
+  },
   outfile: path.join(here, 'bundle.js'),
   platform: 'browser',
   conditions: ['browser', 'import', 'default'],
@@ -40,6 +45,22 @@ await build({
   jsx: 'automatic',
   sourcemap: false,
   plugins: [
+    {
+      name: 'prior-web-entrance',
+      setup(buildApi) {
+        if (!process.env.PROOF_OLD_WEB_ENTRANCE) return;
+        buildApi.onLoad({ filter: /MonoHull\.tsx$/ }, async (args) => {
+          const source = await readFile(args.path, 'utf8');
+          const current = "Platform.OS !== 'web' && enabled &&";
+          if (!source.includes(current)) throw new Error('Web entrance guard changed');
+          return {
+            contents: source.replace(current, 'enabled &&'),
+            loader: 'tsx',
+            resolveDir: path.dirname(args.path),
+          };
+        });
+      },
+    },
     {
       name: 'production-photo-card',
       setup(buildApi) {

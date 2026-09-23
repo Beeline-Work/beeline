@@ -301,6 +301,43 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual([]);
   });
 
+  it('CORNER-TAIL-1: a corner at the tail has no chevron or 9+ badge, even with a stale viewability report', () => {
+    const corner: HarnessProps = {
+      ...AT_TAIL,
+      enabled: false,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+    };
+    const renderer = mount(corner);
+    const arrived = [
+      ...SEED,
+      ...Array.from({ length: 12 }, (_, index) => row(`arrival-${index}`, index + 5)),
+    ];
+    // The list still reports old rows while its inverted tail has settled at
+    // offset zero. The reader sees the newest row, so no control belongs here.
+    report([SEED[1]!, SEED[2]!]);
+    update(renderer, {
+      ...corner,
+      messages: arrived,
+      arrivingIds: new Set(arrived.slice(5).map((message) => message.id)),
+    });
+    expect(onScreen(renderer)).toBe(
+      'unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
+    );
+
+    // Scrolling into history exposes only the bare jump control; returning
+    // to the visible tail removes it again.
+    update(renderer, { ...corner, messages: arrived, pinnedToTail: false });
+    report([SEED[1]!, SEED[2]!]);
+    expect(onScreen(renderer)).toBe(
+      'unread glyph: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed',
+    );
+    report([arrived.at(-1)!]);
+    expect(onScreen(renderer)).toBe(
+      'unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
+    );
+  });
+
   it('UDIV-04: keeps the opening glyph anchored while later arrivals use the jump control', () => {
     const open: HarnessProps = {
       ...AT_TAIL,

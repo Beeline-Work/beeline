@@ -21,8 +21,8 @@ import {
  *   start of has been read, and a landmark that outlives what it marks is the
  *   line readers found still sitting there after catching up;
  * - the jump disc says the newest message is off screen. It is a way back to
- *   newest and nothing else, so it shows on viewport visibility alone,
- *   whether or not anything new is waiting;
+ *   newest and nothing else, so Rooms show it from viewport visibility;
+ *   corners also hide it at the pinned tail when viewability is stale;
  * - the badge on that disc counts the unread run, and reaching the newest row
  *   clears it exactly as a tap on the disc would;
  * - catch-up eligibility, which the disc carries as a long-press door.
@@ -48,7 +48,7 @@ export function useNewMessageControl({
   newestMessageId: string | null;
   firstUnreadMessageId: string | null;
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
-  /** Tail distance, which decides auto-follow and nothing this control shows. */
+  /** Tail distance also suppresses a corner's chevron at its visible tail. */
   isPinnedToTail: () => boolean;
   /** Room unread state is disabled in corners; only the tail chevron remains. */
   enabled?: boolean;
@@ -162,11 +162,16 @@ export function useNewMessageControl({
   return {
     dividerMessageId: enabled && !boundaryRead ? firstUnreadMessageId : null,
     queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
-    discVisible: newestJumpDiscVisible({
-      newestMessageId,
-      newestMessageVisible,
-      hasObservedVisibility,
-    }),
+    discVisible:
+      newestJumpDiscVisible({
+        newestMessageId,
+        newestMessageVisible,
+        hasObservedVisibility,
+      }) &&
+      // An inverted corner list can retain an older viewability report while
+      // opening at offset zero. Tail position is decisive for its bare
+      // chevron; corners have no unread state to reconcile with that report.
+      (enabled || !isPinnedToTailRef.current()),
     badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
     catchUpVisible:
       enabled && !boundaryRead && catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),

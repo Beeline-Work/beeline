@@ -947,7 +947,9 @@ describe('corner close-request polling cadence', () => {
       .filter((write) => write.name === 'postAgentDraft')
       .map((write) => write.input.text);
     expect(draftTexts).toContain('Inspecting');
-    expect(draftTexts.at(-1)).toBe('I inspected the code.\n\nThe fix is ready.');
+    // The lane ends on the unsaved tail: `I inspected the code.` is the Update
+    // row asserted above, so the draft gives it up and shows the rest alone.
+    expect(draftTexts.at(-1)).toBe('The fix is ready.');
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
       expect(draft.input.turnId).toBe('human-msg');
     }
@@ -1231,6 +1233,126 @@ describe('corner close-request polling cadence', () => {
         }),
       }),
     ]);
+  });
+
+  it('drafts only the unsaved tail and settles the remainder past the saved narration', async () => {
+    // Reproduction C100-OFFSET. The turn speaks, a tool settles that prose
+    // into the work ledger, then the SAME assistant run keeps writing. Without
+    // a persisted stream offset the draft keeps showing the saved sentence and
+    // the durable reply carries it a second time, directly under the ledger
+    // row the reader is already looking at.
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    const FIRST = 'I read the ledger.';
+    const SECOND = 'Every row lines up.';
+    const CLOSING = 'Nothing needs changing.';
+    const read = (title: string, path: string) => ({
+      kind: 'read' as const,
+      title,
+      rawInput: { path },
+      status: 'completed' as const,
+    });
+    const first = read('Read package.json', 'package.json');
+    const second = read('Read turbo.json', 'turbo.json');
+    /** Wait for the activity write that moves the offset to actually land. */
+    const saved = async (count: number) => {
+      for (let tick = 0; tick < 200; tick += 1) {
+        const landed = writes.filter((write) => write.name === 'postAgentActivity').length;
+        if (landed >= count) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.(FIRST, FIRST, FIRST);
+        toolActivity?.([first]);
+        // A second call is what releases the first one's narration to the
+        // ledger; until then the loop holds it back for the final-reply dedupe.
+        draft?.(SECOND, `${FIRST}\n\n${SECOND}`, SECOND);
+        toolActivity?.([first, second]);
+        await saved(1);
+        // The run that will BE the answer carries on past the sentence the
+        // ledger just took from it — the seam the retired offset mangled.
+        draft?.(` ${CLOSING}`, `${FIRST}\n\n${SECOND} ${CLOSING}`, `${SECOND} ${CLOSING}`);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: `${SECOND} ${CLOSING}`,
+          toolCalls: [first, second],
+        };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    const drafts = writes
+      .filter((write) => write.name === 'postAgentDraft')
+      .map((write) => write.input.text);
+    const ledger = writes
+      .filter((write) => write.name === 'postAgentActivity')
+      .flatMap((write) =>
+        (write.input.activity as Array<{ kind: string; text?: string }>)
+          .filter((activity) => activity.kind === 'output')
+          .map((activity) => activity.text),
+      );
+    const replies = writes
+      .filter((write) => write.name === 'postRoomMessage')
+      .map((write) => write.input.text);
+
+    expect(ledger).toEqual([FIRST, SECOND]);
+    // What the reader watches, frame by frame: the stream grows, and each time
+    // a sentence reaches the ledger the draft gives it up on the spot rather
+    // than waiting for the next delta to stop repeating it.
+    expect(drafts).toEqual([
+      FIRST, //                   nothing saved yet
+      `${FIRST}\n\n${SECOND}`, // still nothing saved
+      SECOND, //                  FIRST reached the ledger
+      `${SECOND} ${CLOSING}`, //  the closing run carries on
+      CLOSING, //                 SECOND reached the ledger
+    ]);
+    // No draft published after a save repeats what that save took.
+    expect(drafts.slice(drafts.indexOf(SECOND)).join('\n')).not.toContain(FIRST);
+    // And the reply is the remainder: the offset reached INTO the closing run,
+    // so the sentence the ledger took from it is gone and the rest survives.
+    expect(replies).toEqual([CLOSING]);
+    // The whole point: every sentence the turn wrote, in exactly one place.
+    for (const text of [FIRST, SECOND, CLOSING]) {
+      expect([...ledger, ...replies].filter((row) => row?.includes(text))).toHaveLength(1);
+    }
   });
 
   it('does not publish an unfinished corner tool as successful activity', async () => {

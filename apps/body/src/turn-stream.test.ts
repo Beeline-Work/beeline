@@ -315,6 +315,169 @@ describe('agent turn stream', () => {
   });
 });
 
+describe('persisted stream offset', () => {
+  /** Stream `PROSE_TOOL_PROSE` into a lane and hand back what it published. */
+  const streamed = async (mark?: (stream: AgentTurnStream) => void) => {
+    const { api, writes } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('I inspected', 'I inspected', 'I inspected');
+    await settled();
+    stream.onChunk(' the code.', 'I inspected the code.', 'I inspected the code.');
+    await settled();
+    mark?.(stream);
+    stream.onChunk('\n\nThe fix', PROSE_TOOL_PROSE[2]!, 'The fix');
+    await settled();
+    stream.onChunk(' is ready.', PROSE_TOOL_PROSE[3]!, 'The fix is ready.');
+    await settled();
+    return { stream, texts: writes.map((write) => write.input.text) };
+  };
+
+  it('drafts the tail alone once a corner says the head is saved', async () => {
+    const { stream, texts } = await streamed((lane) => lane.markPersisted('I inspected the code.'));
+    // The reader keeps watching the answer grow, but the sentence the work
+    // ledger already carries above it is not repeated inside the draft.
+    expect(texts).toEqual(['I inspected', 'I inspected the code.', 'The fix', 'The fix is ready.']);
+    expect(stream.unsavedTail).toBe('\n\nThe fix is ready.');
+    expect(stream.streamedText).toBe(PROSE_TOOL_PROSE.at(-1));
+  });
+
+  it('drafts the stream entire while nothing has been saved', async () => {
+    // A Room never marks an offset, so its lane is the one it always was.
+    const { stream, texts } = await streamed();
+    expect(texts).toEqual(PROSE_TOOL_PROSE);
+    expect(stream.persistedOffset).toBe('');
+    expect(stream.unsavedTail).toBe(PROSE_TOOL_PROSE.at(-1));
+  });
+
+  it('settles the closing run WHOLE when the offset stops before it', () => {
+    // The retired corner offset's exact failure: it counted the joined stream
+    // and cut `PromptResult.agentText`, which is the last run alone, so this
+    // turn sliced past the end of a shorter string and lost its closing
+    // message. An offset reaching only to the end of the narration ends before
+    // the closing run begins, so there is nothing of it to give up.
+    const { api } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', PROSE_TOOL_PROSE.at(-1)!, 'The fix is ready.');
+    stream.markPersisted('I inspected the code.');
+    expect(stream.remainderOf('The fix is ready.')).toBe('The fix is ready.');
+  });
+
+  it('settles only the remainder when the offset reaches into the closing run', () => {
+    // A tool observed mid-run saves the head of the very run that becomes the
+    // answer. Only that head is given up; the rest is the reply.
+    const { api } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    const run = 'Checking the ledger. All rows agree.';
+    stream.onChunk('', `A note.\n\n${run}`, run);
+    stream.markPersisted('A note.\n\nChecking the ledger.');
+    expect(stream.remainderOf(run)).toBe(' All rows agree.');
+    expect(durableReplyText(stream.remainderOf(run))).toBe('All rows agree.');
+  });
+
+  it('cuts nothing when the stream no longer agrees with what was saved', () => {
+    const { api } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'A note.\n\nThe fix is ready.', 'The fix is ready.');
+    // A snapshot that is not a prefix of this stream describes a run that no
+    // longer exists; an offset that cannot be located cuts nothing at all.
+    stream.markPersisted('Some other turn entirely.');
+    expect(stream.persistedOffset).toBe('');
+    expect(stream.remainderOf('The fix is ready.')).toBe('The fix is ready.');
+    // Nor can a run the lane cannot find inside its stream be cut.
+    stream.markPersisted('A note.');
+    expect(stream.remainderOf('a run this stream never carried')).toBe(
+      'a run this stream never carried',
+    );
+  });
+
+  it('never lets the offset go backwards, and forgets it on a retry', async () => {
+    const { api } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'A note.\n\nAnd another.', 'And another.');
+    stream.markPersisted('A note.\n\nAnd another.');
+    // A write landing out of order restates an older offset; the newer one
+    // already covers it, and moving back would redraft saved text.
+    stream.markPersisted('A note.');
+    expect(stream.persistedOffset).toBe('A note.\n\nAnd another.');
+    stream.beginRun();
+    expect(stream.persistedOffset).toBe('');
+    // A late activity write from the abandoned run cannot mark the new one.
+    stream.onChunk('', 'Second run.', 'Second run.');
+    stream.markPersisted('A note.');
+    expect(stream.persistedOffset).toBe('');
+    await settled();
+  });
+
+  it('rewrites the snapshot waiting on the wire when the offset advances', async () => {
+    // A draft queued behind a slow write was measured against the old offset.
+    // Publishing it unchanged would put the saved narration back on the page
+    // AFTER the save landed — the one moment this lane must be right.
+    const { api, release, texts, held } = gatedRecorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'Saved narration.', 'Saved narration.');
+    expect(held()).toBe(1);
+    stream.onChunk('', 'Saved narration.\n\nUnsaved tail.', 'Saved narration.\n\nUnsaved tail.');
+    // The ledger takes the first sentence while that second snapshot is still
+    // queued behind the held write.
+    stream.markPersisted('Saved narration.');
+    await release();
+    expect(texts()).toEqual(['Saved narration.', 'Unsaved tail.']);
+    await release();
+    expect(held()).toBe(0);
+  });
+
+  it('drops the queued snapshot when the save covered all of it', async () => {
+    // Nothing of the stream is unsaved yet, so there is no tail to publish and
+    // the lane says nothing rather than repeating the ledger.
+    const { api, release, texts, held } = gatedRecorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'Saved narration.', 'Saved narration.');
+    stream.onChunk('', 'Saved narration. All of it.', 'Saved narration. All of it.');
+    stream.markPersisted('Saved narration. All of it.');
+    await release();
+    expect(texts()).toEqual(['Saved narration.']);
+    expect(held()).toBe(0);
+    // The lane is still open: the next delta publishes the tail past the save.
+    stream.onChunk(
+      '',
+      'Saved narration. All of it. And more.',
+      'Saved narration. All of it. And more.',
+    );
+    await settled();
+    expect(texts()).toEqual(['Saved narration.', 'And more.']);
+  });
+
+  it('publishes the corrected tail at once when the wire is idle', async () => {
+    const { api, writes } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'Saved narration.', 'Saved narration.');
+    await settled();
+    stream.onChunk('', 'Saved narration.\n\nUnsaved tail.', 'Saved narration.\n\nUnsaved tail.');
+    await settled();
+    // A tool can run for minutes after its narration is saved. The reader is
+    // not made to wait for the next delta to stop seeing the duplicate.
+    stream.markPersisted('Saved narration.');
+    await settled();
+    expect(writes.map((write) => write.input.text)).toEqual([
+      'Saved narration.',
+      'Saved narration.\n\nUnsaved tail.',
+      'Unsaved tail.',
+    ]);
+  });
+
+  it('queues nothing on a lane the answer already closed', async () => {
+    // A save landing after `close()` must not reopen the lane ahead of the
+    // durable reply, however far the offset moved.
+    const { api, writes } = recorder();
+    const stream = streamFor(api, 'corner-id', 'corner corner-id');
+    stream.onChunk('', 'Saved narration.\n\nUnsaved tail.', 'Unsaved tail.');
+    stream.close();
+    stream.markPersisted('Saved narration.');
+    await settled();
+    expect(writes.map((write) => write.name)).toEqual(['postAgentDraft']);
+  });
+});
+
 describe('Room and corner live/final streaming parity (C100)', () => {
   it('keeps the shared lane to drafts plus one final on both surfaces', async () => {
     const agentId = 'a'.repeat(64);

@@ -12,12 +12,13 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'no
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 import {
   ensureSquireHostDir,
   SQUIRE_BROKER_FLAG,
+  SQUIRE_BROKER_ARGS,
   SQUIRE_BROKER_UNAVAILABLE,
   SQUIRE_SERVER_ARGS,
   squireBrokerSocketReady,
@@ -238,7 +239,10 @@ describe('host broker unit', () => {
         value.replace('/host-home', '%h'),
       ]),
     );
-    expect(environment).toEqual(layout);
+    expect(environment).toEqual({
+      ...layout,
+      PATH: `${dirname(process.execPath)}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+    });
     expect(environment.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
       squireHostPaths('/host-home').brokerSocket.replace('/host-home', '%h'),
     );
@@ -266,6 +270,14 @@ describe('host broker unit', () => {
       args: [...SQUIRE_SERVER_ARGS],
       pathPrefix: join(dir, 'missing'),
     });
+  });
+
+  it('pins the installation Node and selects the durable broker command', () => {
+    expect(trustySquireBrokerUnit('/opt/node24/bin/node')).toContain(
+      'Environment=PATH=/opt/node24/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin',
+    );
+    expect(SQUIRE_BROKER_ARGS.at(-1)).toBe('broker');
+    expect(SQUIRE_SERVER_ARGS.at(-1)).toBe('server');
   });
 });
 

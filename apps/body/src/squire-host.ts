@@ -22,6 +22,7 @@ export const SQUIRE_FACADE_FLAG = '--squire-facade';
 /** Hidden CLI flag so the host user unit can elect through the installed launcher. */
 export const SQUIRE_BROKER_FLAG = '--squire-broker';
 export const SQUIRE_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
+export const SQUIRE_BROKER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'broker'] as const;
 
 export type SquireHostPaths = {
   readonly dir: string;
@@ -120,7 +121,7 @@ export function squireServerCommand(nodeExecPath = process.execPath): {
 }
 
 /** The host elector: one user unit, no PrivateTmp, same socket every façade sees. */
-export function trustySquireBrokerUnit(): string {
+export function trustySquireBrokerUnit(nodeExecPath = process.execPath): string {
   return `[Unit]
 Description=Trusty Squire host broker
 After=network-online.target
@@ -129,6 +130,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h
+Environment=PATH=${dirname(nodeExecPath)}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=TRUSTY_SQUIRE_PROFILE_DIR=%h/.trusty-squire/chrome-profile
 Environment=XDG_CONFIG_HOME=%h/.config
 Environment=TRUSTY_SQUIRE_BROKER_SOCKET=%h/.trusty-squire/broker.sock
@@ -144,10 +146,10 @@ WantedBy=default.target
 `;
 }
 
-function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean): void {
+function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean, args: readonly string[]): void {
   const launch = locateNpx
-    ? squireServerCommand()
-    : { command: 'npx', args: [...SQUIRE_SERVER_ARGS], pathPrefix: '' };
+    ? { ...squireServerCommand(), args: [...args] }
+    : { command: 'npx', args: [...args], pathPrefix: '' };
   const path = [launch.pathPrefix, env.PATH || '/usr/bin:/bin'].filter(Boolean).join(':');
   const child = spawn(launch.command, launch.args, {
     env: { ...env, PATH: path },
@@ -166,6 +168,7 @@ export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
   spawnSquireServer(
     { ...env, ...squireHostRewriteEnv(home), TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket },
     true,
+    SQUIRE_BROKER_ARGS,
   );
 }
 
@@ -177,5 +180,5 @@ export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
     process.exitCode = 1;
     return;
   }
-  spawnSquireServer({ ...env, TRUSTY_SQUIRE_BROKER_SOCKET: socket }, false);
+  spawnSquireServer({ ...env, TRUSTY_SQUIRE_BROKER_SOCKET: socket }, false, SQUIRE_SERVER_ARGS);
 }

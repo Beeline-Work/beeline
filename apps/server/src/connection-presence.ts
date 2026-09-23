@@ -8,6 +8,7 @@ import { noteFirstSilence } from './turn-silence-notice.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
+export const PRESENCE_EVIDENCE_MIN_INTERVAL_MS = 30_000;
 
 interface PresenceMetadata {
   releaseVersion?: string;
@@ -29,15 +30,21 @@ interface Delivery {
   system_kind: string | null;
 }
 
+interface EvidenceRefresh {
+  roomId: string | undefined;
+  pending: boolean;
+  worker: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  resume?: () => void;
+}
+
 /** Presence is the helper's newest authenticated evidence. Mention deadlines may
  * demote only the exact evidence version they observed when they were armed.
  */
 export class ConnectionPresence {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
-  readonly #evidence = new Map<
-    string,
-    { roomId: string | undefined; pending: boolean; worker: Promise<void> }
-  >();
+  readonly #evidence = new Map<string, EvidenceRefresh>();
+  readonly #evidencePersistedAt = new Map<string, number>();
   readonly #authenticatedAt = new Map<string, number>();
   /** Last helper-process announce; a newer value than the stalled receipt means systemd already revived it. */
   readonly #announcedAt = new Map<string, number>();
@@ -52,6 +59,10 @@ export class ConnectionPresence {
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
     private readonly pickupWindowMs = DELIVERY_PICKUP_WINDOW_MS,
+    private readonly evidenceMinimumIntervalMs = Math.min(
+      PRESENCE_EVIDENCE_MIN_INTERVAL_MS,
+      Math.floor(pickupWindowMs / 3),
+    ),
   ) {
     this.#releaseResync = live.subscribeResync(() => {
       void this.recoverWorkingStalls().catch(this.report);
@@ -108,19 +119,50 @@ export class ConnectionPresence {
     // a deadline cannot demote the agent while its coalesced durable refresh
     // is waiting for the database.
     this.#authenticatedAt.set(agentId, Date.now());
+    // A busy helper can make several authenticated calls per second. Presence
+    // needs the newest proof before a 90-second delivery deadline, not one WAL
+    // update per call. Keep the first refresh immediate and retain one trailing
+    // refresh for evidence that arrives while it is in flight or cooling down.
     const active = this.#evidence.get(agentId);
     if (active) {
       active.roomId = roomId ?? active.roomId;
       active.pending = true;
       return active.worker;
     }
-    const state = { roomId, pending: true, worker: Promise.resolve() };
+    const state: EvidenceRefresh = { roomId, pending: true, worker: Promise.resolve() };
     state.worker = (async () => {
       while (state.pending && !this.#stopped) {
-        state.pending = false;
-        await recordAgentEvidence(this.database, this.live, state.roomId, agentId).catch(
-          this.report,
+        const waitMs = Math.max(
+          0,
+          (this.#evidencePersistedAt.get(agentId) ?? 0) +
+            this.evidenceMinimumIntervalMs -
+            Date.now(),
         );
+        if (waitMs > 0) {
+          await new Promise<void>((resolve) => {
+            const resume = () => {
+              if (state.timer) clearTimeout(state.timer);
+              state.timer = undefined;
+              state.resume = undefined;
+              resolve();
+            };
+            state.resume = resume;
+            state.timer = setTimeout(resume, waitMs);
+            state.timer.unref?.();
+          });
+        }
+        if (this.#stopped) break;
+        // Every request that arrived before this write is represented by its
+        // new nonce. Only a request racing the write itself needs a trailing
+        // refresh after the minimum interval.
+        state.pending = false;
+        try {
+          await recordAgentEvidence(this.database, this.live, state.roomId, agentId);
+          this.#evidencePersistedAt.set(agentId, Date.now());
+        } catch (error) {
+          this.report(error);
+          break;
+        }
       }
     })().finally(() => {
       if (this.#evidence.get(agentId) === state) this.#evidence.delete(agentId);
@@ -140,7 +182,12 @@ export class ConnectionPresence {
     this.#observePending.clear();
     this.#authenticatedAt.clear();
     this.#announcedAt.clear();
+    for (const state of this.#evidence.values()) {
+      if (state.timer) clearTimeout(state.timer);
+      state.resume?.();
+    }
     this.#evidence.clear();
+    this.#evidencePersistedAt.clear();
   }
 
   private readonly report = (error: unknown) =>
@@ -396,11 +443,7 @@ export class ConnectionPresence {
         [turn.room_id, turn.request_id, turn.agent_id],
       )
     ).rows[0];
-    if (
-      !current ||
-      current.status !== 'working' ||
-      current.generation_id !== turn.generation_id
-    )
+    if (!current || current.status !== 'working' || current.generation_id !== turn.generation_id)
       return;
     if (current.created_at.getTime() + this.pickupWindowMs > Date.now()) {
       this.watchTurn({

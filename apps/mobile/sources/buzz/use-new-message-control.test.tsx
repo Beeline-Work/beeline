@@ -28,8 +28,7 @@ vi.mock('@/components/buzz/Ledger', () => ({
 
 const { useRoomMessageRenderItem } = await import('./room-message-cell');
 const { useNewMessageControl } = await import('./use-new-message-control');
-const { compactNewMessageCount } = await import('./room-new-message-boundary');
-const { catchUpClock } = await import('./room-catch-up-report');
+const { RoomCatchUpControls } = await import('@/components/buzz/RoomCatchUpControls');
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -108,28 +107,22 @@ function TranscriptHarness({
           {renderItem({ item })}
         </View>
       ))}
-      {control.catchUpVisible && (
-        <Pressable
-          onPress={() => control.settleQueueAtBoundary(control.queue.boundaryId!)}
-          testID="catch-up-summary-strip"
-        >
-          <Text>{control.catchUpSummary}</Text>
-        </Pressable>
-      )}
-      {control.discVisible && (
-        // CHEV-21: the disc's press scrolls and settles NOTHING. The surface
-        // does the same: only reaching the newest row clears the badge.
-        <Pressable onPress={() => undefined} testID="newest-jump-disc">
-          {control.badgeCount > 0 && (
-            <Text testID="newest-jump-badge">{compactNewMessageCount(control.badgeCount)}</Text>
-          )}
-        </Pressable>
-      )}
+      {/* The production controls, so what a reader can see here is what the
+          Room draws. CHEV-21: the disc's press scrolls and settles NOTHING —
+          only reaching the newest row clears the badge. */}
+      <RoomCatchUpControls
+        badgeCount={control.badgeCount}
+        catchUpVisible={control.catchUpVisible}
+        corner={enabled === false}
+        discVisible={control.discVisible}
+        onJumpToNewest={() => undefined}
+        onOpenCatchUp={() => undefined}
+      />
     </View>
   );
 }
 
-const { Pressable, Text, View } = await import('react-native');
+const { Text, View } = await import('react-native');
 
 type HarnessProps = React.ComponentProps<typeof TranscriptHarness>;
 const AT_TAIL: HarnessProps = {
@@ -167,7 +160,9 @@ function discs(renderer: ReactTestRenderer) {
 function badges(renderer: ReactTestRenderer): string[] {
   return renderer.root
     .findAllByProps({ testID: 'newest-jump-badge' }, { deep: false })
-    .map((badge: { props: { children: string } }) => badge.props.children);
+    .map((badge: { findByType: (type: unknown) => { props: { children: string } } }) =>
+      String(badge.findByType(Text).props.children),
+    );
 }
 
 function dividerRowIds(renderer: ReactTestRenderer): string[] {
@@ -182,7 +177,104 @@ function dividerRowIds(renderer: ReactTestRenderer): string[] {
     });
 }
 
+/**
+ * The reader's own walk through a Room they are behind in, printed. Every
+ * line is read off the mounted tree — the production row cell's glyph and the
+ * production control's disc and bar — so what it claims is on screen cannot
+ * outrun what the renderer actually built.
+ */
+function onScreen(renderer: ReactTestRenderer): string {
+  const disc = discs(renderer);
+  return [
+    `unread glyph: ${dividerRowIds(renderer)[0] ?? 'none'}`,
+    `catch-up bar: ${strips(renderer).length > 0 ? 'SHOWN' : 'none'}`,
+    `jump disc: ${disc.length > 0 ? 'shown' : 'hidden'}`,
+    `badge: ${badges(renderer)[0] ?? 'none'}`,
+    `catch-up door: ${typeof disc[0]?.props.onLongPress === 'function' ? 'open' : 'closed'}`,
+  ].join(' · ');
+}
+
 describe('the transcript new-message control', () => {
+  it('UDIV-05/CHEV-22: walks a reader through a Room they are 15 behind in', () => {
+    // A Room past the catch-up threshold, cursor on seed-2, opened landed on
+    // that boundary with the newest row off screen.
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+      pinnedToTail: false,
+    };
+    const renderer = mount(open);
+    const walk: string[] = [];
+    report([SEED[1]!, SEED[2]!]);
+    walk.push(`1 · opened 15 behind, landed on the boundary → ${onScreen(renderer)}`);
+
+    // Two messages land while the reader is still up in history.
+    const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
+    update(renderer, { ...open, messages: arrived, arrivingIds: new Set(['arrival-0', 'arrival-1']) });
+    walk.push(`2 · two messages arrive below the fold → ${onScreen(renderer)}`);
+
+    // The reader scrolls down to the newest message under their own finger.
+    report([arrived[6]!]);
+    walk.push(`3 · scrolled down to the newest message → ${onScreen(renderer)}`);
+
+    // And pages back up into history.
+    report([SEED[1]!, SEED[2]!]);
+    walk.push(`4 · paged back up into history → ${onScreen(renderer)}`);
+
+    console.log(`\n${walk.join('\n')}\n`);
+    expect(walk).toEqual([
+      '1 · opened 15 behind, landed on the boundary → unread glyph: seed-2 · catch-up bar: none · jump disc: shown · badge: none · catch-up door: open',
+      '2 · two messages arrive below the fold → unread glyph: seed-2 · catch-up bar: none · jump disc: shown · badge: 2 · catch-up door: open',
+      '3 · scrolled down to the newest message → unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
+      '4 · paged back up into history → unread glyph: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed',
+    ]);
+  });
+
+  it('UDIV-05: the reader reaching the newest row retires the opening glyph', () => {
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 0 },
+      pinnedToTail: false,
+    };
+    const renderer = mount(open);
+    // The visit opens landed on the boundary, with the newest row off screen.
+    report([SEED[1]!, SEED[2]!]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
+
+    // The reader scrolls down to the newest message. There is nothing left
+    // unread to mark, so the line goes.
+    report([SEED[3]!, SEED[4]!]);
+    expect(dividerRowIds(renderer)).toEqual([]);
+
+    // And paging back into history does not bring it back for this visit.
+    report([SEED[1]!, SEED[2]!]);
+    expect(dividerRowIds(renderer)).toEqual([]);
+  });
+
+  it('UDIV-06: the opening viewability pass alone cannot retire the glyph', () => {
+    // A short unread run: the boundary and the newest row are both on screen
+    // the moment the Room opens. The reader has not moved, so the line stays.
+    const renderer = mount({ ...AT_TAIL, firstUnreadMessageId: 'seed-3' });
+    report([SEED[3]!, SEED[4]!]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-3']);
+  });
+
+  it('CHEV-22: a Room past the catch-up threshold floats no bar over the transcript', () => {
+    const renderer = mount({
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+      pinnedToTail: false,
+    });
+    report([SEED[1]!, SEED[2]!]);
+    expect(strips(renderer)).toHaveLength(0);
+    // The offer is on the disc the reader already has, not on a bar over the
+    // transcript: a long press opens the sheet.
+    expect(typeof discs(renderer)[0]!.props.onLongPress).toBe('function');
+  });
+
   it('keeps only the tail chevron in corners, even with unread data and later arrivals', () => {
     const corner = {
       ...AT_TAIL,
@@ -219,22 +311,18 @@ describe('the transcript new-message control', () => {
     report([SEED[1]!, SEED[2]!]);
     expect(dividerRowIds(renderer)).toEqual(['seed-2']);
 
-    // Reaching newest settles a live count without moving the visit's landmark.
-    report([SEED[3]!, SEED[4]!]);
-    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
-
     // A later arrival below the fold belongs to the jump control and cannot
     // move the anchored glyph.
-    report([SEED[1]!, SEED[2]!]);
     update(renderer, {
       ...open,
       messages: [...SEED, row('arrival-0', 5)],
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    // The arrival raises the badge while the opening boundary stays put.
+    // The arrival raises the badge while the opening boundary stays put, and
+    // nothing floats a bar over the transcript to say so.
     expect(badges(renderer)).toEqual(['1']);
-    expect(strips(renderer)).toHaveLength(1);
+    expect(strips(renderer)).toHaveLength(0);
     expect(dividerRowIds(renderer)).toEqual(['seed-2']);
   });
 
@@ -343,10 +431,9 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual([]);
   });
 
-  it('CHEV-15: the strip dates the unread run and never counts it', () => {
-    // A Room that opened with an unread cursor. The strip says when the run
-    // began and nothing about its size: no count in this product can say how
-    // much arrived while the reader was away (`room-catch-up-report.ts`).
+  it('CHEV-15: the offer rides the disc, and catching up ends it with the glyph', () => {
+    // A Room that opened past the threshold. Nothing is drawn over the
+    // transcript to say so: the door is a long press on the disc.
     const open: HarnessProps = {
       ...AT_TAIL,
       firstUnreadMessageId: 'seed-2',
@@ -355,10 +442,8 @@ describe('the transcript new-message control', () => {
     };
     const renderer = mount(open);
     report([SEED[1]!, SEED[2]!]);
-
-    const label = strips(renderer)[0]!.findByType(Text).props.children as string;
-    expect(label).toBe(`New since ${catchUpClock(SEED[2]!.timestamp)} · Catch me up`);
-    expect(label).not.toMatch(/\d+ new|messages? from/);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(typeof discs(renderer)[0]!.props.onLongPress).toBe('function');
 
     // Arrivals during the visit raise the badge and leave the line alone.
     const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
@@ -368,18 +453,15 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0', 'arrival-1']),
     });
     expect(badges(renderer)).toEqual(['2']);
-    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
-
-    // Reaching newest settles the badge while the opening glyph remains
-    // anchored to the same first unread row for this visit.
-    report([arrived[6]!]);
     expect(dividerRowIds(renderer)).toEqual(['seed-2']);
-    expect(strips(renderer)).toHaveLength(1);
-    expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
 
-    // And the cursor going away takes the strip with it.
-    update(renderer, { ...open, messages: arrived, firstUnreadMessageId: null });
-    expect(strips(renderer)).toHaveLength(0);
+    // The reader reaches newest. The run is read: badge, glyph and the offer
+    // that stood for that run all go together.
+    report([arrived[6]!]);
+    expect(badges(renderer)).toEqual([]);
+    expect(dividerRowIds(renderer)).toEqual([]);
+    report([SEED[1]!, SEED[2]!]);
+    expect(discs(renderer)[0]!.props.onLongPress).toBeUndefined();
   });
 
   it('UDIV-03: a live arrival never creates a divider in a Room that opened read', () => {

@@ -4,7 +4,7 @@ import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
   boundaryRowIndex,
-  catchUpStripVisible,
+  catchUpOfferEligible,
   compactNewMessageCount,
   countsAsUnread,
   messageBoundaryIds,
@@ -129,16 +129,16 @@ describe('new-message boundary', () => {
     expect(newestTranscriptRowId([])).toBeNull();
   });
 
-  it('CHEV-16: draws the strip from the server cursor, never from the live queue', () => {
-    // The queue count only ever knows about arrivals during THIS visit, so a
-    // strip sourced from it could not stand for what the reader missed while
+  it('CHEV-16: gates the offer on the server cursor, never on the live queue', () => {
+    // The queue count only ever knows about arrivals during THIS visit, so an
+    // offer sourced from it could not stand for what the reader missed while
     // away — the one thing it exists to stand for. The cursor is the gate,
     // which is the gate `/catch-up` itself runs on.
-    expect(catchUpStripVisible('new-1', { messages: 15, agentTurns: 0 })).toBe(true);
-    expect(catchUpStripVisible('new-1', { messages: 0, agentTurns: 6 })).toBe(true);
-    expect(catchUpStripVisible('new-1', { messages: 14, agentTurns: 5 })).toBe(false);
-    expect(catchUpStripVisible('new-1', null)).toBe(false);
-    expect(catchUpStripVisible(null, { messages: 15, agentTurns: 6 })).toBe(false);
+    expect(catchUpOfferEligible('new-1', { messages: 15, agentTurns: 0 })).toBe(true);
+    expect(catchUpOfferEligible('new-1', { messages: 0, agentTurns: 6 })).toBe(true);
+    expect(catchUpOfferEligible('new-1', { messages: 14, agentTurns: 5 })).toBe(false);
+    expect(catchUpOfferEligible('new-1', null)).toBe(false);
+    expect(catchUpOfferEligible(null, { messages: 15, agentTurns: 6 })).toBe(false);
   });
 
   it('CHEV-01: shows the disc for an off-screen newest row with no queue behind it', () => {

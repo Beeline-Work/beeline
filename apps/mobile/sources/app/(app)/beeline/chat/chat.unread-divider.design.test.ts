@@ -13,12 +13,12 @@ import { describe, expect, it } from 'vitest';
 const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 
 describe('the chat surface unread-divider wiring', () => {
-  it('draws divider, disc and strip from the one hook, with no second path', () => {
+  it('draws divider, disc and offer from the one hook, with no second path', () => {
     expect(chatSource).toContain('useNewMessageControl({');
     expect(chatSource).toContain('dividerMessageId: firstNewMessageId');
     expect(chatSource).toContain('discVisible: newestJumpDiscShown');
     expect(chatSource).toContain('badgeCount: newMessageBadgeCount');
-    expect(chatSource).toContain('catchUpVisible: catchUpStripShown');
+    expect(chatSource).toContain('catchUpVisible: catchUpEligible');
     expect(chatSource).toContain('<RoomCatchUpControls');
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
     expect(chatSource).toContain('catchUpVisible={catchUpOfferVisible}');
@@ -52,11 +52,11 @@ describe('the chat surface unread-divider wiring', () => {
     expect(landing).not.toContain('acknowledgeNewMessageQueue');
   });
 
-  it('CHEV-14: all three catch-up doors go through the one report', () => {
-    // The composer verb, the strip, and the badge long-press open the same
-    // sheet over the same range. The verb used to scroll to the first unread
-    // row on its own, which is a fourth answer about a Room the other two
-    // were already describing.
+  it('CHEV-14: both catch-up doors go through the one report', () => {
+    // The composer verb and the disc long-press open the same sheet over the
+    // same range. The verb used to scroll to the first unread row on its own,
+    // which is a third answer about a Room the other door was already
+    // describing.
     expect(chatSource).toContain("case 'catch-up':\n          if (!isCorner) openCatchUpSheet();");
     expect(chatSource).toContain('onOpenCatchUp={openCatchUpSheet}');
     const report = chatSource.slice(
@@ -74,10 +74,12 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).not.toContain('newMessageControlPlate');
     expect(chatSource).not.toContain('newMessageControlShown');
     expect(chatSource).not.toContain('} new\n');
-    // The disc and strip are one component's business, not a second styling
-    // path grown beside it.
+    // The disc is one component's business, not a second styling path grown
+    // beside it — and the strip that briefly replaced the pill is gone with
+    // it, so the transcript carries no floating bar at all.
     expect(chatSource).not.toContain('newestJumpDisc:');
-    expect(chatSource).not.toContain('catchUpStrip:');
+    expect(chatSource).not.toContain('catchUpStrip');
+    expect(chatSource).not.toContain('catchUpSummary');
   });
 
   it('gives the hook the server cursor, the folded rows, and the arriving ids', () => {

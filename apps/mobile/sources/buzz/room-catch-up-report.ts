@@ -101,26 +101,6 @@ export function catchUpAuthorRoll(authors: readonly CatchUpAuthor[]): string {
   }`;
 }
 
-/**
- * THE seam where a number may enter catch-up copy, and the only one.
- *
- * The server supplies a capped unread count beside the cursor. This formatter
- * may use only that count; the live queue and loaded transcript are partial
- * views of the unread run.
- */
-export function catchUpStripLabel({
-  since,
-  unreadCount,
-}: {
-  /** Timestamp of the first unread row — the boundary the reader fell behind at. */
-  since: number | null;
-  unreadCount?: number | null;
-}): string {
-  const run = typeof unreadCount === 'number' && unreadCount > 0 ? `${unreadCount} new` : 'New';
-  const when = since === null ? '' : ` since ${catchUpClock(since)}`;
-  return `${run}${when} · Catch me up`;
-}
-
 function messageLine(text: string): string {
   const line = text.replace(/\s+/g, ' ').trim();
   return line.length > 120 ? `${line.slice(0, 119)}…` : line;

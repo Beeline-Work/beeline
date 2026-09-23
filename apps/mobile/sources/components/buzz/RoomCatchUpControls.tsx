@@ -31,15 +31,21 @@ const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
  *   something had no way back down but their own thumb;
  * - the badge on that disc, a counter capped at `9+`, cleared by reaching the
  *   newest row rather than by a press. The disc outlives the badge;
- * - the catch-up strip under the Room header, the visible door to the sheet.
- *   A long-press on the badge is the shortcut to the same sheet, and the
- *   registered accessibility action below is that shortcut for a reader who
- *   cannot long-press.
+ * - the catch-up door, a long-press on the disc, with the registered
+ *   accessibility action below standing in for readers who cannot long-press.
+ *   The `/catch-up` verb opens the same sheet from the composer.
+ *
+ * There is no bar. A strip under the Room header was the visible door here
+ * for one round; it floated over the transcript in every Room the reader was
+ * behind in, which is the one place a reader is trying to read.
+ *
+ * The badge and that door are separate questions. Drawing the badge only when
+ * catch-up was on offer hid this visit's arrival count in every Room under
+ * the six-turn/fifteen-message threshold.
  */
 export function RoomCatchUpControls({
   corner,
   badgeCount,
-  catchUpSummary,
   catchUpVisible,
   discVisible,
   onJumpToNewest,
@@ -47,28 +53,15 @@ export function RoomCatchUpControls({
 }: {
   corner: boolean;
   badgeCount: number;
-  catchUpSummary: string;
   catchUpVisible: boolean;
   discVisible: boolean;
   onJumpToNewest: () => void;
   onOpenCatchUp: () => void;
 }) {
-  const catchUpReachable = !corner && catchUpVisible && badgeCount > 0;
+  const catchUpReachable = !corner && catchUpVisible;
+  const badgeShown = !corner && badgeCount > 0;
   return (
     <>
-      {!corner && catchUpVisible && (
-        <Pressable
-          accessibilityLabel={catchUpSummary}
-          accessibilityRole="button"
-          onPress={onOpenCatchUp}
-          style={({ pressed }) => [styles.strip, pressed && styles.pressed]}
-          testID="catch-up-summary-strip"
-        >
-          <Text numberOfLines={1} style={styles.stripText}>
-            {catchUpSummary}
-          </Text>
-        </Pressable>
-      )}
       {discVisible && (
         <Pressable
           accessibilityActions={
@@ -77,7 +70,7 @@ export function RoomCatchUpControls({
               : undefined
           }
           accessibilityLabel={
-            catchUpReachable
+            badgeShown
               ? `${badgeCount} new ${badgeCount === 1 ? 'message' : 'messages'}. Jump to newest message`
               : 'Jump to newest message'
           }
@@ -98,7 +91,7 @@ export function RoomCatchUpControls({
           <View style={styles.disc}>
             <ChevronGlyph color={styles.chevron.color} direction="down" size={CHEVRON_SIZE} />
           </View>
-          {catchUpReachable && (
+          {badgeShown && (
             <View style={styles.badge} testID="newest-jump-badge">
               <Text style={styles.badgeText}>{compactNewMessageCount(badgeCount)}</Text>
             </View>
@@ -164,27 +157,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.textInverted,
-      fontVariant: ['tabular-nums'],
-    },
-    // The strip rides the top of the transcript, where the run the reader is
-    // behind on begins, rather than beside the disc that leaves it.
-    strip: {
-      position: 'absolute',
-      top: groknight.space.sm,
-      left: 12,
-      right: 12,
-      paddingHorizontal: groknight.space.sm,
-      paddingVertical: groknight.space.xs,
-      alignItems: 'center',
-      borderRadius: groknight.radius,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    stripText: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.meta,
-      color: groknight.ledgerQuiet,
       fontVariant: ['tabular-nums'],
     },
   };

@@ -2072,8 +2072,7 @@ export function BuzzChatSurface({
     queue: newMessageQueue,
     discVisible: newestJumpDiscShown,
     badgeCount: newMessageBadgeCount,
-    catchUpVisible: catchUpStripShown,
-    catchUpSummary,
+    catchUpVisible: catchUpEligible,
     observeVisibleMessages,
     settleQueueAtBoundary,
   } = useNewMessageControl({
@@ -2147,7 +2146,7 @@ export function BuzzChatSurface({
     setCatchUpSheetVisible(false);
     scheduleAnimationFrame(() => composerRef.current?.focus());
   }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
-  const catchUpOfferVisible = !isCorner && catchUpStripShown && catchUpAgents.length > 0 &&
+  const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || (!isCorner && firstUnreadMessageId) || '';
@@ -5259,7 +5258,6 @@ export function BuzzChatSurface({
           <RoomCatchUpControls
             corner={isCorner}
             badgeCount={newMessageBadgeCount}
-            catchUpSummary={catchUpSummary}
             catchUpVisible={catchUpOfferVisible}
             discVisible={newestJumpDiscShown}
             onJumpToNewest={landAtNewestMessage}

@@ -162,16 +162,16 @@ export function newMessageBadgeCount(
 }
 
 /**
- * The strip stands for the server's unread cursor and nothing else, which is
+ * The offer stands for the server's unread cursor and nothing else, which is
  * the same gate the `/catch-up` verb runs on (`canCatchUp`). It used to be
  * drawn from the live queue, whose count only ever knew about arrivals during
- * this visit — a strip sourced from that could not describe what the reader
+ * this visit — an offer sourced from that could not describe what the reader
  * missed while away, which is the one thing it exists to describe.
  *
- * The offer waits for a meaningful unread run: six agent turns or fifteen
- * messages, counted by the server before this visit advances its mark.
+ * It waits for a meaningful unread run: six agent turns or fifteen messages,
+ * counted by the server before this visit advances its mark.
  */
-export function catchUpStripVisible(
+export function catchUpOfferEligible(
   firstUnreadMessageId: string | null,
   counts: { messages: number; agentTurns: number } | null,
 ): boolean {

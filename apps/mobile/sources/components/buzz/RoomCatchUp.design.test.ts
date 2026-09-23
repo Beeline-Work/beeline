@@ -49,12 +49,17 @@ describe('the catch-up sheet', () => {
     expect(sheet).not.toContain('filter(');
   });
 
-  it('CHEV-09: both doors open that one sheet, and the badge keeps its shortcut', () => {
-    expect(controls).toContain('onPress={onOpenCatchUp}');
+  it('CHEV-09: the disc carries the catch-up door, and no bar floats beside it', () => {
     expect(controls).toContain('onLongPress={catchUpReachable ? onOpenCatchUp : undefined}');
-    expect(controls).toContain('const catchUpReachable = !corner && catchUpVisible && badgeCount > 0;');
+    expect(controls).toContain('const catchUpReachable = !corner && catchUpVisible;');
     expect(controls).toContain("{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }");
     expect(controls).toContain('onAccessibilityAction');
+    // The strip under the Room header, in every part it was made of. The
+    // prose above it may still say why it went; `styles.strip` may not exist.
+    expect(controls).not.toContain('catch-up-summary-strip');
+    expect(controls).not.toContain('catchUpSummary');
+    expect(controls).not.toMatch(/styles\.strip|strip:|stripText/);
+    expect(surface).not.toContain('catchUpSummary');
     expect(surface).toContain('onOpenCatchUp={openCatchUpSheet}');
     expect(surface).toContain('<RoomCatchUpSheet');
     // One seam feeds it, and it is handed the range explicitly.
@@ -72,9 +77,11 @@ describe('the catch-up sheet', () => {
     );
     // The literal that number happens to evaluate to has already moved once.
     expect(controls).not.toMatch(/bottom:\s*\d+,/);
-    // A counter capped at 9+, drawn only while it counts something.
+    // A counter capped at 9+, drawn only while it counts something — and on
+    // its own count, never on whether catch-up happens to be on offer.
     expect(controls).toContain('compactNewMessageCount(badgeCount)');
-    expect(controls).toContain('{catchUpReachable && (');
+    expect(controls).toContain('const badgeShown = !corner && badgeCount > 0;');
+    expect(controls).toContain('{badgeShown && (');
   });
 
   it('CHEV-12: one module owns catch-up words, and it counts speakers by identity', () => {
@@ -83,9 +90,9 @@ describe('the catch-up sheet', () => {
       'utf8',
     );
     const report = readFileSync(path.join(__dirname, '../../buzz/room-catch-up-report.ts'), 'utf8');
-    // The strip's line and the sheet's blocks are phrased in one place. The
-    // boundary module holds queue mechanics and a number formatter, no prose.
-    expect(report).toContain('export function catchUpStripLabel');
+    // The sheet's blocks are phrased in one place. The boundary module holds
+    // queue mechanics and a number formatter, no prose.
+    expect(report).toContain('export function buildCatchUpReport');
     expect(boundary).not.toContain('catchUpSummaryText');
     expect(boundary).not.toMatch(/ new message|from \$\{/);
     // Speakers are distinct by pubkey; name-string dedup collapsed two people
@@ -100,22 +107,18 @@ describe('the catch-up sheet', () => {
       path.join(__dirname, '../../buzz/use-new-message-control.ts'),
       'utf8',
     );
-    // The strip dates the run; the sheet head names the window by its two
-    // ends. The live queue is still only a partial view of the run.
-    expect(report).toContain('`${run}${when} · Catch me up`');
+    // The sheet head names the window by its two ends. The live queue is
+    // still only a partial view of the run, so nothing else prints a number.
     expect(report).toContain(
       '`Since ${catchUpClock(startedAt)} · newest ${catchUpClock(endedAt)}`',
     );
     expect(report).not.toMatch(/msgs?['`]|\$\{count\}/);
     // The badge keeps its own count, which only ever claims this visit.
     expect(hook).toContain('badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0');
-    // The formatter accepts a server count; this strip keeps its compact date.
-    expect(report).toContain('unreadCount?: number | null');
-    expect(hook).toContain('catchUpStripLabel({ since: unreadSinceAt })');
-    expect(hook).not.toContain('unreadCount:');
+    expect(hook).not.toContain('unreadCount');
   });
 
-  it('CHEV-16: the strip is gated on the server cursor, not on the live queue', () => {
+  it('CHEV-16: the offer is gated on the server cursor, not on the live queue', () => {
     const boundary = readFileSync(
       path.join(__dirname, '../../buzz/room-new-message-boundary.ts'),
       'utf8',
@@ -124,11 +127,14 @@ describe('the catch-up sheet', () => {
       path.join(__dirname, '../../buzz/use-new-message-control.ts'),
       'utf8',
     );
-    expect(boundary).toContain('export function catchUpStripVisible(');
-    expect(boundary).not.toMatch(/catchUpStripVisible[\s\S]{0,200}queue\.count/);
+    expect(boundary).toContain('export function catchUpOfferEligible(');
+    expect(boundary).not.toMatch(/catchUpOfferEligible[\s\S]{0,200}queue\.count/);
     expect(hook).toContain(
-      'catchUpVisible: enabled && catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts)',
+      'catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts)',
     );
+    // And an offer for a run the reader has read is no offer: reaching newest
+    // ends it with the glyph that marked the same run.
+    expect(hook).toContain('enabled && !boundaryRead && catchUpOfferEligible(');
     // The queue keeps a boundary and a count, and nothing that can be read out.
     expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');
   });

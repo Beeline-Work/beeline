@@ -420,26 +420,7 @@ jobs:
           test "$status" = Accepted || { echo "::error::DMG notarization ended with status '$status'"; exit 1; }
           test -n "$log_id" || { echo '::error::DMG notarization returned no log id'; exit 1; }
           echo "Notarization log id: $log_id"
-          # Apple's ticket lookup can return 503 after notarization accepts the
-          # DMG. Retry only that service failure; other staple errors are real.
-          for attempt in 1 2 3 4; do
-            if xcrun stapler staple -v "$dmg" > "$RUNNER_TEMP/dmg-staple.log" 2>&1; then
-              cat "$RUNNER_TEMP/dmg-staple.log"
-              break
-            fi
-            cat "$RUNNER_TEMP/dmg-staple.log"
-            if ! grep -q 'Status Code: 503' "$RUNNER_TEMP/dmg-staple.log" || test "$attempt" -eq 4; then
-              echo '::error::DMG stapling failed'
-              exit 1
-            fi
-            case "$attempt" in
-              1) delay=300 ;;
-              2) delay=600 ;;
-              3) delay=1200 ;;
-            esac
-            echo "::warning::Apple ticket lookup returned 503; retrying stapling in ${delay}s"
-            sleep "$delay"
-          done
+          xcrun stapler staple -v "$dmg"
 
       - name: Verify the signed and notarized macOS download
         if: steps.macos_signing.outputs.enabled == 'true'

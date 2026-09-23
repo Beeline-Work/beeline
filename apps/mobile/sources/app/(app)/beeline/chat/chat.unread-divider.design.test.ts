@@ -57,7 +57,7 @@ describe('the chat surface unread-divider wiring', () => {
     // sheet over the same range. The verb used to scroll to the first unread
     // row on its own, which is a fourth answer about a Room the other two
     // were already describing.
-    expect(chatSource).toContain("case 'catch-up':\n          openCatchUpSheet();");
+    expect(chatSource).toContain("case 'catch-up':\n          if (!isCorner) openCatchUpSheet();");
     expect(chatSource).toContain('onOpenCatchUp={openCatchUpSheet}');
     const report = chatSource.slice(
       chatSource.indexOf('buildCatchUpReport({'),
@@ -89,7 +89,8 @@ describe('the chat surface unread-divider wiring', () => {
     expect(call).toContain('queueableMessages: foldedMessages');
     expect(call).toContain('arrivingIds: transcriptArrivalObservation.arrivingIds');
     expect(call).toContain('newestMessageId: newestTranscriptMessageId');
-    expect(call).toContain('firstUnreadMessageId,');
+    expect(call).toContain('firstUnreadMessageId: isCorner ? null : firstUnreadMessageId');
+    expect(call).toContain('enabled: !isCorner');
     // Tail distance reaches the hook for queueing only; what the control shows
     // is decided by the viewability pass below.
     expect(call).toContain('isPinnedToTail: () => isPinnedToTailRef.current');
@@ -105,7 +106,15 @@ describe('the chat surface unread-divider wiring', () => {
   });
 
   it('keeps the unread boundary out of the fold without consulting the live queue', () => {
-    expect(chatSource).toContain('boundaryRowIndex(anchored, firstUnreadMessageId)');
+    expect(chatSource).toContain('boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId)');
+  });
+
+  it('keeps corner unread actions and landing paths closed', () => {
+    expect(chatSource).toContain('corner={isCorner}');
+    expect(chatSource).toContain('{!isCorner && (\n            <RoomCatchUpSheet');
+    expect(chatSource).toContain('messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget)');
+    expect(chatSource).toContain('isCorner ||\n      !firstUnreadMessageId');
+    expect(chatSource).toContain('messageAnchorId || (!isCorner && firstUnreadMessageId)');
   });
 
   it('derives corner state from the same fresh turn receipts as the turn line', () => {

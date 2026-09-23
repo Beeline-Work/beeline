@@ -74,12 +74,14 @@ function TranscriptHarness({
   firstUnreadMessageId,
   openingUnreadCounts,
   pinnedToTail,
+  enabled,
 }: {
   messages: readonly ChatDisplayMessage[];
   arrivingIds: ReadonlySet<string>;
   firstUnreadMessageId: string | null;
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
   pinnedToTail: boolean;
+  enabled?: boolean;
 }) {
   const control = useNewMessageControl({
     roomId: 'room-1',
@@ -89,6 +91,7 @@ function TranscriptHarness({
     firstUnreadMessageId,
     openingUnreadCounts,
     isPinnedToTail: () => pinnedToTail,
+    enabled,
   });
   handles.report = control.observeVisibleMessages;
   const renderItem = useRoomMessageRenderItem({
@@ -180,6 +183,32 @@ function dividerRowIds(renderer: ReactTestRenderer): string[] {
 }
 
 describe('the transcript new-message control', () => {
+  it('keeps only the tail chevron in corners, even with unread data and later arrivals', () => {
+    const corner = {
+      ...AT_TAIL,
+      enabled: false,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+      pinnedToTail: false,
+    };
+    const renderer = mount(corner);
+    report([SEED[1]!, SEED[2]!]);
+    expect(discs(renderer)).toHaveLength(1);
+    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(badges(renderer)).toEqual([]);
+
+    update(renderer, {
+      ...corner,
+      messages: [...SEED, row('arrival-0', 5)],
+      arrivingIds: new Set(['arrival-0']),
+    });
+    expect(discs(renderer)).toHaveLength(1);
+    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(strips(renderer)).toHaveLength(0);
+    expect(badges(renderer)).toEqual([]);
+  });
+
   it('UDIV-04: keeps the opening glyph anchored while later arrivals use the jump control', () => {
     const open: HarnessProps = {
       ...AT_TAIL,

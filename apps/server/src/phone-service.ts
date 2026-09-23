@@ -1280,7 +1280,7 @@ export class PhoneService {
     const room =
       topLevelRows?.room ?? (await measured('access', this.roomAccess(roomId, viewerId)));
     if (!room) return null;
-    if (!topLevelRows) {
+    if (!topLevelRows && !room.parent_id) {
       const cursor = await this.optionalEnrichment(
         'read-cursor',
         this.enrichmentDatabase.query<{
@@ -1457,7 +1457,7 @@ export class PhoneService {
       members,
       latestAgentTurns,
       viewer: {
-        ...(room.read_cursor ? { readCursor: room.read_cursor } : {}),
+        ...(!room.parent_id && room.read_cursor ? { readCursor: room.read_cursor } : {}),
         identity: members.find((member) => member.identity.pubkey === viewerId)?.identity ?? {
           pubkey: viewerId,
           kind: 'human',

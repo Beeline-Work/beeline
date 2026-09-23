@@ -41,6 +41,7 @@ export function useNewMessageControl({
   firstUnreadMessageId,
   openingUnreadCounts,
   isPinnedToTail,
+  enabled = true,
 }: {
   roomId: string;
   /** Rows exactly as the list renders them, so a fold is queued by its host. */
@@ -51,6 +52,8 @@ export function useNewMessageControl({
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /** Tail distance, which decides auto-follow and nothing this control shows. */
   isPinnedToTail: () => boolean;
+  /** Room unread state is disabled in corners; only the tail chevron remains. */
+  enabled?: boolean;
 }): {
   /** The opening unread row for this visit. */
   dividerMessageId: string | null;
@@ -82,10 +85,10 @@ export function useNewMessageControl({
     setNewestMessageVisible(false);
     setHasObservedVisibility(false);
     visibleMessagesRef.current = [];
-  }, [roomId]);
+  }, [roomId, enabled]);
 
   useLayoutEffect(() => {
-    if (arrivingIds.size === 0) return;
+    if (!enabled || arrivingIds.size === 0) return;
     setQueue((current) =>
       queueIncomingMessages(current, {
         messages: queueableMessages,
@@ -93,7 +96,7 @@ export function useNewMessageControl({
         isPinnedToTail: isPinnedToTailRef.current(),
       }),
     );
-  }, [arrivingIds, queueableMessages]);
+  }, [arrivingIds, enabled, queueableMessages]);
 
   // A row arriving below the fold leaves the viewable set untouched, so the
   // list has no reason to run its viewability pass, and the last report —
@@ -110,26 +113,33 @@ export function useNewMessageControl({
     );
   }, [newestMessageId]);
 
-  const observeVisibleMessages = useCallback((visible: readonly ChatDisplayMessage[]) => {
-    visibleMessagesRef.current = visible;
-    const newestVisible = visible.some((message) =>
-      messageContainsBoundary(message, newestMessageIdRef.current),
-    );
-    setNewestMessageVisible(newestVisible);
-    setHasObservedVisibility(true);
-    // Reaching the newest message is what the control asks for; arriving there
-    // under the reader's own finger settles the queue exactly as a tap would,
-    // while the opening boundary stays anchored for this visit.
-    if (newestVisible) {
-      setQueue(acknowledgeNewMessageQueue);
-    }
-  }, []);
+  const observeVisibleMessages = useCallback(
+    (visible: readonly ChatDisplayMessage[]) => {
+      visibleMessagesRef.current = visible;
+      const newestVisible = visible.some((message) =>
+        messageContainsBoundary(message, newestMessageIdRef.current),
+      );
+      setNewestMessageVisible(newestVisible);
+      setHasObservedVisibility(true);
+      // Reaching the newest message is what the control asks for; arriving there
+      // under the reader's own finger settles the queue exactly as a tap would,
+      // while the opening boundary stays anchored for this visit.
+      if (enabled && newestVisible) {
+        setQueue(acknowledgeNewMessageQueue);
+      }
+    },
+    [enabled],
+  );
 
-  const settleQueueAtBoundary = useCallback((boundaryId: string) => {
-    setQueue((current) =>
-      current.boundaryId === boundaryId ? acknowledgeNewMessageQueue(current) : current,
-    );
-  }, []);
+  const settleQueueAtBoundary = useCallback(
+    (boundaryId: string) => {
+      if (!enabled) return;
+      setQueue((current) =>
+        current.boundaryId === boundaryId ? acknowledgeNewMessageQueue(current) : current,
+      );
+    },
+    [enabled],
+  );
 
   // The glyph marks the opening boundary for this visit. Later read-mark
   // updates and live arrivals cannot move or retire it.
@@ -137,15 +147,15 @@ export function useNewMessageControl({
     queueableMessages.find((message) => messageContainsBoundary(message, firstUnreadMessageId))
       ?.timestamp ?? null;
   return {
-    dividerMessageId: firstUnreadMessageId,
-    queue,
+    dividerMessageId: enabled ? firstUnreadMessageId : null,
+    queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
     discVisible: newestJumpDiscVisible({
       newestMessageId,
       newestMessageVisible,
       hasObservedVisibility,
     }),
-    badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
-    catchUpVisible: catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts),
+    badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
+    catchUpVisible: enabled && catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts),
     // The control labels the boundary, leaving count display to the server
     // cursor rather than this visit's partial live queue.
     catchUpSummary: catchUpStripLabel({ since: unreadSinceAt }),

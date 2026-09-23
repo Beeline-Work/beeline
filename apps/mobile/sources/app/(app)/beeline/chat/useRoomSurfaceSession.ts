@@ -276,6 +276,7 @@ export function useRoomSurfaceSession({
 
   const channelIdRef = useRef(channelId);
   const isFocusedRef = useRef(isFocused);
+  const isCornerRef = useRef(false);
   isFocusedRef.current = isFocused;
   // One advancer per visit. It debounces the viewport's reports and writes the
   // boundary the reader actually reached; the Room switching out from under it
@@ -319,6 +320,7 @@ export function useRoomSurfaceSession({
 
   const advanceReadCursor = useCallback(
     (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
+      if (isCornerRef.current) return;
       if (!isFocusedRef.current) return;
       if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
       readCursorRef.current?.observe(chronological, visible);
@@ -327,6 +329,7 @@ export function useRoomSurfaceSession({
   );
 
   const markUnreadFrom = useCallback(async (messageId: string) => {
+    if (isCornerRef.current) return;
     // The reader has said this message is unread. Stop the viewport from
     // reading it again on the very next report, then move the server boundary.
     readCursorRef.current?.suspend();
@@ -413,6 +416,7 @@ export function useRoomSurfaceSession({
   useEffect(() => {
     if (!channelId) return;
     if (!isFocused) return;
+    isCornerRef.current = false;
     setFirstUnreadMessageId(null);
     setOpeningUnreadCounts(null);
     liveDraftDrainStore.setActive(true);
@@ -471,12 +475,12 @@ export function useRoomSurfaceSession({
 
     const paintView = (view: RoomView, fresh: boolean): RoomView | null => {
       if (cancelled) return null;
+      isCornerRef.current = Boolean(view.parent?.id ?? view.room.parentId);
+      if (isCornerRef.current) readCursorRef.current?.cancel();
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
       for (const message of stableView.messages) {
         if (message.requestId) {
-          liveDraftDrainStore.finalize(
-            liveDraftDrainKey(message.author.pubkey, message.requestId),
-          );
+          liveDraftDrainStore.finalize(liveDraftDrainKey(message.author.pubkey, message.requestId));
         }
       }
       for (const turn of stableView.latestAgentTurns) {
@@ -487,7 +491,7 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
-      if (fresh && !capturedUnreadBoundary) {
+      if (fresh && !capturedUnreadBoundary && !isCornerRef.current) {
         // This is the last server answer before markRead advances to the tail.
         // Keep the exact id for the whole focused visit; later refreshes may
         // clear the cursor but must not move the divider under the reader.
@@ -560,10 +564,7 @@ export function useRoomSurfaceSession({
             .filter((member) => member.identity.kind === 'agent')
             .map((member) => member.identity.pubkey),
         ),
-        new Set([
-          channelId,
-          ...(stableView.parent ? [stableView.parent.id] : []),
-        ]),
+        new Set([channelId, ...(stableView.parent ? [stableView.parent.id] : [])]),
       );
       const replayedOverlays = pendingOverlayEvents;
       pendingOverlayEvents = [];

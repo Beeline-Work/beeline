@@ -4,10 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { compactNewMessageCount } from '@/buzz/room-new-message-boundary';
-import {
-  TURN_LINE_BAR_MARGIN_BOTTOM,
-  TURN_LINE_ROW_MIN_HEIGHT,
-} from '@/buzz/room-bottom-chrome';
+import { TURN_LINE_BAR_MARGIN_BOTTOM, TURN_LINE_ROW_MIN_HEIGHT } from '@/buzz/room-bottom-chrome';
 
 /**
  * The jump control is a 44pt disc — the one round box in the transcript,
@@ -40,6 +37,7 @@ const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
  *   cannot long-press.
  */
 export function RoomCatchUpControls({
+  corner,
   badgeCount,
   catchUpSummary,
   catchUpVisible,
@@ -47,6 +45,7 @@ export function RoomCatchUpControls({
   onJumpToNewest,
   onOpenCatchUp,
 }: {
+  corner: boolean;
   badgeCount: number;
   catchUpSummary: string;
   catchUpVisible: boolean;
@@ -54,10 +53,10 @@ export function RoomCatchUpControls({
   onJumpToNewest: () => void;
   onOpenCatchUp: () => void;
 }) {
-  const catchUpReachable = catchUpVisible && badgeCount > 0;
+  const catchUpReachable = !corner && catchUpVisible && badgeCount > 0;
   return (
     <>
-      {catchUpVisible && (
+      {!corner && catchUpVisible && (
         <Pressable
           accessibilityLabel={catchUpSummary}
           accessibilityRole="button"
@@ -83,9 +82,14 @@ export function RoomCatchUpControls({
               : 'Jump to newest message'
           }
           accessibilityRole="button"
-          onAccessibilityAction={(event) => {
-            if (event.nativeEvent.actionName === CATCH_UP_ACCESSIBILITY_ACTION) onOpenCatchUp();
-          }}
+          onAccessibilityAction={
+            catchUpReachable
+              ? (event) => {
+                  if (event.nativeEvent.actionName === CATCH_UP_ACCESSIBILITY_ACTION)
+                    onOpenCatchUp();
+                }
+              : undefined
+          }
           onLongPress={catchUpReachable ? onOpenCatchUp : undefined}
           onPress={onJumpToNewest}
           style={({ pressed }) => [styles.hitTarget, pressed && styles.pressed]}

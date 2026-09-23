@@ -52,7 +52,7 @@ describe('the catch-up sheet', () => {
   it('CHEV-09: both doors open that one sheet, and the badge keeps its shortcut', () => {
     expect(controls).toContain('onPress={onOpenCatchUp}');
     expect(controls).toContain('onLongPress={catchUpReachable ? onOpenCatchUp : undefined}');
-    expect(controls).toContain('const catchUpReachable = catchUpVisible && badgeCount > 0;');
+    expect(controls).toContain('const catchUpReachable = !corner && catchUpVisible && badgeCount > 0;');
     expect(controls).toContain("{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }");
     expect(controls).toContain('onAccessibilityAction');
     expect(surface).toContain('onOpenCatchUp={openCatchUpSheet}');
@@ -108,7 +108,7 @@ describe('the catch-up sheet', () => {
     );
     expect(report).not.toMatch(/msgs?['`]|\$\{count\}/);
     // The badge keeps its own count, which only ever claims this visit.
-    expect(hook).toContain('badgeCount: newMessageBadgeCount(queue, newestMessageVisible)');
+    expect(hook).toContain('badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0');
     // The formatter accepts a server count; this strip keeps its compact date.
     expect(report).toContain('unreadCount?: number | null');
     expect(hook).toContain('catchUpStripLabel({ since: unreadSinceAt })');
@@ -127,7 +127,7 @@ describe('the catch-up sheet', () => {
     expect(boundary).toContain('export function catchUpStripVisible(');
     expect(boundary).not.toMatch(/catchUpStripVisible[\s\S]{0,200}queue\.count/);
     expect(hook).toContain(
-      'catchUpVisible: catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts)',
+      'catchUpVisible: enabled && catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts)',
     );
     // The queue keeps a boundary and a count, and nothing that can be read out.
     expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');

@@ -298,8 +298,9 @@ export function isHostMcpPermissionRequest(
 export async function decideSquirePermission(
   request: AcpPermissionRequest,
   authorize: () => Promise<{ allowed: boolean }>,
+  squireRoutes: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
 ): Promise<AcpPermissionDecision | undefined> {
-  if (!isHostMcpPermissionRequest(request, CODE_OWNED_HOST_MCP_NAMES)) return undefined;
+  if (!isHostMcpPermissionRequest(request, squireRoutes)) return undefined;
   const result = await authorize();
   return result.allowed ? 'allow' : 'reject';
 }

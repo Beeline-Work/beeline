@@ -355,6 +355,13 @@ describe('a granted host route reaches the permission matcher', () => {
         '[mcp_servers.squire]',
         'command = "npx"',
         'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
+        '[mcp_servers.vault]',
+        'command = "npx"',
+        'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
+        '[mcp_servers.broker]',
+        'command = "custom-facade"',
+        '[mcp_servers.broker.env]',
+        'TRUSTY_SQUIRE_BROKER_SOCKET = "/home/op/.trusty-squire/broker.sock"',
         '',
       ].join('\n'),
       'utf8',
@@ -487,9 +494,7 @@ describe('a granted host route reaches the permission matcher', () => {
   };
 
   it("approves grok's use_tool spelling of a route the owner granted", async () => {
-    const allow = await capturedHandler([
-      { kind: 'mcp', target: 'squire', status: 'approved' },
-    ]);
+    const allow = await capturedHandler([{ kind: 'mcp', target: 'squire', status: 'approved' }]);
     expect(await allow(grokUseTool)).toBe(true);
   });
 
@@ -504,5 +509,33 @@ describe('a granted host route reaches the permission matcher', () => {
       false,
     );
     expect(await allow(grokUseTool)).toBe(false);
+  });
+
+  it('gates an aliased Squire route mounted through the same façade', async () => {
+    const aliasCall: AcpPermissionRequest = {
+      toolCall: {
+        title: 'use_tool',
+        rawInput: { tool_name: 'vault__use_credential', tool_input: { service: 'openai' } },
+      },
+    };
+    const allow = await capturedHandler(
+      [{ kind: 'mcp', target: 'vault', status: 'approved' }],
+      false,
+    );
+    expect(await allow(aliasCall)).toBe(false);
+    const approved = await capturedHandler([{ kind: 'mcp', target: 'vault', status: 'approved' }]);
+    expect(await approved(aliasCall)).toBe(true);
+  });
+
+  it('gates an alias identified by its broker environment', async () => {
+    const allow = await capturedHandler([{ kind: 'mcp', target: 'broker', status: 'approved' }], false);
+    expect(
+      await allow({
+        toolCall: {
+          title: 'mcp.broker.use_credential',
+          rawInput: { server: 'broker', tool: 'use_credential' },
+        },
+      }),
+    ).toBe(false);
   });
 });

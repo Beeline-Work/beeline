@@ -31,6 +31,7 @@ import {
 import {
   claimGrantedHostRoutes,
   grantedHostRouteWires,
+  grantedSquireHostRouteNames,
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -726,13 +727,15 @@ export class MonolithRoomTurnLoop {
     }
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
+    const hostDeclarations = hostImportedMcpDeclarations({
+      operatorHome,
+      agentKind: this.options.config.agentKind,
+    });
+    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
-      hostImportedMcpDeclarations({
-        operatorHome,
-        agentKind: this.options.config.agentKind,
-      }),
+      hostDeclarations,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
@@ -774,8 +777,10 @@ export class MonolithRoomTurnLoop {
       autoApprovePermissions: false,
       permissionHandler: async (request) => {
         if (!isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'reject';
-        const squire = await decideSquirePermission(request, () =>
-          this.options.api.execute('authorizeSquireCall', { roomId: this.options.roomId }),
+        const squire = await decideSquirePermission(
+          request,
+          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.roomId }),
+          squireRoutes,
         );
         return squire ?? 'allow';
       },

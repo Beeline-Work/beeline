@@ -20,7 +20,11 @@ import {
   hostImportedMcpDeclarations,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
+import {
+  claimGrantedHostRoutes,
+  grantedHostRouteWires,
+  grantedSquireHostRouteNames,
+} from './host-mcp-route.js';
 import { decideSquirePermission } from './read-only-policy.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
@@ -800,6 +804,11 @@ export class MonolithCornerTurnLoop {
       command,
       args: agentArgs,
     });
+    const hostDeclarations = hostImportedMcpDeclarations({
+      operatorHome,
+      agentKind: this.options.config.agentKind,
+    });
+    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,
@@ -808,8 +817,10 @@ export class MonolithCornerTurnLoop {
       agentLabel: harnessLabel,
       autoApprovePermissions: true,
       permissionHandler: async (request) => {
-        const squire = await decideSquirePermission(request, () =>
-          this.options.api.execute('authorizeSquireCall', { roomId: this.options.cornerId }),
+        const squire = await decideSquirePermission(
+          request,
+          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.cornerId }),
+          squireRoutes,
         );
         return squire ?? 'allow';
       },
@@ -893,10 +904,7 @@ export class MonolithCornerTurnLoop {
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
-      hostImportedMcpDeclarations({
-        operatorHome,
-        agentKind: this.options.config.agentKind,
-      }),
+      hostDeclarations,
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and

@@ -17,6 +17,15 @@ describe('imported MCP host/local classification', () => {
         args: ['-y', '@trusty-squire/mcp'],
       }),
     ).toBe('host');
+    expect(
+      classifyImportedMcpServer({
+        name: 'vault',
+        declaration: {
+          command: 'custom-facade',
+          env: { TRUSTY_SQUIRE_BROKER_SOCKET: '/home/op/.trusty-squire/broker.sock' },
+        },
+      }),
+    ).toBe('host');
   });
 
   it('treats everything else as local unless the operator marks the one host key', () => {

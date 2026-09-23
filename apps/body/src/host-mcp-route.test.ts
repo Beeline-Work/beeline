@@ -6,6 +6,7 @@ import {
   grantedHostRoutesFromList,
   grantedHostRouteWires,
   grantedSquireHostRoute,
+  grantedSquireHostRouteNames,
   hostRouteEnv,
   mergeJsonHostRoutes,
   mergeTomlHostRoutes,
@@ -94,6 +95,18 @@ describe('granted MCP host routes', () => {
     expect(grantedSquireHostRoute(['vault'], declarations)).toBe(true);
     expect(grantedSquireHostRoute(['squire'], {})).toBe(true);
     expect(grantedSquireHostRoute([], declarations)).toBe(false);
+    expect(grantedSquireHostRouteNames(['browser', 'vault', 'squire'], declarations)).toEqual([
+      'vault',
+      'squire',
+    ]);
+    expect(
+      grantedSquireHostRouteNames(['broker'], {
+        broker: {
+          command: 'custom-facade',
+          env: { TRUSTY_SQUIRE_BROKER_SOCKET: '/home/op/.trusty-squire/broker.sock' },
+        },
+      }),
+    ).toEqual(['broker']);
   });
 
   it('rewrites a code-owned Squire grant with no operator declaration', () => {

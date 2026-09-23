@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
@@ -52,17 +53,60 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
 const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
   codex: {
     command: 'npm',
-    args: ['install', '-g', '@agentclientprotocol/codex-acp'],
+    args: ['install', '-g', '@agentclientprotocol/codex-acp@latest'],
   },
   claude: {
     command: 'npm',
-    args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+    args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
   },
   pi: {
     command: 'npm',
-    args: ['install', '-g', 'pi-acp'],
+    args: ['install', '-g', 'pi-acp@latest'],
   },
 };
+
+export function latestAdapterInstallCommand(kind: AgentKind): AdapterInstallCommand | undefined {
+  return kind === 'codex' || kind === 'claude' || kind === 'pi'
+    ? ADAPTER_INSTALL_COMMANDS[kind]
+    : undefined;
+}
+
+export async function runAdapterInstall(
+  install: AdapterInstallCommand,
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
+): Promise<void> {
+  await new Promise<void>((resolveInstall, rejectInstall) => {
+    const child = spawn(install.command, install.args, {
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      env: opts.env ?? process.env,
+      stdio: opts.stdio ?? 'inherit',
+    });
+    child.once('error', rejectInstall);
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolveInstall();
+      else {
+        rejectInstall(
+          new Error(
+            signal
+              ? `${install.command} was terminated by ${signal}`
+              : `${install.command} exited with status ${code ?? 'unknown'}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+/** Refresh a separable ACP adapter before resolving the binary that will use it. */
+export async function installLatestAgentAdapter(
+  kind: AgentKind,
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
+): Promise<boolean> {
+  const install = latestAdapterInstallCommand(kind);
+  if (!install) return false;
+  await runAdapterInstall(install, opts);
+  return true;
+}
 
 function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string {
   return formatAdapterInstallCommand(ADAPTER_INSTALL_COMMANDS[kind]);
@@ -267,7 +311,7 @@ export function resolveAgentCommand(opts: {
       'codex',
       env,
       cwd,
-      'Codex CLI not found. Install it with `npm install -g @openai/codex`, then retry with `--agent codex`.',
+      'Codex CLI not found. Install it with `npm install -g @openai/codex@latest`, then retry with `--agent codex`.',
     );
     const command = requireExecutable(
       'codex-acp',
@@ -310,7 +354,7 @@ export function resolveAgentCommand(opts: {
       'pi',
       env,
       cwd,
-      'Pi coding agent not found. Install it with `npm install -g @mariozechner/pi-coding-agent`, then retry with `--agent pi`.',
+      'Pi coding agent not found. Install it with `npm install -g @mariozechner/pi-coding-agent@latest`, then retry with `--agent pi`.',
     );
     const command = requireExecutable(
       'pi-acp',

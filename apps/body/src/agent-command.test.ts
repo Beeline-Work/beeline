@@ -60,13 +60,13 @@ describe('agent command selection', () => {
         status: 'missing-adapter',
         install: {
           command: 'npm',
-          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
         },
       },
       {
         kind: 'pi',
         status: 'missing-adapter',
-        install: { command: 'npm', args: ['install', '-g', 'pi-acp'] },
+        install: { command: 'npm', args: ['install', '-g', 'pi-acp@latest'] },
       },
     ]);
     expect(detected.some((candidate) => candidate.kind === 'goose')).toBe(false);
@@ -89,7 +89,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'claude', env: { HOME: home, PATH: claude.directory } }),
-    ).toThrow('npm install -g @agentclientprotocol/claude-agent-acp');
+    ).toThrow('npm install -g @agentclientprotocol/claude-agent-acp@latest');
   });
 
   it("uses Goose's native ACP subcommand", async () => {
@@ -208,7 +208,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'pi', env: { HOME: home, PATH: pi.directory } }),
-    ).toThrow('npm install -g pi-acp');
+    ).toThrow('npm install -g pi-acp@latest');
   });
 
   it('parses and resolves a custom command without shell expansion', async () => {
@@ -298,7 +298,7 @@ describe('augmented harness lookup', () => {
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toContain('npm install -g @mariozechner/pi-coding-agent');
+    expect(message).toContain('npm install -g @mariozechner/pi-coding-agent@latest');
     expect(message).toContain('Searched:');
     expect(message).toContain('/usr/bin');
     expect(message).toContain(resolve(home, '.local', 'bin'));

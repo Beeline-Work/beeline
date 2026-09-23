@@ -607,7 +607,7 @@ describe('connect wizard', () => {
         {
           kind: 'pi',
           status: 'missing-adapter',
-          install: { command: 'npm', args: ['install', '-g', 'pi-acp'] },
+          install: { command: 'npm', args: ['install', '-g', 'pi-acp@latest'] },
         },
       ]),
     ).toBeUndefined();

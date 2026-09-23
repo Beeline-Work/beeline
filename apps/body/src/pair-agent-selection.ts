@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 
@@ -6,6 +5,7 @@ import {
   detectInstalledAgentCommands,
   formatAdapterInstallCommand,
   resolveAgentCommand,
+  runAdapterInstall,
   type AdapterInstallCommand,
   type AgentCommand,
   type DetectedAgentCommand,
@@ -17,10 +17,10 @@ type SelectionOutput = Pick<NodeJS.WritableStream, 'write'>;
 
 const NO_AGENT_MESSAGE = `No supported ACP-capable coding agent was detected.
 Install one of these supported agents:
-  codex  npm install -g @openai/codex @agentclientprotocol/codex-acp
-  claude Install Claude Code and npm install -g @agentclientprotocol/claude-agent-acp
+  codex  npm install -g @openai/codex@latest @agentclientprotocol/codex-acp@latest
+  claude Install Claude Code and npm install -g @agentclientprotocol/claude-agent-acp@latest
   goose  https://block.github.io/goose/docs/getting-started/installation/
-  pi     npm install -g @mariozechner/pi-coding-agent pi-acp
+  pi     npm install -g @mariozechner/pi-coding-agent@latest pi-acp@latest
   grok   curl -fsSL https://x.ai/cli/install.sh | bash
   cursor Install Cursor Agent CLI from https://cursor.com/docs/cli
 Then retry, or explicitly use \`--agent reference\` with an LLM key.
@@ -49,26 +49,7 @@ async function installAdapter(
   install: AdapterInstallCommand,
   opts: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
-  await new Promise<void>((resolveInstall, rejectInstall) => {
-    const child = spawn(install.command, install.args, {
-      cwd: opts.cwd,
-      env: opts.env ?? process.env,
-      stdio: 'inherit',
-    });
-    child.once('error', rejectInstall);
-    child.once('exit', (code, signal) => {
-      if (code === 0) resolveInstall();
-      else {
-        rejectInstall(
-          new Error(
-            signal
-              ? `${install.command} was terminated by ${signal}`
-              : `${install.command} exited with status ${code ?? 'unknown'}`,
-          ),
-        );
-      }
-    });
-  });
+  await runAdapterInstall(install, opts);
 }
 
 function errorMessage(error: unknown): string {

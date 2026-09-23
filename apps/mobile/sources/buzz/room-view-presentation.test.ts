@@ -114,6 +114,29 @@ describe('Room view presentation', () => {
     ]);
   });
 
+  it('does not let a stale full snapshot walk a newer turn delta backwards', () => {
+    const working = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 10,
+    };
+    const complete = { ...working, status: 'complete' as const, createdAt: 12 };
+    const other = { ...working, agentPubkey: 'other', createdAt: 11 };
+    const settled = reconcileRoomTurnDelta(
+      { ...emptyRoom(), latestAgentTurns: [working] },
+      complete,
+    );
+    const staleRead = { ...emptyRoom(), latestAgentTurns: [working, other] };
+
+    expect(reconcileRoomView(settled, staleRead).latestAgentTurns).toEqual([complete, other]);
+    const laterWork = { ...working, requestId: 'next', createdAt: 13 };
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [laterWork] })
+        .latestAgentTurns,
+    ).toEqual([laterWork]);
+  });
+
   it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
     const [corner] = cornerSummaries([

@@ -356,6 +356,11 @@ export class MonolithRigTransport {
     return sharedLiveConnection().register(filters, listener);
   }
 
+  /** A read proved the live socket missed events: replace it. */
+  reconnectLive(): void {
+    sharedLiveConnection().reconnect();
+  }
+
   respondToWritePermission(
     roomId: string,
     permissionId: string,

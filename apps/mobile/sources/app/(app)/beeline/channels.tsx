@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, SectionList, Text, TouchableOpacity, View } from 'react-native';
+import {
+  AppState,
+  Keyboard,
+  Pressable,
+  SectionList,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
@@ -21,6 +29,13 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+import { isDraftFrame } from '@/sync/transport/live-frames';
+import {
+  applyChatListDelta,
+  chatListDeltaNeedsRead,
+  roomsMissedByLive,
+  type ChatListDelta,
+} from '@/buzz/chat-list-delta';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -224,6 +239,13 @@ export default function BuzzChannels() {
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
+  // A deck under a pushed Room, or in a backgrounded app, reads nothing; its
+  // focus and the foreground socket's resubscribe are the covering reads.
+  const deckFocusedRef = useRef(true);
+  const deckVisible = useCallback(
+    () => deckFocusedRef.current && AppState.currentState !== 'background',
+    [],
+  );
 
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
@@ -373,6 +395,11 @@ export default function BuzzChannels() {
         : null;
       if (cancelled) return;
       if (cachedChats) setChatList(cachedChats);
+      let heldChats = cachedChats;
+      const paintChats = (value: ChatListView) => {
+        heldChats = value;
+        setChatList(value);
+      };
 
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => http.workspaces(),
@@ -400,6 +427,13 @@ export default function BuzzChannels() {
       if (selectedId && chatCacheAddress) {
         let chatWatchKey = '';
         let chatWatchGeneration = 0;
+        // Deltas that landed while a chats read was in flight: the read may
+        // predate them, and no later read comes to correct it.
+        let readInFlight = false;
+        let deltasDuringRead: ChatListDelta[] = [];
+        // Rooms the socket delivered any frame for since the last applied read.
+        const heardRooms = new Set<string>();
+        let liveReadApplied = false;
         const installChatWatch = async (
           filters: ChatListView['watchFilters'],
         ): Promise<void> => {
@@ -415,13 +449,18 @@ export default function BuzzChannels() {
               'monolithLive' in event
                 ? (event as MonolithSurfaceEvent).monolithLive
                 : undefined;
-            if (
-              live &&
-              (live.type === 'message-delta' || live.type === 'turn-delta') &&
-              live.reconcilesDelivery
-            )
+            if (live && 'roomId' in live) heardRooms.add(live.roomId);
+            if (live?.type === 'message-delta' || live?.type === 'turn-delta') {
+              if (readInFlight) deltasDuringRead.push(live);
+              const needsRead = !heldChats || chatListDeltaNeedsRead(heldChats, live);
+              if (heldChats) paintChats(applyChatListDelta(heldChats, live));
+              if (needsRead && deckVisible()) chatsRefresh?.signal();
               return;
-            chatsRefresh?.signal();
+            }
+            if (isDraftFrame(event)) return;
+            // A committed-row invalidation announces the delta that follows it.
+            if (live?.type === 'invalidate' && live.deliveryId) return;
+            if (deckVisible()) chatsRefresh?.signal();
           });
           if (cancelled || generation !== chatWatchGeneration) {
             stop();
@@ -430,9 +469,25 @@ export default function BuzzChannels() {
           unsubscribeChats = stop;
         };
         chatsRefresh = new SurfaceRefreshScheduler({
-          fetch: () => http.chats(selectedId),
-          apply: (value) => {
-            setChatList(value);
+          fetch: async () => {
+            deltasDuringRead = [];
+            readInFlight = true;
+            try {
+              return await http.chats(selectedId);
+            } finally {
+              readInFlight = false;
+            }
+          },
+          apply: (read) => {
+            const missedLive =
+              liveReadApplied &&
+              heldChats !== null &&
+              roomsMissedByLive(heldChats, read, heardRooms).length > 0;
+            heardRooms.clear();
+            liveReadApplied = true;
+            const value = deltasDuringRead.reduce(applyChatListDelta, read);
+            paintChats(value);
+            if (missedLive) nextTransport.reconnectLive();
             setRefreshing(false);
             setError(null);
             void mobileSurfaceCache.write(chatCacheAddress, value, isChatListView);
@@ -455,7 +510,9 @@ export default function BuzzChannels() {
           cachedWorkspaces?.watchFilters ?? [
             { kinds: [9000, 9001, 9007], '#p': [nextIdentity.publicKey] },
           ],
-          () => workspaceRefresh?.signal(),
+          () => {
+            if (deckVisible()) workspaceRefresh?.signal();
+          },
         )
         .then((stop) => {
           if (cancelled) stop();
@@ -477,14 +534,18 @@ export default function BuzzChannels() {
       workspaceScheduler.current = null;
       chatScheduler.current = null;
     };
-  }, [requestedWorkspaceId, retryGeneration]);
+  }, [deckVisible, requestedWorkspaceId, retryGeneration]);
 
   useFocusEffect(
     useCallback(() => {
+      deckFocusedRef.current = true;
       refreshNow();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
-      return () => clearInterval(timer);
+      return () => {
+        deckFocusedRef.current = false;
+        clearInterval(timer);
+      };
     }, [activeCommunityId, refreshNow]),
   );
 

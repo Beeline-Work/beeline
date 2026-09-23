@@ -150,6 +150,23 @@ function eventMarkers(event: { tags: string[][] }): string[] {
   return event.tags.flatMap((tag) => (tag[0] === 't' && tag[1] ? [tag[1]] : []));
 }
 
+function messageTimeMs(message: RoomView['messages'][number]): number {
+  return message.createdAtMs ?? message.createdAt * 1_000;
+}
+
+/** A read carries a message newer than anything the painted Room held. */
+function readFoundUnheardMessage(previous: RoomView | null, next: RoomView): boolean {
+  if (!previous) return false;
+  const known = new Set(previous.messages.map((message) => message.id));
+  const newest = previous.messages.reduce(
+    (latest, message) => Math.max(latest, messageTimeMs(message)),
+    0,
+  );
+  return next.messages.some(
+    (message) => !known.has(message.id) && messageTimeMs(message) > newest,
+  );
+}
+
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
 export interface RoomSurfaceSessionBindings {
@@ -247,25 +264,16 @@ export function useRoomSurfaceSession({
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
-  const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
   liveOverlaysRef.current = liveOverlays;
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
-    if (!roomSurface) return;
-    if (traces.length > 0) {
-      pendingPaintTracesRef.current = [];
-      logLiveTrace('paint', traces);
-      for (const trace of traces) trace.acknowledgePaint?.();
-    }
-    // The committed delta paints first. This post-paint signal then converges
-    // the entire Room without putting the full snapshot on the feedback path.
-    if (deltaReconcilePendingRef.current) {
-      deltaReconcilePendingRef.current = false;
-      schedulerRef.current?.signal();
-    }
+    if (!roomSurface || traces.length === 0) return;
+    pendingPaintTracesRef.current = [];
+    logLiveTrace('paint', traces);
+    for (const trace of traces) trace.acknowledgePaint?.();
   }, [roomSurface]);
 
   const channelIdRef = useRef(channelId);
@@ -411,8 +419,15 @@ export function useRoomSurfaceSession({
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-    let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
+    // A backgrounded app reads nothing: returning to the foreground replaces
+    // the socket, and that resubscribe's `subscribed` frame is the covering read.
+    const visibleScheduler = () =>
+      AppState.currentState === 'background' ? undefined : scheduler;
+    // Any frame on this watch since the last applied read. A read that finds a
+    // newer message while the socket stayed silent proves the socket missed it.
+    let heardSinceRead = false;
+    let liveReadApplied = false;
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
@@ -600,6 +615,7 @@ export function useRoomSurfaceSession({
         [{ '#h': [channelId] }],
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
+          heardSinceRead = true;
           if ('monolithLive' in event) {
             const surfaceEvent = event as MonolithSurfaceEvent;
             const live = surfaceEvent.monolithLive;
@@ -616,12 +632,12 @@ export function useRoomSurfaceSession({
               // snapshot predates this lane, so the frame that finally
               // arrives is the only thing that can cover it.
               if (handshakeSeen) {
-                if (hasPainted) scheduler?.force();
+                if (hasPainted) visibleScheduler()?.force();
                 return;
               }
               handshakeSeen = true;
               listenReady?.();
-              if (readRacedAhead) scheduler?.force();
+              if (readRacedAhead) visibleScheduler()?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -648,7 +664,7 @@ export function useRoomSurfaceSession({
               if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
               const current = reconciledViewRef.current;
               if (!current) {
-                scheduler?.force();
+                visibleScheduler()?.force();
                 return;
               }
               const next =
@@ -667,7 +683,6 @@ export function useRoomSurfaceSession({
                   ...pendingPaintTracesRef.current.slice(-15),
                   received,
                 ];
-              if (!live.reconcilesDelivery) deltaReconcilePendingRef.current = true;
               setRoomSurface(next);
               if (live.type === 'message-delta') {
                 void outboxRef.current?.reconcile(
@@ -696,7 +711,7 @@ export function useRoomSurfaceSession({
                 logLiveTrace('socket-receipt', [received], received.receivedAt);
               }
               if (live.deliveryId) {
-                scheduler?.refreshNow();
+                visibleScheduler()?.refreshNow();
                 return;
               }
               // A claim has already committed its WORKING receipt before the
@@ -711,11 +726,11 @@ export function useRoomSurfaceSession({
                 const namedRow =
                   typeof live.messageId === 'string' ||
                   (typeof live.agentId === 'string' && typeof live.requestId === 'string');
-                if (!namedRow) scheduler?.signal();
+                if (!namedRow) visibleScheduler()?.signal();
               } else if (live.reason === 'postgres:agent_turns') {
-                scheduler?.force();
+                visibleScheduler()?.force();
               } else {
-                scheduler?.signal();
+                visibleScheduler()?.signal();
               }
             } else if (live.roomId !== channelId) {
               // A Room watch no longer includes child corners. An ephemeral
@@ -796,7 +811,7 @@ export function useRoomSurfaceSession({
             requestId &&
             (!replaying || replayedFreshWorkingReceipt)
           ) {
-            scheduler?.signalUntil((view) =>
+            visibleScheduler()?.signalUntil((view) =>
               view.latestAgentTurns.some((turn) => turn.requestId === requestId),
             );
             return;
@@ -816,11 +831,11 @@ export function useRoomSurfaceSession({
                 ].includes(marker),
               ));
           if (expectsPaintedMessage) {
-            scheduler?.signalUntil((view) =>
+            visibleScheduler()?.signalUntil((view) =>
               view.messages.some((message) => message.id === event.id),
             );
           } else {
-            scheduler?.signal();
+            visibleScheduler()?.signal();
           }
         },
       );
@@ -957,7 +972,14 @@ export function useRoomSurfaceSession({
           },
           apply: (view) => {
             if (cancelled) return;
+            const missedLive =
+              liveReadApplied &&
+              !heardSinceRead &&
+              readFoundUnheardMessage(reconciledViewRef.current, view);
+            heardSinceRead = false;
+            liveReadApplied = true;
             applyView(view, identity.publicKey, relayUrl, true);
+            if (missedLive) nextTransport.reconnectLive();
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
               void nextTransport.reopenChat(channelId).catch(() => {
@@ -1010,10 +1032,6 @@ export function useRoomSurfaceSession({
         markRoomOpen('watch-install');
         await scheduler.startAfter(installWatch());
         markRoomOpen('watch-ready');
-
-        appStateSubscription = AppState.addEventListener('change', (state) => {
-          if (state === 'active') scheduler?.force();
-        });
       } catch (error) {
         if (cancelled) return;
         setHydrationFailed(true);
@@ -1026,7 +1044,6 @@ export function useRoomSurfaceSession({
       watchGeneration += 1;
       abandonHandshakeWait?.();
       scheduler?.dispose();
-      appStateSubscription?.remove();
       unsubscribe?.();
       outboxRef.current = null;
       schedulerRef.current = null;

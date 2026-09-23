@@ -105,6 +105,25 @@ function mergeNewerCommittedMessages(
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
 
+/** A read that raced a turn delta must not walk that agent's turn backwards:
+ * no follow-up read comes after a delta to correct it. */
+function keepNewerAgentTurns(
+  previous: readonly RoomViewAgentTurn[],
+  next: readonly RoomViewAgentTurn[],
+): readonly RoomViewAgentTurn[] {
+  // A projected view may omit the list; there is then nothing to keep.
+  if (!previous?.length || !next) return next;
+  const previousByAgent = new Map(previous.map((turn) => [turn.agentPubkey, turn]));
+  let kept = false;
+  const merged = next.map((turn) => {
+    const held = previousByAgent.get(turn.agentPubkey);
+    if (!held || held.createdAt <= turn.createdAt) return turn;
+    kept = true;
+    return held;
+  });
+  return kept ? merged : next;
+}
+
 export function reconcileRoomView(previous: RoomView | null, next: RoomView): RoomView {
   if (!previous) return next;
   const messages = shareResponseArrayByKey(
@@ -120,10 +139,12 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
   const briefing = next.briefing
     ? shareResponseArrayByKey(previous.briefing ?? [], next.briefing, (message) => message.id)
     : undefined;
+  const latestAgentTurns = keepNewerAgentTurns(previous.latestAgentTurns, next.latestAgentTurns);
   return shareResponseValue(previous, {
     ...next,
     messages,
     members,
+    ...(latestAgentTurns !== next.latestAgentTurns ? { latestAgentTurns } : {}),
     ...(briefing ? { briefing } : {}),
   }) as RoomView;
 }

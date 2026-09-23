@@ -140,6 +140,9 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain('<CornerGlyph');
     expect(chatSource).toContain('testID="room-corners-glyph"');
     expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
+    expect(chatSource).toContain('onLongPress={() => void handleOpenRandomCorner()}');
+    expect(chatSource).toContain('onLongPress={canRenameTitle ? startRenameFromTitle : undefined}');
+    expect(chatSource).toContain('accessibilityHint="Long press to open a new corner"');
     expect(chatSource).toContain("from '@/buzz/corner-navigation'");
     expect(chatSource).toContain('roomCornersHref');
     // DMs and the corner's own header do not grow this control.

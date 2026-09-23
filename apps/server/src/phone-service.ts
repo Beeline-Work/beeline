@@ -4188,7 +4188,50 @@ export class PhoneService {
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
   }
+  private async renameCorner(roomId: string, name: string | undefined, viewerId: string) {
+    const title = normalizeHumanCornerTitle(name);
+    const parentId = await this.database.transaction(async (database) => {
+      const access = (
+        await database.query<{ parent_id: string; archived_at: Date | null }>(
+          `SELECT room.parent_id, room.archived_at
+           FROM rooms room
+           JOIN memberships room_member ON room_member.room_id=room.id
+             AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+           JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
+           WHERE room.id=$1 AND room.parent_id IS NOT NULL
+           FOR UPDATE OF room,room_member,workspace_member,viewer`,
+          [roomId, viewerId],
+        )
+      ).rows[0];
+      if (!access) throw new Error('room access denied');
+      if (access.archived_at) throw new Error('room is archived');
+      await database.query(`UPDATE rooms SET name=$2,updated_at=now() WHERE id=$1`, [
+        roomId,
+        title,
+      ]);
+      return access.parent_id;
+    });
+    this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });
+    this.live?.publish({ type: 'invalidate', roomId: parentId, reason: 'corner' });
+  }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
+    const existing = (
+      await this.database.query<{ parent_id: string | null }>(
+        `SELECT parent_id FROM rooms WHERE id=$1`,
+        [input.roomId],
+      )
+    ).rows[0];
+    if (!existing) throw new Error('room not found');
+    if (existing.parent_id) {
+      if (input.visibility !== undefined || input.reviewerAgentId !== undefined) {
+        throw new Error('room lifecycle cannot target a corner');
+      }
+      await this.renameCorner(input.roomId, input.name, viewerId);
+      return;
+    }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     await this.database.transaction(async (database) => {

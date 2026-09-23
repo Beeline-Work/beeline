@@ -340,7 +340,9 @@ import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
+import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
+import { openRandomNamedCorner } from '@/buzz/open-random-corner';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
@@ -677,6 +679,7 @@ export function BuzzChatSurface({
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [openingRandomCorner, setOpeningRandomCorner] = useState(false);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [participantPickerKind, setParticipantPickerKind] = useState<'person' | 'agent' | null>(
     null,
@@ -858,6 +861,9 @@ export function BuzzChatSurface({
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;
   const viewerChannelRole = roomSurface?.viewer.role ?? null;
   const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
+  const canRenameTitle = isCorner
+    ? !viewerIsAgent && !isArchived
+    : Boolean(!isDirectMessage && !viewerIsAgent && canManageWorkspace);
   const communities = useMemo(
     () =>
       roomSurface && activeCommunityId
@@ -3871,11 +3877,12 @@ export function BuzzChatSurface({
 
   const handleRenameRoom = useCallback(async () => {
     const name = renameDraft.trim();
+    const kindLabel = isCorner ? CORNER_LABEL : ROOM_LABEL;
     if (!name) {
-      setRenameError(`${ROOM_LABEL} name cannot be empty.`);
+      setRenameError(`${kindLabel} name cannot be empty.`);
       return;
     }
-    if (!transport || !canManageWorkspace || renameBusy) return;
+    if (!transport || !canRenameTitle || renameBusy) return;
 
     setRenameBusy(true);
     setRenameError(null);
@@ -3887,11 +3894,56 @@ export function BuzzChatSurface({
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
-      setRenameError(`Could not rename ${ROOM_LABEL}: ${String(err)}`);
+      setRenameError(`Could not rename ${kindLabel}: ${String(err)}`);
     } finally {
       setRenameBusy(false);
     }
-  }, [canManageWorkspace, decodedId, renameBusy, renameDraft, transport]);
+  }, [canRenameTitle, decodedId, isCorner, renameBusy, renameDraft, transport]);
+
+  const startRenameFromTitle = useCallback(() => {
+    if (!canRenameTitle) return;
+    setRenameDraft(storedRoomName);
+    setRenameError(null);
+    setRenameEditing(true);
+    if (!isCorner) setRoomActionsVisible(true);
+  }, [canRenameTitle, isCorner, storedRoomName]);
+
+  const handleOpenRandomCorner = useCallback(async () => {
+    if (openingRandomCorner || isArchived || viewerIsAgent) return;
+    if (!transport) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert(
+        'Not connected yet',
+        `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+      );
+      return;
+    }
+    setOpeningRandomCorner(true);
+    try {
+      await openRandomNamedCorner({
+        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        roomId: decodedId,
+        openCorner: (cornerId, title) => {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          if (desktopExperience) openDesktopCorner(decodedId, cornerId);
+          else router.push(cornerHref(cornerId, decodedId, title));
+        },
+      });
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+    } finally {
+      setOpeningRandomCorner(false);
+    }
+  }, [
+    decodedId,
+    desktopExperience,
+    isArchived,
+    openDesktopCorner,
+    openingRandomCorner,
+    transport,
+    viewerIsAgent,
+  ]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -4407,11 +4459,7 @@ export function BuzzChatSurface({
           if (pendingCornerRequest) void handleWritePermission(pendingCornerRequest, 'allow');
           return;
         case 'rename':
-          if (!canManageWorkspace) return;
-          setRenameDraft(storedRoomName);
-          setRenameError(null);
-          setRenameEditing(true);
-          setRoomActionsVisible(true);
+          startRenameFromTitle();
           return;
         case 'close-corner':
           void handleCloseCorner();
@@ -4451,7 +4499,7 @@ export function BuzzChatSurface({
       openCatchUpSheet,
       pendingCornerRequest,
       pendingTargetBranchProposal,
-      storedRoomName,
+      startRenameFromTitle,
     ],
   );
 
@@ -4993,6 +5041,7 @@ export function BuzzChatSurface({
                   // A corner's name is its objective verbatim; let it wrap once
                   // rather than truncate to a slug fragment.
                   numberOfLines={isCorner ? 2 : 1}
+                  onLongPress={canRenameTitle ? startRenameFromTitle : undefined}
                   onPress={
                     !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined
                   }
@@ -5038,9 +5087,12 @@ export function BuzzChatSurface({
               goes, and the pair's boxes touch like the Room-list chrome. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
+                accessibilityHint="Long press to open a new corner"
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
                 accessibilityRole="button"
+                delayLongPress={450}
                 hitSlop={HEADER_EDGE_HIT_SLOP}
+                onLongPress={() => void handleOpenRandomCorner()}
                 onPress={() => router.push(roomCornersHref(decodedId))}
                 style={styles.roomCornersButton}
                 testID="room-corners-menu"
@@ -6016,11 +6068,7 @@ export function BuzzChatSurface({
               disabled={renameBusy}
               label="Rename"
               onPress={() => {
-                // The rename draft is the STORED name; the header's `#`
-                // mark is display-only and must never be saved back.
-                setRenameDraft(storedRoomName);
-                setRenameError(null);
-                setRenameEditing(true);
+                startRenameFromTitle();
               }}
               testID="rename-room-action"
             />
@@ -6106,6 +6154,59 @@ export function BuzzChatSurface({
           testID="corner-actions-close"
         />
       </HullActionSheetModal>
+
+      <HullDialog
+        actions={[
+          {
+            disabled: renameBusy,
+            label: 'Cancel',
+            onPress: () => {
+              setRenameEditing(false);
+              setRenameError(null);
+            },
+          },
+          {
+            busy: renameBusy,
+            disabled: renameBusy || !renameDraft.trim(),
+            label: renameBusy ? 'Renaming' : 'Apply',
+            onPress: () => void handleRenameRoom(),
+            testID: 'apply-corner-rename',
+            variant: 'primary',
+          },
+        ]}
+        dismissOnBackdrop={!renameBusy}
+        onRequestClose={() => {
+          if (renameBusy) return;
+          setRenameEditing(false);
+          setRenameError(null);
+        }}
+        testID="rename-corner-dialog"
+        title={`Rename ${CORNER_LABEL}`}
+        visible={isCorner && renameEditing}
+      >
+        <HullDialogInput
+          accessibilityLabel={`New ${CORNER_LABEL} name`}
+          autoCapitalize="sentences"
+          autoCorrect
+          autoFocus
+          editable={!renameBusy}
+          maxLength={120}
+          onChangeText={(value) => {
+            setRenameDraft(value);
+            if (value.trim()) setRenameError(null);
+          }}
+          onSubmitEditing={() => void handleRenameRoom()}
+          returnKeyType="done"
+          selectTextOnFocus
+          testID="rename-corner-input"
+          value={renameDraft}
+        />
+        {renameError ? (
+          <Text accessibilityRole="alert" style={styles.membershipErrorText}>
+            {renameError}
+          </Text>
+        ) : null}
+      </HullDialog>
 
       <MemberPickerSheet
         busy={addingMembers || memberInviteBusy}

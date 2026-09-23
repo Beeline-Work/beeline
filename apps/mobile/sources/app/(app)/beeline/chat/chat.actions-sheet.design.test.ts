@@ -193,7 +193,7 @@ describe('Room and corner actions sheets', () => {
 
   it('leaves every action wired to exactly what it called before', () => {
     expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('setRosterVisible(true)');
-    expect(row(roomSheet, 'rename-room-action')).toContain('setRenameEditing(true)');
+    expect(row(roomSheet, 'rename-room-action')).toContain('startRenameFromTitle()');
     expect(row(roomSheet, 'room-github-events-toggle')).toContain(
       'onPress={() => void handleToggleGitHubEvents()}',
     );

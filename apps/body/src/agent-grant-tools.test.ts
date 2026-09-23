@@ -70,6 +70,8 @@ describe('beeline-agent request_grant', () => {
     ]);
     expect(reply).toMatch(/^pending, card posted: route squire \[grant g-9\]/);
     expect(reply).toContain('paused');
+    expect(reply).toContain('approval wake starts the fresh session with that route mounted');
+    expect(reply).toContain('without restarting or scheduling another turn');
   });
 
   it('returns "pending, card posted" and tells the agent its turn is paused', async () => {

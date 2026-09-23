@@ -296,4 +296,19 @@ describe('Room deck live path', () => {
     expect(deck.reconnects).toBe(1);
     await act(async () => renderer.unmount());
   });
+
+  it('reconnects the socket when an unannounced message landed in the same second', async () => {
+    const renderer = await mountDeck();
+
+    deck.chatsResponse = chatList({ id: 'm2', text: 'same second, never announced', createdAt: 10 });
+    await act(async () => deck.blur?.());
+    await act(async () => {
+      deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
+    });
+    await quiet();
+
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('same second, never announced');
+    expect(deck.reconnects).toBe(1);
+    await act(async () => renderer.unmount());
+  });
 });

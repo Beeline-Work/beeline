@@ -89,6 +89,11 @@ export function roomsMissedByLive(
     const latest = item.latestMessage;
     if (!before || !latest || heardRoomIds.has(item.room.id)) return [];
     const previous = before.latestMessage;
-    return !previous || latest.createdAt > previous.createdAt ? [item.room.id] : [];
+    // Times are whole seconds, so a different message in the same second is also new.
+    const newer =
+      !previous ||
+      latest.createdAt > previous.createdAt ||
+      (latest.createdAt === previous.createdAt && latest.id !== previous.id);
+    return newer ? [item.room.id] : [];
   });
 }

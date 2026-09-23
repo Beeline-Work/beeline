@@ -124,4 +124,13 @@ describe('chat list deltas', () => {
     expect(roomsMissedByLive(held, read, new Set(['a']))).toEqual(['b']);
     expect(roomsMissedByLive(held, held, new Set())).toEqual([]);
   });
+
+  it('names a Room whose read shows a different latest message in the same second', () => {
+    const held = deck(item('a', 20));
+    const sameSecond = item('a', 20);
+    const read = deck({ ...sameSecond, latestMessage: { ...sameSecond.latestMessage!, id: 'a-other' } });
+
+    expect(roomsMissedByLive(held, read, new Set())).toEqual(['a']);
+    expect(roomsMissedByLive(held, read, new Set(['a']))).toEqual([]);
+  });
 });

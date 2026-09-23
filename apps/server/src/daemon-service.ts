@@ -74,6 +74,7 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
+import { connectorAdapter } from '@beeline/api-contract/workbench';
 import {
   applyVaultList,
   connectorCatalog,
@@ -966,21 +967,33 @@ export class DaemonService {
     ).rows;
     const assignments: ConnectorAssignment[] = [];
     for (const row of connectors) {
-      if (row.status === 'installing')
-        assignments.push({
-          kind: 'install',
-          connectorId: row.id,
-          connectorType: row.connector_type as never,
-        });
-      if (row.status === 'disconnected')
-        assignments.push({
-          kind: 'uninstall',
-          connectorId: row.id,
-          connectorType: row.connector_type as never,
-        });
-      if (row.status === 'connected' && row.connector_type === 'google-youtube')
-        assignments.push({ kind: 'refresh-google-grant', connectorId: row.id,
-          connectorType: row.connector_type as never });
+      const adapter = connectorAdapter(row.connector_type);
+      if (adapter) {
+        for (const kind of adapter.assignmentKinds(
+          row.status as 'disconnected' | 'installing' | 'connected' | 'error',
+        )) {
+          if (kind !== 'install' && kind !== 'uninstall' && kind !== 'refresh-google-grant')
+            continue;
+          assignments.push({
+            kind,
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+          });
+        }
+      } else {
+        if (row.status === 'installing')
+          assignments.push({
+            kind: 'install',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+          });
+        if (row.status === 'disconnected')
+          assignments.push({
+            kind: 'uninstall',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+          });
+      }
       for (const op of row.pending_ops ?? []) {
         if (op === 'sync')
           assignments.push({

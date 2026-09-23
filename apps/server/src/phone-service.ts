@@ -131,6 +131,8 @@ import type {
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
 import {
+  connectorAdapter,
+  connectorRequesterRole,
   faviconDomain,
   isGoogleToolConnectorKind,
 } from '@beeline/api-contract/workbench';
@@ -6330,19 +6332,32 @@ export class PhoneService {
   }
 
   private async assertOwnedConnector(connectorId: string, viewerId: string) {
-    // Human-scoped: a connector is owned by the viewer, wherever it is stored.
+    // Human-scoped: a connector is owned by the viewer. Adapted kinds
+    // (Squire, YouTube) take that verdict from the typed adapter so
+    // cross-requester disconnect is the adapter's refusal, not a second rule.
     const row = await this.database.query<{
       id: string;
       connector_type: Input<'pairConnector'>['connectorType'];
       status: string;
       helper_agent_id: string;
+      owner_identity_id: string;
     }>(
-      `SELECT id,connector_type,status,helper_agent_id FROM workspace_connectors
-       WHERE id=$1::uuid AND owner_identity_id=$2`,
-      [connectorId, viewerId],
+      `SELECT id,connector_type,status,helper_agent_id,owner_identity_id
+       FROM workspace_connectors WHERE id=$1::uuid`,
+      [connectorId],
     );
     if (!row.rowCount) throw new Error('connector not found (access denied)');
-    return row.rows[0]!;
+    const connector = row.rows[0]!;
+    const adapter = connectorAdapter(connector.connector_type);
+    if (adapter) {
+      const role = connectorRequesterRole(viewerId, connector.owner_identity_id);
+      if (!adapter.authorize('disconnect', role).allowed)
+        throw new Error('connector not found (access denied)');
+      return connector;
+    }
+    if (connector.owner_identity_id !== viewerId)
+      throw new Error('connector not found (access denied)');
+    return connector;
   }
 
   /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
@@ -6490,15 +6505,25 @@ export class PhoneService {
         connector_type: Input<'pairConnector'>['connectorType'];
         reference: string;
         grants: Array<Record<string, unknown>>;
+        owner_identity_id: string;
       }>(
-        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants
+        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants,
+                c.owner_identity_id
          FROM workspace_connections c
          JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE c.id=$1::uuid AND c.owner_identity_id=$2`,
-        [input.connectionId, viewerId],
+         WHERE c.id=$1::uuid`,
+        [input.connectionId],
       )
     ).rows[0];
     if (!connection) throw new Error('connection not found (access denied)');
+    const adapter = connectorAdapter(connection.connector_type);
+    const role = connectorRequesterRole(viewerId, connection.owner_identity_id);
+    if (adapter) {
+      if (!adapter.authorize('revoke-grants', role).allowed)
+        throw new Error('connection not found (access denied)');
+    } else if (connection.owner_identity_id !== viewerId) {
+      throw new Error('connection not found (access denied)');
+    }
     const live = (connection.grants ?? []).filter((grant) => !grant.revokedAt);
     const revokedAt = Math.floor(Date.now() / 1000);
     const updated = (connection.grants ?? []).map((grant) =>

@@ -31,15 +31,14 @@ import type {
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
-import { unlinkSync } from 'node:fs';
 import {
   installGoogleTool,
   isGoogleToolConnectorType,
   persistManualGoogleCredentials,
-  manualGoogleCredentialsSearchPaths,
   type InstallGoogleToolResult,
   type ResolvedGoogleCredentials,
 } from './connector-google.js';
+import { clearYoutubeGrant, isAdaptedYoutube } from './connector-adapters.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CONNECT_TIMEOUT_MS,
@@ -257,15 +256,10 @@ export class ConnectorAssignmentLoop {
       return;
     }
     const youtubeRows = assignments.filter((assignment) =>
-      assignment.connectorType === 'google-youtube');
+      isAdaptedYoutube(assignment.connectorType));
     if (youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
       youtubeRows.every((assignment) => assignment.kind === 'uninstall')) {
-      try {
-        unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-          this.log(`could not clear Google grant: ${describe(error)}`);
-      }
+      clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
     }
     let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
@@ -421,12 +415,8 @@ export class ConnectorAssignmentLoop {
     const result = await this.installGoogle(connectorType, report, sharedCredentials);
     if (result.status === 'installing') return;
     if (result.status === 'error') {
-      if (connectorType === 'google-youtube') {
-        try { unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!); }
-        catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-            this.log(`could not clear YouTube grant: ${describe(error)}`);
-        }
+      if (isAdaptedYoutube(connectorType)) {
+        clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
       }
       await this.api.execute('postConnectorStatus', {
         agentId: this.agentId,

@@ -228,3 +228,21 @@ export type {
   PostConnectionUsageInput,
   VaultConnectionMeta,
 } from './daemon-operations.js';
+
+export {
+  CONNECTOR_ADAPTER_ACTIONS,
+  CONNECTOR_ADAPTER_DENIED,
+  SQUIRE_CONNECTOR_ADAPTER,
+  YOUTUBE_CONNECTOR_ADAPTER,
+  adaptedConnectorKinds,
+  connectorAdapter,
+  connectorRequesterRole,
+} from './connector-adapter.js';
+export type {
+  ConnectorAdapter,
+  ConnectorAdapterAction,
+  ConnectorAdapterAssignmentKind,
+  ConnectorAdapterStatus,
+  ConnectorPermissionDecision,
+  ConnectorRequesterRole,
+} from './connector-adapter.js';

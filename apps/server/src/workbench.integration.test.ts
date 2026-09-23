@@ -922,4 +922,38 @@ describe('workbench connectors', () => {
     });
     expect(response.status).toBe(403);
   });
+
+  it('routes YouTube lifecycle through its adapter: owner unpairs, another requester cannot', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-youtube',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await database.query(
+      `UPDATE workspace_connectors SET status='connected', connected_at=now()
+       WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    expect(
+      (queue.body as { assignments?: { kind: string; connectorType: string }[] }).assignments,
+    ).toContainEqual({
+      kind: 'refresh-google-grant',
+      connectorId: paired.connectorId,
+      connectorType: 'google-youtube',
+    });
+    expect(
+      (await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId: paired.connectorId }, recipientToken))
+        .status,
+    ).toBe(403);
+    await phoneOperation('unpairConnector', {
+      workspaceId: WORKSPACE,
+      connectorId: paired.connectorId,
+    });
+    const row = await database.query<{ status: string }>(
+      `SELECT status FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('disconnected');
+  });
 });

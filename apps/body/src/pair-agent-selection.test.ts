@@ -137,7 +137,7 @@ describe('pair agent auto-selection', () => {
     expect(installs).toEqual([
       {
         command: 'npm',
-        args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+        args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
       },
     ]);
     expect(selected).toEqual({
@@ -181,7 +181,9 @@ describe('pair agent auto-selection', () => {
       });
 
       expect(confirmInstall).toHaveBeenCalledWith(expect.stringContaining('Install now?'));
-      expect(installs).toEqual([{ command: 'npm', args: ['install', '-g', packageName] }]);
+      expect(installs).toEqual([
+        { command: 'npm', args: ['install', '-g', `${packageName}@latest`] },
+      ]);
       expect(selected).toEqual({ kind, command: resolve(directory, adapter), args: [] });
     },
   );
@@ -222,7 +224,9 @@ describe('pair agent auto-selection', () => {
       }),
     ).rejects.toThrow(/cannot be used non-interactively/);
 
-    expect(log.text()).toBe('pi adapter not installed; install it with: npm install -g pi-acp\n');
+    expect(log.text()).toBe(
+      'pi adapter not installed; install it with: npm install -g pi-acp@latest\n',
+    );
     expect(installed).toBe(false);
   });
 
@@ -243,7 +247,7 @@ describe('pair agent auto-selection', () => {
     ).rejects.toThrow(/need ACP adapter setup/);
 
     expect(log.text()).toBe(
-      'claude adapter not installed; install it with: npm install -g @agentclientprotocol/claude-agent-acp\n',
+      'claude adapter not installed; install it with: npm install -g @agentclientprotocol/claude-agent-acp@latest\n',
     );
     expect(installed).toBe(false);
   });
@@ -268,7 +272,7 @@ describe('pair agent auto-selection', () => {
     expect(selectAgent).toHaveBeenCalledTimes(2);
     expect(log.text()).toContain('could not install the claude adapter: permission denied');
     expect(log.text()).toContain(
-      'install it with: npm install -g @agentclientprotocol/claude-agent-acp',
+      'install it with: npm install -g @agentclientprotocol/claude-agent-acp@latest',
     );
     expect(log.text()).toContain('[beeline] using goose (selected)');
   });

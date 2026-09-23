@@ -10,7 +10,9 @@ import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js'
 import {
   AUTO_DETECT_AGENT_KINDS,
   detectInstalledAgentCommands,
+  installLatestAgentAdapter,
   resolveAgentCommand,
+  type AgentCommand,
   type AgentKind,
   type DetectedAgentCommand,
 } from './agent-command.js';
@@ -325,12 +327,39 @@ export interface ConnectModelCatalogRequest {
   timeoutMs?: number;
 }
 
+interface ConnectModelCatalogDependencies {
+  refreshAdapter?: (kind: AgentKind) => Promise<unknown>;
+  resolveAgent?: (kind: AgentKind) => Pick<AgentCommand, 'kind' | 'command' | 'args'>;
+  fetchCatalog?: typeof fetchAgentModelCatalog;
+}
+
+const refreshedConnectAdapters = new Map<AgentKind, Promise<unknown>>();
+
+function refreshConnectAdapter(kind: AgentKind): Promise<unknown> {
+  const existing = refreshedConnectAdapters.get(kind);
+  if (existing) return existing;
+  const refresh = installLatestAgentAdapter(kind).catch((error) => {
+    refreshedConnectAdapters.delete(kind);
+    throw error;
+  });
+  refreshedConnectAdapters.set(kind, refresh);
+  return refresh;
+}
+
 export async function loadConnectModelCatalog(
   input: ConnectModelCatalogRequest,
+  dependencies: ConnectModelCatalogDependencies = {},
 ): Promise<ConnectModelCatalog> {
-  const agent = resolveAgentCommand({ kind: input.harness });
+  // Resolve only after the refresh. Otherwise the wizard can interrogate an
+  // old adapter, persist its model id, then launch a different adapter from a
+  // later PATH resolution. A picker choice must come from the exact command
+  // that connect-finish will store for the daemon.
+  await (dependencies.refreshAdapter ?? refreshConnectAdapter)(input.harness);
+  const agent = (dependencies.resolveAgent ?? ((kind) => resolveAgentCommand({ kind })))(
+    input.harness,
+  );
   const model = input.model ?? defaultConnectModel(input.harness, input.provider);
-  const catalog = await fetchAgentModelCatalog(
+  const catalog = await (dependencies.fetchCatalog ?? fetchAgentModelCatalog)(
     agent,
     providerEnvironment({
       harness: input.harness,

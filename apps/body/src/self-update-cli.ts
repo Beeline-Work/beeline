@@ -9,6 +9,13 @@
  */
 import pc from 'picocolors';
 import {
+  formatAdapterInstallCommand,
+  latestAdapterInstallCommand,
+  runAdapterInstall,
+  type AdapterInstallCommand,
+  type AgentKind,
+} from './agent-command.js';
+import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   readRuntimeRecord,
@@ -36,6 +43,47 @@ import {
   resolveManifestUrl,
 } from './self-update-manifest.js';
 import { withInstallLock } from './managed-update.js';
+
+interface RuntimeAdapterRefreshOptions {
+  configPaths?: string[];
+  readRuntime?: (path: string) => Promise<{ agentKind?: AgentKind }>;
+  install?: (command: AdapterInstallCommand) => Promise<void>;
+  log?: (line: string) => void;
+}
+
+/**
+ * Refresh each separable adapter once, no matter how many Room agents share
+ * it. `beeline start` already enters through `runUpdateCommand`, so the same
+ * pass covers direct `npx usebeeline update` and the whole start fan-out.
+ */
+export async function refreshRuntimeHarnessAdapters(
+  options: RuntimeAdapterRefreshOptions = {},
+): Promise<void> {
+  const log = options.log ?? console.log;
+  const readRuntime = options.readRuntime ?? readRuntimeRecord;
+  const install = options.install ?? ((command) => runAdapterInstall(command));
+  const configPaths = options.configPaths ?? [
+    ...(await findRuntimeConfigPaths(process.cwd()).catch(() => [] as string[])),
+    ...(await findAgentRuntimeConfigPaths(process.env, process.cwd()).catch(() => [] as string[])),
+  ];
+  const kinds = new Set<AgentKind>();
+  for (const path of new Set(configPaths)) {
+    const runtime = await readRuntime(path).catch(() => undefined);
+    if (runtime?.agentKind) kinds.add(runtime.agentKind);
+  }
+  for (const kind of kinds) {
+    const command = latestAdapterInstallCommand(kind);
+    if (!command) continue;
+    log(`[beeline] refreshing ${kind} adapter: ${formatAdapterInstallCommand(command)}`);
+    try {
+      await install(command);
+    } catch (error) {
+      log(
+        `[beeline] ${kind} adapter refresh failed; keeping the installed copy (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
+}
 
 function updateUsage(): void {
   console.log(`
@@ -169,6 +217,11 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
     await printStatus(layout);
     return;
   }
+
+  // `--check` is explicitly report-only. Every mutating update, including the
+  // update pass `beeline start` performs before launching its fan-out, also
+  // advances installed ACP adapters to the registry's current release.
+  if (!checkOnly) await refreshRuntimeHarnessAdapters();
 
   const installed = await readInstalledBundleIdentity(layout);
   console.log(`[beeline] installed bundle: ${describeIdentity(installed)}`);

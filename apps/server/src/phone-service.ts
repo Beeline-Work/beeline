@@ -6187,8 +6187,11 @@ export class PhoneService {
     // it as an agent_id and find its machine (for legacy agents, machine_id
     // IS the agent_id).
     // The input helperAgentId may be a machine_id or an agent_id.
-    // Find any agent owned by this viewer that matches either, then find a
-    // Workspace the viewer shares with that agent.
+    // A machine can host several agents, while the connector queue is bound
+    // to one exact agent. Prefer the agent with the freshest live presence;
+    // otherwise an online machine can arm an offline sibling and leave the
+    // install row pending forever. The null fallback preserves old direct
+    // callers that paired a legacy agent before presence was available.
     const candidate = await this.database.query<{
       agent_id: string;
       machine_id: string | null;
@@ -6197,7 +6200,16 @@ export class PhoneService {
          FROM agents a
          JOIN memberships m ON m.identity_id=a.agent_id
            AND m.room_id IS NULL AND m.removed_at IS NULL
+         LEFT JOIN LATERAL(
+           SELECT p.updated_at
+           FROM live_outputs p
+           WHERE p.agent_id=a.agent_id AND p.kind='presence'
+             AND p.body->>'status'='online'
+             AND p.updated_at>now()-interval '90 seconds'
+           ORDER BY p.updated_at DESC LIMIT 1
+         ) presence ON true
         WHERE a.owner_id=$1 AND (a.machine_id=$2 OR a.agent_id=$2)
+        ORDER BY presence.updated_at DESC NULLS LAST,a.agent_id
         LIMIT 1`,
       [viewerId, input.helperAgentId],
     );

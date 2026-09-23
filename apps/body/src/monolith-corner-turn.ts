@@ -488,6 +488,8 @@ export class MonolithCornerTurnLoop {
   private busy = false;
   private forcedStop = false;
   private activityTail = Promise.resolve();
+  /** The model selected for the live ACP session, independent of later settings edits. */
+  private sessionModel: string | null = null;
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
   /** The session's TMPDIR, where a granted command's script argument may also live. */
@@ -599,6 +601,7 @@ export class MonolithCornerTurnLoop {
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
+    this.sessionModel = null;
     if (client?.isAlive) await client.stop();
   }
 
@@ -964,6 +967,7 @@ export class MonolithCornerTurnLoop {
       );
       await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
     }
+    this.sessionModel = selection?.model ?? null;
     return opened.sessionId;
   }
 
@@ -1267,6 +1271,7 @@ export class MonolithCornerTurnLoop {
                   )
                     return;
                   publishedToolCalls.add(key);
+                  const producingModel = this.sessionModel;
                   const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
@@ -1298,6 +1303,7 @@ export class MonolithCornerTurnLoop {
                         roomId: cornerId,
                         requestId,
                         cornerActivityKey: key,
+                        agentModel: producingModel,
                         activity,
                       });
                       // Only now is that prose somewhere a reader can scroll

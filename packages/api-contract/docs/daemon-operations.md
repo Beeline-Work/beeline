@@ -53,6 +53,7 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 - Live draft/thought operations are explicitly replace/retract operations, not generic event publication.
 - `postAgentActivity` keeps ordinary tool activity available on either surface, but `kind='output'` is durable corner narration and is rejected outside a corner. A corner writer binds any completed pre-tool assistant runs to that tool when the call first appears, then posts the narration and terminal tool record together only after the tool settles; the final reply remains a separate whole last assistant run.
 - A corner activity write may carry a bounded deterministic `cornerActivityKey`. The server derives its message ID from the corner, agent, request, and key, and treats a conflict as a replay only when the existing row has that same corner, agent, request, activity presentation, and exact activity payload. Retried writes therefore reuse the original payload rather than creating another narration row.
+- A corner helper sends the model pinned to its producing session as `agentModel` (or null when no model is known). The server stamps it on the activity row so later agent setting changes cannot relabel that turn; older helpers that omit the field retain the prior server selection fallback.
 
 ### PR check gate
 

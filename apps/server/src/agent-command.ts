@@ -1248,6 +1248,63 @@ export async function reconcileConfiguredCornerReviewers(
        AND ($1::uuid IS NULL OR parent.id=$1)`,
     [parentRoomId ?? null],
   );
+  // Older webhook deliveries could persist a green lifecycle while their
+  // deduplicated GitHub note never created a check-passed fact. Give those
+  // heads a durable source for both review dispatch and reviewer handback.
+  const missingFacts = await db.query<{
+    corner_id: string;
+    author_id: string;
+    head_sha: string;
+  }>(
+    `SELECT corner.id corner_id,COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+            fact.lifecycle->'pr'->>'headSha' head_sha
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN corner_facts fact ON fact.corner_id=corner.id
+     JOIN memberships reviewer ON reviewer.room_id=parent.id
+       AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
+     WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
+       AND fact.lifecycle->'pr'->>'number' IS NOT NULL
+       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+       AND ($1::uuid IS NULL OR parent.id=$1)
+       AND NOT EXISTS (
+         SELECT 1 FROM corner_merge_approvals approval
+         WHERE approval.corner_id=corner.id
+           AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
+           AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM messages message WHERE message.room_id=corner.id
+           AND message.system_event->>'kind'='check-passed'
+           AND (message.system_event->'object'->>'headSha' IS NULL
+                OR message.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+       )`,
+    [parentRoomId ?? null],
+  );
+  let commands = 0;
+  if (missingFacts.rows.length) {
+    for (const missing of missingFacts.rows) {
+      const source = await systemLine(db, {
+        id: createHash('sha256')
+          .update(`beeline:${missing.corner_id}:recovered-green:${missing.head_sha}`)
+          .digest('hex'),
+        roomId: missing.corner_id,
+        authorId: missing.author_id,
+        subject: { kind: 'github', name: 'GitHub' },
+        verb: 'passed checks',
+        kind: 'check-passed',
+        object: { text: 'aggregate checks', headSha: missing.head_sha },
+      });
+      const routed = await db.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2
+           AND agent_id=(SELECT reviewer_agent_id FROM rooms WHERE id=(SELECT parent_id FROM rooms WHERE id=$1))`,
+        [missing.corner_id, source.id],
+      );
+      if (source.inserted && routed.rowCount) commands += 1;
+    }
+  }
   const candidates = await db.query<{
     corner_id: string;
     reviewer_agent_id: string;
@@ -1294,7 +1351,6 @@ export async function reconcileConfiguredCornerReviewers(
        )`,
     [parentRoomId ?? null],
   );
-  let commands = 0;
   for (const candidate of candidates.rows) {
     const command = await createAgentCommand(db, {
       roomId: candidate.corner_id,

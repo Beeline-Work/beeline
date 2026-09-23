@@ -713,6 +713,40 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
     commands: 0,
   });
 });
+// Reproduction RG-1: a stored GitHub note and a passing lifecycle have no
+// check-passed fact, so no configured reviewer receives a command.
+it('recovers a green head whose earlier GitHub note never dispatched its reviewer', async () => {
+  const headSha = '8'.repeat(40);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'passing',
+        lifecycle: 'in-review',
+        pr: { number: 18, url: 'https://github.com/acme/repo/pull/18', headSha },
+      }),
+    ],
+  );
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+  await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    object: { text: 'BODY SUITE', headSha },
+  });
+
+  await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
+    subscriptions: 2,
+    commands: 1,
+  });
+  expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'subscribed_event' })]);
+  await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
+    subscriptions: 0,
+    commands: 0,
+  });
+});
 it('runs green review, fixes, exact-head approval, and implementer clearance as commands', async () => {
   const firstHead = '1'.repeat(40);
   const approvedHead = '2'.repeat(40);

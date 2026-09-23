@@ -6,6 +6,7 @@ import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 
 const HUMAN = 'a'.repeat(64);
+const REVIEWER = 'b'.repeat(64);
 
 describe('GitHub phone operations', () => {
   let database: PgliteDatabase;
@@ -112,6 +113,16 @@ describe('GitHub phone operations', () => {
         }),
       ],
     );
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Reviewer')`, [
+      REVIEWER,
+    ]);
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [room, REVIEWER]);
+    for (const roomId of [room, corner])
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [workspace, roomId, REVIEWER],
+      );
     let started!: () => void;
     let release!: () => void;
     const firstStarted = new Promise<void>((resolve) => {
@@ -157,7 +168,9 @@ describe('GitHub phone operations', () => {
     });
     const first = operations.processWebhook('check_run', payload('lint', 'completed'));
     await firstStarted;
-    const second = operations.processWebhook('check_run', payload('typecheck', 'completed'));
+    // The aggregate turns green on another delivery for the same check. The
+    // first delivery already used its ordinary GitHub note's deterministic ID.
+    const second = operations.processWebhook('check_run', payload('lint', 'completed'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(readCommitCheckRollup).toHaveBeenCalledTimes(1);
     release();
@@ -178,6 +191,38 @@ describe('GitHub phone operations', () => {
         checks: [{ name: 'lint' }, { name: 'typecheck' }],
       },
     });
+    expect(
+      (
+        await database.query<{ source_kind: string; agent_id: string }>(
+          `SELECT command.agent_id,message.system_event->>'kind' source_kind
+           FROM agent_commands command JOIN messages message ON message.id=command.source_message_id
+           WHERE command.room_id=$1`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: REVIEWER, source_kind: 'check-passed' }]);
+    // A previously stored green fact must still route if its command was lost.
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"'),
+       command_check_state=NULL WHERE corner_id=$1`,
+      [corner],
+    );
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'passed',
+      total: 2,
+      failing: [],
+      checks: [{ name: 'lint', status: 'passed' }],
+    });
+    await operations.processWebhook('check_run', payload('lint', 'completed'));
+    expect(
+      (
+        await database.query<{ agent_id: string }>(
+          `SELECT agent_id FROM agent_commands WHERE room_id=$1`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: REVIEWER }]);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

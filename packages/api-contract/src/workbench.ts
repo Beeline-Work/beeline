@@ -50,10 +50,8 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
 ];
 
 /**
- * The four Google Workspace tool kinds ride ONE shared Google OAuth grant
- * (the single Google connect entry): pairing any one provisions the whole
- * set, in this canonical order. Tool identity stays per-kind — installs,
- * receipts and grants remain separate connector rows.
+ * The four Google Workspace tool kinds share one OAuth grant on a helper.
+ * Pairing and status remain independent per product.
  */
 export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'google-gmail',
@@ -61,6 +59,24 @@ export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'google-drive',
   'google-youtube',
 ];
+
+/** Scope authority for the four independent Google product installs. */
+export const GOOGLE_TOOL_SCOPES = {
+  'google-gmail': [
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.compose',
+  ],
+  'google-calendar': [
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.readonly',
+  ],
+  'google-drive': ['https://www.googleapis.com/auth/drive.readonly'],
+  'google-youtube': [
+    'https://www.googleapis.com/auth/youtube.readonly',
+    'https://www.googleapis.com/auth/yt-analytics.readonly',
+  ],
+} as const;
 
 export function isGoogleToolConnectorKind(value: ConnectorKind): boolean {
   return (GOOGLE_CONNECTOR_KINDS as readonly string[]).includes(value);

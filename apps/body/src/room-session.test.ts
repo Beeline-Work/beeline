@@ -101,6 +101,8 @@ describe('monolith Room inspection mount', () => {
     expect(server!.env).toEqual([
       { name: 'BEELINE_MCP_SURFACE', value: 'youtube' },
       { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: 'ya29.local' },
+      { name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
+        value: expect.stringContaining('google-credentials.json') },
     ]);
     expect(server!.command).not.toMatch(/smithery|npx/i);
   });

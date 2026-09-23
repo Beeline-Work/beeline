@@ -16,6 +16,7 @@
  * `YOUTUBE_ANALYTICS_OWNER_LIMIT`: Google answers only the channel owner.
  */
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 import {
   GoogleApiError,
   YOUTUBE_ANALYTICS_OWNER_LIMIT,
@@ -221,7 +222,16 @@ async function invokeYoutubeTool(
 }
 
 function youtubeAccessToken(env: NodeJS.ProcessEnv = process.env): string {
-  const token = env.BEELINE_YOUTUBE_ACCESS_TOKEN?.trim();
+  let token = env.BEELINE_YOUTUBE_ACCESS_TOKEN?.trim();
+  const path = env.BEELINE_GOOGLE_CREDENTIALS_PATH;
+  if (path) {
+    try {
+      const stored = JSON.parse(readFileSync(path, 'utf8')) as { accessToken?: string };
+      token = stored.accessToken?.trim();
+    } catch {
+      token = undefined;
+    }
+  }
   if (!token) {
     throw new Error(
       'YouTube is not signed in on this helper. Connect Google Workspace from the Workbench — the same in-app sign-in, not a second overlay.',

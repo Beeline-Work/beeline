@@ -20,6 +20,7 @@ export type GoogleCredentials = {
   /** Expiry in epoch ms; the source decides how staleness is handled. */
   readonly expiresAt?: number;
   readonly accountEmail?: string;
+  readonly scopes?: readonly string[];
 };
 
 /** Where an access token comes from (vault, manual paste, refresh, …). */

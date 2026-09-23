@@ -128,6 +128,8 @@ export function youtubeMcpServer(
     env: [
       { name: 'BEELINE_MCP_SURFACE', value: YOUTUBE_MCP_SURFACE },
       { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: accessToken },
+      { name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
+        value: resolve(process.env.BEELINE_AGENT_HOME ?? process.cwd(), 'google-credentials.json') },
     ],
   };
 }

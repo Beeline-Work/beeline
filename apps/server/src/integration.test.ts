@@ -15,6 +15,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
+import { GoogleOAuth } from './google-oauth.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
@@ -160,6 +161,8 @@ describe('monolith integration', () => {
       'http://placeholder',
       1024 * 1024,
     );
+    const googleOAuth = new GoogleOAuth(database, 'client', 'secret',
+      'http://placeholder', Buffer.alloc(32, 1).toString('base64'));
     phone = new PhoneService(
       database,
       'http://placeholder',
@@ -169,12 +172,13 @@ describe('monolith integration', () => {
       false,
       database,
       objectService,
+      googleOAuth,
     );
     const live = new LiveHub();
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
       expiresAt: Date.now() + 60_000,
-    }));
+    }), undefined, false, undefined, false, undefined, undefined, googleOAuth);
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
@@ -202,6 +206,7 @@ describe('monolith integration', () => {
       auth,
       phone,
       daemon,
+      googleOAuth,
       live,
       review: new ReviewAccess({
         secret: REVIEW_SECRET,
@@ -8355,12 +8360,7 @@ describe('monolith integration', () => {
       [WORKSPACE],
     );
     expect(google.rows.every((row) => row.owner_identity_id === mara.id)).toBe(true);
-    expect(google.rows.map((row) => row.connector_type)).toEqual([
-      'google-calendar',
-      'google-drive',
-      'google-gmail',
-      'google-youtube',
-    ]);
+    expect(google.rows.map((row) => row.connector_type)).toEqual(['google-gmail']);
     await daemonOperation('installConnector', { connectorId: managerAcceptance.connectorId });
     const managerSettled = await database.query<{ card: Record<string, any> }>(
       `SELECT card FROM messages WHERE card_type='connector-offer' AND card->>'offerId'=$1`,

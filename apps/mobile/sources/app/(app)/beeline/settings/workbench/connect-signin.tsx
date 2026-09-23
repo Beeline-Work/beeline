@@ -70,13 +70,9 @@ export default function ConnectorSignInScreen() {
 
   const openExternally = useCallback(async () => {
     if (!url) return;
-    if (method === 'oauth') {
-      await WebBrowser.openAuthSessionAsync(url);
-    } else {
-      await WebBrowser.openBrowserAsync(url);
-    }
+    await WebBrowser.openBrowserAsync(url);
     setFellBack(true);
-  }, [method, url]);
+  }, [url]);
 
   const host = (() => {
     try {
@@ -109,7 +105,19 @@ export default function ConnectorSignInScreen() {
           {host ? <Text style={styles.subtitle}>{host}</Text> : null}
         </View>
       </View>
-      {webView && url ? (
+      {method === 'oauth' ? (
+        <View style={styles.centered} testID="signin-oauth-browser">
+          <Text style={styles.note}>Google sign-in opens in your browser. Return here after granting access.</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => void openExternally()}
+            style={styles.fallbackButton}
+            testID="signin-open-external"
+          >
+            <Text style={styles.fallbackText}>Continue with Google</Text>
+          </TouchableOpacity>
+        </View>
+      ) : webView && url ? (
         // JS-enabled on purpose: the sign-in sequence itself must run.
         React.createElement(webView, {
           source: { uri: url },

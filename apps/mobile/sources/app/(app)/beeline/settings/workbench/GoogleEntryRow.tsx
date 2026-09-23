@@ -10,10 +10,8 @@ import {
 } from '@/buzz/workbench';
 
 /**
- * The ONE Google connect entry: the four Google tool connectors (Gmail /
- * Calendar / Drive / YouTube) fold into a single logical row, so one connect
- * flow covers every tool with one Google grant. The server keeps four
- * connector kinds/rows; only consent and connect UX fold.
+ * One Google account with four separately installed tools. The disclosure
+ * shows each tool's status and its own Connect action.
  *
  * The row has one state and one valid action. Its disclosure has no glyph and
  * contains only the catalog's existing one-line capability copy.
@@ -23,13 +21,12 @@ export function GoogleEntryRow({
   onPressConnect,
 }: {
   connectors: readonly WorkbenchConnector[];
-  onPressConnect: () => void;
+  onPressConnect: (id: WorkbenchConnector['id']) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
   const instrument = connectorInstrument(entry.status);
-  const canConnect = instrument.connect && entry.available;
   const errorText =
     entry.status === 'error'
       ? (entry.errorMessage ?? 'Connection failed')
@@ -38,7 +35,6 @@ export function GoogleEntryRow({
   return (
     <View testID="google-entry">
       <SettingsRow
-        action={canConnect ? 'Connect' : undefined}
         description={errorText}
         descriptionTone={entry.status === 'error' ? 'danger' : undefined}
         onPress={() => setExpanded((value) => !value)}
@@ -46,42 +42,29 @@ export function GoogleEntryRow({
         title={entry.name}
         value={instrument.value}
         valueTone={instrument.valueTone}
-        trailingPress={
-          canConnect
-            ? {
-                accessibilityLabel: 'Connect Google Workspace',
-                onPress: onPressConnect,
-                testID: 'google-entry-connect',
-              }
-            : undefined
-        }
       />
       {expanded ? (
         <View style={styles.details} testID="google-entry-details">
           <Text style={styles.tool}>{entry.description}</Text>
-          {googleToolRows(connectors).map((tool) => (
-            <View key={tool.id} style={styles.toolRow} testID={`google-tool-${tool.id}`}>
-              <Text style={styles.tool}>{tool.name}</Text>
-              <Text
-                style={[
-                  styles.tool,
-                  tool.status === 'connected'
-                    ? styles.toolConnected
-                    : tool.status === 'error'
-                      ? styles.toolError
-                      : undefined,
-                ]}
-              >
-                {tool.status === 'connected'
-                  ? 'connected'
-                  : tool.status === 'installing'
-                    ? 'installing'
-                    : tool.status === 'error'
-                      ? 'error'
-                      : 'not connected'}
-              </Text>
-            </View>
-          ))}
+          {googleToolRows(connectors).map((tool) => {
+            const toolInstrument = connectorInstrument(tool.status);
+            const canConnect = tool.available && toolInstrument.connect;
+            return <SettingsRow
+              key={tool.id}
+              testID={`google-tool-${tool.id}`}
+              title={tool.name}
+              value={toolInstrument.value}
+              valueTone={toolInstrument.valueTone}
+              action={canConnect ? 'Connect' : undefined}
+              description={tool.status === 'error' ? tool.errorMessage : undefined}
+              descriptionTone={tool.status === 'error' ? 'danger' : undefined}
+              trailingPress={canConnect ? {
+                accessibilityLabel: `Connect ${tool.name}`,
+                onPress: () => onPressConnect(tool.id),
+                testID: `google-tool-${tool.id}-connect`,
+              } : undefined}
+            />;
+          })}
         </View>
       ) : null}
     </View>

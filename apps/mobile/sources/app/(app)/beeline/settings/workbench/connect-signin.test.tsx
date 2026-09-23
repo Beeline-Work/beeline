@@ -57,6 +57,7 @@ vi.mock('@/buzz/workbench-source', () => ({
 }));
 
 import ConnectorSignInScreen from './connect-signin';
+import * as WebBrowser from 'expo-web-browser';
 
 const originalConsoleError = console.error;
 
@@ -74,6 +75,19 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('ConnectorSignInScreen', () => {
+  it('opens Google OAuth in the system browser', async () => {
+    searchParams.connectorName = 'Google Workspace';
+    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=test';
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+    expect(renderer.root.findAllByType('WebView')).toHaveLength(0);
+    await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(searchParams.url);
+    await act(async () => renderer.unmount());
+    searchParams.connectorName = 'Tailscale';
+    searchParams.url = 'https://login.tailscale.com/a/test';
+  });
+
   it('names the connector being authenticated', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {

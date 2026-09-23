@@ -10,6 +10,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
+import { GoogleOAuth } from './google-oauth.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
@@ -72,10 +73,14 @@ describe('workbench connectors', () => {
       {} as unknown as GitHubAppClient,
       'github-client-secret',
     );
-    phone = new PhoneService(database, 'http://placeholder', githubOperations);
+    const googleOAuth = new GoogleOAuth(database, 'client', 'secret',
+      'http://placeholder', Buffer.alloc(32, 1).toString('base64'));
+    phone = new PhoneService(database, 'http://placeholder', githubOperations,
+      undefined, undefined, false, database, undefined, googleOAuth);
     const live = new LiveHub();
-    daemon = new DaemonService(database, live);
-    server = createBeelineServer({ database, auth, phone, daemon, live });
+    daemon = new DaemonService(database, live, undefined, undefined, false,
+      undefined, false, undefined, undefined, googleOAuth);
+    server = createBeelineServer({ database, auth, phone, daemon, live, googleOAuth });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
@@ -818,10 +823,7 @@ describe('workbench connectors', () => {
     );
   });
 
-  it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {
-    // The single Google connect entry pairs the whole set: one grant, four
-    // server-side tool rows, so the entry's repair state tops up every
-    // missing tool without a second consent.
+  it('pairing one Google tool queues only that product', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
       connectorType: 'google-gmail',
@@ -835,34 +837,26 @@ describe('workbench connectors', () => {
       [WORKSPACE, HUMAN, HELPER],
     );
     const byType = Object.fromEntries(rows.rows.map((row) => [row.connector_type, row.status]));
-    expect(Object.keys(byType).sort()).toEqual(
-      ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube'].sort(),
-    );
+    expect(Object.keys(byType)).toEqual(['google-gmail']);
     expect(byType['google-gmail']).toBe('installing');
-    for (const type of ['google-calendar', 'google-drive', 'google-youtube']) {
-      expect(byType[type]).toBe('installing');
-    }
-
-    // Every sibling re-armed like the primary: fresh steps, no error line,
-    // and the helper daemon picks up all four installs on its next poll.
     const queue = await daemonOperation('getConnectorAssignments', {});
     const kinds = (
       queue.body as { assignments?: { kind: string; connectorType: string }[] }
     ).assignments?.filter((assignment) => assignment.connectorType?.startsWith('google-'));
-    expect(kinds?.map((assignment) => assignment.connectorType).sort()).toEqual(
-      ['google-calendar', 'google-drive', 'google-gmail', 'google-youtube'].sort(),
-    );
+    expect(kinds?.map((assignment) => assignment.connectorType)).toEqual(['google-gmail']);
     expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
   });
 
-  it('re-pairing one Google tool re-arms only the unconnected siblings', async () => {
+  it('re-pairing one Google tool leaves a connected sibling alone', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
       connectorType: 'google-gmail',
       helperAgentId: HELPER,
     })) as { connectorId: string };
 
-    // One sibling already carries a live grant from the first pairing.
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-youtube', helperAgentId: HELPER,
+    });
     await database.query(
       `UPDATE workspace_connectors SET status='connected', connected_at=now()
        WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
@@ -894,12 +888,12 @@ describe('workbench connectors', () => {
         { status: row.status, connectedAt: row.connected_at },
       ]),
     );
-    // The connected sibling keeps its live grant untouched; the rest re-arm.
+    // The connected sibling keeps its live grant untouched.
     expect(byType['google-youtube']!.status).toBe('connected');
     expect(byType['google-youtube']!.connectedAt).not.toBeNull();
-    for (const type of ['google-gmail', 'google-calendar', 'google-drive']) {
-      expect(byType[type]!.status).toBe('installing');
-    }
+    expect(byType['google-gmail']!.status).toBe('installing');
+    expect(byType['google-calendar']).toBeUndefined();
+    expect(byType['google-drive']).toBeUndefined();
   });
 
   it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {

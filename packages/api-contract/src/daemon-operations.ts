@@ -219,6 +219,11 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
+  getGoogleOAuthGrant: Operation<AgentInput & { readonly connectorId: string }, {
+    readonly status: 'pending' | 'ready';
+    readonly credentials?: { readonly accessToken: string;
+      readonly expiresAt: number; readonly accountEmail?: string; readonly scopes: readonly string[] };
+  }>;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
@@ -963,6 +968,8 @@ export type ConnectorAssignment =
       readonly connectorType: ConnectorKind;
     }
   | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
+  | { readonly kind: 'refresh-google-grant'; readonly connectorId: string;
+      readonly connectorType: ConnectorKind }
   | {
       readonly kind: 'revoke-grants';
       readonly connectorId: string;

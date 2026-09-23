@@ -6,6 +6,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { GoogleOAuth } from './google-oauth.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import {
@@ -130,7 +131,6 @@ import type {
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
 import {
-  GOOGLE_CONNECTOR_KINDS,
   faviconDomain,
   isGoogleToolConnectorKind,
 } from '@beeline/api-contract/workbench';
@@ -652,6 +652,7 @@ export class PhoneService {
     private readonly routingTransaction = false,
     private readonly enrichmentDatabase: SqlDatabase = database,
     private readonly objects?: ObjectService,
+    private readonly googleOAuth?: GoogleOAuth,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -6082,7 +6083,10 @@ export class PhoneService {
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
-      catalog: connectorCatalog(),
+      catalog: connectorCatalog().map((entry) =>
+        isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
+          ? { ...entry, available: false }
+          : entry),
       ...(walletRow
         ? {
             wallet: {
@@ -6231,11 +6235,21 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
+    if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
+      throw new Error('Google OAuth is not configured on this Beeline server');
     const viewerId = input.ownerIdentityId;
     const machineId = input.machineId;
     const ws = { workspace_id: input.workspaceId };
     const matched = { agent_id: input.helperAgentId };
     const id = randomUUID();
+    const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
+      ? (await database.query<{ status: string }>(
+          `SELECT status FROM workspace_connectors
+           WHERE workspace_id=$1 AND owner_identity_id=$2
+             AND connector_type=$3 AND machine_id=$4`,
+          [ws.workspace_id, viewerId, input.connectorType, machineId],
+        )).rows[0]?.status
+      : undefined;
     await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
@@ -6268,40 +6282,6 @@ export class PhoneService {
     // by `connector-assignment` (the 5-minute poll is only recovery) even when
     // the conflict row carried a different agent of the same machine or a
     // leftover `uninstall` op.
-    // ONE Google consent covers all four tool connectors: pairing any Google
-    // tool provisions the whole set on this machine, so the single Google
-    // connect entry tops up every missing tool. A sibling that is already
-    // connected keeps its live grant — only missing or broken siblings are
-    // (re-)armed.
-    if (isGoogleToolConnectorKind(input.connectorType)) {
-      for (const siblingType of GOOGLE_CONNECTOR_KINDS) {
-        if (siblingType === input.connectorType) continue;
-        await database.query(
-          `INSERT INTO workspace_connectors(
-             id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-             status,status_steps
-           ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
-           ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
-           SET helper_agent_id=EXCLUDED.helper_agent_id,
-               status='installing',
-               status_steps=EXCLUDED.status_steps,
-               status_error=NULL,
-               pending_ops='[]'::jsonb,
-               connected_at=NULL,
-               updated_at=now()
-           WHERE workspace_connectors.status <> 'connected'`,
-          [
-            randomUUID(),
-            ws.workspace_id,
-            viewerId,
-            siblingType,
-            matched.agent_id,
-            machineId,
-            JSON.stringify(defaultConnectorSteps()),
-          ],
-        );
-      }
-    }
     const existing = (
       await database.query<{
         id: string;
@@ -6320,6 +6300,16 @@ export class PhoneService {
       status_steps: defaultConnectorSteps() as ConnectorStep[],
       status_error: null,
     };
+    if (isGoogleToolConnectorKind(input.connectorType) && this.googleOAuth) {
+      if (previousGoogleStatus === 'error' ||
+        !(await this.googleOAuth.hasGrant(ws.workspace_id, viewerId, machineId, database))) {
+        const url = await this.googleOAuth.begin(existing.id, database);
+        await database.query(
+          `UPDATE workspace_connectors SET sign_in=$2::jsonb WHERE id=$1`,
+          [existing.id, JSON.stringify({ method: 'oauth', url })],
+        );
+      }
+    }
     // Push the install to this helper now; the poll is only recovery.
     await notifyConnectorAssignment(database, matched.agent_id);
     await ensureConnectorDirectMessageRoom(
@@ -6345,8 +6335,9 @@ export class PhoneService {
       id: string;
       connector_type: Input<'pairConnector'>['connectorType'];
       status: string;
+      helper_agent_id: string;
     }>(
-      `SELECT id,connector_type,status FROM workspace_connectors
+      `SELECT id,connector_type,status,helper_agent_id FROM workspace_connectors
        WHERE id=$1::uuid AND owner_identity_id=$2`,
       [connectorId, viewerId],
     );
@@ -6369,6 +6360,24 @@ export class PhoneService {
        WHERE id=$1::uuid`,
       [input.connectorId],
     );
+    if (isGoogleToolConnectorKind(connector.connector_type)) {
+      await this.database.query(
+        `DELETE FROM google_oauth_grants g
+         USING workspace_connectors c
+         WHERE c.id=$1 AND g.workspace_id=c.workspace_id
+           AND g.owner_identity_id=c.owner_identity_id AND g.machine_id=c.machine_id
+           AND NOT EXISTS (
+             SELECT 1 FROM workspace_connectors active
+             WHERE active.workspace_id=c.workspace_id
+               AND active.owner_identity_id=c.owner_identity_id
+               AND active.machine_id=c.machine_id
+               AND active.connector_type LIKE 'google-%'
+               AND active.status IN ('installing','connected','error')
+           )`,
+        [input.connectorId],
+      );
+    }
+    await notifyConnectorAssignment(this.database, connector.helper_agent_id);
   }
 
   async readConnectionDetail(

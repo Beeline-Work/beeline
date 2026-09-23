@@ -18,9 +18,9 @@ import { catchUpStripLabel } from './room-catch-up-report';
  * The answers a transcript owes a reader about unread mail, kept apart the
  * way Slack keeps them apart:
  *
- * - the NEW MESSAGES divider says where the reader's unread run began when
- *   they opened this Room. The server's opening cursor owns it until the
- *   reader reaches the newest row, and a live arrival may never move it;
+ * - the unread glyph marks where the reader's unread run began when they
+ *   opened this Room. The opening cursor owns it for the visit, and a live
+ *   arrival may never move it;
  * - the jump disc says the newest message is off screen. It is a way back to
  *   newest and nothing else, so it shows on viewport visibility alone,
  *   whether or not anything new is waiting;
@@ -39,6 +39,7 @@ export function useNewMessageControl({
   arrivingIds,
   newestMessageId,
   firstUnreadMessageId,
+  openingUnreadCounts,
   isPinnedToTail,
 }: {
   roomId: string;
@@ -47,10 +48,11 @@ export function useNewMessageControl({
   arrivingIds: ReadonlySet<string>;
   newestMessageId: string | null;
   firstUnreadMessageId: string | null;
+  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /** Tail distance, which decides auto-follow and nothing this control shows. */
   isPinnedToTail: () => boolean;
 }): {
-  /** The opening unread row until the newest row is seen, otherwise null. */
+  /** The opening unread row for this visit. */
   dividerMessageId: string | null;
   queue: NewMessageQueue;
   /** The jump disc: shown for as long as the newest row is off screen. */
@@ -69,12 +71,9 @@ export function useNewMessageControl({
   // unanswered viewport would flash one over every Room at open.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
   const [hasObservedVisibility, setHasObservedVisibility] = useState(false);
-  const [dismissedDividerMessageId, setDismissedDividerMessageId] = useState<string | null>(null);
   const visibleMessagesRef = useRef<readonly ChatDisplayMessage[]>([]);
   const newestMessageIdRef = useRef(newestMessageId);
   newestMessageIdRef.current = newestMessageId;
-  const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
-  firstUnreadMessageIdRef.current = firstUnreadMessageId;
   const isPinnedToTailRef = useRef(isPinnedToTail);
   isPinnedToTailRef.current = isPinnedToTail;
 
@@ -82,7 +81,6 @@ export function useNewMessageControl({
     setQueue(EMPTY_NEW_MESSAGE_QUEUE);
     setNewestMessageVisible(false);
     setHasObservedVisibility(false);
-    setDismissedDividerMessageId(null);
     visibleMessagesRef.current = [];
   }, [roomId]);
 
@@ -121,12 +119,9 @@ export function useNewMessageControl({
     setHasObservedVisibility(true);
     // Reaching the newest message is what the control asks for; arriving there
     // under the reader's own finger settles the queue exactly as a tap would,
-    // and retires the opening divider now that its unread run has been read.
+    // while the opening boundary stays anchored for this visit.
     if (newestVisible) {
       setQueue(acknowledgeNewMessageQueue);
-      if (firstUnreadMessageIdRef.current) {
-        setDismissedDividerMessageId(firstUnreadMessageIdRef.current);
-      }
     }
   }, []);
 
@@ -136,18 +131,13 @@ export function useNewMessageControl({
     );
   }, []);
 
-  // The divider is the server's cursor and only ever the server's cursor. It
-  // retires after the reader reaches the newest row and stays retired when a
-  // later live batch arms the independent jump control. The strip stands for
-  // that same cursor but does NOT retire with the line: a Room opening at its
-  // tail sees the newest row at once, and the strip would be gone before the
-  // reader could reach for it.
-  const dividerRetired = dismissedDividerMessageId === firstUnreadMessageId;
+  // The glyph marks the opening boundary for this visit. Later read-mark
+  // updates and live arrivals cannot move or retire it.
   const unreadSinceAt =
     queueableMessages.find((message) => messageContainsBoundary(message, firstUnreadMessageId))
       ?.timestamp ?? null;
   return {
-    dividerMessageId: dividerRetired ? null : firstUnreadMessageId,
+    dividerMessageId: firstUnreadMessageId,
     queue,
     discVisible: newestJumpDiscVisible({
       newestMessageId,
@@ -155,8 +145,9 @@ export function useNewMessageControl({
       hasObservedVisibility,
     }),
     badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
-    catchUpVisible: catchUpStripVisible(firstUnreadMessageId),
-    // No count: there is none to state honestly (`room-catch-up-report.ts`).
+    catchUpVisible: catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts),
+    // The control labels the boundary, leaving count display to the server
+    // cursor rather than this visit's partial live queue.
     catchUpSummary: catchUpStripLabel({ since: unreadSinceAt }),
     observeVisibleMessages,
     settleQueueAtBoundary,

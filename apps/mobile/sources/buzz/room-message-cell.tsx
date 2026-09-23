@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
+import Svg, { Path } from 'react-native-svg';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { messageContainsBoundary } from './room-new-message-boundary';
 import { arrivalFlashTiming } from './room-arrival-flash';
@@ -176,9 +177,21 @@ function ArrivalFlashFill() {
 
 export function NewMessagesDivider() {
   return (
-    <View accessibilityRole="text" style={styles.newMessages} testID="new-messages-divider">
+    <View
+      accessibilityLabel="Unread messages begin here"
+      accessibilityRole="text"
+      style={styles.newMessages}
+      testID="new-messages-divider"
+    >
       <View style={styles.newMessagesRule} />
-      <Text style={styles.newMessagesLabel}>NEW MESSAGES</Text>
+      <Svg width={12} height={12} viewBox="0 0 12 12" accessibilityElementsHidden>
+        <Path
+          d="M6 1.5 10.5 6 6 10.5 1.5 6Z"
+          fill="none"
+          stroke={styles.newMessagesGlyph.color}
+          strokeWidth={1.5}
+        />
+      </Svg>
       <View style={styles.newMessagesRule} />
     </View>
   );
@@ -203,8 +216,5 @@ const styles = StyleSheet.create((theme) => ({
     height: StyleSheet.hairlineWidth,
     backgroundColor: theme.buzz.border,
   },
-  newMessagesLabel: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.ledgerQuiet,
-  },
+  newMessagesGlyph: { color: theme.buzz.accent },
 }));

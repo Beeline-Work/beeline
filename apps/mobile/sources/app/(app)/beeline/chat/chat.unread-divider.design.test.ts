@@ -21,7 +21,7 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('catchUpVisible: catchUpStripShown');
     expect(chatSource).toContain('<RoomCatchUpControls');
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
-    expect(chatSource).toContain('catchUpVisible={catchUpStripShown}');
+    expect(chatSource).toContain('catchUpVisible={catchUpOfferVisible}');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
     // The coupling this change removed, in either of the shapes it had. The
     // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
@@ -106,6 +106,10 @@ describe('the chat surface unread-divider wiring', () => {
 
   it('keeps the unread boundary out of the fold without consulting the live queue', () => {
     expect(chatSource).toContain('boundaryRowIndex(anchored, firstUnreadMessageId)');
+  });
+
+  it('derives corner state from the same fresh turn receipts as the turn line', () => {
+    expect(chatSource).toContain('latestAgentTurns: activeAgentTurns');
   });
 
   it('reports the newest row from chronological order so both lists agree', () => {

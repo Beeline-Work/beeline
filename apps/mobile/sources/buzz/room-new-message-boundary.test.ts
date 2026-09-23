@@ -37,7 +37,7 @@ describe('what counts as unread', () => {
     expect(countsAsUnread({ ...message('turn'), isAgentLiveTurn: true })).toBe(false);
   });
 
-  it('keeps a narrating agent from inflating the reader\'s count', () => {
+  it("keeps a narrating agent from inflating the reader's count", () => {
     const rows = [
       message('real'),
       { ...message('narration-a'), isAgentActivity: true },
@@ -134,8 +134,11 @@ describe('new-message boundary', () => {
     // strip sourced from it could not stand for what the reader missed while
     // away — the one thing it exists to stand for. The cursor is the gate,
     // which is the gate `/catch-up` itself runs on.
-    expect(catchUpStripVisible('new-1')).toBe(true);
-    expect(catchUpStripVisible(null)).toBe(false);
+    expect(catchUpStripVisible('new-1', { messages: 15, agentTurns: 0 })).toBe(true);
+    expect(catchUpStripVisible('new-1', { messages: 0, agentTurns: 6 })).toBe(true);
+    expect(catchUpStripVisible('new-1', { messages: 14, agentTurns: 5 })).toBe(false);
+    expect(catchUpStripVisible('new-1', null)).toBe(false);
+    expect(catchUpStripVisible(null, { messages: 15, agentTurns: 6 })).toBe(false);
   });
 
   it('CHEV-01: shows the disc for an off-screen newest row with no queue behind it', () => {

@@ -93,9 +93,7 @@ export function queueIncomingMessages(
 ): NewMessageQueue {
   if (isPinnedToTail || arrivingIds.size === 0) return current;
   const incoming = messages.flatMap((message) =>
-    countsAsUnread(message)
-      ? messageBoundaryIds(message).filter((id) => arrivingIds.has(id))
-      : [],
+    countsAsUnread(message) ? messageBoundaryIds(message).filter((id) => arrivingIds.has(id)) : [],
   );
   if (incoming.length === 0) return current;
   // A zero count means the previous batch was visited. Its divider may stay
@@ -170,13 +168,16 @@ export function newMessageBadgeCount(
  * this visit — a strip sourced from that could not describe what the reader
  * missed while away, which is the one thing it exists to describe.
  *
- * Only the cursor. Retiring it alongside the NEW MESSAGES divider was tried
- * and is wrong: the divider retires the moment the newest row is seen, and a
- * Room that opens at its tail sees that row immediately, so the strip
- * vanished before the reader could reach for it in exactly the Room that
- * needed it. The cursor clears when the session marks the Room read, and the
- * strip goes with it.
+ * The offer waits for a meaningful unread run: six agent turns or fifteen
+ * messages, counted by the server before this visit advances its mark.
  */
-export function catchUpStripVisible(firstUnreadMessageId: string | null): boolean {
-  return firstUnreadMessageId !== null;
+export function catchUpStripVisible(
+  firstUnreadMessageId: string | null,
+  counts: { messages: number; agentTurns: number } | null,
+): boolean {
+  return (
+    firstUnreadMessageId !== null &&
+    counts !== null &&
+    (counts.agentTurns >= 6 || counts.messages >= 15)
+  );
 }

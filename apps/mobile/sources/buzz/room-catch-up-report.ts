@@ -104,18 +104,9 @@ export function catchUpAuthorRoll(authors: readonly CatchUpAuthor[]): string {
 /**
  * THE seam where a number may enter catch-up copy, and the only one.
  *
- * There is no unread count in this product to print. The server serves
- * `unread: boolean` per Room (`phone-service.ts`), the client's own
- * `NewMessageQueue.count` resets on every Room open so it only ever knows
- * about arrivals during this visit, and the session marks a Room read at its
- * tail on the first fresh view (`useRoomSurfaceSession.ts`) — so no count
- * available here can say how much the reader missed while away. A strip
- * reading `42 new since 08:04` would be inventing that 42.
- *
- * `unreadCount` is where a server-supplied count slots in when one exists.
- * Nothing supplies it today, and nothing may compute one from loaded rows and
- * pass it here: partial history would understate the number and the strip
- * would still be lying, just more quietly.
+ * The server supplies a capped unread count beside the cursor. This formatter
+ * may use only that count; the live queue and loaded transcript are partial
+ * views of the unread run.
  */
 export function catchUpStripLabel({
   since,
@@ -125,10 +116,7 @@ export function catchUpStripLabel({
   since: number | null;
   unreadCount?: number | null;
 }): string {
-  const run =
-    typeof unreadCount === 'number' && unreadCount > 0
-      ? `${unreadCount} new`
-      : 'New';
+  const run = typeof unreadCount === 'number' && unreadCount > 0 ? `${unreadCount} new` : 'New';
   const when = since === null ? '' : ` since ${catchUpClock(since)}`;
   return `${run}${when} · Catch me up`;
 }

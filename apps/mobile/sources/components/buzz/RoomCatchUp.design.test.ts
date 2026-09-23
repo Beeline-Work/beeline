@@ -3,11 +3,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The sheet's scope is the thing most at risk here: it was trimmed from three
- * blocks to two, and the v2 mock's split of decisions from action items is
- * exactly what must not grow back. What a mounted test cannot see — that no
- * third block, filter or control has appeared, and that both doors reach the
- * same sheet — is pinned from source.
+ * The unread range is the source for the local overview and the agent request.
+ * The two overview blocks keep decisions and action items together; the third
+ * block gives the reader an explicit model choice.
  */
 const sheet = readFileSync(path.join(__dirname, 'RoomCatchUpSheet.tsx'), 'utf8');
 const controls = readFileSync(path.join(__dirname, 'RoomCatchUpControls.tsx'), 'utf8');
@@ -17,21 +15,25 @@ const surface = readFileSync(
 );
 
 describe('the catch-up sheet', () => {
-  it('CHEV-07: is bottom-anchored with exactly two blocks and no third', () => {
+  it('offers a model choice below the two overview blocks', () => {
     expect(sheet).toContain('HullActionSheetModal');
     const blockHeads = [...sheet.matchAll(/styles\.blockHead}>([^<]+)</g)].map((match) =>
       match[1]!.trim(),
     );
-    expect(blockHeads).toEqual(['Summary', 'Needs you']);
-    expect([...sheet.matchAll(/testID="catch-up-sheet-[a-z-]+"/g)].map((match) => match[0])).toEqual(
-      ['testID="catch-up-sheet-summary"', 'testID="catch-up-sheet-needs-you"'],
-    );
+    expect(blockHeads).toEqual(['Summary', 'Needs you', 'Ask an agent']);
+    expect(
+      [...sheet.matchAll(/testID="catch-up-sheet-[a-z-]+"/g)].map((match) => match[0]),
+    ).toEqual([
+      'testID="catch-up-sheet-summary"',
+      'testID="catch-up-sheet-needs-you"',
+      'testID="catch-up-sheet-agents"',
+    ]);
   });
 
-  it('CHEV-07: states the range in the head and carries nothing but dismiss', () => {
-    expect(sheet).toContain('subtitle={report.rangeLabel}');
-    // Dismissal is the sheet's own; no control of this screen's may be added.
-    expect(sheet).not.toContain('Pressable');
+  it('keeps the agent request reachable when the local range has not loaded', () => {
+    expect(sheet).toContain("subtitle={report?.rangeLabel ?? 'From your unread point'}");
+    expect(sheet).toContain('onPress={() => onAskAgent(agent)}');
+    expect(sheet).toContain('Finish your current draft to ask for a catch up.');
     expect(sheet).not.toContain('onJump');
     expect(sheet).not.toContain('footer=');
     expect(sheet).not.toContain('sticky=');
@@ -44,12 +46,13 @@ describe('the catch-up sheet', () => {
     // that array would be the decisions/action-items split coming back.
     expect([...sheet.matchAll(/report\.needsYou/g)]).toHaveLength(2);
     expect(sheet).not.toContain("kind === 'decision'");
-    expect(sheet).not.toContain("filter(");
+    expect(sheet).not.toContain('filter(');
   });
 
   it('CHEV-09: both doors open that one sheet, and the badge keeps its shortcut', () => {
     expect(controls).toContain('onPress={onOpenCatchUp}');
     expect(controls).toContain('onLongPress={catchUpReachable ? onOpenCatchUp : undefined}');
+    expect(controls).toContain('const catchUpReachable = catchUpVisible && badgeCount > 0;');
     expect(controls).toContain("{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }");
     expect(controls).toContain('onAccessibilityAction');
     expect(surface).toContain('onOpenCatchUp={openCatchUpSheet}');
@@ -58,6 +61,8 @@ describe('the catch-up sheet', () => {
     expect(surface).toContain('buildCatchUpReport({');
     expect(surface).toContain('boundaryId: catchUpBoundaryId');
     expect(surface).toContain('newestId: newestTranscriptMessageId');
+    expect(surface).toContain('onAskAgent={draftCatchUpRequest}');
+    expect(surface).toContain('selectedAgentMentionsRef.current.set(handle, agent.pubkey)');
   });
 
   it('CHEV-10: the disc is 44 and its lift stays derived from the turn line', () => {
@@ -91,17 +96,20 @@ describe('the catch-up sheet', () => {
 
   it('CHEV-15: no catch-up copy states a message count it cannot source', () => {
     const report = readFileSync(path.join(__dirname, '../../buzz/room-catch-up-report.ts'), 'utf8');
-    const hook = readFileSync(path.join(__dirname, '../../buzz/use-new-message-control.ts'), 'utf8');
-    // There is no unread count in this product: the server serves
-    // `unread: boolean`, the queue count resets on every Room open, and the
-    // session marks a Room read at its tail on first fresh view. The strip
-    // dates the run; the sheet head names the window by its two ends.
+    const hook = readFileSync(
+      path.join(__dirname, '../../buzz/use-new-message-control.ts'),
+      'utf8',
+    );
+    // The strip dates the run; the sheet head names the window by its two
+    // ends. The live queue is still only a partial view of the run.
     expect(report).toContain('`${run}${when} · Catch me up`');
-    expect(report).toContain('`Since ${catchUpClock(startedAt)} · newest ${catchUpClock(endedAt)}`');
+    expect(report).toContain(
+      '`Since ${catchUpClock(startedAt)} · newest ${catchUpClock(endedAt)}`',
+    );
     expect(report).not.toMatch(/msgs?['`]|\$\{count\}/);
     // The badge keeps its own count, which only ever claims this visit.
     expect(hook).toContain('badgeCount: newMessageBadgeCount(queue, newestMessageVisible)');
-    // One seam for a server-supplied count, and nothing feeds it yet.
+    // The formatter accepts a server count; this strip keeps its compact date.
     expect(report).toContain('unreadCount?: number | null');
     expect(hook).toContain('catchUpStripLabel({ since: unreadSinceAt })');
     expect(hook).not.toContain('unreadCount:');
@@ -112,10 +120,15 @@ describe('the catch-up sheet', () => {
       path.join(__dirname, '../../buzz/room-new-message-boundary.ts'),
       'utf8',
     );
-    const hook = readFileSync(path.join(__dirname, '../../buzz/use-new-message-control.ts'), 'utf8');
-    expect(boundary).toContain('export function catchUpStripVisible(firstUnreadMessageId');
+    const hook = readFileSync(
+      path.join(__dirname, '../../buzz/use-new-message-control.ts'),
+      'utf8',
+    );
+    expect(boundary).toContain('export function catchUpStripVisible(');
     expect(boundary).not.toMatch(/catchUpStripVisible[\s\S]{0,200}queue\.count/);
-    expect(hook).toContain('catchUpVisible: catchUpStripVisible(firstUnreadMessageId)');
+    expect(hook).toContain(
+      'catchUpVisible: catchUpStripVisible(firstUnreadMessageId, openingUnreadCounts)',
+    );
     // The queue keeps a boundary and a count, and nothing that can be read out.
     expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');
   });

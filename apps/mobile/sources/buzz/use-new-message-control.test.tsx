@@ -31,8 +31,9 @@ const { useNewMessageControl } = await import('./use-new-message-control');
 const { compactNewMessageCount } = await import('./room-new-message-boundary');
 const { catchUpClock } = await import('./room-catch-up-report');
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 const originalConsoleError = console.error;
 beforeAll(() => {
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
@@ -71,11 +72,13 @@ function TranscriptHarness({
   messages,
   arrivingIds,
   firstUnreadMessageId,
+  openingUnreadCounts,
   pinnedToTail,
 }: {
   messages: readonly ChatDisplayMessage[];
   arrivingIds: ReadonlySet<string>;
   firstUnreadMessageId: string | null;
+  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   pinnedToTail: boolean;
 }) {
   const control = useNewMessageControl({
@@ -84,6 +87,7 @@ function TranscriptHarness({
     arrivingIds,
     newestMessageId: messages.at(-1)?.id ?? null,
     firstUnreadMessageId,
+    openingUnreadCounts,
     isPinnedToTail: () => pinnedToTail,
   });
   handles.report = control.observeVisibleMessages;
@@ -129,6 +133,7 @@ const AT_TAIL: HarnessProps = {
   messages: SEED,
   arrivingIds: new Set<string>(),
   firstUnreadMessageId: null,
+  openingUnreadCounts: null,
   pinnedToTail: true,
 };
 
@@ -175,19 +180,22 @@ function dividerRowIds(renderer: ReactTestRenderer): string[] {
 }
 
 describe('the transcript new-message control', () => {
-  it('UDIV-04: retires the opening divider at the newest row without consuming later arrivals', () => {
-    const open: HarnessProps = { ...AT_TAIL, firstUnreadMessageId: 'seed-2' };
+  it('UDIV-04: keeps the opening glyph anchored while later arrivals use the jump control', () => {
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 0 },
+    };
     const renderer = mount(open);
     report([SEED[1]!, SEED[2]!]);
     expect(dividerRowIds(renderer)).toEqual(['seed-2']);
 
-    // Reaching the newest row retires the opening unread landmark for the rest
-    // of this visit. It must not remain behind in already-read history.
+    // Reaching newest settles a live count without moving the visit's landmark.
     report([SEED[3]!, SEED[4]!]);
-    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
 
-    // A later arrival below the fold still belongs to the jump control. It
-    // must neither restore the visited divider nor be lost with its dismissal.
+    // A later arrival below the fold belongs to the jump control and cannot
+    // move the anchored glyph.
     report([SEED[1]!, SEED[2]!]);
     update(renderer, {
       ...open,
@@ -195,13 +203,10 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(['arrival-0']),
       pinnedToTail: false,
     });
-    // The arrival raises the BADGE. The strip stands for the server's cursor,
-    // which the reader reaching the newest row does not clear — only the
-    // session's own markRead does — so it is still there for the divider that
-    // has gone.
+    // The arrival raises the badge while the opening boundary stays put.
     expect(badges(renderer)).toEqual(['1']);
     expect(strips(renderer)).toHaveLength(1);
-    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
   });
 
   it('UDIV-01: arms on an arrival below the fold and settles on the reader’s own return', () => {
@@ -313,7 +318,12 @@ describe('the transcript new-message control', () => {
     // A Room that opened with an unread cursor. The strip says when the run
     // began and nothing about its size: no count in this product can say how
     // much arrived while the reader was away (`room-catch-up-report.ts`).
-    const open: HarnessProps = { ...AT_TAIL, firstUnreadMessageId: 'seed-2', pinnedToTail: false };
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-2',
+      openingUnreadCounts: { messages: 15, agentTurns: 0 },
+      pinnedToTail: false,
+    };
     const renderer = mount(open);
     report([SEED[1]!, SEED[2]!]);
 
@@ -323,16 +333,18 @@ describe('the transcript new-message control', () => {
 
     // Arrivals during the visit raise the badge and leave the line alone.
     const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
-    update(renderer, { ...open, messages: arrived, arrivingIds: new Set(['arrival-0', 'arrival-1']) });
+    update(renderer, {
+      ...open,
+      messages: arrived,
+      arrivingIds: new Set(['arrival-0', 'arrival-1']),
+    });
     expect(badges(renderer)).toEqual(['2']);
     expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
 
-    // Reaching the newest row retires the DIVIDER. It does not retire the
-    // strip: the cursor is the server's to clear, and a Room that opens at
-    // its tail would otherwise lose the strip before the reader could reach
-    // for it — which is exactly the Room that needs it.
+    // Reaching newest settles the badge while the opening glyph remains
+    // anchored to the same first unread row for this visit.
     report([arrived[6]!]);
-    expect(dividerRowIds(renderer)).toEqual([]);
+    expect(dividerRowIds(renderer)).toEqual(['seed-2']);
     expect(strips(renderer)).toHaveLength(1);
     expect(strips(renderer)[0]!.findByType(Text).props.children).toBe(label);
 

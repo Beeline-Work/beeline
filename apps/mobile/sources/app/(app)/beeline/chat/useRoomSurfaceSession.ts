@@ -188,6 +188,8 @@ export interface UseRoomSurfaceSessionResult {
   roomSurface: RoomView | null;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
+  /** Server counts captured with the opening boundary, before viewport reads advance it. */
+  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /**
    * Report what the transcript's viewport can currently see. The boundary it
    * publishes is debounced, so this is safe to call on every viewability pass.
@@ -227,6 +229,10 @@ export function useRoomSurfaceSession({
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
   const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
+  const [openingUnreadCounts, setOpeningUnreadCounts] = useState<{
+    messages: number;
+    agentTurns: number;
+  } | null>(null);
   const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
   const [userPubkey, setUserPubkey] = useState('');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
@@ -326,6 +332,7 @@ export function useRoomSurfaceSession({
     readCursorRef.current?.suspend();
     await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
     setFirstUnreadMessageId(messageId);
+    setOpeningUnreadCounts(null);
   }, []);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
@@ -407,6 +414,7 @@ export function useRoomSurfaceSession({
     if (!channelId) return;
     if (!isFocused) return;
     setFirstUnreadMessageId(null);
+    setOpeningUnreadCounts(null);
     liveDraftDrainStore.setActive(true);
 
     let cancelled = false;
@@ -485,6 +493,14 @@ export function useRoomSurfaceSession({
         // clear the cursor but must not move the divider under the reader.
         capturedUnreadBoundary = true;
         setFirstUnreadMessageId(view.viewer.readCursor?.firstUnreadMessageId ?? null);
+        const cursor = view.viewer.readCursor;
+        setOpeningUnreadCounts(
+          cursor &&
+            typeof cursor.unreadCount === 'number' &&
+            typeof cursor.unreadAgentTurnCount === 'number'
+            ? { messages: cursor.unreadCount, agentTurns: cursor.unreadAgentTurnCount }
+            : null,
+        );
       }
       setRoomSurface(stableView);
       if (fresh) {
@@ -1067,6 +1083,7 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
     liveOverlays,

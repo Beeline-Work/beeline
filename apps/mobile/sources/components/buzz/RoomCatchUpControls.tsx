@@ -54,7 +54,7 @@ export function RoomCatchUpControls({
   onJumpToNewest: () => void;
   onOpenCatchUp: () => void;
 }) {
-  const catchUpReachable = badgeCount > 0;
+  const catchUpReachable = catchUpVisible && badgeCount > 0;
   return (
     <>
       {catchUpVisible && (

@@ -553,6 +553,7 @@ export function BuzzChatSurface({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
     liveOverlays,
@@ -1756,7 +1757,14 @@ export function BuzzChatSurface({
               roomSurface?.viewer.permissions.send,
           ),
           canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
-          canCatchUp: Boolean(firstUnreadMessageId),
+          canCatchUp: Boolean(
+            !viewerIsAgent &&
+              roomSurface?.viewer.permissions.send &&
+              roomParticipants.some((participant) => participant.kind === 'agent') &&
+              firstUnreadMessageId &&
+              openingUnreadCounts &&
+              (openingUnreadCounts.agentTurns >= 6 || openingUnreadCounts.messages >= 15),
+          ),
           canManageSchedules: Boolean(
             !isCorner &&
               !isDirectMessage &&
@@ -1792,6 +1800,7 @@ export function BuzzChatSurface({
       currentSlashQuery,
       canManageWorkspace,
       firstUnreadMessageId,
+      openingUnreadCounts,
       isCorner,
       isDirectMessage,
       latestOpenPoll,
@@ -1802,6 +1811,7 @@ export function BuzzChatSurface({
       viewerIsAgent,
       roomSurface?.repositoryResolution,
       roomSurface?.viewer.permissions.send,
+      roomParticipants,
     ],
   );
   const slashMenuVisible = Boolean(
@@ -1945,7 +1955,7 @@ export function BuzzChatSurface({
     Keyboard.dismiss();
   }, []);
   const canonicalCornerItem = isCorner && roomSurface
-    ? cornerDisplayFromRoomView(roomSurface)
+    ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
     : undefined;
   const sessionState = !isCorner
     ? 'idle'
@@ -2070,6 +2080,7 @@ export function BuzzChatSurface({
     arrivingIds: transcriptArrivalObservation.arrivingIds,
     newestMessageId: newestTranscriptMessageId,
     firstUnreadMessageId,
+    openingUnreadCounts,
     isPinnedToTail: () => isPinnedToTailRef.current,
   });
   // The catch-up sheet, reached from the strip and from a long-press on the
@@ -2106,6 +2117,29 @@ export function BuzzChatSurface({
   );
   const openCatchUpSheet = useCallback(() => setCatchUpSheetVisible(true), []);
   const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
+  const catchUpAgents = useMemo(
+    () => roomParticipants.filter((participant) => participant.kind === 'agent'),
+    [roomParticipants],
+  );
+  const draftCatchUpRequest = useCallback((agent: Pick<RoomMemberOption, 'pubkey' | 'name' | 'handle'>) => {
+    if (
+      !catchUpBoundaryId ||
+      inputTextRef.current.trim() ||
+      pendingAttachments.length > 0 ||
+      !roomSurface?.viewer.permissions.send
+    ) return;
+    const handle = agent.handle.replace(/^@/, '');
+    const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
+    selectedAgentMentionsRef.current.set(handle, agent.pubkey);
+    selectedMentionsRef.current.set(handle, agent.pubkey);
+    inputTextRef.current = prompt;
+    setInputText(prompt);
+    setInputSelection({ start: prompt.length, end: prompt.length });
+    setCatchUpSheetVisible(false);
+    scheduleAnimationFrame(() => composerRef.current?.focus());
+  }, [catchUpBoundaryId, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
+  const catchUpOfferVisible = catchUpStripShown && catchUpAgents.length > 0 &&
+    !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
   // A live message/card change follows to the newest end. The decision is one
@@ -5215,12 +5249,15 @@ export function BuzzChatSurface({
           <RoomCatchUpControls
             badgeCount={newMessageBadgeCount}
             catchUpSummary={catchUpSummary}
-            catchUpVisible={catchUpStripShown}
+            catchUpVisible={catchUpOfferVisible}
             discVisible={newestJumpDiscShown}
             onJumpToNewest={landAtNewestMessage}
             onOpenCatchUp={openCatchUpSheet}
           />
           <RoomCatchUpSheet
+            agents={catchUpAgents}
+            canDraft={!inputText.trim() && pendingAttachments.length === 0}
+            onAskAgent={draftCatchUpRequest}
             onClose={closeCatchUpSheet}
             report={catchUpReport}
             visible={catchUpSheetVisible}

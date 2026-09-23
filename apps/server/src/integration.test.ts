@@ -1241,15 +1241,19 @@ describe('monolith integration', () => {
     await operation('addRoomMember', { roomId: room.id, memberId: bobId });
     await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
 
-    // The authority ladder is addWorkspaceMember's: nobody removes themselves,
-    // an admin never removes an equal, an agent is not a person.
+    // Owners are protected, peers may remove peers, and agents use their own path.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN })).status,
     ).toBe(403);
     expect(
-      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken))
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN }, aliceToken))
         .status,
     ).toBe(403);
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken))
+        .status,
+    ).toBe(204);
+    await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'admin' });
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: AGENT })).status,
     ).toBe(400);
@@ -1284,9 +1288,13 @@ describe('monolith integration', () => {
        GROUP BY message.author_id,message.text`,
       [workspaceId],
     );
-    expect(removalDms.rows).toEqual([
-      { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
-    ]);
+    expect(removalDms.rows).toHaveLength(2);
+    expect(removalDms.rows).toEqual(
+      expect.arrayContaining([
+        { author_id: SYSTEM_IDENTITY_ID, text: '@alice removed @bob', count: 2 },
+        { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
+      ]),
+    );
     // Gone means gone: the second removal has no membership to act on.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,

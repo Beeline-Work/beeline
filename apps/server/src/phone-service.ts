@@ -4490,8 +4490,8 @@ export class PhoneService {
     });
   }
   /**
-   * A manager removes a person from the Workspace: the same authority ladder
-   * as addWorkspaceMember, then every live Room membership goes with the
+   * A manager removes a person from the Workspace. Admins may remove peers;
+   * owners remain protected. Every live Room membership goes with the
    * Workspace one and each of those Rooms carries the removal line. Agents
    * are not people — their removal is the removeAgent host teardown.
    */
@@ -4519,8 +4519,8 @@ export class PhoneService {
         throw new Error('workspace manager required');
       }
       if (!target) throw new Error('workspace membership required');
-      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin')) {
-        throw new Error('workspace manager cannot remove a member with equal or greater authority');
+      if (target.role === 'owner') {
+        throw new Error('workspace manager cannot remove an owner');
       }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,

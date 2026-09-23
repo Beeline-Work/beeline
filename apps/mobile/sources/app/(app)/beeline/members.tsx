@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { Swipeable } from 'react-native-gesture-handler';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -28,7 +29,6 @@ import {
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
-import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
@@ -116,6 +116,19 @@ function canChangeRole(
 
 function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean {
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
+}
+
+function canRemovePerson(
+  viewerRole: WorkspaceRole,
+  viewerPubkey: string,
+  targetPubkey: string,
+  targetRole: WorkspaceRole,
+): boolean {
+  return (
+    viewerPubkey !== targetPubkey &&
+    targetRole !== 'owner' &&
+    (viewerRole === 'owner' || viewerRole === 'admin')
+  );
 }
 
 function ownerByline(
@@ -639,11 +652,7 @@ export default function BuzzMembers() {
     );
     if (
       !target ||
-      !canRemoveRoomParticipant(
-        surface.viewer.role,
-        target.role,
-        pubkey === surface.viewer.identity.pubkey,
-      )
+      !canRemovePerson(surface.viewer.role, surface.viewer.identity.pubkey, pubkey, target.role)
     )
       return;
     const name = target.identity.name;
@@ -974,75 +983,86 @@ export default function BuzzMembers() {
     );
     const removable =
       canManage &&
-      canRemoveRoomParticipant(
+      canRemovePerson(
         surface.viewer.role,
+        surface.viewer.identity.pubkey,
+        member.identity.pubkey,
         member.role,
-        member.identity.pubkey === surface.viewer.identity.pubkey,
       );
-    const hasDetail = editable || removable;
+    const hasDetail = canManage && editable;
     const open = openPersonPubkey === member.identity.pubkey;
+    const row = (
+      <MemberRosterRow
+        avatarUrl={member.identity.avatar}
+        disabled={!hasDetail || busy}
+        divider="bottom"
+        face={member.identity.face}
+        handle={member.identity.handle}
+        kind="human"
+        name={member.identity.name}
+        onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
+        pubkey={member.identity.pubkey}
+        role={member.role}
+        testID={`member-${member.identity.pubkey}-identity`}
+        trailing={
+          hasDetail ? (
+            <ChevronGlyph
+              color={styles.chevron.color}
+              direction={open ? 'down' : 'right'}
+              size={CHEVRON_ROW_SIZE}
+            />
+          ) : undefined
+        }
+      />
+    );
     return (
       <View key={member.identity.pubkey}>
-        <MemberRosterRow
-          avatarUrl={member.identity.avatar}
-          disabled={!hasDetail || busy}
-          divider="bottom"
-          face={member.identity.face}
-          handle={member.identity.handle}
-          kind="human"
-          name={member.identity.name}
-          onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
-          pubkey={member.identity.pubkey}
-          role={member.role}
-          testID={`member-${member.identity.pubkey}-identity`}
-          trailing={
-            hasDetail ? (
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction={open ? 'down' : 'right'}
-                size={CHEVRON_ROW_SIZE}
-              />
-            ) : undefined
-          }
-        />
-        {open && (
-          <View style={styles.personDetail} testID={`member-${member.identity.pubkey}-detail`}>
-            {editable && (
-              <View style={styles.rolePicker} testID={`member-${member.identity.pubkey}-roles`}>
-                {(['member', 'admin', 'owner'] as const).map((role) => {
-                  const allowed = canAssignRole(surface.viewer.role, role);
-                  return (
-                    <TouchableOpacity
-                      key={role}
-                      disabled={!allowed || member.role === role || busy}
-                      onPress={() => void setPersonRole(member.identity.pubkey, role)}
-                      style={[
-                        styles.choice,
-                        styles.roleChoice,
-                        member.role === role && styles.choiceActive,
-                        !allowed && styles.choiceDisabled,
-                      ]}
-                      testID={`member-${member.identity.pubkey}-${role}`}
-                    >
-                      <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-            {removable && (
+        {removable ? (
+          <Swipeable
+            enabled={!busy}
+            overshootRight={false}
+            renderRightActions={() => (
               <TouchableOpacity
+                accessibilityLabel={`Remove ${member.identity.name} from ${WORKSPACE_LABEL}`}
                 accessibilityRole="button"
                 disabled={busy}
                 onPress={() => void removePerson(member.identity.pubkey)}
                 style={styles.removeControl}
                 testID={`remove-person-${member.identity.pubkey}`}
               >
-                <Text style={styles.removeText}>
-                  {working === 'remove-person' ? 'Removing…' : `Remove from ${WORKSPACE_LABEL}`}
-                </Text>
+                <Text style={styles.removeText}>Remove</Text>
               </TouchableOpacity>
             )}
+            testID={`member-${member.identity.pubkey}-swipe`}
+          >
+            {row}
+          </Swipeable>
+        ) : (
+          row
+        )}
+        {open && editable && canManage && (
+          <View style={styles.personDetail} testID={`member-${member.identity.pubkey}-detail`}>
+            <View style={styles.rolePicker} testID={`member-${member.identity.pubkey}-roles`}>
+              {(['member', 'admin', 'owner'] as const).map((role) => {
+                const allowed = canAssignRole(surface.viewer.role, role);
+                return (
+                  <TouchableOpacity
+                    key={role}
+                    disabled={!allowed || member.role === role || busy}
+                    onPress={() => void setPersonRole(member.identity.pubkey, role)}
+                    style={[
+                      styles.choice,
+                      styles.roleChoice,
+                      member.role === role && styles.choiceActive,
+                      !allowed && styles.choiceDisabled,
+                    ]}
+                    testID={`member-${member.identity.pubkey}-${role}`}
+                  >
+                    <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         )}
       </View>
@@ -1557,7 +1577,13 @@ const styles = StyleSheet.create((theme) => {
     chevron: { color: hull.textMuted },
     personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
     rolePicker: { flexDirection: 'row', gap: hull.space.sm },
-    removeControl: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
+    removeControl: {
+      minHeight: hull.layout.row,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: hull.space.md,
+      backgroundColor: hull.bgRaised,
+    },
     removeText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
     choice: {
       minHeight: 44,

@@ -43,6 +43,7 @@ vi.mock('react-native', async () => {
       select: (choices: Record<string, unknown>) => choices.default,
     },
     Pressable: host('Pressable'),
+    PanResponder: { create: (handlers: Record<string, unknown>) => ({ panHandlers: handlers }) },
     Image: host('Image'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
@@ -239,6 +240,85 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(image.props.testID).toBe('artifact-viewer-image');
     expect(image.props.attachment).toBe(photo);
     expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+  });
+
+  it('offers labeled zoom controls and restores the fitted view', () => {
+    const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+    const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+    const plus = renderer.root.findByProps({ testID: 'artifact-viewer-zoom-in' });
+    const minus = renderer.root.findByProps({ testID: 'artifact-viewer-zoom-out' });
+    const reset = renderer.root.findByProps({ testID: 'artifact-viewer-zoom-reset' });
+    expect(plus.props.accessibilityLabel).toBe('Zoom in');
+    expect(minus.props.accessibilityState.disabled).toBe(true);
+    act(() => plus.props.onPress());
+    expect(minus.props.accessibilityState.disabled).toBe(false);
+    expect(
+      renderer.root.findByProps({ accessibilityLabel: 'Image zoom 150 percent' }),
+    ).toBeDefined();
+    act(() => reset.props.onPress());
+    expect(minus.props.accessibilityState.disabled).toBe(true);
+    expect(
+      renderer.root.findByProps({ accessibilityLabel: 'Image zoom 100 percent' }),
+    ).toBeDefined();
+  });
+
+  it('pinches to zoom and pans within the image viewport', () => {
+    const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg' });
+    const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+    const viewport = renderer.root.findByProps({ testID: 'artifact-viewer-image-viewport' });
+    act(() => viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } }));
+    const point = (x: number, y: number) => ({ pageX: x, pageY: y });
+    act(() => {
+      viewport.props.onPanResponderGrant({
+        nativeEvent: { touches: [point(100, 100), point(200, 100)] },
+      });
+      viewport.props.onPanResponderMove({
+        nativeEvent: { touches: [point(50, 100), point(250, 100)] },
+      });
+    });
+    expect(
+      renderer.root.findByProps({ accessibilityLabel: 'Image zoom 200 percent' }),
+    ).toBeDefined();
+    act(() => {
+      viewport.props.onPanResponderRelease();
+      viewport.props.onPanResponderGrant({ nativeEvent: { touches: [point(100, 100)] } });
+      viewport.props.onPanResponderMove({ nativeEvent: { touches: [point(180, 100)] } });
+    });
+    const image = renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' });
+    expect(image.props.style[1].transform).toEqual([
+      { translateX: 80 },
+      { translateY: 0 },
+      { scale: 2 },
+    ]);
+  });
+
+  it('zooms with the desktop wheel and allows reset', () => {
+    mocks.platformOS.value = 'web';
+    try {
+      const photo = attachment({ mimeType: 'image/png', name: 'photo.png' });
+      const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+      const viewport = renderer.root.findByProps({ testID: 'artifact-viewer-image-viewport' });
+      act(() => viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } }));
+      const preventDefault = vi.fn();
+      act(() =>
+        viewport.props.onWheel({
+          preventDefault,
+          nativeEvent: { deltaY: -200, offsetX: 200, offsetY: 150 },
+        }),
+      );
+      expect(preventDefault).toHaveBeenCalled();
+      expect(
+        renderer.root.findByProps({ testID: 'artifact-viewer-zoom-reset' }).props.disabled,
+      ).toBe(false);
+      act(() =>
+        renderer.root.findByProps({ testID: 'artifact-viewer-zoom-reset' }).props.onPress(),
+      );
+      expect(
+        renderer.root.findByProps({ accessibilityLabel: 'Image zoom 100 percent' }),
+      ).toBeDefined();
+    } finally {
+      mocks.platformOS.value = 'android';
+    }
   });
 
   it('gives a full-screen picture the same direct copy, share, and long-press actions', async () => {

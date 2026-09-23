@@ -4,10 +4,15 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, wrapArtifactMarkup } from '@/buzz/artifact';
-import { fetchArtifactBytes, fetchArtifactText, openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
+import {
+  fetchArtifactBytes,
+  fetchArtifactText,
+  openArtifactInBrowserOrExplain,
+} from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
-import { copyPicture, sharePicture, showPictureActions } from '@/buzz/picture-actions';
-import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { copyPicture, sharePicture } from '@/buzz/picture-actions';
+import { ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 
@@ -93,24 +98,11 @@ export function DesktopArtifactPane({
       ) : format === 'html' || format === 'svg' ? (
         <DesktopArtifactFrame attachment={attachment} format={format} />
       ) : format === 'image' ? (
-        <Pressable
-          accessibilityLabel={`Image ${title}`}
-          style={styles.image}
-          testID="desktop-artifact-image-actions"
-          {...({
-            onContextMenu: (event: { preventDefault(): void }) => {
-              event.preventDefault();
-              showPictureActions(attachment);
-            },
-          } as any)}
-        >
-          <ArtifactImage
-            attachment={attachment}
-            fit="contain"
-            style={styles.image}
-            testID="desktop-artifact-image"
-          />
-        </Pressable>
+        <ZoomableArtifactImage
+          attachment={attachment}
+          title={title}
+          testIDPrefix="desktop-artifact"
+        />
       ) : format === 'text' ? (
         <ArtifactText attachment={attachment} crop={false} testID="desktop-artifact-text" />
       ) : format === 'pdf' ? (
@@ -246,9 +238,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   actionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
-  image: { flex: 1, width: '100%', height: '100%' },
   markdownBody: { padding: theme.buzz.space.md },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
-  placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.buzz.space.md },
+  placeholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.buzz.space.md,
+  },
   placeholderText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, textAlign: 'center' },
 }));

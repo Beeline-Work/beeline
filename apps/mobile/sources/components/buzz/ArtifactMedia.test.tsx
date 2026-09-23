@@ -44,9 +44,12 @@ import { ArtifactImage, ArtifactText } from './ArtifactMedia';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -94,7 +97,10 @@ async function flush(): Promise<void> {
 
 describe('the raster artifact view', () => {
   it('paints the file through the app session at the fit it was given', async () => {
-    const source = { uri: 'https://server.usebeeline.app/v1/media/x', headers: { authorization: 'Bearer t' } };
+    const source = {
+      uri: 'https://server.usebeeline.app/v1/media/x',
+      headers: { authorization: 'Bearer t' },
+    };
     mocks.artifactImageSource.mockResolvedValue(source);
     const renderer = render(
       <ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />,
@@ -104,6 +110,29 @@ describe('the raster artifact view', () => {
     expect(image.props.source).toEqual(source);
     expect(image.props.resizeMode).toBe('contain');
     expect(image.props.accessibilityLabel).toBe('Photo');
+  });
+
+  it('reports intrinsic size from native and browser image load events', async () => {
+    mocks.artifactImageSource.mockResolvedValue({ uri: 'blob:x' });
+    const onLoadImageSize = vi.fn();
+    const renderer = render(
+      <ArtifactImage
+        attachment={attachment()}
+        fit="contain"
+        onLoadImageSize={onLoadImageSize}
+        testID="artifact-image"
+      />,
+    );
+    await flush();
+    const image = hostNode(renderer, 'artifact-image');
+    act(() => image.props.onLoad({ nativeEvent: { source: { width: 800, height: 200 } } }));
+    act(() =>
+      image.props.onLoad({ nativeEvent: { target: { naturalWidth: 640, naturalHeight: 480 } } }),
+    );
+    expect(onLoadImageSize.mock.calls).toEqual([
+      [800, 200],
+      [640, 480],
+    ]);
   });
 
   it('falls back to the file name when the artifact was posted without a title', async () => {
@@ -222,17 +251,15 @@ describe('the plain-text artifact view', () => {
       <ArtifactText attachment={attachment()} crop={false} testID="artifact-text" />,
     );
     await flush();
-    expect(
-      hostNode(renderer, 'artifact-text').findByType('Text' as any).props.children,
-    ).toBe(content);
+    expect(hostNode(renderer, 'artifact-text').findByType('Text' as any).props.children).toBe(
+      content,
+    );
   });
 
   it('says it is loading, then says it failed — never a blank box', async () => {
     let reject!: (error: Error) => void;
     mocks.fetchArtifactText.mockReturnValue(new Promise((_resolve, no) => (reject = no)));
-    const renderer = render(
-      <ArtifactText attachment={attachment()} crop testID="artifact-text" />,
-    );
+    const renderer = render(<ArtifactText attachment={attachment()} crop testID="artifact-text" />);
     expect(renderer.root.findByProps({ testID: 'artifact-text-loading' })).toBeDefined();
     await act(async () => {
       reject(new Error('404'));
@@ -244,11 +271,11 @@ describe('the plain-text artifact view', () => {
 
   it('paints an empty file as an empty body, not as a stuck loading line', async () => {
     mocks.fetchArtifactText.mockResolvedValue('');
-    const renderer = render(
-      <ArtifactText attachment={attachment()} crop testID="artifact-text" />,
-    );
+    const renderer = render(<ArtifactText attachment={attachment()} crop testID="artifact-text" />);
     await flush();
-    expect(renderer.root.findAll((node: any) => node.props.testID === 'artifact-text-loading')).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: any) => node.props.testID === 'artifact-text-loading'),
+    ).toHaveLength(0);
     expect(hostNode(renderer, 'artifact-text')).toBeDefined();
   });
 });

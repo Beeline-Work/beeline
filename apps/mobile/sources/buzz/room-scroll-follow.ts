@@ -68,6 +68,44 @@ export function roomOpenLandsOnTail({
   return !desktopTranscript && !messageAnchorId?.trim();
 }
 
+/**
+ * The two ids that can own a landing instead of the tail: a notification or
+ * bookmark target carried in on the route, and the unread boundary captured
+ * once for the focused visit. Both hold the viewport on an older row, and both
+ * are released the moment the viewer sends a message — a send is the viewer
+ * speaking at the live end of the log, so the log is what they must be looking
+ * at. Without the release, a Room opened with unread mail keeps its anchor for
+ * the whole visit and the viewer's own message lands off screen behind the
+ * catch-up disc.
+ *
+ * The release is keyed on the pair rather than latched, so an anchor that
+ * arrives after the send (a notification tapped while the Room is already
+ * open) still owns its own landing.
+ */
+export function historyAnchorKey({
+  messageAnchorId,
+  firstUnreadMessageId,
+}: {
+  messageAnchorId?: string | null;
+  firstUnreadMessageId?: string | null;
+}): string {
+  return `${messageAnchorId?.trim() ?? ''}\u0000${firstUnreadMessageId?.trim() ?? ''}`;
+}
+
+export function transcriptLandingAnchor({
+  messageAnchorId,
+  firstUnreadMessageId,
+  releasedAnchorKey,
+}: {
+  messageAnchorId?: string | null;
+  firstUnreadMessageId?: string | null;
+  /** The anchor pair a send has already released; null while none has been. */
+  releasedAnchorKey: string | null;
+}): string {
+  if (releasedAnchorKey === historyAnchorKey({ messageAnchorId, firstUnreadMessageId })) return '';
+  return messageAnchorId?.trim() || firstUnreadMessageId?.trim() || '';
+}
+
 export function scrollFollowOnArrival({
   previousNewestId,
   nextNewestId,

@@ -547,13 +547,18 @@ function CornerCockpit({
       await transport.publishPreparedMessage(event);
       setInput('');
       setHeight(COMPOSER_MIN_HEIGHT);
+      // The focus jump that put the reader up in this corner's history is
+      // spent once they speak: mark it landed so the refresh below cannot pull
+      // them back off the message they just sent, then land on the tail.
+      if (focusMessageId) focusedAnchorRef.current = `${roomId}:${focusMessageId}`;
       await onRefresh();
+      scheduleFrame(() => transcriptRef.current?.scrollToEnd({ animated: false }));
     } catch (caught) {
       setSendError(`Could not send message: ${String(caught)}`);
     } finally {
       setSending(false);
     }
-  }, [detail, input, onRefresh, sending]);
+  }, [detail, focusMessageId, input, onRefresh, roomId, sending]);
   const bylineOpeners = React.useMemo(
     () =>
       transcriptBylineOpeners(

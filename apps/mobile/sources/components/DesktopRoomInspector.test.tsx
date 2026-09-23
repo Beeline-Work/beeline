@@ -5,14 +5,21 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn());
+/** Scroll calls the transcript makes on its list, in order. */
+const listScrolls = vi.hoisted(() => [] as string[]);
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    FlatList: (props: any) =>
-      ReactModule.createElement(
+    FlatList: ReactModule.forwardRef((props: any, ref: any) => {
+      ReactModule.useImperativeHandle(ref, () => ({
+        scrollToEnd: () => listScrolls.push('end'),
+        scrollToIndex: ({ index }: { index: number }) => listScrolls.push(`index:${index}`),
+        scrollToOffset: ({ offset }: { offset: number }) => listScrolls.push(`offset:${offset}`),
+      }));
+      return ReactModule.createElement(
         'FlatList',
         props,
         props.ListHeaderComponent,
@@ -24,7 +31,8 @@ vi.mock('react-native', async () => {
           ),
         ),
         props.ListFooterComponent,
-      ),
+      );
+    }),
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Platform: { OS: 'web' },
     Pressable: host('Pressable'),
@@ -117,7 +125,16 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn() }));
-vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    async composeMessage({ text }: { sessionId: string; text: string }) {
+      return { id: 'sent-1', created_at: 9, text };
+    }
+    async publishPreparedMessage() {
+      return {};
+    }
+  },
+}));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/modal', () => ({ Modal: { confirm: modalConfirm } }));
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
@@ -130,6 +147,7 @@ import {
   clearDesktopArtifactPane,
   openArtifactInDesktopWorkPane,
 } from '@/buzz/desktop-artifact-pane';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
 
 const agent = {
@@ -261,6 +279,7 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   phoneOperation.mockReset();
   modalConfirm.mockReset();
+  listScrolls.length = 0;
 });
 
 async function render(options = props()): Promise<ReactTestRenderer> {
@@ -689,6 +708,48 @@ describe('DesktopRoomInspector work pane', () => {
     );
     expect(tree.root.findAllByType('OrdinaryLedgerMessage' as any)).toHaveLength(2);
     expect(client.history).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  /**
+   * A bookmark jump parks this transcript up in the corner's history. Sending
+   * is the viewer speaking at the live end of the log, so the pane lands there
+   * and shows them their own message instead of holding the older row the jump
+   * brought them to.
+   */
+  it('lands the corner transcript on the tail when the viewer sends', async () => {
+    const detail = {
+      ...room(),
+      room: corners[0].corner,
+      parent: room().room,
+      messages: [
+        { id: 'm1', text: 'The bookmarked line.', createdAt: 4, author: person, presentation: 'message' },
+        { id: 'm2', text: 'Latest note.', createdAt: 5, author: agent, presentation: 'message' },
+      ],
+    } as any;
+    const client = {
+      room: vi.fn(async () => detail),
+      history: vi.fn(async () => ({ roomId: 'working', messages: [] })),
+    } as any;
+    (loadBuzzIdentity as any).mockResolvedValue({ pubkey: person.pubkey });
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({ client, selectedCornerId: 'working', focusMessageId: 'm1' })}
+        />,
+      );
+    });
+    // The jump owns the viewport first.
+    expect(listScrolls).toEqual(['index:0']);
+
+    const composer = tree.root.findByType('ConversationComposer' as any);
+    await act(async () => composer.props.onChangeText('speaking up'));
+    await act(async () => {
+      await tree.root.findByType('ConversationComposer' as any).props.onSend();
+    });
+
+    expect(listScrolls.at(-1)).toBe('end');
     act(() => tree.unmount());
   });
 

@@ -240,10 +240,9 @@ export async function postRoomChoice(
       [input.agentId, input.roomId],
     )
   ).rows[0];
-  if (open) throw new Error('choice conflict: this agent already has an open choice in this Room');
+  if (open) throw new Error('choice conflict: you already have an open choice in this Room');
   const agent = await loadIdentity(database, input.agentId);
-  const requesterRow = (
-    await database.query<IdentityRow>(
+  const requesterRow = agent.kind === 'agent' ? (await database.query<IdentityRow>(
       `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar,identity.face_id
        FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id
@@ -251,8 +250,7 @@ export async function postRoomChoice(
        WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
       [input.roomId, input.agentId],
-    )
-  ).rows[0];
+    )).rows[0] : undefined;
   const requester = requesterRow ? cardIdentity(requesterRow) : undefined;
   const mentionIds = await loadMentionIds(database, input.roomId, prompt, constraint);
   const choiceId = randomUUID();
@@ -427,16 +425,18 @@ async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<
     tally.outcome === 'winner' && winner
       ? `${responses.length} of ${choice.electorate.length} voted for ${winner.label}`
       : footer;
-  await wakeChoice(database, {
-    roomId: choice.room_id,
-    authorId: choice.agent_id,
-    agentId: choice.agent_id,
-    subject: agent,
-    verb: 'asked a poll',
-    consequence,
-    kind: 'poll-closed',
-    card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },
-  });
+  if (agent.kind === 'agent') {
+    await wakeChoice(database, {
+      roomId: choice.room_id,
+      authorId: choice.agent_id,
+      agentId: choice.agent_id,
+      subject: agent,
+      verb: 'asked a poll',
+      consequence,
+      kind: 'poll-closed',
+      card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },
+    });
+  }
 }
 
 async function skipOpenChoice(

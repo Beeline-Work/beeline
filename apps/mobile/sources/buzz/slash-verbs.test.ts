@@ -12,7 +12,7 @@ import {
 
 const allAvailable: SlashVerbAvailability = {
   canBuild: true,
-  canAnswerPoll: true,
+  canCreatePoll: true,
   canCatchUp: true,
   canManageSchedules: true,
   canRunWorkflows: true,
@@ -37,7 +37,7 @@ describe('Buzz composer built-in slash verbs', () => {
     const verbs = availableSlashVerbs(
       {
         ...allAvailable,
-        canAnswerPoll: false,
+        canCreatePoll: false,
         canCatchUp: false,
         canCloseCorner: false,
         canChangeTargetBranch: false,
@@ -65,7 +65,7 @@ describe('Buzz composer built-in slash verbs', () => {
 
   it.each([
     ['canBuild', 'build'],
-    ['canAnswerPoll', 'poll'],
+    ['canCreatePoll', 'poll'],
     ['canCatchUp', 'catch-up'],
     ['canManageSchedules', 'schedule'],
     ['canRunWorkflows', 'workflow'],

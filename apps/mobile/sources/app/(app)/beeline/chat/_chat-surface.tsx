@@ -357,6 +357,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
+import { CreatePollSheet, type PollDraft } from '@/components/buzz/CreatePollSheet';
 import { CornerAppRow } from '@/components/buzz/CornerAppScreen';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -693,6 +694,8 @@ export function BuzzChatSurface({
   const isDirectMessage = Boolean(directMessage);
   const [workspaceChats, setWorkspaceChats] = useState<readonly ChatListItem[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [createPollVisible, setCreatePollVisible] = useState(false);
+  const [createPollBusy, setCreatePollBusy] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
   const [connectorOfferActionId, setConnectorOfferActionId] = useState<string | null>(null);
@@ -1716,19 +1719,6 @@ export function BuzzChatSurface({
     if (currentSlashQuery === null) return [];
     return availableCornerAppCommands(roomSurface?.cornerApps ?? [], currentSlashQuery);
   }, [currentSlashQuery, roomSurface?.cornerApps]);
-  const latestOpenPoll = useMemo(() => {
-    for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
-      const message = combinedMessages[index];
-      if (
-        message.choice?.mode === 'poll' &&
-        message.choice.status === 'open' &&
-        message.choice.electorate.includes(userPubkey)
-      ) {
-        return message;
-      }
-    }
-    return undefined;
-  }, [combinedMessages, userPubkey]);
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
       const message = combinedMessages[index];
@@ -2088,7 +2078,9 @@ export function BuzzChatSurface({
               !viewerIsAgent &&
               roomSurface?.viewer.permissions.send,
           ),
-          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
+          canCreatePoll: Boolean(
+            !isCorner && !isDirectMessage && !viewerIsAgent && roomSurface?.viewer.permissions.send,
+          ),
           // The verb is the line's door under another name: one gate, so
           // neither can offer a catch-up the other has withdrawn.
           canCatchUp: catchUpOfferVisible,
@@ -2129,7 +2121,6 @@ export function BuzzChatSurface({
       canManageWorkspace,
       isCorner,
       isDirectMessage,
-      latestOpenPoll,
       pendingCornerRequest,
       pendingTargetBranchProposal,
       targetBranchActionId,
@@ -3639,6 +3630,20 @@ export function BuzzChatSurface({
     [choiceActionId, viewerIsAgent],
   );
 
+  const handleCreatePoll = useCallback(async (draft: PollDraft) => {
+    if (createPollBusy) return;
+    setCreatePollBusy(true);
+    try {
+      await monolithPhoneOperation('createRoomPoll', { roomId: decodedId, ...draft });
+      setCreatePollVisible(false);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      Modal.alert('Could not create poll', phoneOperationFailureReason(err));
+    } finally {
+      setCreatePollBusy(false);
+    }
+  }, [createPollBusy, decodedId]);
+
   const openConnectorOfferCeremony = useCallback(
     (offerId: string, connectorType: string, pairedConnectorId: string, roomId = decodedId) => {
       router.push(
@@ -4451,7 +4456,7 @@ export function BuzzChatSurface({
           } as Href);
           return;
         case 'poll':
-          if (latestOpenPoll) landAtNewMessageBoundary(latestOpenPoll.id, false);
+          setCreatePollVisible(true);
           return;
         // The third door into catch-up, and the same one: the verb opens the
         // report over the same unread range the strip and the badge open it
@@ -4513,8 +4518,6 @@ export function BuzzChatSurface({
       handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
-      landAtNewMessageBoundary,
-      latestOpenPoll,
       openCatchUpSheet,
       pendingCornerRequest,
       pendingTargetBranchProposal,
@@ -6242,6 +6245,12 @@ export function BuzzChatSurface({
         onConnectAgent={handleConnectAgent}
         onInvitePerson={() => void handleInvitePerson()}
         visible={memberManagement.pickerVisible}
+      />
+      <CreatePollSheet
+        visible={createPollVisible}
+        busy={createPollBusy}
+        onClose={() => setCreatePollVisible(false)}
+        onCreate={(draft) => void handleCreatePoll(draft)}
       />
     </BuzzCommunityShell>
   );

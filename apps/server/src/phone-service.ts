@@ -113,7 +113,12 @@ import {
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import { answerRoomChoice, hiddenWakeCardSql, skipRoomChoice } from './room-choice.js';
+import {
+  answerRoomChoice,
+  hiddenWakeCardSql,
+  postRoomChoice,
+  skipRoomChoice,
+} from './room-choice.js';
 import { unreadMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
@@ -2668,6 +2673,11 @@ export class PhoneService {
           input as Input<'acceptConnectorOffer'>,
           viewerId,
         )) as Output<Name>;
+      case 'createRoomPoll':
+        return (await this.createRoomPoll(
+          input as Input<'createRoomPoll'>,
+          viewerId,
+        )) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
       case 'skipChoice':
@@ -4971,6 +4981,31 @@ export class PhoneService {
     if (!revoked.rowCount) throw new Error('grant revoke conflict: grant is not active');
     return { grantId: input.grantId, status: 'revoked' as const, roomId: grant.room_id };
   }
+  private async createRoomPoll(input: Input<'createRoomPoll'>, viewerId: string) {
+    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    await this.assertRoomIsWritable(input.roomId, viewerId);
+    const identity = await this.database.query<{ kind: string }>(
+      `SELECT kind FROM identities WHERE id=$1`,
+      [viewerId],
+    );
+    if (identity.rows[0]?.kind !== 'human') throw new Error('poll creator must be human');
+    return this.database.transaction(async (database) => {
+      const result = await postRoomChoice(database, {
+        roomId: input.roomId,
+        agentId: viewerId,
+        mode: 'poll',
+        prompt: input.prompt,
+        options: input.options,
+        ttlSeconds: input.ttlSeconds,
+      });
+      return {
+        choiceId: result.choiceId,
+        messageId: result.messageId,
+        roomId: input.roomId,
+        closesAt: result.closesAt!,
+      };
+    });
+  }
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
     return this.database.transaction((database) =>
       answerRoomChoice(database, {
@@ -6150,7 +6185,8 @@ export class PhoneService {
       catalog: connectorCatalog().map((entry) =>
         isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
           ? { ...entry, available: false }
-          : entry),
+          : entry,
+      ),
       ...(walletRow
         ? {
             wallet: {
@@ -6320,12 +6356,14 @@ export class PhoneService {
     const matched = { agent_id: input.helperAgentId };
     const id = randomUUID();
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
-      ? (await database.query<{ status: string }>(
+      ? (
+          await database.query<{ status: string }>(
           `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
           [ws.workspace_id, viewerId, input.connectorType, machineId],
-        )).rows[0]?.status
+          )
+        ).rows[0]?.status
       : undefined;
     await database.query(
       `INSERT INTO workspace_connectors(
@@ -6379,13 +6417,15 @@ export class PhoneService {
       status_error: null,
     };
     if (isGoogleToolConnectorKind(input.connectorType) && this.googleOAuth) {
-      if (previousGoogleStatus === 'error' ||
-        !(await this.googleOAuth.hasGrant(ws.workspace_id, viewerId, machineId, database))) {
+      if (
+        previousGoogleStatus === 'error' ||
+        !(await this.googleOAuth.hasGrant(ws.workspace_id, viewerId, machineId, database))
+      ) {
         const url = await this.googleOAuth.begin(existing.id, database);
-        await database.query(
-          `UPDATE workspace_connectors SET sign_in=$2::jsonb WHERE id=$1`,
-          [existing.id, JSON.stringify({ method: 'oauth', url })],
-        );
+        await database.query(`UPDATE workspace_connectors SET sign_in=$2::jsonb WHERE id=$1`, [
+          existing.id,
+          JSON.stringify({ method: 'oauth', url }),
+        ]);
       }
     }
     // Push the install to this helper now; the poll is only recovery.
@@ -7323,6 +7363,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'decideAgentGrant',
   'revokeAgentGrant',
   'acceptConnectorOffer',
+  'createRoomPoll',
   'answerChoice',
   'skipChoice',
   'createWorkspace',

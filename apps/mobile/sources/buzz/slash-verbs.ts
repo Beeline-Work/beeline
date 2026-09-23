@@ -20,7 +20,7 @@ export type BuiltInSlashVerb = {
 
 export type SlashVerbAvailability = {
   canBuild: boolean;
-  canAnswerPoll: boolean;
+  canCreatePoll: boolean;
   canCatchUp: boolean;
   canManageSchedules: boolean;
   canRunWorkflows: boolean;
@@ -45,9 +45,9 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
   {
     id: 'poll',
     command: 'poll',
-    label: 'Answer poll',
-    description: 'Jump to the latest open poll',
-    available: 'canAnswerPoll',
+    label: 'Create poll',
+    description: 'Ask this Room a question with a closing time',
+    available: 'canCreatePoll',
   },
   {
     id: 'catch-up',

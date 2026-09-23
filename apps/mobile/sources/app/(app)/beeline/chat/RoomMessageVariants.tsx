@@ -515,8 +515,9 @@ export const ChoiceCard = React.memo(function ChoiceCard({
   onSkip,
 }: ChoiceCardProps) {
   const card = message.choice!;
-  const display = resolveAgentDisplayIdentity(card.agent.pubkey, agent);
-  const agentName = agent ? display.name : card.agent.name;
+  const display =
+    card.agent.kind === 'agent' ? resolveAgentDisplayIdentity(card.agent.pubkey, agent) : null;
+  const agentName = display && agent ? display.name : card.agent.name;
   const open = card.status === 'open';
   const viewerVote = card.responses.find((response) => response.identityId === viewerPubkey);
   const canAct =
@@ -532,7 +533,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
     id: option.optionId,
     letter: option.letter,
     label: option.label,
-    consequence: option.consequence,
+    consequence: option.consequence === option.label ? '' : option.consequence,
     costly: option.costly,
     votes: option.votes,
     share: option.share,
@@ -561,10 +562,10 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       testID={`choice-${card.choiceId}`}
       identity={
         <IdentityMark
-          kind="agent"
-          seed={display.avatarSeed ?? card.agent.pubkey}
-          avatarUrl={display.avatarUrl}
-          face={display.face}
+          kind={card.agent.kind}
+          seed={display?.avatarSeed ?? card.agent.pubkey}
+          avatarUrl={display?.avatarUrl ?? card.agent.avatar}
+          face={display?.face ?? card.agent.face}
           name={agentName}
           size={26}
         />

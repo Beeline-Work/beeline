@@ -52,9 +52,19 @@ async function daemonDoor(
       const payload =
         operation === 'getRoomRepositoryState'
           ? repository
-          : operation === 'createCorner'
-            ? { cornerId: CORNER }
-            : { ok: true };
+          : operation === 'listRoomCorners'
+            ? { corners: [{ cornerId: CORNER, parentRoomId: ROOM }] }
+            : operation === 'getCornerRestoreState'
+              ? {
+                  cornerId: CORNER,
+                  objective: 'Ship the endpoint',
+                  lifecycle: { checks: 'pending' },
+                }
+              : operation === 'getRoomConversation'
+                ? { items: [{ id: 'message-1', body: 'Tests pending' }] }
+                : operation === 'createCorner'
+                  ? { cornerId: CORNER }
+                  : { ok: true };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
@@ -358,6 +368,41 @@ describe('relay tools', () => {
       text: 'Change the endpoint',
       relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down' },
     });
+  });
+  it('asks for exactly one linked reply through the active Room command', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, text: 'What is blocking the endpoint?' },
+      { name: 'ask_corner' },
+    );
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual({
+      operation: 'postRoomMessage',
+      roomId: ROOM,
+      requestId: 'command-request',
+      generationId: 'g1',
+      text: 'What is blocking the endpoint?',
+      relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down', reply: 'once' },
+    });
+  });
+  it('reads a listed member corner without posting a message', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(door.origin, { cornerId: CORNER }, { name: 'inspect_corner' });
+    expect(response.result?.isError).not.toBe(true);
+    expect(JSON.parse(response.result!.content[0]!.text)).toEqual({
+      status: {
+        cornerId: CORNER,
+        objective: 'Ship the endpoint',
+        lifecycle: { checks: 'pending' },
+      },
+      transcript: { items: [{ id: 'message-1', body: 'Tests pending' }] },
+    });
+    expect(door.calls.map((call) => call.operation)).toEqual([
+      'listRoomCorners',
+      'getCornerRestoreState',
+      'getRoomConversation',
+    ]);
   });
   it('refuses steering from a corner turn', async () => {
     const door = await daemonDoor();

@@ -598,7 +598,8 @@ describe('background advisory-lock ownership', () => {
          ($7,$2,$3,'','activity',NULL,NULL),
          ($8,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$9::jsonb),
          ($10,$2,$3,'@bee merged Ship push policy','card','daemon-fact',$11::jsonb),
-         ($12,$13,$3,'A direct message','message',NULL,NULL)`,
+         ($12,$13,$3,'A direct message','message',NULL,NULL),
+         ($14,$2,$3,'Muted corner answer','card','relay',$15::jsonb)`,
         [
           '1'.repeat(64),
           room,
@@ -622,6 +623,12 @@ describe('background advisory-lock ownership', () => {
           }),
           '7'.repeat(64),
           directRoom,
+          '8'.repeat(64),
+          JSON.stringify({
+            direction: 'up',
+            cornerId: directRoom,
+            anchorMessageId: '5'.repeat(64),
+          }),
         ],
       );
       expect(await loop.runOnce()).toBe(2);

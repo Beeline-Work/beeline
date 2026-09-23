@@ -380,7 +380,7 @@ describe('command intake mechanics', () => {
     expect(stop).toHaveBeenCalledWith('turn');
     expect(execute).toHaveBeenCalledWith('acknowledgeAgentCommand', expect.anything());
   });
-  it.each(['human_tag', 'relay_steer'])(
+  it.each(['human_tag', 'relay_steer', 'relay_question'])(
     'leaves later %s input unclaimed while busy and deduplicates delivery',
     async (reason) => {
       const controller = new AbortController();
@@ -394,7 +394,7 @@ describe('command intake mechanics', () => {
             reason,
             source: {
               ...command('second').source,
-              type: reason === 'relay_steer' ? 'card' : 'message',
+              type: reason.startsWith('relay_') ? 'card' : 'message',
             },
           },
         ],

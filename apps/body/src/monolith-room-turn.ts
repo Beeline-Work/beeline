@@ -810,7 +810,7 @@ export class MonolithRoomTurnLoop {
       SOUL_HOUSE_RULE,
       ...(!directMessage
         ? [
-            'When something said in this Room changes work under way in a corner you opened, pass it down with steer_corner. Pass what changes the work, not the chatter. Do not ask the person which corner.',
+            'Use inspect_corner to read a member corner’s status or recent transcript. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Its answer returns as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
           ]
         : []),
     ].join('\n');
@@ -1069,7 +1069,7 @@ export class MonolithRoomTurnLoop {
                   grantDecision ? resumePrompt(item) : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
                   (corners.corners ?? []).some((corner) => !corner.archived)
-                    ? `Current corners you belong to (use the exact cornerId with steer_corner):\n${JSON.stringify(
+                    ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(
                         (corners.corners ?? []).filter((corner) => !corner.archived),
                       )}`
                     : '',

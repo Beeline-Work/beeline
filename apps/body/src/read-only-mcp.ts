@@ -363,6 +363,31 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'inspect_corner',
+    description:
+      'Read the status and newest transcript page of a corner you belong to in this Room.',
+    inputSchema: {
+      type: 'object',
+      required: ['cornerId'],
+      properties: { cornerId: { type: 'string' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'ask_corner',
+    description:
+      'Ask the corner opener one question. Its one answer is linked to the corner card in this Room and muted for notifications.',
+    inputSchema: {
+      type: 'object',
+      required: ['cornerId', 'text'],
+      properties: {
+        cornerId: { type: 'string' },
+        text: { type: 'string', minLength: 1, maxLength: 16000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'react_to_message',
     description:
       'React to one message in this Room. The reaction stays present if this call is retried. Use only one of the supported emoji.',
@@ -930,7 +955,8 @@ export function agentToolsFor(
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
-    if (tool.name === 'steer_corner') return !directMessage && !cornerTurn;
+    if (['steer_corner', 'ask_corner', 'inspect_corner'].includes(tool.name))
+      return !directMessage && !cornerTurn;
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
     // A connector is offered where a person is answering — a Room or a DM —
     // never from a corner, whose work is the branch (R5).
@@ -1487,10 +1513,10 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
   };
 }
 
-async function relayMessage(direction: 'down', args: JsonObject): Promise<string> {
+async function relayMessage(direction: 'down', args: JsonObject, reply = false): Promise<string> {
   const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
   if (process.env.BEELINE_AGENT_DM === '1' || Boolean(cornerId))
-    throw new Error('steer_corner requires a Room turn');
+    throw new Error('corner relay requires a Room turn');
   if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
     throw new Error('relay text must contain 1 to 16000 characters');
   const context = await activeCommandContext();
@@ -1499,7 +1525,12 @@ async function relayMessage(direction: 'down', args: JsonObject): Promise<string
   return JSON.stringify(
     await daemonExecute('postRoomMessage', {
       text: args.text,
-      relay: { fromRoomId: context.roomId, toRoomId, direction },
+      relay: {
+        fromRoomId: context.roomId,
+        toRoomId,
+        direction,
+        ...(reply ? { reply: 'once' } : {}),
+      },
     }),
   );
 }
@@ -2737,6 +2768,31 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return openCorner(args, toolCallId);
     case 'steer_corner':
       return relayMessage('down', args);
+    case 'ask_corner':
+      return relayMessage('down', args, true);
+    case 'inspect_corner': {
+      if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
+        throw new Error('inspect_corner requires a Room turn');
+      const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
+      if (typeof args.cornerId !== 'string' || !args.cornerId)
+        throw new Error('cornerId is required');
+      const corners = await daemonExecute('listRoomCorners', { roomId });
+      if (
+        !Array.isArray(corners.corners) ||
+        !corners.corners.some(
+          (corner) =>
+            corner &&
+            typeof corner === 'object' &&
+            (corner as Record<string, unknown>).cornerId === args.cornerId,
+        )
+      )
+        throw new Error('corner is not available in this Room');
+      const [status, transcript] = await Promise.all([
+        daemonExecute('getCornerRestoreState', { cornerId: args.cornerId }),
+        daemonExecute('getRoomConversation', { roomId: args.cornerId, limit: 200 }),
+      ]);
+      return JSON.stringify({ status, transcript });
+    }
     case 'react_to_message':
       return reactToMessage(args);
     case 'close_corner':

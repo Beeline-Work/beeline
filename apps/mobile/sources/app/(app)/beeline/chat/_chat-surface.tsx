@@ -2176,6 +2176,7 @@ export function BuzzChatSurface({
   // unread boundary, artifact origin) and viewability — no index math, no
   // scrollToIndex failure/retry.
   const desktopRowNodesRef = useRef<Map<string, HTMLElement>>(new Map());
+  const pendingOwnSendTailIdRef = useRef<string | null>(null);
   const desktopVisibilityObserverRef = useRef<IntersectionObserver | null>(null);
   const desktopIntersectingIdsRef = useRef<Set<string>>(new Set());
   // A message anchor (notification, unread boundary) owns the next landing;
@@ -2225,6 +2226,7 @@ export function BuzzChatSurface({
     visibleTranscriptMessagesRef.current = [];
     completedUnreadLandingRef.current = null;
     desktopRowNodesRef.current.clear();
+    pendingOwnSendTailIdRef.current = null;
     desktopRowRefCallbacksRef.current.clear();
     desktopIntersectingIdsRef.current.clear();
     desktopPrependOldestIdRef.current = null;
@@ -2438,6 +2440,19 @@ export function BuzzChatSurface({
     desktopPrependOldestIdRef.current = oldestId;
     desktopPrependScrollHeightRef.current = node?.scrollHeight ?? null;
   }, [desktopTranscript, transcriptMessages]);
+  // A send promises to show its own row at the live end. The scheduled scroll
+  // can run before a burst's final row commits, and the resulting scroll event
+  // may mark the viewport unpinned. Land once more when this exact row exists
+  // in the DOM, before paint, then return to ordinary reader-owned pin state.
+  useLayoutEffect(() => {
+    if (!desktopTranscript) return;
+    const pendingId = pendingOwnSendTailIdRef.current;
+    const node = desktopScrollNodeRef.current;
+    if (!pendingId || !node || !desktopRowNodesRef.current.has(pendingId)) return;
+    node.scrollTop = node.scrollHeight;
+    isPinnedToTailRef.current = true;
+    pendingOwnSendTailIdRef.current = null;
+  }, [desktopTranscript, transcriptMessages]);
   const landAtNewMessageBoundary = useCallback(
     (boundaryId: string, acknowledgeQueue: boolean) => {
       pendingNewMessageLandingRef.current = { boundaryId, acknowledgeQueue };
@@ -2539,13 +2554,14 @@ export function BuzzChatSurface({
   // route/unread landing anchor (`transcriptLandingAnchor`), any armed
   // boundary landing, the unread-boundary effect below, and the pin itself,
   // which the arrival rule reads to decide whether the appended row follows.
-  const releaseHistoryAnchorForSend = useCallback(() => {
+  const releaseHistoryAnchorForSend = useCallback((messageId: string) => {
     pendingNewMessageLandingRef.current = null;
+    if (desktopTranscript) pendingOwnSendTailIdRef.current = messageId;
     if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
     setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));
     isPinnedToTailRef.current = true;
     scrollToNewestMessage();
-  }, [firstUnreadMessageId, messageAnchorId, scrollToNewestMessage]);
+  }, [desktopTranscript, firstUnreadMessageId, messageAnchorId, scrollToNewestMessage]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -3276,8 +3292,8 @@ export function BuzzChatSurface({
         ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
         ...(attachments.length ? { attachments } : {}),
       });
+      releaseHistoryAnchorForSend(optimistic.id);
       addMessages([optimistic]);
-      releaseHistoryAnchorForSend();
       if (!sendShortcut) {
         const nextInputRevision = composerInputRevisionRef.current + 1;
         composerInputRevisionRef.current = nextInputRevision;

@@ -231,3 +231,107 @@ escape 30/60/500 early+late -> follow never re-arms toward the tail
 from the real module, same `ResizeObserver`/prepend-layout-effect/pin-check
 shape) rather than re-deriving it, so a regression in either place is a
 regression in both.
+
+## Windows post-send check (2026-09-23)
+
+The installed production Beeline on Chad's Windows guest is version 0.2.41.
+Its old session reported `SESSION EXPIRED · TICKET_EXPIRED`. The original
+September 9 Preview version 0.2.20 reported an invalid Room response. After
+the owner authorized a reinstall, replacement Preview builds from PR #1650
+and #1610 crashed at launch even with a clean profile (`0xc0000409`, fault
+offset `0x356ea5`); the old profile was preserved separately. These were
+testing blockers, not evidence about the transcript bug. A later authenticated
+production web session on Chad reproduced the bug, as recorded below.
+
+The first version of `run-send.mjs` exercised five fixed-height optimistic
+appends in the measured-DOM fixture, starting with the reader scrolled into
+history. It measured no adjacent-row overlap and a zero tail gap in Linux
+Chromium and Windows Chrome 153 on Chad. It did not exercise pictures.
+
+### Picture-send geometry follow-up
+
+`run-send.mjs` sends photo attachment, text, image artifact, photo attachment,
+then text. The build extracts the production `AttachmentCard` function and its
+styles from `RoomMessageVariants.tsx`, failing if its source markers change.
+The artifact mounts production `ArtifactCard` and `ArtifactImage` directly.
+Both use the actual Obsidian theme tokens; stand-ins replace session, storage,
+viewer, PDF, and navigation services. A 300ms source switch takes the photo
+from file glyph to image; the artifact image source resolves after 300ms.
+At 100ms and 550ms after each send the proof measures the painted image,
+card, enclosing message row, adjacent rows and scroll tail. The later sample
+requires every image to have loaded. React Native Web paints an image in an
+inner background-image child, not the outer `Image` View.
+
+Linux Chromium and Windows Chrome 153 on Chad each passed all ten samples:
+zero adjacent-row overlaps, zero painted-image/card bounds outside their row,
+zero tail gap, and the newest row visible. The Windows run used Chrome CDP in
+the guest and the `CDP_HTTP_URL`/`PROOF_URL` options of `run-send.mjs`.
+
+### Rapid photo-send tail landing
+
+The driver also appends five photos with zero-delay task breaks, then measures
+before and after their images load. On Linux Chromium, `NO_SEND_COMMIT=1`
+(the prior send wiring) reproducibly left the newest row immediately below
+the transcript viewport: 104px tail gap, previous row ending at y=470 and
+newest row spanning y=470–574, while the viewport ended at y=470. A scroll
+event had changed the pin ref to false before the final row committed, so the
+`ResizeObserver` held position. The original proof's visibility check compared
+against `window.innerHeight` (700), incorrectly calling that row visible; it
+now uses the transcript viewport bounds.
+
+`_chat-surface.tsx` now records the own-send message id before appending and
+lands on the tail in a layout effect only when that exact row is in the DOM.
+The same Linux burst then has 0px tail gap and a visible newest row before and
+after image load; all adjacent row and painted-image bounds stay separate.
+On Windows Chrome 153 in Chad, the fixed mixed sends and burst also pass with
+0px tail gap and no geometric overlap. The Windows comparison run without
+the committed-row landing also passed; this timing race was reproduced in the
+Linux fixture, not on Windows.
+
+These earlier fixture results did not reproduce the painted-row overlap; the
+proof at that point did not mount the animated message wrapper. The following
+live reproduction and updated proof supersede that conclusion.
+
+### Reproduction WEB-ROW-1: settled web rows collapse
+
+In an authenticated production web session on Chad's Windows guest Chrome,
+send a 1600×900 PNG with a caption and then text in a Room, waiting about four
+seconds after each send. The later text paints across an earlier message.
+In a fresh empty Room, send three text-only messages with three-second waits;
+these also paint over one another. Picture attachments are therefore not
+required to trigger this bug. The production Windows screenshots are
+`/tmp/speedy-windows-after-text.png` and
+`/tmp/speedy-windows-text-only.png` on the Room host.
+
+Live DOM measurement traced the painted overlap to the
+`NewMessageMaterialize` `Animated.View`: a new row starts at 37px high but
+becomes 0px after about 2.2 seconds. The child remains visible with inline
+`position:absolute; top:-37px; height:37px`. Forcing that child back into
+normal flow immediately restored its parent's height from 0px to 37px; the
+measured six row heights were then `[119, 37, 346, 37, 37, 37]`. Adjacent
+row rectangles do not overlap because the later rectangles themselves have
+zero height; painted descendants escape those collapsed bounds.
+
+The fix keeps `NewMessageMaterialize` in a normal `View` on web. Native
+platforms retain their entrance animation. The browser proof now mounts the
+production `NewMessageMaterialize` component around each sent row, along with
+the production photo and artifact components. `PROOF_OLD_WEB_ENTRANCE=1`
+removes only the new web guard at build time, giving an executable prior-code
+comparison. After mixed photo/text sends and a 2.3-second settle, it measures
+every row rectangle, any absolute wrapper, and painted image containment;
+it repeats in an empty Room with three text-only sends. A collapsed row or
+escaped image fails the run. This proof models sending and settlement around
+real production rendering components; it is separate from the live upload
+and outbox send on Windows.
+
+On Chad's Windows Chrome 153, the prior-code build failed as expected:
+after settling, the mixed run had 10 zero-height rows, 10 absolutely
+positioned wrappers, and eight painted images outside their rows; the three
+text-only rows were all 0px high. The fixed build passed the same run: all 70
+mixed rows and all three text-only rows had positive height (minimum 43px),
+with zero absolute wrappers, zero painted-image escapes, and zero adjacent
+row overlaps. Linux Chromium gave the same red/green result. Both platforms
+measured the latest row after delayed image loading and 2.3 seconds of
+settlement. The production site remains on the previous bundle until this
+change is released; the fixed verification used the source-backed proof on
+the Windows guest, not a released WebView2 binary.

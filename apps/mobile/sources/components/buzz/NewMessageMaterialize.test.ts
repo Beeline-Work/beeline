@@ -58,6 +58,7 @@ vi.mock('@/constants/Typography', () => ({
 
 import { NewMessageMaterialize } from './MonoHull';
 import { resetMessageReveals } from '@/buzz/message-reveal';
+import { Platform } from 'react-native';
 
 const originalConsoleError = console.error;
 
@@ -99,6 +100,23 @@ function enteringConfig(renderer: ReactTestRenderer) {
 }
 
 describe('NewMessageMaterialize', () => {
+  it('keeps a new web picture and later text row in normal flow through settlement', () => {
+    const previous = Platform.OS;
+    (Platform as { OS: string }).OS = 'web';
+    try {
+      const renderer = render(materialize('picture-send', true, 'picture'));
+      expect(animatedWrappers(renderer)).toHaveLength(0);
+      expect(renderer.root.findByType('View')).toBeDefined();
+      act(() => renderer.update(materialize('picture-send', true, 'picture')));
+      expect(animatedWrappers(renderer)).toHaveLength(0);
+      const text = render(materialize('text-after-picture', true, 'later text'));
+      expect(animatedWrappers(text)).toHaveLength(0);
+      expect(text.root.findByType('View')).toBeDefined();
+    } finally {
+      (Platform as { OS: string }).OS = previous;
+    }
+  });
+
   it('animates a genuinely new message exactly once', () => {
     const renderer = render(materialize('m1', true, 'hello'));
     expect(animatedWrappers(renderer)).toHaveLength(1);

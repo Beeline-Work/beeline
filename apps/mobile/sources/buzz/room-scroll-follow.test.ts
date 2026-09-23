@@ -433,12 +433,13 @@ describe('the chat screen wires the scroll rule', () => {
     expect(release).toContain('scrollToNewestMessage();');
 
     // The send calls it for Rooms and corners alike — one `handleSend`, the
-    // same surface for both — on the optimistic row, not on the publish ack.
+    // same surface for both — immediately before the optimistic row, not on
+    // the publish ack. Desktop tracks that row's id for its committed landing.
     const send = chatSource.slice(
       chatSource.indexOf('const handleSend = useCallback('),
       chatSource.indexOf('const handleCornerProposalDecision'),
     );
-    expect(send).toContain('addMessages([optimistic]);\n      releaseHistoryAnchorForSend();');
+    expect(send).toContain('releaseHistoryAnchorForSend(optimistic.id);\n      addMessages([optimistic]);');
 
     // The landing anchor is the released-aware value everywhere it is read.
     expect(chatSource).toContain('const transcriptLandingAnchorId = transcriptLandingAnchor({');

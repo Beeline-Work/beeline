@@ -555,6 +555,7 @@ export function BuzzChatSurface({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
     liveOverlays,
@@ -571,9 +572,6 @@ export function BuzzChatSurface({
     refreshSignal,
     outbox,
   } = session;
-  useEffect(() => {
-    if (firstUnreadMessageId) allowOlderHistoryRef.current = true;
-  }, [firstUnreadMessageId]);
   useEffect(() => {
     return navigation.addListener('beforeRemove', () => {
       liveDraftStore.setActive(false);
@@ -849,6 +847,9 @@ export function BuzzChatSurface({
       ? 'corner'
       : 'unknown';
   const isCorner = Boolean(parentChannelId);
+  useEffect(() => {
+    if (!isCorner && firstUnreadMessageId) allowOlderHistoryRef.current = true;
+  }, [firstUnreadMessageId, isCorner]);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
@@ -1171,14 +1172,14 @@ export function BuzzChatSurface({
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(() => {
     const anchored = anchorRelayReports(combinedMessages);
-    const boundary = boundaryRowIndex(anchored, firstUnreadMessageId);
+    const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
     if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
     // Folding cannot swallow the one exact server-owned unread boundary.
     return [
       ...foldSystemLines(foldSettledActivityRuns(anchored.slice(0, boundary))),
       ...foldSystemLines(foldSettledActivityRuns(anchored.slice(boundary))),
     ];
-  }, [combinedMessages, firstUnreadMessageId]);
+  }, [combinedMessages, firstUnreadMessageId, isCorner]);
   const transcriptArrivalStateRef = useRef(EMPTY_TRANSCRIPT_ARRIVAL_STATE);
   const transcriptCardMotionStore = useMemo(createTranscriptCardMotionStore, [decodedId]);
   const transcriptArrivalObservation = useMemo(() => {
@@ -1747,75 +1748,6 @@ export function BuzzChatSurface({
     }
     return undefined;
   }, [combinedMessages, roomRepository?.targetBranch]);
-  const slashVerbs = useMemo(
-    () =>
-      availableSlashVerbs(
-        {
-          canBuild: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              roomSurface?.viewer.permissions.send,
-          ),
-          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
-          canCatchUp: Boolean(firstUnreadMessageId),
-          canManageSchedules: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              getBuzzRuntimeConfig().monolithEnabled,
-          ),
-          canRunWorkflows: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              roomSurface?.repositoryResolution === 'repository',
-          ),
-          canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
-          canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
-          canCloseCorner: isCorner && !viewerIsAgent,
-          canChangeTargetBranch: Boolean(
-            !isCorner &&
-            !viewerIsAgent &&
-            canManageWorkspace &&
-            pendingTargetBranchProposal &&
-            !targetBranchActionId,
-          ),
-          canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
-          canInvitePerson: Boolean(
-            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
-          ),
-        },
-        currentSlashQuery ?? '',
-      ),
-    [
-      currentSlashQuery,
-      canManageWorkspace,
-      firstUnreadMessageId,
-      isCorner,
-      isDirectMessage,
-      latestOpenPoll,
-      pendingCornerRequest,
-      pendingTargetBranchProposal,
-      targetBranchActionId,
-      viewerChannelRole,
-      viewerIsAgent,
-      roomSurface?.repositoryResolution,
-      roomSurface?.viewer.permissions.send,
-    ],
-  );
-  const slashMenuVisible = Boolean(
-    composerFocused &&
-    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
-    dismissedSlashText !== inputText,
-  );
-  const paletteItemCount =
-    mentionAgentCommands.length + cornerAppCommands.length + slashVerbs.length;
-  useEffect(() => {
-    setHighlightedSlashVerbIndex(0);
-  }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   // Load the addressed agent's published command list on demand — the palette
   // renders ONLY from this published record, never a hardcoded inventory. A
   // failed read stays unknown and never blocks typing.
@@ -1947,7 +1879,7 @@ export function BuzzChatSurface({
     Keyboard.dismiss();
   }, []);
   const canonicalCornerItem = isCorner && roomSurface
-    ? cornerDisplayFromRoomView(roomSurface)
+    ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
     : undefined;
   const sessionState = !isCorner
     ? 'idle'
@@ -2049,7 +1981,8 @@ export function BuzzChatSurface({
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
-  // Divider and jump control, kept apart (`buzz/use-new-message-control.ts`).
+  // Rooms use the unread divider and queue; corners use only the viewport-
+  // driven jump control (`buzz/use-new-message-control.ts`).
   // The divider answers one question: where the reader's unread run began when
   // they opened this Room. The server's cursor owns that line until the newest
   // row is visible; a message arriving while the reader is in history belongs
@@ -2062,17 +1995,19 @@ export function BuzzChatSurface({
     queue: newMessageQueue,
     discVisible: newestJumpDiscShown,
     badgeCount: newMessageBadgeCount,
-    catchUpVisible: catchUpStripShown,
-    catchUpSummary,
+    catchUpVisible: catchUpEligible,
     observeVisibleMessages,
+    observeTailPinned,
     settleQueueAtBoundary,
   } = useNewMessageControl({
     roomId: decodedId,
     queueableMessages: foldedMessages,
     arrivingIds: transcriptArrivalObservation.arrivingIds,
     newestMessageId: newestTranscriptMessageId,
-    firstUnreadMessageId,
+    firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
+    openingUnreadCounts: isCorner ? null : openingUnreadCounts,
     isPinnedToTail: () => isPinnedToTailRef.current,
+    enabled: !isCorner,
   });
   // The catch-up sheet, reached from the strip and from a long-press on the
   // badge. Both doors carry the same unread range — the boundary the reader
@@ -2083,10 +2018,12 @@ export function BuzzChatSurface({
   // The server's cursor first: it is the one boundary that knows where the
   // reader fell behind BEFORE this visit. The live queue only answers for a
   // Room that opened read and gained arrivals while they sat in history.
-  const catchUpBoundaryId = firstUnreadMessageId ?? newMessageQueue.boundaryId;
+  const catchUpBoundaryId = isCorner
+    ? null
+    : (firstUnreadMessageId ?? newMessageQueue.boundaryId);
   const catchUpReport = useMemo(
     () =>
-      catchUpSheetVisible
+      !isCorner && catchUpSheetVisible
         ? buildCatchUpReport({
             messages: foldedMessages,
             boundaryId: catchUpBoundaryId,
@@ -2102,12 +2039,110 @@ export function BuzzChatSurface({
       catchUpSheetVisible,
       conversationIdentities,
       foldedMessages,
+      isCorner,
       newestTranscriptMessageId,
       userPubkey,
     ],
   );
-  const openCatchUpSheet = useCallback(() => setCatchUpSheetVisible(true), []);
+  const openCatchUpSheet = useCallback(() => {
+    if (!isCorner) setCatchUpSheetVisible(true);
+  }, [isCorner]);
   const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
+  const catchUpAgents = useMemo(
+    () => roomParticipants.filter((participant) => participant.kind === 'agent'),
+    [roomParticipants],
+  );
+  const draftCatchUpRequest = useCallback((agent: Pick<RoomMemberOption, 'pubkey' | 'name' | 'handle'>) => {
+    if (
+      isCorner ||
+      !catchUpBoundaryId ||
+      inputTextRef.current.trim() ||
+      pendingAttachments.length > 0 ||
+      !roomSurface?.viewer.permissions.send
+    ) return;
+    const handle = agent.handle.replace(/^@/, '');
+    const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
+    selectedAgentMentionsRef.current.set(handle, agent.pubkey);
+    selectedMentionsRef.current.set(handle, agent.pubkey);
+    inputTextRef.current = prompt;
+    setInputText(prompt);
+    setInputSelection({ start: prompt.length, end: prompt.length });
+    setCatchUpSheetVisible(false);
+    scheduleAnimationFrame(() => composerRef.current?.focus());
+  }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
+  const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
+    !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
+  const slashVerbs = useMemo(
+    () =>
+      availableSlashVerbs(
+        {
+          canBuild: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              roomSurface?.viewer.permissions.send,
+          ),
+          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
+          // The verb is the line's door under another name: one gate, so
+          // neither can offer a catch-up the other has withdrawn.
+          canCatchUp: catchUpOfferVisible,
+          canManageSchedules: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              getBuzzRuntimeConfig().monolithEnabled,
+          ),
+          canRunWorkflows: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              roomSurface?.repositoryResolution === 'repository',
+          ),
+          canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
+          canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
+          canCloseCorner: isCorner && !viewerIsAgent,
+          canChangeTargetBranch: Boolean(
+            !isCorner &&
+            !viewerIsAgent &&
+            canManageWorkspace &&
+            pendingTargetBranchProposal &&
+            !targetBranchActionId,
+          ),
+          canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+          canInvitePerson: Boolean(
+            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
+          ),
+        },
+        currentSlashQuery ?? '',
+      ),
+    [
+      catchUpOfferVisible,
+      currentSlashQuery,
+      canManageWorkspace,
+      isCorner,
+      isDirectMessage,
+      latestOpenPoll,
+      pendingCornerRequest,
+      pendingTargetBranchProposal,
+      targetBranchActionId,
+      viewerChannelRole,
+      viewerIsAgent,
+      roomSurface?.repositoryResolution,
+      roomSurface?.viewer.permissions.send,
+    ],
+  );
+  const slashMenuVisible = Boolean(
+    composerFocused &&
+    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
+    dismissedSlashText !== inputText,
+  );
+  const paletteItemCount =
+    mentionAgentCommands.length + cornerAppCommands.length + slashVerbs.length;
+  useEffect(() => {
+    setHighlightedSlashVerbIndex(0);
+  }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   // A send releases whatever history anchor is holding the landing; the pair
   // it released is remembered so a *later* anchor still owns its own landing.
@@ -2115,7 +2150,7 @@ export function BuzzChatSurface({
   useEffect(() => setReleasedHistoryAnchorKey(null), [decodedId]);
   const transcriptLandingAnchorId = transcriptLandingAnchor({
     messageAnchorId,
-    firstUnreadMessageId,
+    firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
     releasedAnchorKey: releasedHistoryAnchorKey,
   });
   // A live message/card change follows to the newest end. The decision is one
@@ -2365,6 +2400,7 @@ export function BuzzChatSurface({
       const node = event.currentTarget;
       isPinnedToTailRef.current =
         node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
+      observeTailPinned(isPinnedToTailRef.current);
       if (
         (!isPinnedToTailRef.current ||
           node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) &&
@@ -2373,7 +2409,7 @@ export function BuzzChatSurface({
         loadOlderTranscriptMessages();
       }
     },
-    [loadOlderTranscriptMessages],
+    [loadOlderTranscriptMessages, observeTailPinned],
   );
   // Older history paging in above the reader grows the content from the
   // top, not the bottom — hold the reader's place by the real measured
@@ -2457,6 +2493,7 @@ export function BuzzChatSurface({
   }, [landAtNewMessageBoundary]);
   useEffect(() => {
     if (
+      isCorner ||
       !firstUnreadMessageId ||
       messageAnchorId ||
       completedUnreadLandingRef.current === firstUnreadMessageId
@@ -2464,7 +2501,7 @@ export function BuzzChatSurface({
       return;
     }
     landAtNewMessageBoundary(firstUnreadMessageId, false);
-  }, [firstUnreadMessageId, landAtNewMessageBoundary, messageAnchorId]);
+  }, [firstUnreadMessageId, isCorner, landAtNewMessageBoundary, messageAnchorId]);
   const scrollToNewestMessage = useCallback(() => {
     scheduleAnimationFrame(() => {
       if (desktopTranscript) {
@@ -4350,7 +4387,7 @@ export function BuzzChatSurface({
         // over, so the composer cannot say something different about a Room
         // than the two controls sitting in it.
         case 'catch-up':
-          openCatchUpSheet();
+          if (!isCorner) openCatchUpSheet();
           return;
         case 'schedule':
           if (!canManageWorkspace || !activeCommunityId) return;
@@ -4801,6 +4838,10 @@ export function BuzzChatSurface({
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
     arrivalFlashMessageId,
+    // The catch-up door rides the unread line, where the run it summarizes
+    // begins, rather than in chrome floating over the transcript.
+    catchUpOffered: catchUpOfferVisible,
+    onOpenCatchUp: openCatchUpSheet,
   });
 
   if (!roomSurface) {
@@ -5167,6 +5208,7 @@ export function BuzzChatSurface({
             onScroll={(event) => {
               const { contentOffset } = event.nativeEvent;
               isPinnedToTailRef.current = contentOffset.y <= TAIL_PIN_THRESHOLD;
+              observeTailPinned(isPinnedToTailRef.current);
             }}
             scrollEventThrottle={100}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
@@ -5248,18 +5290,21 @@ export function BuzzChatSurface({
           />
           )}
           <RoomCatchUpControls
+            corner={isCorner}
             badgeCount={newMessageBadgeCount}
-            catchUpSummary={catchUpSummary}
-            catchUpVisible={catchUpStripShown}
             discVisible={newestJumpDiscShown}
             onJumpToNewest={landAtNewestMessage}
-            onOpenCatchUp={openCatchUpSheet}
           />
-          <RoomCatchUpSheet
-            onClose={closeCatchUpSheet}
-            report={catchUpReport}
-            visible={catchUpSheetVisible}
-          />
+          {!isCorner && (
+            <RoomCatchUpSheet
+              agents={catchUpAgents}
+              canDraft={!inputText.trim() && pendingAttachments.length === 0}
+              onAskAgent={draftCatchUpRequest}
+              onClose={closeCatchUpSheet}
+              report={catchUpReport}
+              visible={catchUpSheetVisible}
+            />
+          )}
           </View>
 
           {/* P2: Archived channels are read-only */}
@@ -5759,7 +5804,7 @@ export function BuzzChatSurface({
             testID="message-forward-action"
           />
         ) : null}
-        {messageActionsTarget && countsAsUnread(messageActionsTarget) ? (
+        {messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget) ? (
           <HullActionSheetRow
             accessibilityLabel="Mark unread from this message"
             label="Mark unread"

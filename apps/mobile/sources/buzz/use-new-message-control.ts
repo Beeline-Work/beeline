@@ -3,31 +3,34 @@ import type { ChatDisplayMessage } from './room-view-presentation';
 import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
-  catchUpStripVisible,
+  catchUpOfferEligible,
   messageContainsBoundary,
   newMessageBadgeCount,
   newestJumpDiscVisible,
   queueIncomingMessages,
   type NewMessageQueue,
 } from './room-new-message-boundary';
-// The strip's line and the sheet's blocks are one module's words, so the two
-// doors into catch-up cannot phrase the same range differently.
-import { catchUpStripLabel } from './room-catch-up-report';
+import { issueUnreadLine, spendUnreadLine, unreadLineSpent } from './unread-line-ticket';
 
 /**
  * The answers a transcript owes a reader about unread mail, kept apart the
  * way Slack keeps them apart:
  *
- * - the NEW MESSAGES divider says where the reader's unread run began when
- *   they opened this Room. The server's opening cursor owns it until the
- *   reader reaches the newest row, and a live arrival may never move it;
+ * - the unread line marks where the reader's unread run began when they
+ *   opened this Room. The opening cursor owns it, and a live arrival may
+ *   never move it. Reaching the newest row retires it: the run it marks the
+ *   start of has been read, and a landmark that outlives what it marks is the
+ *   line readers found still sitting there after catching up. It is drawn at
+ *   most once per unread run (`buzz/unread-line-ticket.ts`), so leaving a
+ *   Room half-read cannot draw a second one further down on re-entry;
  * - the jump disc says the newest message is off screen. It is a way back to
- *   newest and nothing else, so it shows on viewport visibility alone,
- *   whether or not anything new is waiting;
+ *   newest and nothing else, so Rooms show it from viewport visibility;
+ *   corners also hide it at the pinned tail when viewability is stale;
  * - the badge on that disc counts the unread run, and reaching the newest row
  *   clears it exactly as a tap on the disc would;
- * - the catch-up strip says what that run is — how many and from whom — and
- *   lands at its first message rather than at newest.
+ * - catch-up eligibility, which the line itself carries as its press target.
+ *   The offer belongs where the run it would summarize begins, and it dies
+ *   with the line.
  *
  * Divider and count used to be drawn from the live queue alone, which is what
  * put a fresh divider under the newest row and left the old pill sitting over
@@ -39,7 +42,9 @@ export function useNewMessageControl({
   arrivingIds,
   newestMessageId,
   firstUnreadMessageId,
+  openingUnreadCounts,
   isPinnedToTail,
+  enabled = true,
 }: {
   roomId: string;
   /** Rows exactly as the list renders them, so a fold is queued by its host. */
@@ -47,10 +52,13 @@ export function useNewMessageControl({
   arrivingIds: ReadonlySet<string>;
   newestMessageId: string | null;
   firstUnreadMessageId: string | null;
+  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /** Tail distance, which decides auto-follow and nothing this control shows. */
   isPinnedToTail: () => boolean;
+  /** Room unread state is disabled in corners; only the tail chevron remains. */
+  enabled?: boolean;
 }): {
-  /** The opening unread row until the newest row is seen, otherwise null. */
+  /** The opening unread row for this visit. */
   dividerMessageId: string | null;
   queue: NewMessageQueue;
   /** The jump disc: shown for as long as the newest row is off screen. */
@@ -58,8 +66,9 @@ export function useNewMessageControl({
   /** What the disc's badge reads, or 0 for no badge. */
   badgeCount: number;
   catchUpVisible: boolean;
-  catchUpSummary: string;
   observeVisibleMessages: (visible: readonly ChatDisplayMessage[]) => void;
+  /** The list's scroll handler reports tail distance; only corners render it. */
+  observeTailPinned: (pinned: boolean) => void;
   settleQueueAtBoundary: (boundaryId: string) => void;
 } {
   const [queue, setQueue] = useState<NewMessageQueue>(EMPTY_NEW_MESSAGE_QUEUE);
@@ -69,12 +78,19 @@ export function useNewMessageControl({
   // unanswered viewport would flash one over every Room at open.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
   const [hasObservedVisibility, setHasObservedVisibility] = useState(false);
-  const [dismissedDividerMessageId, setDismissedDividerMessageId] = useState<string | null>(null);
+  // A corner's chevron also yields to tail position, as state so a scroll that
+  // leaves the viewable set unchanged still redraws it. Rooms never set it.
+  const [tailPinned, setTailPinned] = useState(true);
+  // The glyph's own end. Set when a viewability pass AFTER the opening one
+  // reports the newest row on screen — the reader's own scroll down, or their
+  // tap on the disc, which lands there and reports.
+  const [boundaryRead, setBoundaryRead] = useState(false);
+  // Read inside the observation callback, where the state above is a commit
+  // behind: the opening pass must not retire a line drawn in the same frame.
+  const hasObservedVisibilityRef = useRef(false);
   const visibleMessagesRef = useRef<readonly ChatDisplayMessage[]>([]);
   const newestMessageIdRef = useRef(newestMessageId);
   newestMessageIdRef.current = newestMessageId;
-  const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
-  firstUnreadMessageIdRef.current = firstUnreadMessageId;
   const isPinnedToTailRef = useRef(isPinnedToTail);
   isPinnedToTailRef.current = isPinnedToTail;
 
@@ -82,12 +98,38 @@ export function useNewMessageControl({
     setQueue(EMPTY_NEW_MESSAGE_QUEUE);
     setNewestMessageVisible(false);
     setHasObservedVisibility(false);
-    setDismissedDividerMessageId(null);
+    setTailPinned(true);
+    hasObservedVisibilityRef.current = false;
     visibleMessagesRef.current = [];
-  }, [roomId]);
+  }, [roomId, enabled]);
+
+  // A boundary the reader has not been shown yet is not one they have read.
+  // The server cursor arrives after the first paint, and `markUnreadFrom`
+  // replaces it mid-visit; either way the new line starts its own life.
+  useEffect(() => setBoundaryRead(false), [roomId, enabled, firstUnreadMessageId]);
+
+  // Is a line owed at all? Read once per boundary, BEFORE the spend below, so
+  // that spending the ticket cannot retire the line the spend paid for. The
+  // session captures the cursor once a visit, so the only thing that moves
+  // `firstUnreadMessageId` mid-visit is "Mark unread", which issues its own
+  // ticket first.
+  const [lineOwed, setLineOwed] = useState(false);
+  useEffect(() => {
+    setLineOwed(enabled && firstUnreadMessageId !== null && !unreadLineSpent(roomId));
+  }, [enabled, firstUnreadMessageId, roomId]);
+
+  useEffect(() => {
+    if (lineOwed) spendUnreadLine(roomId);
+  }, [lineOwed, roomId]);
+
+  // Reaching the newest row is being caught up, which is what earns the next
+  // run its line — whether or not one was drawn for this one.
+  useEffect(() => {
+    if (boundaryRead) issueUnreadLine(roomId);
+  }, [boundaryRead, roomId]);
 
   useLayoutEffect(() => {
-    if (arrivingIds.size === 0) return;
+    if (!enabled || arrivingIds.size === 0) return;
     setQueue((current) =>
       queueIncomingMessages(current, {
         messages: queueableMessages,
@@ -95,7 +137,7 @@ export function useNewMessageControl({
         isPinnedToTail: isPinnedToTailRef.current(),
       }),
     );
-  }, [arrivingIds, queueableMessages]);
+  }, [arrivingIds, enabled, queueableMessages]);
 
   // A row arriving below the fold leaves the viewable set untouched, so the
   // list has no reason to run its viewability pass, and the last report —
@@ -112,53 +154,72 @@ export function useNewMessageControl({
     );
   }, [newestMessageId]);
 
-  const observeVisibleMessages = useCallback((visible: readonly ChatDisplayMessage[]) => {
-    visibleMessagesRef.current = visible;
-    const newestVisible = visible.some((message) =>
-      messageContainsBoundary(message, newestMessageIdRef.current),
-    );
-    setNewestMessageVisible(newestVisible);
-    setHasObservedVisibility(true);
-    // Reaching the newest message is what the control asks for; arriving there
-    // under the reader's own finger settles the queue exactly as a tap would,
-    // and retires the opening divider now that its unread run has been read.
-    if (newestVisible) {
-      setQueue(acknowledgeNewMessageQueue);
-      if (firstUnreadMessageIdRef.current) {
-        setDismissedDividerMessageId(firstUnreadMessageIdRef.current);
+  const observeVisibleMessages = useCallback(
+    (visible: readonly ChatDisplayMessage[]) => {
+      visibleMessagesRef.current = visible;
+      const newestVisible = visible.some((message) =>
+        messageContainsBoundary(message, newestMessageIdRef.current),
+      );
+      setNewestMessageVisible(newestVisible);
+      setHasObservedVisibility(true);
+      const opening = !hasObservedVisibilityRef.current;
+      hasObservedVisibilityRef.current = true;
+      // Reaching the newest message is what the control asks for; arriving there
+      // under the reader's own finger settles the queue exactly as a tap would,
+      // and retires the unread line the same way. The OPENING pass is exempt:
+      // a short unread run can leave boundary and newest on screen together at
+      // open, and retiring there would blink the line out before the reader
+      // could look at it.
+      if (enabled && newestVisible) {
+        setQueue(acknowledgeNewMessageQueue);
+        if (!opening) setBoundaryRead(true);
       }
-    }
-  }, []);
+    },
+    [enabled],
+  );
 
-  const settleQueueAtBoundary = useCallback((boundaryId: string) => {
-    setQueue((current) =>
-      current.boundaryId === boundaryId ? acknowledgeNewMessageQueue(current) : current,
-    );
-  }, []);
+  const observeTailPinned = useCallback(
+    (pinned: boolean) => {
+      if (!enabled) setTailPinned(pinned);
+    },
+    [enabled],
+  );
 
-  // The divider is the server's cursor and only ever the server's cursor. It
-  // retires after the reader reaches the newest row and stays retired when a
-  // later live batch arms the independent jump control. The strip stands for
-  // that same cursor but does NOT retire with the line: a Room opening at its
-  // tail sees the newest row at once, and the strip would be gone before the
-  // reader could reach for it.
-  const dividerRetired = dismissedDividerMessageId === firstUnreadMessageId;
-  const unreadSinceAt =
-    queueableMessages.find((message) => messageContainsBoundary(message, firstUnreadMessageId))
-      ?.timestamp ?? null;
+  const settleQueueAtBoundary = useCallback(
+    (boundaryId: string) => {
+      if (!enabled) return;
+      setQueue((current) =>
+        current.boundaryId === boundaryId ? acknowledgeNewMessageQueue(current) : current,
+      );
+    },
+    [enabled],
+  );
+
+  // The glyph marks where the reader's unread run began. Later read-mark
+  // updates and live arrivals cannot move it; only reaching newest ends it.
   return {
-    dividerMessageId: dividerRetired ? null : firstUnreadMessageId,
-    queue,
-    discVisible: newestJumpDiscVisible({
-      newestMessageId,
-      newestMessageVisible,
-      hasObservedVisibility,
-    }),
-    badgeCount: newMessageBadgeCount(queue, newestMessageVisible),
-    catchUpVisible: catchUpStripVisible(firstUnreadMessageId),
-    // No count: there is none to state honestly (`room-catch-up-report.ts`).
-    catchUpSummary: catchUpStripLabel({ since: unreadSinceAt }),
+    dividerMessageId: enabled && lineOwed && !boundaryRead ? firstUnreadMessageId : null,
+    queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
+    discVisible:
+      newestJumpDiscVisible({
+        newestMessageId,
+        newestMessageVisible,
+        hasObservedVisibility,
+      }) &&
+      // An inverted corner list can retain an older viewability report while
+      // opening at offset zero. Tail position is decisive for its bare
+      // chevron; corners have no unread state to reconcile with that report.
+      (enabled || !tailPinned),
+    badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
+    // The offer rides the line, so it cannot outlive it: no line drawn, no
+    // offer, and reaching the tail takes both.
+    catchUpVisible:
+      enabled &&
+      lineOwed &&
+      !boundaryRead &&
+      catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
     observeVisibleMessages,
+    observeTailPinned,
     settleQueueAtBoundary,
   };
 }

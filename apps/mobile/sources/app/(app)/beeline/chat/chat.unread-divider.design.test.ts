@@ -13,16 +13,21 @@ import { describe, expect, it } from 'vitest';
 const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 
 describe('the chat surface unread-divider wiring', () => {
-  it('draws divider, disc and strip from the one hook, with no second path', () => {
+  it('draws divider, disc and offer from the one hook, with no second path', () => {
     expect(chatSource).toContain('useNewMessageControl({');
     expect(chatSource).toContain('dividerMessageId: firstNewMessageId');
     expect(chatSource).toContain('discVisible: newestJumpDiscShown');
     expect(chatSource).toContain('badgeCount: newMessageBadgeCount');
-    expect(chatSource).toContain('catchUpVisible: catchUpStripShown');
+    expect(chatSource).toContain('catchUpVisible: catchUpEligible');
     expect(chatSource).toContain('<RoomCatchUpControls');
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
-    expect(chatSource).toContain('catchUpVisible={catchUpStripShown}');
+    expect(chatSource).toContain('catchUpOffered: catchUpOfferVisible');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
+    // `/catch-up` is the line's door under another name, so it closes with it.
+    expect(chatSource).toContain('canCatchUp: catchUpOfferVisible,');
+    // Both lists report tail distance, so a corner's chevron follows a scroll
+    // that leaves the viewable set unchanged.
+    expect(chatSource.match(/observeTailPinned\(isPinnedToTailRef\.current\);/g)).toHaveLength(2);
     // The coupling this change removed, in either of the shapes it had. The
     // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
     // catch-up sheet's range legitimately falls back to the server cursor
@@ -52,13 +57,15 @@ describe('the chat surface unread-divider wiring', () => {
     expect(landing).not.toContain('acknowledgeNewMessageQueue');
   });
 
-  it('CHEV-14: all three catch-up doors go through the one report', () => {
-    // The composer verb, the strip, and the badge long-press open the same
-    // sheet over the same range. The verb used to scroll to the first unread
-    // row on its own, which is a fourth answer about a Room the other two
-    // were already describing.
-    expect(chatSource).toContain("case 'catch-up':\n          openCatchUpSheet();");
-    expect(chatSource).toContain('onOpenCatchUp={openCatchUpSheet}');
+  it('CHEV-14: both catch-up doors go through the one report', () => {
+    // The composer verb and the unread line open the same sheet over the same
+    // range. The verb used to scroll to the first unread row on its own,
+    // which is a third answer about a Room the other door was already
+    // describing.
+    expect(chatSource).toContain("case 'catch-up':\n          if (!isCorner) openCatchUpSheet();");
+    expect(chatSource).toContain('onOpenCatchUp: openCatchUpSheet');
+    // The disc holds no door at all now; it jumps and nothing else.
+    expect(chatSource).not.toContain('onOpenCatchUp={');
     const report = chatSource.slice(
       chatSource.indexOf('buildCatchUpReport({'),
       chatSource.indexOf('const openCatchUpSheet'),
@@ -74,10 +81,12 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).not.toContain('newMessageControlPlate');
     expect(chatSource).not.toContain('newMessageControlShown');
     expect(chatSource).not.toContain('} new\n');
-    // The disc and strip are one component's business, not a second styling
-    // path grown beside it.
+    // The disc is one component's business, not a second styling path grown
+    // beside it — and the strip that briefly replaced the pill is gone with
+    // it, so the transcript carries no floating bar at all.
     expect(chatSource).not.toContain('newestJumpDisc:');
-    expect(chatSource).not.toContain('catchUpStrip:');
+    expect(chatSource).not.toContain('catchUpStrip');
+    expect(chatSource).not.toContain('catchUpSummary');
   });
 
   it('gives the hook the server cursor, the folded rows, and the arriving ids', () => {
@@ -89,7 +98,8 @@ describe('the chat surface unread-divider wiring', () => {
     expect(call).toContain('queueableMessages: foldedMessages');
     expect(call).toContain('arrivingIds: transcriptArrivalObservation.arrivingIds');
     expect(call).toContain('newestMessageId: newestTranscriptMessageId');
-    expect(call).toContain('firstUnreadMessageId,');
+    expect(call).toContain('firstUnreadMessageId: isCorner ? null : firstUnreadMessageId');
+    expect(call).toContain('enabled: !isCorner');
     // Tail distance reaches the hook for queueing only; what the control shows
     // is decided by the viewability pass below.
     expect(call).toContain('isPinnedToTail: () => isPinnedToTailRef.current');
@@ -105,7 +115,19 @@ describe('the chat surface unread-divider wiring', () => {
   });
 
   it('keeps the unread boundary out of the fold without consulting the live queue', () => {
-    expect(chatSource).toContain('boundaryRowIndex(anchored, firstUnreadMessageId)');
+    expect(chatSource).toContain('boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId)');
+  });
+
+  it('keeps corner unread actions and landing paths closed', () => {
+    expect(chatSource).toContain('corner={isCorner}');
+    expect(chatSource).toContain('{!isCorner && (\n            <RoomCatchUpSheet');
+    expect(chatSource).toContain('messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget)');
+    expect(chatSource).toContain('isCorner ||\n      !firstUnreadMessageId');
+    expect(chatSource).toContain('firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,\n    releasedAnchorKey');
+  });
+
+  it('derives corner state from the same fresh turn receipts as the turn line', () => {
+    expect(chatSource).toContain('latestAgentTurns: activeAgentTurns');
   });
 
   it('reports the newest row from chronological order so both lists agree', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { buildCatchUpReport, catchUpClock, catchUpStripLabel } from './room-catch-up-report';
+import { buildCatchUpReport, catchUpClock } from './room-catch-up-report';
 
 const VIEWER = 'pk-viewer';
 const AT_0804 = new Date(2026, 8, 22, 8, 4).getTime();
@@ -20,36 +20,6 @@ function said(id: string, name: string, minutes: number, text = id): ChatDisplay
 }
 
 const identity = (name: string) => ({ pubkey: `pk-${name}`, kind: 'agent' as const, name });
-
-describe('the catch-up strip label', () => {
-  it('CHEV-15: states when the reader fell behind, never how much they missed', () => {
-    // There is no unread count in this product to print: the server serves
-    // `unread: boolean`, the client's queue count resets on every Room open,
-    // and the session marks a Room read at its tail on first fresh view. A
-    // number here would be invented.
-    expect(catchUpStripLabel({ since: at(4) })).toBe(
-      `New since ${catchUpClock(at(4))} · Catch me up`,
-    );
-    expect(catchUpStripLabel({ since: null })).toBe('New · Catch me up');
-    expect(catchUpStripLabel({ since: at(4) })).not.toMatch(/\d+ new|messages? from/);
-  });
-
-  it('CHEV-15: prints a count only when a server supplies one', () => {
-    // The one seam a real unread count slots into. Nothing supplies it today,
-    // and a count computed from loaded rows must never be passed here.
-    expect(catchUpStripLabel({ since: at(4), unreadCount: 42 })).toBe(
-      `42 new since ${catchUpClock(at(4))} · Catch me up`,
-    );
-    // An absent or empty count falls back to the countless line rather than
-    // printing a zero the reader would read as fact.
-    expect(catchUpStripLabel({ since: at(4), unreadCount: null })).toBe(
-      `New since ${catchUpClock(at(4))} · Catch me up`,
-    );
-    expect(catchUpStripLabel({ since: at(4), unreadCount: 0 })).toBe(
-      `New since ${catchUpClock(at(4))} · Catch me up`,
-    );
-  });
-});
 
 describe('the catch-up report', () => {
   it('CHEV-04: states the range by its two ends, boundary through newest', () => {

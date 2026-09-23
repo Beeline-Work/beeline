@@ -334,7 +334,7 @@ describe('monolith integration', () => {
     });
   };
 
-  it('projects exact viewer read cursors for Rooms and corners without rounding same-second order', async () => {
+  it('projects exact Room read cursors and omits unread state from corners', async () => {
     const corner = '44444444-4444-4444-8444-444444444444';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Cursor corner')`,
@@ -353,9 +353,17 @@ describe('monolith integration', () => {
         ($2,$3,$4,'Unread','2026-09-12 01:00:00.900+00')`,
         [read, unread, id, AGENT],
       );
+      if (id === corner) {
+        const view = await phone.readRoom(id, HUMAN);
+        expect(view?.messages.map((message) => message.id)).toEqual([read, unread]);
+        expect(view?.viewer.readCursor).toBeUndefined();
+        continue;
+      }
       expect((await phone.readRoom(id, HUMAN))?.viewer.readCursor).toEqual({
         messageId: null,
         firstUnreadMessageId: read,
+        unreadCount: 2,
+        unreadAgentTurnCount: 0,
       });
       await phone.markRead(id, read, HUMAN);
       const view = await phone.readRoom(id, HUMAN);
@@ -364,26 +372,29 @@ describe('monolith integration', () => {
         Date.parse('2026-09-12T01:00:00.100Z'),
         Date.parse('2026-09-12T01:00:00.900Z'),
       ]);
-      expect(view?.viewer.readCursor).toEqual({ messageId: read, firstUnreadMessageId: unread });
+      expect(view?.viewer.readCursor).toEqual({
+        messageId: read,
+        firstUnreadMessageId: unread,
+        unreadCount: 1,
+        unreadAgentTurnCount: 0,
+      });
       expect(isRoomView(view)).toBe(true);
       expect(isRoomView({ ...view, viewer: { ...view!.viewer, readCursor: undefined } })).toBe(
         true,
       );
-      expect(
-        isRoomView({
-          ...view,
-          viewer: { ...view!.viewer, readCursor: { messageId: read, firstUnreadMessageId: 7 } },
-        }),
-      ).toBe(false);
       // The agent's own messages are not unread; the human's cursor never leaks.
       expect((await phone.readRoom(id, AGENT))?.viewer.readCursor).toEqual({
         messageId: null,
         firstUnreadMessageId: null,
+        unreadCount: 0,
+        unreadAgentTurnCount: 0,
       });
       await phone.markRead(id, unread, HUMAN);
       expect((await phone.readRoom(id, HUMAN))?.viewer.readCursor).toEqual({
         messageId: unread,
         firstUnreadMessageId: null,
+        unreadCount: 0,
+        unreadAgentTurnCount: 0,
       });
     }
   });

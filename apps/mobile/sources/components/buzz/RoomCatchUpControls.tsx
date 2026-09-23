@@ -4,10 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { compactNewMessageCount } from '@/buzz/room-new-message-boundary';
-import {
-  TURN_LINE_BAR_MARGIN_BOTTOM,
-  TURN_LINE_ROW_MIN_HEIGHT,
-} from '@/buzz/room-bottom-chrome';
+import { TURN_LINE_BAR_MARGIN_BOTTOM, TURN_LINE_ROW_MIN_HEIGHT } from '@/buzz/room-bottom-chrome';
 
 /**
  * The jump control is a 44pt disc — the one round box in the transcript,
@@ -20,9 +17,6 @@ const DISC_SIZE = 44;
 const CHEVRON_SIZE = 20;
 const BADGE_SIZE = 18;
 
-/** The one way into the catch-up sheet for a reader on a screen reader. */
-const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
-
 /**
  * Everything a reader who is behind gets, drawn over the transcript by
  * `_chat-surface.tsx` from one hook (`buzz/use-new-message-control.ts`):
@@ -34,59 +28,42 @@ const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
  *   something had no way back down but their own thumb;
  * - the badge on that disc, a counter capped at `9+`, cleared by reaching the
  *   newest row rather than by a press. The disc outlives the badge;
- * - the catch-up strip under the Room header, the visible door to the sheet.
- *   A long-press on the badge is the shortcut to the same sheet, and the
- *   registered accessibility action below is that shortcut for a reader who
- *   cannot long-press.
+ * Catch-up is NOT here. It lives on the unread line itself
+ * (`buzz/room-message-cell.tsx`), where the run it would summarize begins,
+ * and the `/catch-up` verb opens the same sheet from the composer. Two doors,
+ * one of them visible and labelled.
+ *
+ * This control held that door twice, and both were wrong. A strip under the
+ * Room header floated over the transcript in every Room the reader was behind
+ * in, which is the one place a reader is trying to read. A long-press on the
+ * disc replaced it with an affordance nothing announces.
+ *
+ * The badge is the disc's own business. Drawing it only when catch-up was on
+ * offer hid this visit's arrival count in every Room under the six-turn/
+ * fifteen-message threshold.
  */
 export function RoomCatchUpControls({
+  corner,
   badgeCount,
-  catchUpSummary,
-  catchUpVisible,
   discVisible,
   onJumpToNewest,
-  onOpenCatchUp,
 }: {
+  corner: boolean;
   badgeCount: number;
-  catchUpSummary: string;
-  catchUpVisible: boolean;
   discVisible: boolean;
   onJumpToNewest: () => void;
-  onOpenCatchUp: () => void;
 }) {
-  const catchUpReachable = badgeCount > 0;
+  const badgeShown = !corner && badgeCount > 0;
   return (
     <>
-      {catchUpVisible && (
-        <Pressable
-          accessibilityLabel={catchUpSummary}
-          accessibilityRole="button"
-          onPress={onOpenCatchUp}
-          style={({ pressed }) => [styles.strip, pressed && styles.pressed]}
-          testID="catch-up-summary-strip"
-        >
-          <Text numberOfLines={1} style={styles.stripText}>
-            {catchUpSummary}
-          </Text>
-        </Pressable>
-      )}
       {discVisible && (
         <Pressable
-          accessibilityActions={
-            catchUpReachable
-              ? [{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }]
-              : undefined
-          }
           accessibilityLabel={
-            catchUpReachable
+            badgeShown
               ? `${badgeCount} new ${badgeCount === 1 ? 'message' : 'messages'}. Jump to newest message`
               : 'Jump to newest message'
           }
           accessibilityRole="button"
-          onAccessibilityAction={(event) => {
-            if (event.nativeEvent.actionName === CATCH_UP_ACCESSIBILITY_ACTION) onOpenCatchUp();
-          }}
-          onLongPress={catchUpReachable ? onOpenCatchUp : undefined}
           onPress={onJumpToNewest}
           style={({ pressed }) => [styles.hitTarget, pressed && styles.pressed]}
           testID="newest-jump-disc"
@@ -94,7 +71,7 @@ export function RoomCatchUpControls({
           <View style={styles.disc}>
             <ChevronGlyph color={styles.chevron.color} direction="down" size={CHEVRON_SIZE} />
           </View>
-          {catchUpReachable && (
+          {badgeShown && (
             <View style={styles.badge} testID="newest-jump-badge">
               <Text style={styles.badgeText}>{compactNewMessageCount(badgeCount)}</Text>
             </View>
@@ -160,27 +137,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.textInverted,
-      fontVariant: ['tabular-nums'],
-    },
-    // The strip rides the top of the transcript, where the run the reader is
-    // behind on begins, rather than beside the disc that leaves it.
-    strip: {
-      position: 'absolute',
-      top: groknight.space.sm,
-      left: 12,
-      right: 12,
-      paddingHorizontal: groknight.space.sm,
-      paddingVertical: groknight.space.xs,
-      alignItems: 'center',
-      borderRadius: groknight.radius,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    stripText: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.meta,
-      color: groknight.ledgerQuiet,
       fontVariant: ['tabular-nums'],
     },
   };

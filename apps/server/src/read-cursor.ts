@@ -6,6 +6,7 @@ import { hiddenWakeCardSql } from './room-choice.js';
  * long-abandoned mark grow with the whole backlog.
  */
 export const UNREAD_COUNT_CAP = 99;
+export const UNREAD_AGENT_TURN_COUNT_CAP = 6;
 
 /**
  * WHAT COUNTS AS UNREAD. One definition, and the only one.
@@ -65,5 +66,20 @@ export const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
         AND ${unreadMessageSql('message')}
         AND ${newerThanMarkSql('message')}
       LIMIT ${UNREAD_COUNT_CAP}
+    ) capped
+  ),
+  'unreadAgentTurnCount',(
+    SELECT count(*)::int FROM (
+      SELECT 1 FROM agent_turns turn
+      WHERE turn.room_id=room.id
+        AND turn.status='complete'
+        -- created_at moves on every status write, so a complete turn's is
+        -- when its answer landed: a turn running when the reader last read
+        -- still counts.
+        AND turn.created_at>COALESCE(
+          (SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
+          '-infinity'::timestamptz
+        )
+      LIMIT ${UNREAD_AGENT_TURN_COUNT_CAP}
     ) capped
   ))`;

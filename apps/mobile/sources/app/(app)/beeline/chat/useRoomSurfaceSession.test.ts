@@ -280,14 +280,14 @@ function stubFrameScheduler(): {
 } {
   const queued: FrameRequestCallback[] = [];
   const receivers: unknown[] = [];
-  vi.stubGlobal('requestAnimationFrame', function requestAnimationFrame(
-    this: unknown,
-    callback: FrameRequestCallback,
-  ) {
-    receivers.push(this);
-    queued.push(callback);
-    return receivers.length;
-  });
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    function requestAnimationFrame(this: unknown, callback: FrameRequestCallback) {
+      receivers.push(this);
+      queued.push(callback);
+      return receivers.length;
+    },
+  );
   return { queued, receivers };
 }
 
@@ -461,6 +461,46 @@ describe('useRoomSurfaceSession', () => {
     });
     expect(current.firstUnreadMessageId).toBe('first-new');
 
+    await act(async () => renderer.unmount());
+  });
+
+  it('does not capture or advance unread state for a corner', async () => {
+    const corner = {
+      ...roomView('corner-a'),
+      room: { ...roomView('corner-a').room, parentId: 'room-a' },
+      viewer: {
+        ...roomView('corner-a').viewer,
+        readCursor: {
+          messageId: 'read',
+          firstUnreadMessageId: 'first-new',
+          unreadCount: 15,
+          unreadAgentTurnCount: 6,
+        },
+      },
+    };
+    controls.cached = corner;
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'corner-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+    await act(async () => controls.schedulers[0]!.apply(corner));
+    expect(current.firstUnreadMessageId).toBeNull();
+    expect(current.openingUnreadCounts).toBeNull();
+    const rows: ChatDisplayMessage[] = [
+      { id: 'first-new', text: 'new', isUser: false, timestamp: 1 },
+    ];
+    await act(async () => {
+      current.advanceReadCursor(rows, rows);
+      await new Promise((resolve) => setTimeout(resolve, READ_CURSOR_DEBOUNCE_MS + 20));
+    });
+    expect(controls.readMarks).toEqual([]);
     await act(async () => renderer.unmount());
   });
 

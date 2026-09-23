@@ -22,6 +22,7 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
+import { issueUnreadLine } from '@/buzz/unread-line-ticket';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -188,6 +189,8 @@ export interface UseRoomSurfaceSessionResult {
   roomSurface: RoomView | null;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
+  /** Server counts captured with the opening boundary, before viewport reads advance it. */
+  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /**
    * Report what the transcript's viewport can currently see. The boundary it
    * publishes is debounced, so this is safe to call on every viewability pass.
@@ -227,6 +230,10 @@ export function useRoomSurfaceSession({
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
   const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
+  const [openingUnreadCounts, setOpeningUnreadCounts] = useState<{
+    messages: number;
+    agentTurns: number;
+  } | null>(null);
   const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
   const [userPubkey, setUserPubkey] = useState('');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
@@ -270,6 +277,7 @@ export function useRoomSurfaceSession({
 
   const channelIdRef = useRef(channelId);
   const isFocusedRef = useRef(isFocused);
+  const isCornerRef = useRef(false);
   isFocusedRef.current = isFocused;
   // One advancer per visit. It debounces the viewport's reports and writes the
   // boundary the reader actually reached; the Room switching out from under it
@@ -313,6 +321,7 @@ export function useRoomSurfaceSession({
 
   const advanceReadCursor = useCallback(
     (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
+      if (isCornerRef.current) return;
       if (!isFocusedRef.current) return;
       if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
       readCursorRef.current?.observe(chronological, visible);
@@ -321,11 +330,18 @@ export function useRoomSurfaceSession({
   );
 
   const markUnreadFrom = useCallback(async (messageId: string) => {
+    if (isCornerRef.current) return;
     // The reader has said this message is unread. Stop the viewport from
     // reading it again on the very next report, then move the server boundary.
     readCursorRef.current?.suspend();
     await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
+    // Naming a row is asking for the line back, so it gets a ticket even if
+    // this visit already spent one (`buzz/unread-line-ticket.ts`). Issued
+    // before the boundary moves, because the boundary is what the control
+    // re-reads the ledger on.
+    issueUnreadLine(channelIdRef.current);
     setFirstUnreadMessageId(messageId);
+    setOpeningUnreadCounts(null);
   }, []);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
@@ -406,7 +422,9 @@ export function useRoomSurfaceSession({
   useEffect(() => {
     if (!channelId) return;
     if (!isFocused) return;
+    isCornerRef.current = false;
     setFirstUnreadMessageId(null);
+    setOpeningUnreadCounts(null);
     liveDraftDrainStore.setActive(true);
 
     let cancelled = false;
@@ -463,12 +481,12 @@ export function useRoomSurfaceSession({
 
     const paintView = (view: RoomView, fresh: boolean): RoomView | null => {
       if (cancelled) return null;
+      isCornerRef.current = Boolean(view.parent?.id ?? view.room.parentId);
+      if (isCornerRef.current) readCursorRef.current?.cancel();
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
       for (const message of stableView.messages) {
         if (message.requestId) {
-          liveDraftDrainStore.finalize(
-            liveDraftDrainKey(message.author.pubkey, message.requestId),
-          );
+          liveDraftDrainStore.finalize(liveDraftDrainKey(message.author.pubkey, message.requestId));
         }
       }
       for (const turn of stableView.latestAgentTurns) {
@@ -479,12 +497,20 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
-      if (fresh && !capturedUnreadBoundary) {
+      if (fresh && !capturedUnreadBoundary && !isCornerRef.current) {
         // This is the last server answer before markRead advances to the tail.
         // Keep the exact id for the whole focused visit; later refreshes may
         // clear the cursor but must not move the divider under the reader.
         capturedUnreadBoundary = true;
         setFirstUnreadMessageId(view.viewer.readCursor?.firstUnreadMessageId ?? null);
+        const cursor = view.viewer.readCursor;
+        setOpeningUnreadCounts(
+          cursor &&
+            typeof cursor.unreadCount === 'number' &&
+            typeof cursor.unreadAgentTurnCount === 'number'
+            ? { messages: cursor.unreadCount, agentTurns: cursor.unreadAgentTurnCount }
+            : null,
+        );
       }
       setRoomSurface(stableView);
       if (fresh) {
@@ -544,10 +570,7 @@ export function useRoomSurfaceSession({
             .filter((member) => member.identity.kind === 'agent')
             .map((member) => member.identity.pubkey),
         ),
-        new Set([
-          channelId,
-          ...(stableView.parent ? [stableView.parent.id] : []),
-        ]),
+        new Set([channelId, ...(stableView.parent ? [stableView.parent.id] : [])]),
       );
       const replayedOverlays = pendingOverlayEvents;
       pendingOverlayEvents = [];
@@ -1067,6 +1090,7 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     firstUnreadMessageId,
+    openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
     liveOverlays,

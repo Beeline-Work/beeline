@@ -317,6 +317,22 @@ describe('phone surface readers', () => {
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
 
+  it('keeps valid read-cursor counts and drops malformed turn counts', () => {
+    const cursor = { messageId: null, firstUnreadMessageId: 'b'.repeat(64), unreadCount: 15 };
+    expect(
+      readRoomView({
+        ...currentRoom,
+        viewer: { ...viewer, readCursor: { ...cursor, unreadAgentTurnCount: 6 } },
+      })?.viewer.readCursor?.unreadAgentTurnCount,
+    ).toBe(6);
+    expect(
+      readRoomView({
+        ...currentRoom,
+        viewer: { ...viewer, readCursor: { ...cursor, unreadAgentTurnCount: -1 } },
+      })?.viewer.readCursor?.unreadAgentTurnCount,
+    ).toBeUndefined();
+  });
+
   it('preserves a Squire request source link through the Room message reader', () => {
     const sourceMessageId = 'd'.repeat(64);
     const grantRequest = {

@@ -25,17 +25,25 @@ opens with a server cursor at `seed-20`, and what was missed carries a real
 open poll, a real pending repository-edit permission whose requester is NOT
 its author, and a real mention of the viewer.
 
-## No count in the strip
+## The strip these frames show has since been removed
 
-There is no unread count in this product to print. The server serves
+Frames `01`–`04` were captured while the visible catch-up door was a strip
+under the Room header, reading `New since 07:40 · Catch me up`. That strip is
+gone: it floated over the transcript in every Room the reader was behind in,
+which is the one place a reader is trying to read. The catch-up sheet, its
+range, and its three blocks are unchanged, and so are the doors these frames
+show opening it — the disc long-press (`06`/`07`), the registered `catchUp`
+accessibility action, and the `/catch-up` verb (`08`). Only the strip and its
+label formatter went. Read frames `01`–`04` for the sheet they open, not for
+the strip they open it from.
+
+There is still no unread count to print in catch-up copy. The server serves
 `unread: boolean` per Room (`phone-service.ts:1147`); the client's
 `NewMessageQueue.count` resets on every Room open, so it only ever knows about
 arrivals during the current visit; and the session marks a Room read at its
-tail on the first fresh view (`useRoomSurfaceSession.ts:891`). So the strip
-dates the run — `New since 07:40 · Catch me up` — and the sheet head names the
-window by its two ends. `catchUpStripLabel` carries one `unreadCount` seam for
-a server-supplied number; nothing feeds it, and nothing may feed it a count
-derived from loaded rows.
+tail on the first fresh view (`useRoomSurfaceSession.ts:891`). The sheet head
+names the window by its two ends, and nothing prints a number derived from
+loaded rows.
 
 The badge is unchanged and keeps its count, because that count is honest: it
 only ever claims arrivals during this visit, and it caps at `9+`.

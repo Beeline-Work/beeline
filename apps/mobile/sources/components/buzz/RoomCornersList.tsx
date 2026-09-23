@@ -89,7 +89,7 @@ export function RoomCornersList({
         });
         return;
       }
-      router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name));
+      router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name, 'corners'));
     };
     return (
       <Pressable

@@ -26,7 +26,7 @@ export type ChatStackRoute = {
   params?: Record<string, unknown> | undefined;
 };
 
-export type CornerReturnTarget = 'room-list';
+export type CornerReturnTarget = 'room-list' | 'corners';
 
 export type CornerOpenAction =
   { type: 'open-corner'; cornerId: string } | { type: 'explain'; message: string };
@@ -128,6 +128,21 @@ export function routeChannelId(route: ChatStackRoute | undefined): string | unde
 }
 
 /**
+ * The Room a corners-list route is showing, undecorated by URI encoding.
+ * Only a corners-list route answers; a chat route is never one.
+ */
+export function routeCornersRoomId(route: ChatStackRoute | undefined): string | undefined {
+  if (route?.name !== 'beeline/corners/[roomId]') return undefined;
+  const raw = route?.params?.roomId;
+  if (typeof raw !== 'string' || !raw) return undefined;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * How many entries to pop so the parent Room is on top, or `null` when it is
  * not on this stack. Searches downward from the top so a Room that was
  * reordered above an older copy still resolves to the nearest one.
@@ -147,6 +162,7 @@ export function popCountToParentRoom(
 export type ChatBackAction =
   | { type: 'pop'; count: number }
   | { type: 'open-room'; channelId: string }
+  | { type: 'open-corners'; roomId: string }
   | { type: 'back' }
   | { type: 'room-list' };
 
@@ -166,6 +182,19 @@ export function chatBackAction(
   parentChannelId: string | undefined,
   returnTo?: CornerReturnTarget,
 ): ChatBackAction {
+  // A Corner opened from a Room's corners screen returns to that screen —
+  // the parent Room beneath it is the screen it will itself back into, and
+  // that Room's corner dropdown is never skipped. Pop to the corners list
+  // when it is on the stack; open it in place when it is not.
+  if (returnTo === 'corners' && parentChannelId) {
+    const top = routes.length - 1;
+    for (let index = top - 1; index >= 0; index -= 1) {
+      if (routeCornersRoomId(routes[index]) === parentChannelId) {
+        return { type: 'pop', count: top - index };
+      }
+    }
+    return { type: 'open-corners', roomId: parentChannelId };
+  }
   // A Corner opened from the Room list must return to that list. Its parent
   // Room was never visited, so manufacturing one here both violates Back and
   // flashes a newly mounted transcript during the replacement transition.

@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import {
+  historyAnchorKey,
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
   scrollFollowOnArrival,
   scrollFollowOnLayoutChange,
+  transcriptLandingAnchor,
 } from './room-scroll-follow';
 
 const chatSource = readFileSync(
@@ -364,7 +366,88 @@ describe('scrollFollowOnLayoutChange', () => {
   });
 });
 
+describe('a send releases the history anchor', () => {
+  const notification = { messageAnchorId: 'msg-7', firstUnreadMessageId: 'msg-3' };
+
+  it('hands the landing to a notification target, then to the unread boundary', () => {
+    expect(transcriptLandingAnchor({ ...notification, releasedAnchorKey: null })).toBe('msg-7');
+    expect(
+      transcriptLandingAnchor({ firstUnreadMessageId: 'msg-3', releasedAnchorKey: null }),
+    ).toBe('msg-3');
+    expect(transcriptLandingAnchor({ releasedAnchorKey: null })).toBe('');
+  });
+
+  it('gives up both anchors at once, so the tail owns the landing after a send', () => {
+    const released = historyAnchorKey(notification);
+    expect(transcriptLandingAnchor({ ...notification, releasedAnchorKey: released })).toBe('');
+  });
+
+  it('re-arms for an anchor that arrives after the send', () => {
+    const released = historyAnchorKey(notification);
+    // A notification tapped while the Room is already open owns its own
+    // landing; the release covers the pair it was taken against, not the
+    // rest of the visit.
+    expect(
+      transcriptLandingAnchor({
+        messageAnchorId: 'msg-9',
+        firstUnreadMessageId: 'msg-3',
+        releasedAnchorKey: released,
+      }),
+    ).toBe('msg-9');
+  });
+
+  it('does not let a blank anchor read as a released one', () => {
+    expect(
+      transcriptLandingAnchor({
+        messageAnchorId: '  ',
+        firstUnreadMessageId: 'msg-3',
+        releasedAnchorKey: null,
+      }),
+    ).toBe('msg-3');
+    expect(historyAnchorKey({ messageAnchorId: '', firstUnreadMessageId: null })).not.toBe('');
+  });
+});
+
 describe('the chat screen wires the scroll rule', () => {
+  /**
+   * The viewer sending is the viewer speaking at the live end of the log, so
+   * the transcript has to land there and show them their own message. Every
+   * holder of the viewport has to let go in the same place: the landing anchor
+   * (`transcriptLandingAnchor`, which otherwise owns every landing for the
+   * whole focused visit), the armed boundary landing, the unread-boundary
+   * effect's re-land guard, and the tail pin the arrival rule reads.
+   */
+  it('lands the transcript on the tail when the viewer sends, releasing the anchor', () => {
+    const release = chatSource.slice(
+      chatSource.indexOf('const releaseHistoryAnchorForSend = useCallback('),
+      chatSource.indexOf('liveDraftStore.subscribeCommit'),
+    );
+    expect(release).toContain('pendingNewMessageLandingRef.current = null;');
+    expect(release).toContain(
+      'if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;',
+    );
+    expect(release).toContain(
+      'setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));',
+    );
+    expect(release).toContain('isPinnedToTailRef.current = true;');
+    expect(release).toContain('scrollToNewestMessage();');
+
+    // The send calls it for Rooms and corners alike — one `handleSend`, the
+    // same surface for both — on the optimistic row, not on the publish ack.
+    const send = chatSource.slice(
+      chatSource.indexOf('const handleSend = useCallback('),
+      chatSource.indexOf('const handleCornerProposalDecision'),
+    );
+    expect(send).toContain('addMessages([optimistic]);\n      releaseHistoryAnchorForSend();');
+
+    // The landing anchor is the released-aware value everywhere it is read.
+    expect(chatSource).toContain('const transcriptLandingAnchorId = transcriptLandingAnchor({');
+    expect(chatSource).not.toContain(
+      'const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId',
+    );
+  });
+
+
   it('scrolls once per arrival through the pure decision, tracking drags on the FlatList', () => {
     expect(chatSource).toContain("from '@/buzz/room-scroll-follow'");
     expect(chatSource).toContain('useScrollFollowOnArrival({');

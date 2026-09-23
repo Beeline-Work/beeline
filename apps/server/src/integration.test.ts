@@ -2512,6 +2512,28 @@ describe('monolith integration', () => {
     expect(chat?.waitingCornerCount).toBe(1);
   });
 
+  it('keeps the Room list readable when corner enrichment fails', async () => {
+    const brokenEnrichment = {
+      query: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+      transaction: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+    };
+    const phone = new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      brokenEnrichment,
+    );
+    const chats = await phone.readChats(WORKSPACE, HUMAN);
+    expect(chats?.chats.some((chat) => chat.room.id === ROOM)).toBe(true);
+  });
+
   it('keeps a Room view valid when live activity joins a full transcript', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)

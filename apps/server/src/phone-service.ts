@@ -1157,13 +1157,15 @@ export class PhoneService {
           [roomIds, viewerId],
         ),
       ),
-      this.database.query<{
-        parent_id: string;
-        archived_at: Date | null;
-        lifecycle: CornerLifecycleView | null;
-        latest_turn_status: string | null;
-      }>(
-        `SELECT c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
+      this.optionalEnrichment(
+        'chat-corner-counts',
+        this.enrichmentDatabase.query<{
+          parent_id: string;
+          archived_at: Date | null;
+          lifecycle: CornerLifecycleView | null;
+          latest_turn_status: string | null;
+        }>(
+          `SELECT c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
@@ -1173,10 +1175,11 @@ export class PhoneService {
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
          )`,
-        [roomIds, viewerId],
+          [roomIds, viewerId],
+        ),
       ),
     ]);
-    const countsByRoom = chatCornerCounts(cornerStates.rows);
+    const countsByRoom = chatCornerCounts(cornerStates?.rows ?? []);
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
     const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
     for (const room of rooms.rows) {

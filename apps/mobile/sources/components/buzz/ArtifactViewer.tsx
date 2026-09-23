@@ -5,24 +5,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
-import {
-  artifactPdfLocalUri,
-  fetchArtifactBytes,
-  fetchArtifactText,
-} from '@/buzz/artifact-link';
+import { artifactPdfLocalUri, fetchArtifactBytes, fetchArtifactText } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
-import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 import type { CodeDocument } from '@/buzz/code-document';
 import * as Clipboard from 'expo-clipboard';
-import {
-  copyPicture,
-  sharePicture,
-  showPictureActions,
-} from '@/buzz/picture-actions';
+import { copyPicture, sharePicture } from '@/buzz/picture-actions';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -116,36 +109,11 @@ export function ArtifactViewerScreen({
         ) : format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment!} />
         ) : format === 'image' ? (
-          <Pressable
-            accessibilityLabel={`Image ${title}`}
-            delayLongPress={450}
-            onLongPress={() => showPictureActions(attachment!)}
-            style={styles.image}
-            testID="artifact-viewer-image-actions"
-            {...(Platform.OS === 'web'
-              ? {
-                  onContextMenu: (event: { preventDefault(): void }) => {
-                    event.preventDefault();
-                    showPictureActions(attachment!);
-                  },
-                }
-              : {})}
-          >
-            <ArtifactImage
-              attachment={attachment!}
-              fit="contain"
-              style={styles.image}
-              testID="artifact-viewer-image"
-            />
-          </Pressable>
+          <ZoomableArtifactImage attachment={attachment!} title={title} />
         ) : format === 'text' ? (
           <ArtifactText attachment={attachment!} crop={false} testID="artifact-viewer-text" />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
-          <ArtifactPdfView
-            attachment={attachment!}
-            mode="viewer"
-            testID="artifact-viewer-pdf"
-          />
+          <ArtifactPdfView attachment={attachment!} mode="viewer" testID="artifact-viewer-pdf" />
         ) : (
           <ArtifactViewerSandbox
             attachment={attachment!}
@@ -179,7 +147,8 @@ export function ArtifactViewerSandbox({
         }
         if (format === 'html' || format === 'svg') {
           const bytes = await fetchArtifactBytes(attachment);
-          if (live) setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
+          if (live)
+            setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
           return;
         }
         if (live) setFailed('This file type has no inline preview — open it in a browser instead.');
@@ -288,7 +257,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   body: { flex: 1 },
-  image: { flex: 1, height: '100%', width: '100%' },
   webview: { flex: 1, backgroundColor: 'transparent' },
   codeBody: { flexGrow: 1, padding: theme.buzz.space.md },
   codeInscription: {

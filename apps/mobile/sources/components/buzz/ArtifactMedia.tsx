@@ -22,11 +22,13 @@ type ImageSource = Awaited<ReturnType<typeof artifactImageSource>>;
 export function ArtifactImage({
   attachment,
   fit,
+  onLoadImageSize,
   style,
   testID,
 }: {
   attachment: AttachmentReference;
   fit: 'cover' | 'contain';
+  onLoadImageSize?: (width: number, height: number) => void;
   style?: object;
   testID: string;
 }) {
@@ -69,6 +71,14 @@ export function ArtifactImage({
     <Image
       accessibilityIgnoresInvertColors
       accessibilityLabel={attachment.title ?? attachment.name}
+      onLoad={(event) => {
+        const native = event.nativeEvent as typeof event.nativeEvent & {
+          target?: { naturalWidth?: number; naturalHeight?: number };
+        };
+        const width = native.source?.width ?? native.target?.naturalWidth ?? 0;
+        const height = native.source?.height ?? native.target?.naturalHeight ?? 0;
+        if (width > 0 && height > 0) onLoadImageSize?.(width, height);
+      }}
       onError={() => setFailed(true)}
       resizeMode={fit}
       source={source}

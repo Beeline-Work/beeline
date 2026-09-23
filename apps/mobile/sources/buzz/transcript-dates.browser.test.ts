@@ -30,6 +30,9 @@ it.skipIf(!existsSync(chrome))(
       export const withDelay = (_delayMs, animation) => animation;
       export default { View: props => React.createElement(View, props) };`,
       '@expo/vector-icons': 'export const Ionicons = () => null;',
+      'react-native-svg': `import React from 'react';
+      export const Path = () => null;
+      export default props => React.createElement('svg', props);`,
       './IdentityMark': 'export const IdentityMark = () => null;',
       './MonoMarkdown': `import React from 'react'; import { Text } from 'react-native';
       export const MonoMarkdown = props => React.createElement(Text, { style: props.textStyle }, props.markdown);`,

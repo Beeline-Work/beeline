@@ -34,7 +34,6 @@ export function ChannelHeaderTitle({
         onPress ? `Open ${mark.name} settings` : onLongPress ? `Rename ${mark.name}` : undefined
       }
       accessibilityRole={interactive ? 'button' : undefined}
-      delayLongPress={450}
       numberOfLines={numberOfLines}
       onLongPress={onLongPress}
       onPress={onPress}

@@ -34,6 +34,7 @@ import {
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
 import { completeDevicePairing } from './device-pairing.js';
+import { claimGrantedHostRoutes } from './host-mcp-route.js';
 import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
 import {
   launchRuntimeDaemon,
@@ -106,6 +107,99 @@ describe('daemon API client against the local monolith', () => {
       [posted.id],
     );
     expect(tagged.rows[0]!.tagged_ids).toEqual([HUMAN]);
+  });
+
+  it('spends a non-owner Once Squire grant on exactly one call', async () => {
+    const requester = createHash('sha256').update('github:squire-requester').digest('hex');
+    const approvalRequestId = createHash('sha256').update('squire-once-approval').digest('hex');
+    await database.query(`UPDATE agents SET machine_id='machine-squire-once' WHERE agent_id=$1`, [
+      AGENT,
+    ]);
+    await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: AGENT },
+      HUMAN,
+    );
+    await database.query(
+      `INSERT INTO identities(id,kind,name,github_subject,handle)
+       VALUES($1,'human','Requester','squire-requester','squire-requester')`,
+      [requester],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, requester, ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee use Squire')`,
+      [approvalRequestId, ROOM, requester],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: approvalRequestId,
+      reason: 'test Squire call',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'generation-1');
+
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const client = new DaemonApiClient(origin, daemonToken, AGENT);
+    const firstAsk = await client.execute('authorizeSquireCall', {
+      roomId: ROOM,
+      requestId: approvalRequestId,
+      generationId: 'generation-1',
+    });
+    expect(firstAsk).toEqual(
+      expect.objectContaining({ allowed: false, status: 'pending', messageId: expect.any(String) }),
+    );
+    await phone.execute(
+      'decideAgentGrant',
+      { grantId: firstAsk.grantId!, decision: 'once' },
+      HUMAN,
+    );
+
+    const callRequestId = createHash('sha256').update('squire-once-call').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee use approved Squire')`,
+      [callRequestId, ROOM, requester],
+    );
+    const callCommand = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: callRequestId,
+      reason: 'test approved Squire call',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, callCommand!.id, 'generation-2');
+
+    const routes = await claimGrantedHostRoutes(
+      await client.execute('listAgentGrants', { agentId: AGENT, roomId: ROOM }),
+      (grantId) => client.execute('consumeAgentGrant', { grantId }),
+    );
+    expect(routes).toContain('squire');
+
+    await expect(
+      client.execute('authorizeSquireCall', {
+        roomId: ROOM,
+        requestId: callRequestId,
+        generationId: 'generation-2',
+      }),
+    ).resolves.toEqual(expect.objectContaining({ allowed: true, grantId: firstAsk.grantId }));
+    const routesAfterFirstCall = await claimGrantedHostRoutes(
+      await client.execute('listAgentGrants', { agentId: AGENT, roomId: ROOM }),
+      (grantId) => client.execute('consumeAgentGrant', { grantId }),
+    );
+    expect(routesAfterFirstCall).toContain('squire');
+    const secondAsk = await client.execute('authorizeSquireCall', {
+      roomId: ROOM,
+      requestId: callRequestId,
+      generationId: 'generation-2',
+    });
+    expect(secondAsk).toEqual(
+      expect.objectContaining({ allowed: false, status: 'pending', messageId: expect.any(String) }),
+    );
+    expect(secondAsk.grantId).not.toBe(firstAsk.grantId);
+    expect(secondAsk.messageId).not.toBe(firstAsk.messageId);
   });
 
   it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(

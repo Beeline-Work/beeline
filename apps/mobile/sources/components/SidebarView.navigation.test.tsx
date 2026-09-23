@@ -44,6 +44,7 @@ vi.mock('react-native', async () => {
   return {
     Platform: { OS: 'web' },
     Pressable: host('Pressable'),
+    TouchableOpacity: host('TouchableOpacity'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
     TextInput: host('TextInput'),
@@ -64,7 +65,8 @@ const theme = vi.hoisted(() => ({
   },
   buzz: {
     accent: '#b08a4a',
-    type: { bodyStrong: {}, machine: {}, meta: {}, sectionHead: {} },
+    space: { xs: 4, sm: 8, md: 16, lg: 24 },
+    type: { body: {}, bodyStrong: {}, machine: {}, meta: {}, sectionHead: {} },
   },
 }));
 vi.mock('react-native-unistyles', () => ({
@@ -110,6 +112,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
         {
           corner: { id: 'corner-a', name: 'Fix fixture' },
           state: 'working',
+          lifecycle: { lifecycle: 'open', checks: 'unknown' },
         },
       ],
     }));
@@ -118,7 +121,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/buzz/desktop-workbench-state')>()),
   loadDesktopRoomCornersExpanded: vi.fn(
-    async (roomId: string) => roomCornersExpanded.get(roomId) ?? true,
+    async (roomId: string, fallback = true) => roomCornersExpanded.get(roomId) ?? fallback,
   ),
   saveDesktopRoomCornersExpanded,
 }));
@@ -188,6 +191,7 @@ vi.mock('@/components/buzz/IdentityMark', () => ({
 }));
 vi.mock('@/components/buzz/MembersGlyph', () => ({
   MEMBERS_GLYPH_STROKE_WIDTH: 1.25,
+  chromeStrokeWidth: () => 1.25,
   MembersGlyph: (props: any) => React.createElement('MembersGlyph', props),
 }));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
@@ -197,7 +201,24 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 
+vi.mock('@/components/buzz/HullActionSheet', () => ({
+  HullActionSheetModal: ({ visible, children }: any) => (visible ? children : null),
+  HullActionSheetRow: (props: any) => React.createElement('Pressable', props),
+  HullActionSheetCancel: (props: any) => React.createElement('Pressable', props),
+}));
+
 import { SidebarView } from './SidebarView';
+let tree: ReactTestRenderer;
+function control(id: string) {
+  const nodes = tree.root.findAll(
+    (node: any) => typeof node.type === 'string' && node.props.testID === id,
+  );
+  if (!nodes.length) throw new Error(`Missing control ${id}`);
+  return nodes[0];
+}
+function openMenu() {
+  act(() => control('workspace-menu').props.onPress());
+}
 
 async function settle() {
   await act(async () => {
@@ -227,8 +248,6 @@ afterAll(() => {
 });
 
 describe('desktop Workspace navigation', () => {
-  let tree: ReactTestRenderer;
-
   beforeEach(async () => {
     vi.clearAllMocks();
     windowListeners.clear();
@@ -297,18 +316,18 @@ describe('desktop Workspace navigation', () => {
   it('opens and closes the overlay rail without replacing the Room list', () => {
     const rail = tree.root.findByType('DesktopWorkspaceRail');
     expect(rail.props.open).toBe(false);
-    expect(tree.root.findByProps({ testID: 'desktop-room-search' })).toBeDefined();
+    expect(control('desktop-room-search')).toBeDefined();
 
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
-    expect(tree.root.findByProps({ testID: 'desktop-room-search' })).toBeDefined();
+    expect(control('desktop-room-search')).toBeDefined();
 
     act(() => tree.root.findByType('DesktopWorkspaceRail').props.onClose());
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
   });
 
-  it('keeps profile settings reachable from the persistent desktop navigation as the viewer\'s own face', () => {
-    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
+  it("keeps profile settings reachable from the persistent desktop navigation as the viewer's own face", () => {
+    const profileSettings = control('profile-settings-navigation');
 
     expect(profileSettings.props.accessibilityLabel).toBe('Ada Lovelace — Settings');
     expect(profileSettings.findByType('IdentityMark').props).toMatchObject({
@@ -316,7 +335,9 @@ describe('desktop Workspace navigation', () => {
       kind: 'human',
     });
     expect(
-      profileSettings.findAllByType('Text').map((node: { props: { children?: unknown } }) => node.props.children),
+      profileSettings
+        .findAllByType('Text')
+        .map((node: { props: { children?: unknown } }) => node.props.children),
     ).toEqual(['Ada Lovelace']);
 
     act(() => profileSettings.props.onPress());
@@ -324,42 +345,27 @@ describe('desktop Workspace navigation', () => {
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
   });
 
-  it('gives search a visible focus state without announcing decorative chrome', () => {
-    const search = tree.root.findByProps({ testID: 'desktop-room-search' });
-    const searchWrap = search.parent;
-
+  it('gives search a visible focus state', () => {
+    const search = control('desktop-room-search');
     expect(search.props.accessibilityLabel).toBe('Search Rooms and direct messages');
-    expect(searchWrap?.props.style).not.toContainEqual({ borderColor: '#b08a4a' });
-
     act(() => search.props.onFocus());
-    expect(searchWrap?.props.style).toContainEqual({ borderColor: '#b08a4a' });
-
-    const hiddenChrome = tree.root.findAll(
-      (node: { props: { 'aria-hidden'?: boolean } }) => node.props['aria-hidden'] === true,
-    );
-    expect(
-      hiddenChrome.some((node: { props: { name?: string } }) => node.props.name === 'search'),
-    ).toBe(true);
-    expect(
-      hiddenChrome.some((node: { props: { children?: unknown } }) => node.props.children === '⌘K'),
-    ).toBe(true);
+    expect(control('desktop-room-search').props.style).toContainEqual({
+      borderBottomColor: '#b08a4a',
+    });
   });
 
   it('routes the heading glyphs to Members and Bookmarks, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 
-    const members = tree.root.findByProps({ testID: 'desktop-members' });
-    expect(members.props.accessibilityLabel).toBe('Workspace members');
-    expect(members.findAllByType('Text')).toHaveLength(0);
-    expect(members.findByType('MembersGlyph').props.size).toBe(16);
-
+    openMenu();
+    const members = control('workspace-menu-members');
     act(() => members.props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/members',
       params: { communityId: 'workspace-a' },
     });
 
-    act(() => tree.root.findByProps({ testID: 'desktop-bookmarks' }).props.onPress());
+    act(() => control('desktop-bookmarks').props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/bookmarks',
       params: { communityId: 'workspace-a' },
@@ -369,10 +375,8 @@ describe('desktop Workspace navigation', () => {
   it('offers Workspace settings to a privileged member and routes with the Workspace id', () => {
     // ChatListView.workspace.role is the manage axis: owner/admin ⇒
     // viewer.permissions.manage, member ⇒ not. Same signal as workspace.tsx.
-    const settings = tree.root.findByProps({ testID: 'desktop-workspace-settings' });
-    expect(settings.props.accessibilityLabel).toBe('Open Workspace settings');
-    // A glyph, not a labeled row: the heading carries no settings text.
-    expect(settings.findAllByType('Text')).toHaveLength(0);
+    openMenu();
+    const settings = control('workspace-menu-settings');
 
     act(() => settings.props.onPress());
 
@@ -389,7 +393,8 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(tree.root.findByProps({ testID: 'desktop-workspace-settings' })).toBeDefined();
+    openMenu();
+    expect(control('workspace-menu-settings')).toBeDefined();
   });
 
   it('does not offer Workspace settings to an ordinary member', async () => {
@@ -399,8 +404,9 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: 'desktop-bookmarks' })).toBeDefined();
+    openMenu();
+    expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
+    expect(control('desktop-bookmarks')).toBeDefined();
   });
 
   it('keeps Workspace settings and profile settings from appearing selected together', async () => {
@@ -410,15 +416,11 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    const selected = (style: unknown) =>
-      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
-    const workspaceSettings = tree.root.findByProps({ testID: 'desktop-workspace-settings' });
-    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
-
-    expect(selected(workspaceSettings.props.style({ pressed: false }))).toBe(true);
-    expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
-    expect(workspaceSettings.props.accessibilityState).toEqual({ selected: true });
-    expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+    expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
+      selected: false,
+    });
+    openMenu();
+    expect(control('workspace-menu-settings')).toBeDefined();
   });
 
   it('carries the section creation controls in the section heads', () => {
@@ -426,11 +428,15 @@ describe('desktop Workspace navigation', () => {
       tree.root
         .findAllByType('RoomListSectionHeader')
         .map((header: { props: { title: string } }) => header.props.title),
-    ).toEqual(['Rooms', 'Direct messages']);
+    ).toEqual(['Rooms', 'Messages']);
     expect(
-      tree.root.findAllByProps({ testID: 'desktop-new-room' }).map((row: { props: { accessibilityLabel: string } }) => row.props.accessibilityLabel),
+      tree.root
+        .findAllByProps({ testID: 'desktop-new-room' })
+        .map((row: { props: { accessibilityLabel: string } }) => row.props.accessibilityLabel),
     ).toEqual(['Create a new Room']);
-    expect(tree.root.findByProps({ testID: 'desktop-new-direct-message' }).props.accessibilityLabel).toBe('Start a direct message');
+    expect(control('desktop-new-direct-message').props.accessibilityLabel).toBe(
+      'Start a direct message',
+    );
     expect(
       tree.root
         .findAllByType('Text')
@@ -463,11 +469,12 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: 'desktop-new-direct-message' })).toBeDefined();
-    expect(tree.root.findByProps({ testID: 'desktop-bookmarks' })).toBeDefined();
-    expect(tree.root.findByProps({ testID: 'desktop-members' })).toBeDefined();
-    expect(tree.root.findByProps({ testID: 'profile-settings-navigation' })).toBeDefined();
+    openMenu();
+    expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
+    expect(control('desktop-new-direct-message')).toBeDefined();
+    expect(control('desktop-bookmarks')).toBeDefined();
+    expect(control('workspace-menu-members')).toBeDefined();
+    expect(control('profile-settings-navigation')).toBeDefined();
   });
 
   it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
@@ -478,7 +485,8 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: 'desktop-workspace-settings' })).toBeDefined();
+    openMenu();
+    expect(control('workspace-menu-settings')).toBeDefined();
   });
 
   it('keeps Bookmarks and profile settings from appearing selected together', async () => {
@@ -488,36 +496,19 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    const selected = (style: unknown) =>
-      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
-    const bookmarks = tree.root.findByProps({ testID: 'desktop-bookmarks' });
-    const members = tree.root.findByProps({ testID: 'desktop-members' });
-    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
-
-    expect(selected(bookmarks.props.style({ pressed: false }))).toBe(true);
-    expect(selected(members.props.style({ pressed: false }))).toBe(false);
-    expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
-    expect(bookmarks.props.accessibilityState).toEqual({ selected: true });
-    expect(members.props.accessibilityState).toEqual({ selected: false });
-    expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+    expect(control('desktop-bookmarks').props.accessibilityState).toEqual({ selected: true });
+    expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
+      selected: false,
+    });
   });
 
-  it('keeps Members selected only on the members route', async () => {
+  it('keeps Bookmarks unselected on the Members route', async () => {
     route.pathname = '/beeline/members';
     await act(async () => {
       tree.update(<SidebarView key="members-route" />);
     });
     await settle();
-
-    const selected = (style: unknown) =>
-      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
-    const members = tree.root.findByProps({ testID: 'desktop-members' });
-    const bookmarks = tree.root.findByProps({ testID: 'desktop-bookmarks' });
-
-    expect(selected(members.props.style({ pressed: false }))).toBe(true);
-    expect(selected(bookmarks.props.style({ pressed: false }))).toBe(false);
-    expect(members.props.accessibilityState).toEqual({ selected: true });
-    expect(bookmarks.props.accessibilityState).toEqual({ selected: false });
+    expect(control('desktop-bookmarks').props.accessibilityState).toEqual({ selected: false });
   });
 
   it('exposes the active conversation to assistive technology', async () => {
@@ -527,9 +518,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(
-      tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState,
-    ).toEqual({ selected: true });
+    expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
   });
 
   it('collapses and restores the active Room corner list with an accessible disclosure', async () => {
@@ -539,20 +528,20 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    const toggle = tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' });
-    expect(toggle.props.accessibilityLabel).toBe('Hide 1 corner in #Alpha');
+    const toggle = control('desktop-room-corners-toggle-room-a');
+    expect(toggle.props.accessibilityLabel).toBe('Hide 1 corner');
     expect(toggle.props.accessibilityState).toEqual({ expanded: true });
-    expect(tree.root.findByProps({ testID: 'desktop-corner-corner-a' })).toBeDefined();
+    expect(control('desktop-corner-corner-a')).toBeDefined();
 
     act(() => toggle.props.onPress());
     expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
-    const restore = tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' });
-    expect(restore.props.accessibilityLabel).toBe('Show 1 corner in #Alpha');
+    const restore = control('desktop-room-corners-toggle-room-a');
+    expect(restore.props.accessibilityLabel).toBe('Show 1 corner');
     expect(restore.props.accessibilityState).toEqual({ expanded: false });
     expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', false);
 
     act(() => restore.props.onPress());
-    expect(tree.root.findByProps({ testID: 'desktop-corner-corner-a' })).toBeDefined();
+    expect(control('desktop-corner-corner-a')).toBeDefined();
     expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', true);
   });
 
@@ -564,10 +553,9 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(
-      tree.root.findByProps({ testID: 'desktop-room-corners-toggle-room-a' }).props
-        .accessibilityState,
-    ).toEqual({ expanded: false });
+    expect(control('desktop-room-corners-toggle-room-a').props.accessibilityState).toEqual({
+      expanded: false,
+    });
     expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
   });
 
@@ -601,3 +589,13 @@ describe('desktop Workspace navigation', () => {
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
   });
 });
+
+vi.mock('@/components/buzz/HullActionSheet', () => ({
+  HullActionSheetModal: (props: any) =>
+    props.visible ? React.createElement('Sheet', props, props.children) : null,
+  HullActionSheetRow: (props: any) => React.createElement('SheetRow', props),
+  HullActionSheetCancel: (props: any) => React.createElement('SheetCancel', props),
+}));
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: { getItem: async () => null, setItem: async () => undefined },
+}));

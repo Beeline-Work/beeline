@@ -198,8 +198,12 @@ function desktopRoomCornersExpandedKey(roomId: string): string {
 }
 
 /** Existing desktop behavior is expanded; only an explicit collapse changes it. */
-export async function loadDesktopRoomCornersExpanded(roomId: string): Promise<boolean> {
-  return (await AsyncStorage.getItem(desktopRoomCornersExpandedKey(roomId))) !== 'collapsed';
+export async function loadDesktopRoomCornersExpanded(
+  roomId: string,
+  defaultExpanded = true,
+): Promise<boolean> {
+  const saved = await AsyncStorage.getItem(desktopRoomCornersExpandedKey(roomId));
+  return saved === null ? defaultExpanded : saved !== 'collapsed';
 }
 
 export async function saveDesktopRoomCornersExpanded(

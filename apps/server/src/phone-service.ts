@@ -30,6 +30,7 @@ import type {
   ChatListView,
   CornerAppView,
   CornerListView,
+  CornerLifecycleView,
   InviteView,
   RoomLiveDelta,
   RoomHistoryView,
@@ -93,6 +94,7 @@ import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub 
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
+import { chatCornerCounts } from './chat-corner-counts.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import {
   joinRooms,
@@ -1016,7 +1018,6 @@ export class PhoneService {
     const rooms = await this.database.query<
       RoomRow & {
         member_count: string;
-        corner_count: string;
         latest_id: string | null;
         latest_text: string | null;
         latest_created_at: Date | null;
@@ -1045,7 +1046,6 @@ export class PhoneService {
       `
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
-        (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id AND c.archived_at IS NULL) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
@@ -1087,7 +1087,7 @@ export class PhoneService {
       [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
-    const [presence, cursors] = await Promise.all([
+    const [presence, cursors, cornerStates] = await Promise.all([
       this.optionalEnrichment(
         'chat-presence',
         this.enrichmentDatabase.query<{
@@ -1157,7 +1157,26 @@ export class PhoneService {
           [roomIds, viewerId],
         ),
       ),
+      this.database.query<{
+        parent_id: string;
+        archived_at: Date | null;
+        lifecycle: CornerLifecycleView | null;
+        latest_turn_status: string | null;
+      }>(
+        `SELECT c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
+         FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+         LEFT JOIN LATERAL (
+           SELECT status FROM agent_turns WHERE room_id=c.id
+           ORDER BY created_at DESC LIMIT 1
+         ) turn ON true
+         WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
+           SELECT 1 FROM memberships member WHERE member.room_id=c.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+         )`,
+        [roomIds, viewerId],
+      ),
     ]);
+    const countsByRoom = chatCornerCounts(cornerStates.rows);
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
     const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
     for (const room of rooms.rows) {
@@ -1182,7 +1201,7 @@ export class PhoneService {
         ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
-        cornerCount: Number(row.corner_count),
+        ...(countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 }),
         ...(row.latest_id &&
         row.latest_created_at &&
         row.latest_author_id &&

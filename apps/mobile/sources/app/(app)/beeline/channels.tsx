@@ -1,4 +1,69 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
+import { useGitHubInstallationSession } from '@/auth/github-installation-host';
+import {
+  applyChatListDelta,
+  chatListDeltaNeedsRead,
+  roomsMissedByLive,
+  type ChatListDelta,
+} from '@/buzz/chat-list-delta';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
+import { navigateToRoom } from '@/buzz/corner-navigation';
+import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
+import {
+  filterConversations,
+  useRoomPins,
+  type RoomListFilter,
+} from '@/buzz/room-list-preferences';
+import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
+import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
+import { ExitGlyph } from '@/components/buzz/ExitGlyph';
+import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
+import { MonoButton } from '@/components/buzz/MonoHull';
+import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
+import { RoomCornerSummary } from '@/components/buzz/RoomCornerSummary';
+import {
+  RoomDeckComposeMenu,
+  type RoomDeckComposeAction,
+} from '@/components/buzz/RoomDeckComposeMenu';
+import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal';
+import { BuzzRigTransport } from '@/sync/transport';
+import { isDraftFrame } from '@/sync/transport/live-frames';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { useIsDesktop } from '@/utils/responsive';
+import {
+  SurfaceRefreshScheduler,
+  isChatListView,
+  isWorkspaceListView,
+  isWorkspaceView,
+  type ChatListItem,
+  type ChatListView,
+  type GitHubInstallationAccess,
+  type Identity,
+  type WorkspaceListView,
+  type WorkspaceView,
+} from '@beeline/buzz-client';
+import { useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
@@ -8,110 +73,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import { Swipeable } from 'react-native-gesture-handler';
-import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  SurfaceRefreshScheduler,
-  isChatListView,
-  isWorkspaceListView,
-  isWorkspaceView,
-  type ChatListItem,
-  type ChatListView,
-  type CornerListItem,
-  type GitHubInstallationAccess,
-  type Identity,
-  type WorkspaceListView,
-  type WorkspaceView,
-} from '@beeline/buzz-client';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-import { isDraftFrame } from '@/sync/transport/live-frames';
-import {
-  applyChatListDelta,
-  chatListDeltaNeedsRead,
-  roomsMissedByLive,
-  type ChatListDelta,
-} from '@/buzz/chat-list-delta';
-import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
-import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
-import { useGitHubInstallationSession } from '@/auth/github-installation-host';
-import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
-  saveLastViewedChannel,
-} from '@/buzz/community-storage';
-import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { compactRelativeTime } from '@/buzz/relative-time';
-import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
-import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
-import {
-  displayGroupedCornerTitle,
-  expandedCornerRefreshAction,
-  roomRowName,
-  roomRowNeedsAttention,
-  roomRowPreview,
-  roomListSections,
-  NO_ACTIVITY_PREVIEW,
-} from '@/buzz/room-list-row';
-import { formatRoomCornerCount } from '@/buzz/vocabulary';
-import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
-import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
-import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
-import { ExitGlyph } from '@/components/buzz/ExitGlyph';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
-import { BookmarksGlyph } from '@/components/buzz/BookmarksGlyph';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
-import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
-import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import { CornerWorkingPulse } from '@/components/buzz/CornerWorkingPulse';
-import { MonoButton } from '@/components/buzz/MonoHull';
-import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
-import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import {
-  RoomDeckComposeMenu,
-  type RoomDeckComposeAction,
-} from '@/components/buzz/RoomDeckComposeMenu';
-import { BuzzRigTransport } from '@/sync/transport';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import type { RepoCandidate } from '@/buzz/room-repo-picker';
-import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
-import { useIsDesktop } from '@/utils/responsive';
+import { StyleSheet } from 'react-native-unistyles';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
 const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
-/** Speakeasy index row: 64 tall. Room and DM copy share one leading edge;
- *  the brass `#`/`@` sigil states the row kind without a separate tile. */
 const ROW_HEIGHT = 64;
-/** The trailing brass unread/attention square — lit or reserved, never absent. */
-const ATTENTION_SQUARE = 7;
-/** The row's leading gutter, in order: slab padding, state column, gap. */
-const ROW_PADDING_LEFT = 16;
-const ROW_COPY_GAP = 12;
-/** Where a Room's copy starts. The corner tray indents to the same number so
- *  its corner mark sits on the Room title's left margin and the tree reads as
- *  one stem under the name rather than a block floating off to its right. */
-const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
-/**
- * A 21px mark centred in its own 44pt box. The box remains the complete touch
- * target; changing the Room-list chrome must not shrink its interactive area.
- */
-const HEADER_MARK_SIZE = 21;
-const HEADER_TARGET_SIZE = 44;
-/** The Room-row corners toggle keeps the 16 it already drew; the header
- *  resize must not enlarge row chrome. */
-const CORNER_TOGGLE_MARK_SIZE = 16;
 /** Match the fixed trailing inset used by Room and corner conversation headers. */
 const HEADER_RIGHT_SPACING = 12;
 
@@ -171,16 +141,6 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/**
- * The dropdown lists what the row's count promised. Both now read the daemon
- * state through `resolveCornerDisplayState`; filtering on `lifecycle` alone
- * used to leave a daemon-concluded corner listed under a count that had
- * already dropped it.
- */
-function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
-  return cornerDisplayItems(corners).map((entry) => entry.item);
-}
-
 function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {
   if (!view) return [];
   return [...view.members, ...view.agents]
@@ -232,10 +192,6 @@ export default function BuzzChannels() {
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
-  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
-  const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
-  const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
-  const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
@@ -259,7 +215,17 @@ export default function BuzzChannels() {
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const canLeaveRooms = chatList?.workspace.role === 'member';
-  const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<RoomListFilter>('all');
+  const { pinned, togglePin, pinError } = useRoomPins(identity?.publicKey, activeCommunityId);
+  const chatSections = useMemo(
+    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
+    [chatList?.chats, query, filter, pinned],
+  );
+  useEffect(() => {
+    setQuery('');
+    setFilter('all');
+  }, [activeCommunityId]);
 
   useEffect(() => {
     if (
@@ -301,43 +267,49 @@ export default function BuzzChannels() {
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
 
-  const handleCloseChat = useCallback(async (item: ChatListItem) => {
-    swipeableRefs.current.get(item.room.id)?.close();
-    if (!transport) {
-      Modal.alert('Cannot close yet', 'Connection is still starting. Try again.');
-      return;
-    }
-    try {
-      await transport.closeChat(item.room.id);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      chatScheduler.current?.force();
-    } catch (reason) {
-      setError(`Could not close chat: ${String(reason)}`);
-    }
-  }, [transport]);
+  const handleCloseChat = useCallback(
+    async (item: ChatListItem) => {
+      swipeableRefs.current.get(item.room.id)?.close();
+      if (!transport) {
+        Modal.alert('Cannot close yet', 'Connection is still starting. Try again.');
+        return;
+      }
+      try {
+        await transport.closeChat(item.room.id);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        chatScheduler.current?.force();
+      } catch (reason) {
+        setError(`Could not close chat: ${String(reason)}`);
+      }
+    },
+    [transport],
+  );
 
-  const handleLeaveRoom = useCallback(async (item: ChatListItem) => {
-    swipeableRefs.current.get(item.room.id)?.close();
-    if (!transport) {
-      Modal.alert('Cannot leave yet', 'Connection is still starting. Try again.');
-      return;
-    }
-    const heading = roomRowName(item);
-    const title = `${heading.sigil}${heading.name}`;
-    const confirmed = await Modal.confirm(
-      `Leave ${title}?`,
-      'Other members keep their access.',
-      { cancelText: 'No', confirmText: 'Yes', destructive: true },
-    );
-    if (!confirmed) return;
-    try {
-      await transport.leaveRoom(item.room.id);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      chatScheduler.current?.force();
-    } catch (reason) {
-      setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
-    }
-  }, [transport]);
+  const handleLeaveRoom = useCallback(
+    async (item: ChatListItem) => {
+      swipeableRefs.current.get(item.room.id)?.close();
+      if (!transport) {
+        Modal.alert('Cannot leave yet', 'Connection is still starting. Try again.');
+        return;
+      }
+      const heading = roomRowName(item);
+      const title = `${heading.sigil}${heading.name}`;
+      const confirmed = await Modal.confirm(`Leave ${title}?`, 'Other members keep their access.', {
+        cancelText: 'No',
+        confirmText: 'Yes',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      try {
+        await transport.leaveRoom(item.room.id);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        chatScheduler.current?.force();
+      } catch (reason) {
+        setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
+      }
+    },
+    [transport],
+  );
 
   const explainRoomLeaveConstraint = useCallback((item: ChatListItem) => {
     const heading = roomRowName(item);
@@ -434,9 +406,7 @@ export default function BuzzChannels() {
         // Rooms the socket delivered any frame for since the last applied read.
         const heardRooms = new Set<string>();
         let liveReadApplied = false;
-        const installChatWatch = async (
-          filters: ChatListView['watchFilters'],
-        ): Promise<void> => {
+        const installChatWatch = async (filters: ChatListView['watchFilters']): Promise<void> => {
           const generation = ++chatWatchGeneration;
           chatWatchKey = JSON.stringify(filters);
           unsubscribeChats?.();
@@ -446,9 +416,7 @@ export default function BuzzChannels() {
           if (filters.length === 0) return;
           const stop = await relay.surfaceSubscribe(filters, (event) => {
             const live =
-              'monolithLive' in event
-                ? (event as MonolithSurfaceEvent).monolithLive
-                : undefined;
+              'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
             if (live?.type === 'message-delta' || live?.type === 'turn-delta') {
               if (readInFlight) deltasDuringRead.push(live);
@@ -586,56 +554,6 @@ export default function BuzzChannels() {
     },
     [activeCommunityId, identity],
   );
-
-  const loadRoomCorners = useCallback(
-    async (roomId: string) => {
-      if (!identity || !relayUrl) {
-        setCornerLoadErrors((current) => ({
-          ...current,
-          [roomId]: 'Corner navigation is still connecting. Try again.',
-        }));
-        return;
-      }
-      setCornerLoadingRoomId(roomId);
-      setCornerLoadErrors((current) => {
-        const next = { ...current };
-        delete next[roomId];
-        return next;
-      });
-      try {
-        const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(roomId);
-        setCornersByRoom((current) => ({ ...current, [roomId]: openCornerItems(view.corners) }));
-      } catch (reason) {
-        setCornerLoadErrors((current) => ({
-          ...current,
-          [roomId]: `Could not load corners: ${String(reason)}`,
-        }));
-      } finally {
-        setCornerLoadingRoomId((current) => (current === roomId ? null : current));
-      }
-    },
-    [identity, relayUrl],
-  );
-
-  const toggleRoomCorners = useCallback((roomId: string) => {
-    setExpandedRoomId((current) => (current === roomId ? null : roomId));
-  }, []);
-
-  useEffect(() => {
-    const action = expandedCornerRefreshAction(expandedRoomId, chatList?.chats ?? []);
-    if (action.kind === 'reload') {
-      void loadRoomCorners(action.roomId);
-      return;
-    }
-    if (action.kind === 'drop') {
-      setExpandedRoomId(null);
-      setCornersByRoom((current) => {
-        const next = { ...current };
-        delete next[action.roomId];
-        return next;
-      });
-    }
-  }, [chatList, expandedRoomId, loadRoomCorners]);
 
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {
@@ -824,9 +742,7 @@ export default function BuzzChannels() {
     );
   }
   if (!chatList && !error) {
-    return (
-      <RoomDeckLoadingView style={{ paddingTop: insets.top }} />
-    );
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
   if (!chatList) {
     return (
@@ -860,47 +776,55 @@ export default function BuzzChannels() {
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
-              <TouchableOpacity
-                accessibilityLabel="Bookmarks"
-                accessibilityRole="button"
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/bookmarks',
-                    params: { communityId: activeCommunityId },
-                  } as never)
-                }
-                style={styles.headerAction}
-                testID="workspace-bookmarks"
-              >
-                <BookmarksGlyph
-                  color={styles.headerBookmarkGlyph.color}
-                  filled
-                  size={HEADER_MARK_SIZE}
-                  testID="workspace-bookmarks-glyph"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
-                accessibilityRole="button"
-                onPress={() =>
+              <WorkspaceActionsMenu
+                onMembers={() =>
                   router.push({
                     pathname: '/beeline/members',
                     params: { communityId: activeCommunityId },
                   } as never)
                 }
-                style={styles.headerAction}
-                testID="workspace-members"
-              >
-                <MembersGlyph
-                  color={styles.headerActionGlyph.color}
-                  filled
-                  size={HEADER_MARK_SIZE}
-                  testID="workspace-members-glyph"
+                onSettings={
+                  canManageWorkspace
+                    ? () =>
+                        router.push({
+                          pathname: '/beeline/settings/workspace',
+                          params: { communityId: activeCommunityId },
+                        } as never)
+                    : undefined
+                }
+              />
+              {!viewerIsAgent && (
+                <RoomDeckComposeMenu
+                  header
+                  canManageWorkspace={canManageWorkspace}
+                  onSelect={compose}
                 />
-              </TouchableOpacity>
+              )}
             </View>
           )}
         </View>
+        {!isDesktop && (
+          <RoomListToolbar
+            filter={filter}
+            onFilter={setFilter}
+            query={query}
+            onQuery={setQuery}
+            onBookmarks={
+              activeCommunityId
+                ? () =>
+                    router.push({
+                      pathname: '/beeline/bookmarks',
+                      params: { communityId: activeCommunityId },
+                    } as never)
+                : undefined
+            }
+          />
+        )}
+        {pinError && (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {pinError}
+          </Text>
+        )}
         <NewRoomDialog
           visible={showCreateRoom}
           workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}
@@ -956,7 +880,7 @@ export default function BuzzChannels() {
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions
-              canAddRoom={canManageWorkspace}
+              canAddRoom={!viewerIsAgent && canManageWorkspace}
               canConnectAgent={!viewerIsAgent}
               desktop
               onAddRoom={() => setShowCreateRoom(true)}
@@ -966,281 +890,147 @@ export default function BuzzChannels() {
           ) : (
             <View style={styles.center} testID="desktop-room-selection-empty">
               <Text style={styles.emptyTitle}>Select a Room</Text>
-              <Text style={styles.emptyCopy}>Choose a Room or direct message from the sidebar.</Text>
+              <Text style={styles.emptyCopy}>
+                Choose a Room or direct message from the sidebar.
+              </Text>
             </View>
           )
         ) : (
           <SectionList
-          testID="room-list"
-          sections={chatSections}
-          keyExtractor={(item) => item.room.id}
-          stickySectionHeadersEnabled={false}
-          refreshing={refreshing}
-          onRefresh={() => {
-            setRefreshing(true);
-            refreshNow();
-          }}
-          contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
-          renderSectionHeader={({ section }) =>
-            section.title ? <RoomListSectionHeader title={section.title} /> : null
-          }
-          ListEmptyComponent={
-            <EmptyRoomActions
-              canAddRoom={!viewerIsAgent && canManageWorkspace}
-              canConnectAgent={!viewerIsAgent}
-              onAddRoom={() => setShowCreateRoom(true)}
-              onConnectAgent={() => void connectAgent()}
-            />
-          }
-          renderItem={({ item }: { item: ChatListItem }) => {
-            // Every row-level fact is derived once in room-list-row.ts: the
-            // sigil and name (`@peer` for a DM, `#room` for a Room), the
-            // preview attribution, and whether the trailing brass
-            // square is lit. `unread` is server-owned and cross-device; a
-            // corner waiting on a human (`agentState === 'needs-you'`) lights
-            // the same square. The screen renders answers, never re-derives.
-            const heading = roomRowName(item);
-            const preview = roomRowPreview(item, chatList.viewer.pubkey);
-            const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
-            const attention = roomRowNeedsAttention(item);
-            const title = `${heading.sigil}${heading.name}`;
-            const age = compactRelativeTime(
-              item.latestMessage?.createdAt ?? item.room.updatedAt,
-              ageNow,
-            );
-            const cornerCount = formatRoomCornerCount(item.cornerCount);
-            const expanded = expandedRoomId === item.room.id;
-            const corners = cornersByRoom[item.room.id];
-            const row = (
-              <View style={styles.row}>
-                <TouchableOpacity
-                  accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
-                  testID={`room-${item.room.id}`}
-                  onPress={() => {
-                    swipeableRefs.current.get(item.room.id)?.close();
-                    openRoom(item.room.id);
-                  }}
-                  style={styles.rowMain}
-                >
-                  <View style={styles.rowStateSlot} accessibilityElementsHidden>
-                    {attention && (
-                      <View style={styles.rowStateMark} testID={`room-attention-${item.room.id}`} />
-                    )}
-                  </View>
-                  <View style={styles.rowCopy}>
-                    <View style={styles.titleLine}>
-                      <Text numberOfLines={1} style={styles.title}>
-                        <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
-                          {heading.sigil}
-                        </Text>
-                        {heading.name}
-                      </Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
-                      {hasPreview && preview.attribution === 'self' && (
-                        <Text style={styles.previewSelf}>you: </Text>
-                      )}
-                      {hasPreview && preview.attribution === 'other' && (
-                        <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                      )}
-                      {preview.text}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={styles.gutter}>
-                  <Text style={styles.age}>{age}</Text>
+            testID="room-list"
+            sections={chatSections}
+            keyExtractor={(item) => item.room.id}
+            stickySectionHeadersEnabled={false}
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              refreshNow();
+            }}
+            contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
+            renderSectionHeader={({ section }) =>
+              section.title ? <RoomListSectionHeader title={section.title} /> : null
+            }
+            ListEmptyComponent={
+              query || filter !== 'all' ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>No matching conversations</Text>
+                  <MonoButton
+                    label="SHOW ALL"
+                    onPress={() => {
+                      setQuery('');
+                      setFilter('all');
+                    }}
+                  />
                 </View>
-                <View style={styles.cornerToggleSlot}>
-                  {(item.cornerCount ?? 0) > 0 && (
-                    <TouchableOpacity
-                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
-                      accessibilityRole="button"
-                      accessibilityState={{ expanded }}
-                      onPress={() => toggleRoomCorners(item.room.id)}
-                      style={styles.cornerToggle}
+              ) : (
+                <EmptyRoomActions
+                  canAddRoom={!viewerIsAgent && canManageWorkspace}
+                  canConnectAgent={!viewerIsAgent}
+                  onAddRoom={() => setShowCreateRoom(true)}
+                  onConnectAgent={() => void connectAgent()}
+                />
+              )
+            }
+            renderItem={({ item }: { item: ChatListItem }) => {
+              const heading = roomRowName(item);
+              const title = `${heading.sigil}${heading.name}`;
+              const row = (
+                <View style={styles.rowSurface}>
+                  <ConversationRow
+                    item={item}
+                    viewer={chatList.viewer.pubkey}
+                    now={ageNow}
+                    onPress={() => {
+                      swipeableRefs.current.get(item.room.id)?.close();
+                      openRoom(item.room.id);
+                    }}
+                    pinned={pinned.includes(item.room.id)}
+                    onPin={() => void togglePin(item.room.id)}
+                    testID={`room-${item.room.id}`}
+                  />
+                  {!item.directMessage && (item.cornerCount ?? 0) > 0 && (
+                    <RoomCornerSummary
+                      count={item.cornerCount!}
+                      waiting={item.waitingCornerCount}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/beeline/corners/[roomId]',
+                          params: { roomId: item.room.id },
+                        } as never)
+                      }
                       testID={`room-corners-toggle-${item.room.id}`}
-                    >
-                        <ChevronGlyph
-                          color={styles.cornerToggleText.color}
-                          direction={expanded ? 'up' : 'down'}
-                          size={CORNER_TOGGLE_MARK_SIZE}
-                          testID={`room-corners-toggle-glyph-${item.room.id}`}
-                        />
-                    </TouchableOpacity>
+                    />
                   )}
                 </View>
-              </View>
-            );
-            return (
-              <View style={styles.roomCell}>
-                {!viewerIsAgent ? (
-                  <Swipeable
-                    ref={(ref) => {
-                      if (ref) swipeableRefs.current.set(item.room.id, ref);
-                      else swipeableRefs.current.delete(item.room.id);
-                    }}
-                    friction={1}
-                    overshootRight={false}
-                    rightThreshold={ROW_HEIGHT}
-                    renderRightActions={() => (
-                      <View style={styles.chatActions}>
-                        {!item.directMessage && canLeaveRooms && (
-                          <View style={styles.swipeAction}>
-                            <TouchableOpacity
-                              accessibilityLabel={`Leave ${title}`}
-                              accessibilityRole="button"
-                              hitSlop={LEAVE_TILE_HIT_SLOP}
-                              onPress={() => handleLeaveRoom(item)}
-                              style={styles.swipeActionButton}
-                              testID={`room-leave-action-${item.room.id}`}
-                            >
-                              <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                        {!item.directMessage && canManageWorkspace && (
-                          <View style={styles.swipeAction}>
-                            <TouchableOpacity
-                              accessibilityLabel={`Cannot leave ${title}`}
-                              accessibilityRole="button"
-                              hitSlop={LEAVE_TILE_HIT_SLOP}
-                              onPress={() => explainRoomLeaveConstraint(item)}
-                              style={styles.swipeActionButton}
-                              testID={`room-leave-constraint-${item.room.id}`}
-                            >
-                              <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                        {item.directMessage && (
-                          <View style={styles.swipeAction}>
-                            <TouchableOpacity
-                              accessibilityLabel={`Close ${title}`}
-                              accessibilityRole="button"
-                              hitSlop={LEAVE_TILE_HIT_SLOP}
-                              onPress={() => handleCloseChat(item)}
-                              style={styles.swipeActionButton}
-                              testID={`chat-close-action-${item.room.id}`}
-                            >
-                              <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                      </View>
-                    )}
-                    testID={`chat-close-swipe-${item.room.id}`}
-                  >
-                    {row}
-                  </Swipeable>
-                ) : row}
-                {expanded && (
-                  <View style={styles.cornerDropdown} testID={`room-corners-${item.room.id}`}>
-                    {cornerLoadingRoomId === item.room.id && !corners ? (
-                      <View style={styles.cornerLoading}>
-                        <SurfaceGlyphLoader compact testID="corners-loader" />
-                        <Text style={styles.cornerLoadingText}>LOADING CORNERS</Text>
-                      </View>
-                    ) : cornerLoadErrors[item.room.id] ? (
-                      <TouchableOpacity
-                        accessibilityRole="button"
-                        onPress={() => void loadRoomCorners(item.room.id)}
-                        style={styles.cornerNotice}
-                        testID={`room-corners-retry-${item.room.id}`}
-                      >
-                        <Text style={styles.cornerNoticeText}>
-                          {cornerLoadErrors[item.room.id]}
-                        </Text>
-                        <Text style={styles.cornerRetryText}>RETRY</Text>
-                      </TouchableOpacity>
-                    ) : corners?.length ? (
-                      corners.map((corner) => {
-                        const label = displayGroupedCornerTitle(
-                          item.room.name,
-                          corner.corner.name,
-                          corner.corner.id,
-                        );
-                        // The server owns the state; this maps it only to the
-                        // shared visual tokens and optional PR narration.
-                        const display = cornerDisplayState(corner);
-                        return (
-                          <TouchableOpacity
-                            accessibilityLabel={`Open ${label}, ${display.word.toLowerCase()}${
-                              display.needsYou ? ', needs you' : ''
-                            }`}
-                            accessibilityRole="button"
-                            key={corner.corner.id}
-                            onPress={() =>
-                              router.push(
-                                cornerHref(
-                                  corner.corner.id,
-                                  item.room.id,
-                                  corner.corner.name,
-                                  'room-list',
-                                ),
-                              )
-                            }
-                            style={styles.cornerRow}
-                            testID={`room-corner-${corner.corner.id}`}
-                          >
-                            <View style={styles.cornerLead}>
-                              <CornerGlyph
-                                size={CORNER_META_SIZE}
-                                testID={`room-corner-mark-${corner.corner.id}`}
-                              />
-                              <Text
-                                numberOfLines={1}
-                                style={[
-                                  styles.cornerName,
-                                  display.needsYou && styles.cornerNameNeedsYou,
-                                ]}
+              );
+              return (
+                <View style={styles.roomCell}>
+                  {!viewerIsAgent ? (
+                    <Swipeable
+                      ref={(ref) => {
+                        if (ref) swipeableRefs.current.set(item.room.id, ref);
+                        else swipeableRefs.current.delete(item.room.id);
+                      }}
+                      friction={1}
+                      overshootRight={false}
+                      rightThreshold={ROW_HEIGHT}
+                      renderRightActions={() => (
+                        <View style={styles.chatActions}>
+                          {!item.directMessage && canLeaveRooms && (
+                            <View style={styles.swipeAction}>
+                              <TouchableOpacity
+                                accessibilityLabel={`Leave ${title}`}
+                                accessibilityRole="button"
+                                hitSlop={LEAVE_TILE_HIT_SLOP}
+                                onPress={() => handleLeaveRoom(item)}
+                                style={styles.swipeActionButton}
+                                testID={`room-leave-action-${item.room.id}`}
                               >
-                                {label}
-                              </Text>
+                                <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
+                              </TouchableOpacity>
                             </View>
-                            <View style={styles.cornerTrail}>
-                              <CornerWorkingPulse state={display.status}>
-                                <Text
-                                  style={[
-                                    styles.cornerStatus,
-                                    display.status === 'working'
-                                      ? styles.cornerStatusWorking
-                                      : display.status === 'review'
-                                        ? styles.cornerStatusReview
-                                        : display.status === 'archived'
-                                          ? styles.cornerStatusArchived
-                                          : styles.cornerStatusWaiting,
-                                  ]}
-                                  testID={`room-corner-status-${corner.corner.id}`}
-                                >
-                                  {display.word}
-                                </Text>
-                              </CornerWorkingPulse>
-                                <ChevronGlyph
-                                  color={styles.cornerChevron.color}
-                                  direction="right"
-                                  size={CHEVRON_ROW_SIZE}
-                                />
+                          )}
+                          {!item.directMessage && canManageWorkspace && (
+                            <View style={styles.swipeAction}>
+                              <TouchableOpacity
+                                accessibilityLabel={`Cannot leave ${title}`}
+                                accessibilityRole="button"
+                                hitSlop={LEAVE_TILE_HIT_SLOP}
+                                onPress={() => explainRoomLeaveConstraint(item)}
+                                style={styles.swipeActionButton}
+                                testID={`room-leave-constraint-${item.room.id}`}
+                              >
+                                <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
+                              </TouchableOpacity>
                             </View>
-                          </TouchableOpacity>
-                        );
-                      })
-                    ) : (
-                      <Text style={styles.cornerNoticeText}>No open corners now.</Text>
-                    )}
-                  </View>
-                )}
-              </View>
-            );
-          }}
+                          )}
+                          {item.directMessage && (
+                            <View style={styles.swipeAction}>
+                              <TouchableOpacity
+                                accessibilityLabel={`Close ${title}`}
+                                accessibilityRole="button"
+                                hitSlop={LEAVE_TILE_HIT_SLOP}
+                                onPress={() => handleCloseChat(item)}
+                                style={styles.swipeActionButton}
+                                testID={`chat-close-action-${item.room.id}`}
+                              >
+                                <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                      testID={`chat-close-swipe-${item.room.id}`}
+                    >
+                      {row}
+                    </Swipeable>
+                  ) : (
+                    row
+                  )}
+                </View>
+              );
+            }}
           />
-        )}
-        {!isDesktop && !viewerIsAgent && (
-          <View
-            pointerEvents="box-none"
-            style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}
-          >
-            <RoomDeckComposeMenu canManageWorkspace={canManageWorkspace} onSelect={compose} />
-          </View>
         )}
         <DirectMessagePickerSheet
           busyPubkey={messagingPubkey}
@@ -1278,14 +1068,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    // One box for both header marks. They were two identically-defined names,
-    // which is how a pair meant to stay siblings drifts apart.
-    headerAction: {
-      minHeight: HEADER_TARGET_SIZE,
-      minWidth: HEADER_TARGET_SIZE,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
     headerActions: {
@@ -1293,8 +1075,6 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: 0,
     },
-    headerBookmarkGlyph: { color: hull.accent },
-    headerActionGlyph: { color: hull.textMuted },
     errorBar: {
       paddingHorizontal: 16,
       paddingVertical: 8,
@@ -1302,10 +1082,8 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.danger,
     },
     error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
-    // The list owns the whole deck. Its bottom inset lets the final row scroll
-    // clear of the floating compose control without turning that control into
-    // a visually separate footer cell.
-    list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
+    // Leave breathing room after the final conversation.
+    list: { paddingBottom: 24 },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',
@@ -1353,163 +1131,11 @@ const styles = StyleSheet.create((theme) => {
       fontSize: hull.type.body.fontSize - 1,
       lineHeight: hull.type.body.lineHeight,
     },
+    rowSurface: { backgroundColor: hull.bgBase },
     roomCell: {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    row: {
-      minHeight: ROW_HEIGHT,
-      flexDirection: 'row',
-      alignItems: 'center',
-      // The shifted row stays on the slab and lifts just enough for its
-      // trailing edge to separate from the recessed swipe action beneath it.
-      backgroundColor: hull.bgBase,
-      shadowColor: hull.bgVoid,
-      shadowOffset: { width: 6, height: 0 },
-      shadowOpacity: 0.28,
-      shadowRadius: 8,
-      elevation: 4,
-      boxShadow: `6px 0 8px color-mix(in srgb, ${hull.bgVoid} 28%, transparent)`,
-    },
-    rowMain: {
-      flex: 1,
-      minWidth: 0,
-      minHeight: ROW_HEIGHT,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: ROW_COPY_GAP,
-      paddingLeft: ROW_PADDING_LEFT,
-      paddingVertical: 10,
-    },
-    // The row's leading unit: the STATE column, on every row. Its width is
-    // reserved whether or not the row is lit, so the tile (a DM) or the copy
-    // (a Room) that follows starts at the same edge either way.
-    rowStateSlot: { width: ATTENTION_SQUARE, height: ATTENTION_SQUARE },
-    rowStateMark: {
-      width: ATTENTION_SQUARE,
-      height: ATTENTION_SQUARE,
-      backgroundColor: hull.accent,
-    },
-    rowCopy: { flex: 1, minWidth: 0, gap: 3 },
-    titleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-    // The row leads with the name: one size, one weight, the brightest thing
-    // on the row. Ownership and unread never bold or enlarge it.
-    title: {
-      ...Typography.default('semiBold'),
-      color: hull.textPrimary,
-      fontSize: 18,
-      lineHeight: 22,
-      flexShrink: 1,
-    },
-    // The sigil is the name's first glyph in brass: `@` for a DM, `#` for a Room.
-    sigil: { ...Typography.default('semiBold'), color: hull.accent },
-    preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
-    previewSelf: { ...Typography.default(), color: hull.textMuted },
-    previewAuthor: { ...Typography.default(), color: hull.accent },
-    // The gutter carries the timestamp only now; state lives in the leading
-    // column (`rowStateSlot`).
-    gutter: {
-      width: 46,
-      minHeight: ROW_HEIGHT,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-      paddingRight: 4,
-    },
-    age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
-    // Reserved whether or not the Room has corners, so the age column keeps
-    // one straight right edge down the whole index.
-    cornerToggleSlot: {
-      width: 32,
-      minHeight: ROW_HEIGHT,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 8,
-    },
-    cornerToggle: {
-      minWidth: 32,
-      minHeight: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cornerToggleText: { color: hull.chrome },
-    // Indented to the parent Room's text edge, not past it: the tray is the
-    // Room's own continuation, so it starts where the Room's name starts.
-    cornerDropdown: {
-      paddingLeft: ROW_TEXT_INSET,
-      paddingRight: 16,
-      paddingBottom: 8,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    cornerLoading: {
-      minHeight: 44,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    cornerLoadingText: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 9,
-      letterSpacing: 0.6,
-    },
-    cornerNotice: {
-      minHeight: 44,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    cornerNoticeText: {
-      ...Typography.default(),
-      flex: 1,
-      color: hull.textMuted,
-      fontSize: 11,
-    },
-    cornerRetryText: {
-      ...Typography.mono('semiBold'),
-      color: hull.chrome,
-      fontSize: 9,
-    },
-    cornerRow: {
-      minHeight: 44,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    cornerLead: {
-      flex: 1,
-      minWidth: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    cornerName: {
-      ...theme.buzz.type.meta,
-      fontFamily: theme.buzz.type.bodyStrong.fontFamily,
-      flex: 1,
-      minWidth: 0,
-      color: hull.textSecondary,
-      includeFontPadding: false,
-    },
-    cornerTrail: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    cornerStatus: {
-      ...theme.buzz.type.sectionHead,
-      color: hull.textMuted,
-      includeFontPadding: false,
-    },
-    // Brass is reserved for the state that wants the viewer.
-    cornerStatusWorking: { color: hull.ledgerBright },
-    cornerStatusReview: { color: hull.ledgerQuiet },
-    cornerStatusWaiting: { color: hull.accent },
-    cornerStatusArchived: { color: hull.ledgerGhost },
-    // The name lifts out of the secondary tone with it, so the pair reads as
-    // one emphasized row rather than a loud chip beside a quiet title.
-    cornerNameNeedsYou: { color: hull.textPrimary },
-    cornerChevron: { color: hull.steel },
     chatActions: {
       flexDirection: 'row',
       minHeight: ROW_HEIGHT,
@@ -1526,10 +1152,6 @@ const styles = StyleSheet.create((theme) => {
       height: 26,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    composeOverlay: {
-      position: 'absolute',
-      right: 16,
     },
   };
 });

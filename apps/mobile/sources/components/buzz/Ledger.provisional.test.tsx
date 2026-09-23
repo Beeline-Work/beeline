@@ -21,6 +21,9 @@ vi.mock('react-native', async () => {
 
 let reducedMotion = false;
 vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => reducedMotion }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
 vi.mock('./IdentityMark', () => ({
   IdentityMark: (props: any) => React.createElement('IdentityMark', props),
 }));

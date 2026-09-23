@@ -43,9 +43,7 @@ function capture(): { output: Pick<NodeJS.WritableStream, 'write'>; text: () => 
 
 describe('pair agent auto-selection', () => {
   it('fails clearly when no real ACP-capable agent is installed', async () => {
-    await expect(
-      selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false }),
-    ).rejects.toThrow(
+    await expect(selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false })).rejects.toThrow(
       /No supported ACP-capable coding agent.*codex.*claude.*goose.*pi.*--agent reference.*LLM key.*--agent custom/s,
     );
   });

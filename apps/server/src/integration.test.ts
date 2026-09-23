@@ -8419,10 +8419,16 @@ describe('monolith integration', () => {
     ).toBe(204);
     const accessLines = async () =>
       (
-        await database.query<{ room_id: string; text: string }>(
-          `SELECT room_id,text FROM messages
-           WHERE presentation='system' AND text LIKE '%changed who may address%'
-           ORDER BY created_at,room_id`,
+        await database.query<{
+          room_id: string;
+          text: string;
+          author_id: string;
+          direct_participants: string[] | null;
+        }>(
+          `SELECT message.room_id,message.text,message.author_id,room.direct_participants
+           FROM messages message JOIN rooms room ON room.id=message.room_id
+           WHERE message.presentation='system' AND message.card_type='agent-access'
+           ORDER BY message.created_at,message.room_id`,
         )
       ).rows;
     const before = await accessLines();
@@ -8462,8 +8468,8 @@ describe('monolith integration', () => {
     ).toEqual([{ status: 'pending' }]);
     expect(await policy()).toBe('everyone');
 
-    // The owner accepts, and acceptance re-scopes the agent: one line per Room
-    // the agent is still in, naming the owner as the only one who may ask.
+    // The owner accepts, and acceptance re-scopes the agent: one line in each
+    // active person's read-only @system DM, with no shared-Room fan-out.
     const accepted = await operation('decideAgentGrant', {
       grantId: route.grantId,
       decision: 'always',
@@ -8471,16 +8477,28 @@ describe('monolith integration', () => {
     expect(accepted.status).toBe(200);
     expect(await policy()).toBe('creator');
     const rescoped = (await accessLines()).slice(before.length);
-    const agentRooms = (
-      await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
-           AND r.workspace_id=$2 AND r.archived_at IS NULL ORDER BY m.room_id`,
-        [AGENT, WORKSPACE],
+    const humanRecipients = (
+      await database.query<{ identity_id: string }>(
+        `SELECT membership.identity_id FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id
+         WHERE membership.workspace_id=$1 AND membership.room_id IS NULL
+           AND membership.removed_at IS NULL AND identity.kind='human'
+           AND identity.hidden_from_roster=false ORDER BY membership.identity_id`,
+        [WORKSPACE],
       )
-    ).rows.map((row) => row.room_id);
-    expect(agentRooms.length).toBeGreaterThan(0);
-    expect(rescoped.map((row) => row.room_id).sort()).toEqual([...agentRooms].sort());
+    ).rows.map((row) => row.identity_id);
+    expect(humanRecipients.length).toBeGreaterThan(0);
+    expect(rescoped).toHaveLength(humanRecipients.length);
+    expect(
+      rescoped
+        .map((row) => row.direct_participants)
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    ).toEqual(
+      humanRecipients
+        .map((recipient) => [SYSTEM_IDENTITY_ID, recipient].sort())
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    );
+    expect(new Set(rescoped.map((row) => row.author_id))).toEqual(new Set([SYSTEM_IDENTITY_ID]));
     expect(new Set(rescoped.map((row) => row.text))).toEqual(
       new Set(['@owner changed who may address @bee · only @owner may ask now']),
     );

@@ -3002,7 +3002,9 @@ export class PhoneService {
     // 'invalid' is what the router reads as a 400 — the row is real and
     // readable, it is simply not something this viewer can hold unread.
     if (!countable.rows[0])
-      throw new Error('messageId is invalid: only a row that counts as unread can be marked unread');
+      throw new Error(
+        'messageId is invalid: only a row that counts as unread can be marked unread',
+      );
     const previous = (
       await this.database.query<{ id: string; created_at: Date }>(
         `SELECT earlier.id,earlier.created_at FROM messages target
@@ -3024,10 +3026,10 @@ export class PhoneService {
         [roomId, viewerId, previous.created_at, previous.id],
       );
     } else {
-      await this.database.query(
-        `DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, viewerId],
-      );
+      await this.database.query(`DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`, [
+        roomId,
+        viewerId,
+      ]);
     }
   }
 
@@ -5014,25 +5016,18 @@ export class PhoneService {
         [agentId, JSON.stringify(agentAccessPolicyRecord('creator'))],
       );
       if (!changed.rowCount) return;
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m
-         JOIN rooms r ON r.id=m.room_id
-         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
-           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
-        [agentId, workspaceId],
-      );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: {
-            kind: 'person',
-            id: viewerId,
-            name: personMention(row.viewer_handle) ?? 'Someone',
-          },
-          verb: 'changed who may address',
-          object: { text: row.agent_name, id: agentId },
-          consequence: `only ${personMention(row.owner_handle) ?? 'the owner'} may ask now`,
-        });
+      await workspaceSystemLine(database, {
+        workspaceId,
+        subject: {
+          kind: 'person',
+          id: viewerId,
+          name: personMention(row.viewer_handle) ?? 'Someone',
+        },
+        verb: 'changed who may address',
+        object: { text: row.agent_name, id: agentId },
+        consequence: `only ${personMention(row.owner_handle) ?? 'the owner'} may ask now`,
+        cardType: 'agent-access',
+      });
     });
   }
   /**
@@ -5242,10 +5237,9 @@ export class PhoneService {
    * authority — a running helper reads it through `getRoomAuthority` on its next
    * poll, so the change takes effect without a reconnect or a restart.
    *
-   * A change posts one system line to every live Room the agent is in, so the
-   * people who were being refused can see that they no longer are. The line
-   * mentions nobody; like any message it reaches a phone only in a DM, where
-   * telling that one person they may now ask is the point.
+   * A change posts one system line to every active person's read-only @system
+   * DM. It is Workspace configuration, not activity in every Room the agent is
+   * in, and no agent should be woken by the notice.
    */
   private async updateAgentAccessPolicy(input: Input<'updateAgentAccessPolicy'>, viewerId: string) {
     if (!isAgentAccessPolicy(input.policy)) throw new Error('policy is invalid');
@@ -5284,32 +5278,25 @@ export class PhoneService {
         [input.agentId, JSON.stringify(agentAccessPolicyRecord(input.policy, allow))],
       );
       if (!changed.rowCount) return;
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m
-         JOIN rooms r ON r.id=m.room_id
-         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
-           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
-        [input.agentId, input.workspaceId],
-      );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: {
-            kind: 'person',
-            id: viewerId,
-            // Named by @handle like every other person in a system line; a
-            // person with no handle is left unnamed rather than described.
-            name: personMention(agent.viewer_handle) ?? 'Someone',
-          },
-          verb: 'changed who may address',
-          object: { text: agent.agent_name, id: input.agentId },
-          consequence:
-            input.policy === 'everyone'
-              ? 'anyone may ask now'
-              : input.policy === 'creator'
-                ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
-                : 'only an allowed member may ask now',
-        });
+      await workspaceSystemLine(database, {
+        workspaceId: input.workspaceId,
+        subject: {
+          kind: 'person',
+          id: viewerId,
+          // Named by @handle like every other person in a system line; a
+          // person with no handle is left unnamed rather than described.
+          name: personMention(agent.viewer_handle) ?? 'Someone',
+        },
+        verb: 'changed who may address',
+        object: { text: agent.agent_name, id: input.agentId },
+        consequence:
+          input.policy === 'everyone'
+            ? 'anyone may ask now'
+            : input.policy === 'creator'
+              ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
+              : 'only an allowed member may ask now',
+        cardType: 'agent-access',
+      });
     });
   }
   /**

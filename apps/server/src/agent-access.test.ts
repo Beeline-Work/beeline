@@ -5,6 +5,7 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
 const OUTSIDER = 'b'.repeat(64);
@@ -46,6 +47,20 @@ async function lines(database: PgliteDatabase): Promise<Line[]> {
        FROM messages
        WHERE room_id=$1 AND presentation='system' ORDER BY created_at,id`,
       [ROOM],
+    )
+  ).rows;
+}
+
+async function accessPolicyLines(database: PgliteDatabase): Promise<Line[]> {
+  return (
+    await database.query<Line>(
+      `SELECT message.text,message.presentation,message.author_id,
+              ${taggedIdentityIdsSql('message')} tagged_ids
+       FROM messages message
+       JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND message.card_type='agent-access'
+       ORDER BY message.created_at,message.id`,
+      [WORKSPACE],
     )
   ).rows;
 }
@@ -135,8 +150,15 @@ describe('who may address an agent', () => {
       expect(await lines(database)).toHaveLength(1);
 
       // The owner is permitted, so their mention is never explained away.
-      await send(phone, OWNER, '5', '@greeter status');
-      expect(await lines(database)).toHaveLength(1);
+      await reportPresence(database, 'online');
+      await send(phone, OWNER, '5', '@greeter hello owner');
+      expect(await lines(database)).toEqual([
+        expect.objectContaining({
+          text:
+            '@greeter did not answer @bananaman614305 · only @lunchboxfortwo may address @greeter. ' +
+            'Ask the user for permission to access the agent in the members page',
+        }),
+      ]);
     } finally {
       await database.close();
     }
@@ -169,7 +191,7 @@ describe('who may address an agent', () => {
         { workspaceId: WORKSPACE, agentId: AGENT, policy: 'everyone' },
         OWNER,
       );
-      expect((await lines(database)).map((line) => line.text)).toContain(
+      expect((await accessPolicyLines(database)).map((line) => line.text)).toContain(
         'changed who may address @greeter · anyone may ask now',
       );
     } finally {
@@ -259,7 +281,7 @@ describe('who may address an agent', () => {
     }
   });
 
-  it('lets the owner change the policy and says so in the Room, and refuses anyone else', async () => {
+  it('lets the owner change the policy and tells each person in their read-only @system DM', async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
@@ -276,11 +298,20 @@ describe('who may address an agent', () => {
         { workspaceId: WORKSPACE, agentId: AGENT, policy: 'creator' },
         OWNER,
       );
-      expect(await lines(database)).toEqual([
-        expect.objectContaining({
-          author_id: OWNER,
+      expect(await lines(database)).toEqual([]);
+      expect(await accessPolicyLines(database)).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          presentation: 'system',
+          tagged_ids: [],
           text: '@lunchboxfortwo changed who may address @greeter · only @lunchboxfortwo may ask now',
-        }),
+        },
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          presentation: 'system',
+          tagged_ids: [],
+          text: '@lunchboxfortwo changed who may address @greeter · only @lunchboxfortwo may ask now',
+        },
       ]);
 
       // The profile reads the row, so the app and the running helper agree.
@@ -295,9 +326,10 @@ describe('who may address an agent', () => {
         { workspaceId: WORKSPACE, agentId: AGENT, policy: 'everyone' },
         OWNER,
       );
-      expect((await lines(database)).at(-1)?.text).toBe(
+      expect((await accessPolicyLines(database)).at(-1)?.text).toBe(
         '@lunchboxfortwo changed who may address @greeter · anyone may ask now',
       );
+      expect(await lines(database)).toEqual([]);
       // A member who cannot change it still sees the truth.
       expect((await phone.readAgent(WORKSPACE, AGENT, OUTSIDER))?.access).toMatchObject({
         policy: 'everyone',

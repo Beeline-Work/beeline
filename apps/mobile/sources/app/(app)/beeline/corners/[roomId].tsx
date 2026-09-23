@@ -150,7 +150,7 @@ export default function BuzzCorners() {
           params: { slug: selectedApp.manifest.slug, roomId: cornerId },
         } as Href);
       } else {
-        router.push(cornerHref(cornerId, decodedId, nextTitle));
+        router.push(cornerHref(cornerId, decodedId, nextTitle, 'corners'));
       }
     } catch (reason) {
       setCreateError(phoneOperationFailureReason(reason));

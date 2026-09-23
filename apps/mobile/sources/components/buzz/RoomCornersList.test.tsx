@@ -324,12 +324,12 @@ describe('RoomCornersList', () => {
     expect(resolvedStyle(row.props.style).height).toBeUndefined();
   });
 
-  it('opens a row into that corner', () => {
+  it('opens a row into that corner, returning to this corners screen on back', () => {
     const tree = render([corner('live', 'working', 'Fix fixture')]);
     act(() => tree.root.findByProps({ testID: 'room-corner-live' }).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'live', parent: 'room-1', title: 'Fix fixture' },
+      params: { channelId: 'live', parent: 'room-1', title: 'Fix fixture', returnTo: 'corners' },
     });
   });
 

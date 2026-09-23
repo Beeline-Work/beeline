@@ -484,7 +484,7 @@ export function BuzzChatSurface({
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
-  const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
+  const cornerReturnTarget = returnTo === 'room-list' || returnTo === 'corners' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
   const readOnlyFooterInset =
     Platform.OS === 'android'
@@ -4176,6 +4176,9 @@ export function BuzzChatSurface({
     // cold start or an older link without an origin hint). Open it here rather
     // than popping into whatever happens to be underneath.
     else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
+    // A corner opened from a Room's corners screen lands back on that screen
+    // even when the list is not on the stack — never the parent Room.
+    else if (action.type === 'open-corners') router.replace(roomCornersHref(action.roomId));
     else if (action.type === 'back') router.back();
     else router.replace('/beeline/channels');
   }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
@@ -4925,9 +4928,11 @@ export function BuzzChatSurface({
             {(!isDesktop || isCorner) && (
               <TouchableOpacity
                 accessibilityLabel={
-                  isCorner && cornerReturnTarget !== 'room-list'
-                    ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
-                    : 'Back to Rooms'
+                  isCorner && cornerReturnTarget === 'corners'
+                    ? `Back to this ${ROOM_LABEL}’s ${CHANGES_LABEL}`
+                    : isCorner && cornerReturnTarget !== 'room-list'
+                      ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
+                      : 'Back to Rooms'
                 }
                 accessibilityRole="button"
                 hitSlop={HEADER_EDGE_HIT_SLOP}

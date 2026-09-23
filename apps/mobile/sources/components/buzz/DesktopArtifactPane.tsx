@@ -41,7 +41,7 @@ export function DesktopArtifactPane({
 }) {
   const format = artifactFormat(attachment.mimeType);
   const title = attachment.title ?? attachment.name;
-  const { showCopied, toast } = useCopiedToast('desktop-artifact-copied');
+  const { showCopied, showCopyFailed, toast } = useCopiedToast('desktop-artifact-copied');
   const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${format} · ${formatAttachmentSize(attachment.size)}`;
   return (
     <View style={styles.screen} testID="desktop-artifact-pane">
@@ -60,9 +60,11 @@ export function DesktopArtifactPane({
               accessibilityLabel="Copy image"
               accessibilityRole="button"
               onPress={() =>
-                void copyPicture(attachment).then((copied) => {
-                  if (copied) showCopied('Image copied to clipboard');
-                })
+                void copyPicture(attachment).then((copied) =>
+                  copied
+                    ? showCopied('Image copied to clipboard')
+                    : showCopyFailed("Couldn't copy image"),
+                )
               }
               style={styles.headerAction}
               testID="desktop-artifact-copy"

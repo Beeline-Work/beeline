@@ -206,7 +206,7 @@ describe('the desktop work pane artifact view', () => {
     expect(mocks.showPictureActions).toHaveBeenCalledWith(photo);
   });
 
-  it('confirms a copied picture with a toast that dismisses itself, and none on failure', async () => {
+  it('confirms a copied picture with a toast, and reports a failed copy with a failure toast', async () => {
     vi.useFakeTimers();
     try {
       const photo = attachment({ mimeType: 'image/png', name: 'chart.png', title: 'Chart' });
@@ -227,6 +227,11 @@ describe('the desktop work pane artifact view', () => {
         renderer.root.findByProps({ testID: 'desktop-artifact-copy' }).props.onPress();
         await Promise.resolve();
       });
+      const failed = renderer.root.findByProps({ testID: 'desktop-artifact-copied' });
+      expect(failed.findAllByType('Text' as any).map((t: any) => t.props.children)).toContain(
+        "Couldn't copy image",
+      );
+      act(() => vi.advanceTimersByTime(2000));
       expect(renderer.root.findAllByProps({ testID: 'desktop-artifact-copied' })).toHaveLength(0);
     } finally {
       vi.useRealTimers();

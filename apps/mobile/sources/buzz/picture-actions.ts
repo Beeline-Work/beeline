@@ -16,13 +16,12 @@ function safePictureName(name: string): string {
   return safe || 'picture';
 }
 
-/** Copies the picture; true once it is on the clipboard, false after the failure alert. */
+/** Copies the picture; true once it is on the clipboard. The caller reports the outcome. */
 export async function copyPicture(attachment: AttachmentReference): Promise<boolean> {
   try {
     await Clipboard.setImageAsync(await artifactBase64(attachment));
     return true;
   } catch {
-    Modal.alert('Could not copy image', 'The image could not be copied. Try again.');
     return false;
   }
 }
@@ -60,7 +59,15 @@ export async function sharePicture(attachment: AttachmentReference): Promise<voi
 
 export function showPictureActions(attachment: AttachmentReference): void {
   Modal.actionSheet(attachment.title ?? attachment.name, [
-    { text: 'Copy image', onPress: () => void copyPicture(attachment) },
+    {
+      text: 'Copy image',
+      // The action sheet has no toast host, so a failure here still speaks
+      // through the alert rather than failing silently.
+      onPress: () =>
+        void copyPicture(attachment).then((copied) => {
+          if (!copied) Modal.alert('Could not copy image', 'The image could not be copied. Try again.');
+        }),
+    },
     { text: 'Share image', onPress: () => void sharePicture(attachment) },
     {
       text: 'Open in browser',

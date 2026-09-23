@@ -49,7 +49,7 @@ export function ArtifactViewerScreen({
   // the status tray the way every full-screen surface does.
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { showCopied, toast } = useCopiedToast('artifact-viewer-copied');
+  const { showCopied, showCopyFailed, toast } = useCopiedToast('artifact-viewer-copied');
   return (
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
@@ -61,9 +61,13 @@ export function ArtifactViewerScreen({
             accessibilityLabel="Copy code"
             accessibilityRole="button"
             onPress={() =>
-              void Clipboard.setStringAsync(document.code).then((copied) => {
-                if (copied) showCopied('Code copied to clipboard');
-              })
+              void Clipboard.setStringAsync(document.code).then(
+                (copied) =>
+                  copied
+                    ? showCopied('Code copied to clipboard')
+                    : showCopyFailed("Couldn't copy code"),
+                () => showCopyFailed("Couldn't copy code"),
+              )
             }
             style={styles.headerAction}
             testID="artifact-viewer-copy"
@@ -76,9 +80,11 @@ export function ArtifactViewerScreen({
               accessibilityLabel="Copy image"
               accessibilityRole="button"
               onPress={() =>
-                void copyPicture(attachment!).then((copied) => {
-                  if (copied) showCopied('Image copied to clipboard');
-                })
+                void copyPicture(attachment!).then((copied) =>
+                  copied
+                    ? showCopied('Image copied to clipboard')
+                    : showCopyFailed("Couldn't copy image"),
+                )
               }
               style={styles.headerAction}
               testID="artifact-viewer-copy"

@@ -96,12 +96,21 @@ describe('picture actions', () => {
     expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalledWith(picture);
   });
 
-  it('speaks copy and share failures instead of failing silently', async () => {
+  it('reports a failed copy to its caller without raising an alert', async () => {
     mocks.artifactBase64.mockRejectedValueOnce(new Error('copy failed'));
     await expect(copyPicture(picture)).resolves.toBe(false);
-    expect(mocks.alert).toHaveBeenCalledWith(
-      'Could not copy image',
-      'The image could not be copied. Try again.',
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
+
+  it('speaks action-sheet copy and share failures instead of failing silently', async () => {
+    mocks.artifactBase64.mockRejectedValueOnce(new Error('copy failed'));
+    showPictureActions(picture);
+    await mocks.actionSheet.mock.calls[0]![1][0].onPress();
+    await vi.waitFor(() =>
+      expect(mocks.alert).toHaveBeenCalledWith(
+        'Could not copy image',
+        'The image could not be copied. Try again.',
+      ),
     );
 
     mocks.isAvailableAsync.mockResolvedValueOnce(false);

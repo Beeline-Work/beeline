@@ -161,8 +161,13 @@ describe('monolith integration', () => {
       'http://placeholder',
       1024 * 1024,
     );
-    const googleOAuth = new GoogleOAuth(database, 'client', 'secret',
-      'http://placeholder', Buffer.alloc(32, 1).toString('base64'));
+    const googleOAuth = new GoogleOAuth(
+      database,
+      'client',
+      'secret',
+      'http://placeholder',
+      Buffer.alloc(32, 1).toString('base64'),
+    );
     phone = new PhoneService(
       database,
       'http://placeholder',
@@ -175,10 +180,21 @@ describe('monolith integration', () => {
       googleOAuth,
     );
     const live = new LiveHub();
-    const daemon = new DaemonService(database, live, async () => ({
+    const daemon = new DaemonService(
+      database,
+      live,
+      async () => ({
       token: 'github-room-token',
       expiresAt: Date.now() + 60_000,
-    }), undefined, false, undefined, false, undefined, undefined, googleOAuth);
+      }),
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      googleOAuth,
+    );
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
@@ -656,7 +672,8 @@ describe('monolith integration', () => {
     ).toBe(403);
     expect(await currentRole()).toBe('admin');
     expect(
-      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' })).status,
+      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' }))
+        .status,
     ).toBe(200);
     expect(await currentRole()).toBe('member');
     expect(
@@ -2733,7 +2750,9 @@ describe('monolith integration', () => {
   });
 
   it('keeps a replayed corner narration activity singular after reopening', async () => {
-    await database.query(`UPDATE agents SET selected_model='grok-4-fast' WHERE agent_id=$1`, [AGENT]);
+    await database.query(`UPDATE agents SET selected_model='grok-4-fast' WHERE agent_id=$1`, [
+      AGENT,
+    ]);
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'replayed-narration-corner',
@@ -2774,7 +2793,9 @@ describe('monolith integration', () => {
     ).toBe(200);
     expect((await daemonOperation('postAgentActivity', input)).status).toBe(409);
     const replayInput = { ...input, cornerActivityKey: 'read-package-replay' };
-    await database.query(`UPDATE agents SET selected_model='newer-model' WHERE agent_id=$1`, [AGENT]);
+    await database.query(`UPDATE agents SET selected_model='newer-model' WHERE agent_id=$1`, [
+      AGENT,
+    ]);
     const pinnedInput = { ...replayInput, agentModel: 'grok-4-fast' };
     expect((await daemonOperation('postAgentActivity', pinnedInput)).status).toBe(200);
     expect((await daemonOperation('postAgentActivity', pinnedInput)).status).toBe(200);
@@ -8739,17 +8760,18 @@ describe('monolith integration', () => {
     ).toBe('denied');
   });
 
-  it('does not let a non-owner requester use mounted Squire without that owner\'s applicable approval', async () => {
+  it("does not let a non-owner requester use mounted Squire without that owner's applicable approval", async () => {
     const MACHINE = 'machine-squire-box';
     const SIBLING = 'd'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`,
       [SIBLING],
     );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`,
-      [SIBLING, HUMAN, MACHINE],
-    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`, [
+      SIBLING,
+      HUMAN,
+      MACHINE,
+    ]);
     await database.query(`UPDATE agents SET machine_id=$2 WHERE agent_id=$1`, [AGENT, MACHINE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
@@ -8796,9 +8818,9 @@ describe('monolith integration', () => {
       }),
     ]);
 
-    const mounted = (await (
-      await daemonOperation('listAgentGrants', { roomId: ROOM })
-    ).json()) as { grants: Array<{ kind: string; target: string; requestedBy: string }> };
+    const mounted = (await (await daemonOperation('listAgentGrants', { roomId: ROOM })).json()) as {
+      grants: Array<{ kind: string; target: string; requestedBy: string }>;
+    };
     expect(mounted.grants).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'mcp', target: 'squire', requestedBy: HUMAN }),
@@ -9617,6 +9639,37 @@ describe('monolith integration', () => {
     expect(isRoomView(closed)).toBe(true);
     expect(closed.messages.find((message) => message.choice?.status === 'closed')?.choice).toEqual(
       expect.objectContaining({ status: 'closed', outcome: 'winner' }),
+    );
+  });
+
+  it('lets a Room member create a poll that everyone can vote on', async () => {
+    const memberId = createHash('sha256').update('github:member').digest('hex');
+    const memberToken = await phoneToken('member');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    await operation('addRoomMember', { roomId: ROOM, memberId });
+    const created = await operation(
+      'createRoomPoll',
+      {
+        roomId: ROOM,
+        prompt: 'Which plan?',
+        ttlSeconds: 900,
+        options: [
+          { label: 'Plan A', consequence: 'Plan A' },
+          { label: 'Plan B', consequence: 'Plan B' },
+        ],
+      },
+      memberToken,
+    );
+    expect(created.status).toBe(200);
+    const { choiceId, closesAt } = (await created.json()) as { choiceId: string; closesAt: number };
+    expect(closesAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect((await operation('answerChoice', { choiceId, optionId: 'A' })).status).toBe(200);
+    expect((await operation('answerChoice', { choiceId, optionId: 'B' }, memberToken)).status).toBe(
+      200,
+    );
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(room.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
+      expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie' }),
     );
   });
 

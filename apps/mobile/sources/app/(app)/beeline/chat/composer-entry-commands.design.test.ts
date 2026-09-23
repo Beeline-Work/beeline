@@ -20,7 +20,8 @@ describe('permission-aware composer entry commands', () => {
     expect(corners).toContain('useState(false)');
     expect(corners).not.toContain("create === '1'");
     expect(chat).toContain("case 'poll':");
-    expect(chat).toContain('landAtNewMessageBoundary(latestOpenPoll.id, false)');
+    expect(chat).toContain('setCreatePollVisible(true)');
+    expect(chat).toContain("monolithPhoneOperation('createRoomPoll'");
     // `catch-up` opened by scrolling to the first unread row when this test
     // was written. It opens the catch-up report now — the same one the strip
     // and the badge open — so the assertion follows the verb rather than

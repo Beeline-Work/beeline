@@ -1,5 +1,5 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
-import type { ChoiceStatus } from './room-choices.js';
+import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
@@ -51,6 +51,7 @@ export type PhoneOperationMap = {
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
   /** Starts the offered connector's full sign-in ceremony on the offering agent's machine. */
   acceptConnectorOffer: { input: AcceptConnectorOfferInput; output: AcceptConnectorOfferResult };
+  createRoomPoll: { input: CreateRoomPollInput; output: CreateRoomPollResult };
   answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
   skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
@@ -262,6 +263,17 @@ export type AcceptConnectorOfferResult = {
 export type AnswerChoiceInput = {
   readonly choiceId: string;
   readonly optionId: string;
+};
+export type CreateRoomPollInput = RoomInput & {
+  readonly prompt: string;
+  readonly options: readonly ChoiceOptionInput[];
+  readonly ttlSeconds: number;
+};
+export type CreateRoomPollResult = {
+  readonly choiceId: string;
+  readonly messageId: string;
+  readonly roomId: string;
+  readonly closesAt: number;
 };
 export type SkipChoiceInput = { readonly choiceId: string };
 export type ChoiceDecisionResult = {

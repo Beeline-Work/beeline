@@ -123,7 +123,7 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('{!isCorner && (\n            <RoomCatchUpSheet');
     expect(chatSource).toContain('messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget)');
     expect(chatSource).toContain('isCorner ||\n      !firstUnreadMessageId');
-    expect(chatSource).toContain('messageAnchorId || (!isCorner && firstUnreadMessageId)');
+    expect(chatSource).toContain('firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,\n    releasedAnchorKey');
   });
 
   it('derives corner state from the same fresh turn receipts as the turn line', () => {

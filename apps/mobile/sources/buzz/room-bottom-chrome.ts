@@ -67,15 +67,16 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
     // bottom margin. Absolute, so the list's viewport is the same height with
     // the line as without it; anchored to `bottom: '100%'` of the stack, so
     // its own bottom lands exactly on the composer's border. The line's outer
-    // box includes the fixed gap below its ink row. No rule or fill: this is a
-    // transparent overlay, so the newest transcript row remains visible below
-    // it. The composer keeps its top border; that one separates two real
-    // surfaces.
+    // box includes the fixed gap below its ink row. No rule and no fill of its
+    // own beyond the canvas it sits on — a hairline or a second background
+    // would fence off space the transcript already owns. The composer keeps
+    // its top border; that one separates two real surfaces.
     hangingTurnChrome: {
       position: 'absolute',
       left: 0,
       right: 0,
       bottom: '100%',
+      backgroundColor: hull.bgTerminal,
     },
     composerRow: {
       paddingHorizontal: 16,

@@ -29,7 +29,7 @@ import {
   prepareRoomAgentHome,
 } from './agent-home.js';
 import {
-  grantedHostRoutesFromList,
+  claimGrantedHostRoutes,
   grantedHostRouteWires,
   ungatedHostServers,
 } from './host-mcp-route.js';
@@ -558,10 +558,12 @@ export class MonolithRoomTurnLoop {
 
   private async grantedHostRoutes(): Promise<string[]> {
     try {
-      return grantedHostRoutesFromList(
+      return claimGrantedHostRoutes(
         await this.options.api.execute('listAgentGrants', {
           agentId: this.agent.publicKey,
+          roomId: this.options.roomId,
         }),
+        (grantId) => this.options.api.execute('consumeAgentGrant', { grantId }),
       );
     } catch {
       return [];

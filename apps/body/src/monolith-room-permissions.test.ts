@@ -342,7 +342,7 @@ describe('a granted host route reaches the permission matcher', () => {
   const HUMAN = '22'.repeat(32);
 
   async function capturedAllowlist(
-    grants: Array<{ kind: string; target: string }>,
+    grants: Array<{ kind: string; target: string; status?: string }>,
   ): Promise<(request: AcpPermissionRequest) => boolean> {
     const root = await mkdtemp(join(tmpdir(), 'beeline-granted-route-'));
     roots.push(root);
@@ -485,7 +485,9 @@ describe('a granted host route reaches the permission matcher', () => {
   };
 
   it("approves grok's use_tool spelling of a route the owner granted", async () => {
-    const allowlist = await capturedAllowlist([{ kind: 'mcp', target: 'squire' }]);
+    const allowlist = await capturedAllowlist([
+      { kind: 'mcp', target: 'squire', status: 'approved' },
+    ]);
     expect(allowlist(grokUseTool)).toBe(true);
   });
 

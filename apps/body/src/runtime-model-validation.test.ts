@@ -5,7 +5,7 @@ import {
   revalidateRuntimeModelSelection,
 } from './runtime-model-validation.js';
 
-const agent = { command: 'fake-acp', args: ['stdio'] };
+const agent = { kind: 'codex' as const, command: 'fake-acp', args: ['stdio'] };
 
 describe('revalidateRuntimeModelSelection', () => {
   it('wires a persisted selection and its startup block onto the daemon Body config', async () => {
@@ -73,6 +73,46 @@ describe('revalidateRuntimeModelSelection', () => {
       recovery:
         'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
     });
+  });
+
+  it('refreshes a stale adapter and retries a missing selected model once', async () => {
+    const unavailable = new ModelSelectionUnavailableError({
+      label: 'model',
+      value: 'gpt-6-sol',
+      reason: 'not-advertised',
+    });
+    const validate = vi.fn().mockRejectedValueOnce(unavailable).mockResolvedValueOnce({});
+    const refreshAdapter = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      revalidateRuntimeModelSelection(agent, {}, { model: 'gpt-6-sol' }, validate, refreshAdapter),
+    ).resolves.toBeUndefined();
+
+    expect(refreshAdapter).toHaveBeenCalledTimes(1);
+    expect(validate).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not refresh for a provider refusal', async () => {
+    const unavailable = new ModelSelectionUnavailableError({
+      label: 'model',
+      value: 'retired-model',
+      reason: 'provider-refused',
+    });
+    const validate = vi.fn().mockRejectedValue(unavailable);
+    const refreshAdapter = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      revalidateRuntimeModelSelection(
+        agent,
+        {},
+        { model: 'retired-model' },
+        validate,
+        refreshAdapter,
+      ),
+    ).resolves.toMatchObject({ kind: 'model-unavailable' });
+
+    expect(refreshAdapter).not.toHaveBeenCalled();
+    expect(validate).toHaveBeenCalledTimes(1);
   });
 
   it('retains a provider redirect while redacting credential-shaped text', async () => {

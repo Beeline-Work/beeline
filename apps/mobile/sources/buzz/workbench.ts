@@ -97,11 +97,11 @@ export type WorkbenchHelper = {
  *  one covering sentence. */
 export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
   'trusty-squire':
-    'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
+    'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
   wallet:
     "With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana—with free transaction fees on Base.",
   tailscale:
-    'Allows the machines in your B-Line network to connect to each other to form a tailnet.',
+    'Allows the machines in your Beeline network to connect to each other to form a tailnet.',
   'google-gmail': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-calendar': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-drive': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',

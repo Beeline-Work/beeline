@@ -60,7 +60,6 @@ import {
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
-  MCP_GRANT_CREATOR_ONLY_MESSAGE,
   type AgentGrantDecision,
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
@@ -3002,7 +3001,9 @@ export class PhoneService {
     // 'invalid' is what the router reads as a 400 — the row is real and
     // readable, it is simply not something this viewer can hold unread.
     if (!countable.rows[0])
-      throw new Error('messageId is invalid: only a row that counts as unread can be marked unread');
+      throw new Error(
+        'messageId is invalid: only a row that counts as unread can be marked unread',
+      );
     const previous = (
       await this.database.query<{ id: string; created_at: Date }>(
         `SELECT earlier.id,earlier.created_at FROM messages target
@@ -3024,10 +3025,10 @@ export class PhoneService {
         [roomId, viewerId, previous.created_at, previous.id],
       );
     } else {
-      await this.database.query(
-        `DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, viewerId],
-      );
+      await this.database.query(`DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`, [
+        roomId,
+        viewerId,
+      ]);
     }
   }
 
@@ -4814,7 +4815,8 @@ export class PhoneService {
   }
   /**
    * The owner's tap on a grant card. Authorization is the yolo axis: the agent's
-   * owner or a Workspace manager, decided here and never on the phone. The
+   * owner or a Workspace manager (owner alone for host MCP), decided here and
+   * never on the phone. The
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
@@ -4826,9 +4828,22 @@ export class PhoneService {
     if (!decision) throw new Error('grant decision is invalid');
     const grant = await this.requireGrantAuthority(input.grantId, viewerId);
     if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
-    if (grant.kind === 'mcp' && decision !== 'deny') {
-      await this.assertMcpGrantAcceptable(grant.agent_id, grant.workspace_id, viewerId);
-    }
+    // Existing pending Squire cards may still live in the source Room. Find
+    // the card by its exact grant id so an upgrade settles either placement.
+    const cardRoomId =
+      (
+        await this.database.query<{ room_id: string }>(
+          `SELECT message.room_id FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         WHERE room.workspace_id=$2 AND message.card_type='grant-request'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(message.card->'grants') entry
+             WHERE entry->>'grantId'=$1
+           )
+         ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
+          [input.grantId, grant.workspace_id],
+        )
+      ).rows[0]?.room_id ?? grant.room_id;
     const status: AgentGrantStatus =
       decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
     const decider = await this.requireIdentity(viewerId);
@@ -4841,7 +4856,7 @@ export class PhoneService {
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
       await this.settleGrantCard(database, {
-        roomId: grant.room_id,
+        roomId: cardRoomId,
         grantId: input.grantId,
         status,
         decidedBy: decider,
@@ -4877,6 +4892,8 @@ export class PhoneService {
         card: { grantId: input.grantId, status },
       });
     });
+    if (cardRoomId !== grant.room_id)
+      this.live?.publish({ type: 'invalidate', roomId: cardRoomId, reason: 'grant' });
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
   /** Revoke is one tap on the profile; a command rule stops matching at once. */
@@ -4969,6 +4986,12 @@ export class PhoneService {
     if (!grant) throw new Error('grant not found');
     if (grant.kind === 'mcp') {
       if (grant.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+      const member = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL`,
+        [grant.workspace_id, viewerId],
+      );
+      if (!member.rowCount) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
       return grant;
     }
     if (grant.owner_id !== viewerId) {
@@ -4979,61 +5002,6 @@ export class PhoneService {
       if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
     }
     return grant;
-  }
-  /**
-   * Host MCP routes are creator-scoped. Accepting on an everyone agent
-   * re-scopes it to the owner; any other policy is refused with the reason.
-   */
-  private async assertMcpGrantAcceptable(agentId: string, workspaceId: string, viewerId: string) {
-    const row = (
-      await this.database.query<{
-        access_policy: unknown;
-        owner_id: string;
-        agent_name: string;
-        owner_handle: string | null;
-        viewer_handle: string | null;
-      }>(
-        `SELECT a.access_policy,a.owner_id,agent.name agent_name,owner.handle owner_handle,
-                viewer.handle viewer_handle
-         FROM agents a
-         JOIN identities agent ON agent.id=a.agent_id
-         JOIN identities owner ON owner.id=a.owner_id
-         JOIN identities viewer ON viewer.id=$2
-         WHERE a.agent_id=$1`,
-        [agentId, viewerId],
-      )
-    ).rows[0];
-    if (!row) throw new Error('agent not found');
-    const policy = parseAgentAccessPolicy(row.access_policy).type;
-    if (policy === 'creator') return;
-    if (policy !== 'everyone') throw new Error(MCP_GRANT_CREATOR_ONLY_MESSAGE);
-    await this.database.transaction(async (database) => {
-      const changed = await database.query(
-        `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
-         WHERE agent_id=$1 AND access_policy<>$2::jsonb`,
-        [agentId, JSON.stringify(agentAccessPolicyRecord('creator'))],
-      );
-      if (!changed.rowCount) return;
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m
-         JOIN rooms r ON r.id=m.room_id
-         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
-           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
-        [agentId, workspaceId],
-      );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: {
-            kind: 'person',
-            id: viewerId,
-            name: personMention(row.viewer_handle) ?? 'Someone',
-          },
-          verb: 'changed who may address',
-          object: { text: row.agent_name, id: agentId },
-          consequence: `only ${personMention(row.owner_handle) ?? 'the owner'} may ask now`,
-        });
-    });
   }
   /**
    * Start the connector offer's full sign-in ceremony. Authorization is
@@ -5242,10 +5210,9 @@ export class PhoneService {
    * authority — a running helper reads it through `getRoomAuthority` on its next
    * poll, so the change takes effect without a reconnect or a restart.
    *
-   * A change posts one system line to every live Room the agent is in, so the
-   * people who were being refused can see that they no longer are. The line
-   * mentions nobody; like any message it reaches a phone only in a DM, where
-   * telling that one person they may now ask is the point.
+   * A change posts one system line to every active person's read-only @system
+   * DM. It is Workspace configuration, not activity in every Room the agent is
+   * in, and no agent should be woken by the notice.
    */
   private async updateAgentAccessPolicy(input: Input<'updateAgentAccessPolicy'>, viewerId: string) {
     if (!isAgentAccessPolicy(input.policy)) throw new Error('policy is invalid');
@@ -5284,32 +5251,25 @@ export class PhoneService {
         [input.agentId, JSON.stringify(agentAccessPolicyRecord(input.policy, allow))],
       );
       if (!changed.rowCount) return;
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m
-         JOIN rooms r ON r.id=m.room_id
-         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
-           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
-        [input.agentId, input.workspaceId],
-      );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: {
-            kind: 'person',
-            id: viewerId,
-            // Named by @handle like every other person in a system line; a
-            // person with no handle is left unnamed rather than described.
-            name: personMention(agent.viewer_handle) ?? 'Someone',
-          },
-          verb: 'changed who may address',
-          object: { text: agent.agent_name, id: input.agentId },
-          consequence:
-            input.policy === 'everyone'
-              ? 'anyone may ask now'
-              : input.policy === 'creator'
-                ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
-                : 'only an allowed member may ask now',
-        });
+      await workspaceSystemLine(database, {
+        workspaceId: input.workspaceId,
+        subject: {
+          kind: 'person',
+          id: viewerId,
+          // Named by @handle like every other person in a system line; a
+          // person with no handle is left unnamed rather than described.
+          name: personMention(agent.viewer_handle) ?? 'Someone',
+        },
+        verb: 'changed who may address',
+        object: { text: agent.agent_name, id: input.agentId },
+        consequence:
+          input.policy === 'everyone'
+            ? 'anyone may ask now'
+            : input.policy === 'creator'
+              ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
+              : 'only an allowed member may ask now',
+        cardType: 'agent-access',
+      });
     });
   }
   /**
@@ -6200,8 +6160,11 @@ export class PhoneService {
     // it as an agent_id and find its machine (for legacy agents, machine_id
     // IS the agent_id).
     // The input helperAgentId may be a machine_id or an agent_id.
-    // Find any agent owned by this viewer that matches either, then find a
-    // Workspace the viewer shares with that agent.
+    // A machine can host several agents, while the connector queue is bound
+    // to one exact agent. Prefer the agent with the freshest live presence;
+    // otherwise an online machine can arm an offline sibling and leave the
+    // install row pending forever. The null fallback preserves old direct
+    // callers that paired a legacy agent before presence was available.
     const candidate = await this.database.query<{
       agent_id: string;
       machine_id: string | null;
@@ -6210,7 +6173,16 @@ export class PhoneService {
          FROM agents a
          JOIN memberships m ON m.identity_id=a.agent_id
            AND m.room_id IS NULL AND m.removed_at IS NULL
+         LEFT JOIN LATERAL(
+           SELECT p.updated_at
+           FROM live_outputs p
+           WHERE p.agent_id=a.agent_id AND p.kind='presence'
+             AND p.body->>'status'='online'
+             AND p.updated_at>now()-interval '90 seconds'
+           ORDER BY p.updated_at DESC LIMIT 1
+         ) presence ON true
         WHERE a.owner_id=$1 AND (a.machine_id=$2 OR a.agent_id=$2)
+        ORDER BY presence.updated_at DESC NULLS LAST,a.agent_id
         LIMIT 1`,
       [viewerId, input.helperAgentId],
     );
@@ -6923,6 +6895,9 @@ export class PhoneService {
     before: { createdAt: number; id: string } | undefined,
     limit: number,
   ) {
+    // `createdAt` is the compatibility display stamp and is rounded to
+    // seconds. Resolve the cursor row so siblings stored inside that second
+    // cannot disappear between pages.
     const rows = (
       await this.database.query<MessageRow>(
         `SELECT m.*,
@@ -6933,9 +6908,16 @@ export class PhoneService {
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND ${hiddenWakeCardSql('m')}
-         ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
+         ${
+           before
+             ? `AND (m.created_at,m.id)<(
+                  SELECT cursor.created_at,cursor.id FROM messages cursor
+                  WHERE cursor.room_id=$1 AND cursor.id=$2
+                )`
+             : ''
+         }
          ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
-        before ? [roomId, before.createdAt, before.id] : [roomId],
+        before ? [roomId, before.id] : [roomId],
       )
     ).rows;
     await this.enrichMessageTags(rows);

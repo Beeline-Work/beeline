@@ -90,36 +90,23 @@ export function TurnProgressLine({
       accessibilityLabel={stateLabel ? `${label} (${stateLabel})` : label}
       accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
-      pointerEvents="box-none"
       style={styles.bar}
       testID={testID}
     >
-      <HullLivePulse pointerEvents="box-none" style={styles.row}>
-        <View
-          pointerEvents="none"
-          style={styles.glyphCell}
-          testID={testID ? `${testID}-glyph` : undefined}
-        >
+      <HullLivePulse style={styles.row}>
+        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner live />
         </View>
-        <Text numberOfLines={1} pointerEvents="none" style={styles.label}>
+        <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
         {counter != null && (
-          <Text
-            pointerEvents="none"
-            style={styles.counter}
-            testID={testID ? `${testID}-elapsed` : undefined}
-          >
+          <Text style={styles.counter} testID={testID ? `${testID}-elapsed` : undefined}>
             {counter}
           </Text>
         )}
         {received && (
-          <Text
-            pointerEvents="none"
-            style={styles.counter}
-            testID={testID ? `${testID}-received` : undefined}
-          >
+          <Text style={styles.counter} testID={testID ? `${testID}-received` : undefined}>
             · received
           </Text>
         )}
@@ -154,7 +141,7 @@ export function TurnProgressLine({
  */
 export function TurnSettledLine({ line, testID }: { line: string; testID?: string }) {
   return (
-    <View accessibilityLabel={line} pointerEvents="none" style={styles.bar} testID={testID}>
+    <View accessibilityLabel={line} style={styles.bar} testID={testID}>
       <View style={styles.row}>
         <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner />

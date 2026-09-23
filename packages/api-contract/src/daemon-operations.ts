@@ -204,7 +204,7 @@ export type DaemonOperationMap = {
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
   openRoomPoll: Operation<OpenRoomPollInput, AskRoomChoiceResult>;
-  listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
+  listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
   readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;

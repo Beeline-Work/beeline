@@ -185,7 +185,7 @@ describe('the Room turn line paints the transcript margin', () => {
     // transcript already owns, so fencing it off would read as a new panel.
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
-    expect(styles.hangingTurnChrome).not.toHaveProperty('backgroundColor');
+    expect(styles.hangingTurnChrome.backgroundColor).toBe('#111');
     // The composer keeps its own border; that one separates two real surfaces.
     expect(styles.composerRow.borderTopWidth).toBe(1);
   });

@@ -187,9 +187,11 @@ import {
   TURN_LINE_ROW_MIN_HEIGHT,
 } from '@/buzz/room-bottom-chrome';
 import {
+  historyAnchorKey,
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
   shouldFollowDesktopTail,
+  transcriptLandingAnchor,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
 } from '@/buzz/room-scroll-follow';
@@ -2142,7 +2144,15 @@ export function BuzzChatSurface({
     setHighlightedSlashVerbIndex(0);
   }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
-  const transcriptLandingAnchorId = messageAnchorId || (!isCorner && firstUnreadMessageId) || '';
+  // A send releases whatever history anchor is holding the landing; the pair
+  // it released is remembered so a *later* anchor still owns its own landing.
+  const [releasedHistoryAnchorKey, setReleasedHistoryAnchorKey] = useState<string | null>(null);
+  useEffect(() => setReleasedHistoryAnchorKey(null), [decodedId]);
+  const transcriptLandingAnchorId = transcriptLandingAnchor({
+    messageAnchorId,
+    firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
+    releasedAnchorKey: releasedHistoryAnchorKey,
+  });
   // A live message/card change follows to the newest end. The decision is one
   // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
   // most once per arrival, off the render path.
@@ -2517,6 +2527,19 @@ export function BuzzChatSurface({
     // clears it when the newest row is actually on screen — the same rule
     // that clears it when they scroll there under their own finger.
   }, [scrollToNewestMessage]);
+  // The viewer sending is the viewer saying they are speaking at the live end
+  // of the log, so the transcript lands there and shows them their own
+  // message. Everything holding the viewport in history is released here: the
+  // route/unread landing anchor (`transcriptLandingAnchor`), any armed
+  // boundary landing, the unread-boundary effect below, and the pin itself,
+  // which the arrival rule reads to decide whether the appended row follows.
+  const releaseHistoryAnchorForSend = useCallback(() => {
+    pendingNewMessageLandingRef.current = null;
+    if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
+    setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));
+    isPinnedToTailRef.current = true;
+    scrollToNewestMessage();
+  }, [firstUnreadMessageId, messageAnchorId, scrollToNewestMessage]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -3248,6 +3271,7 @@ export function BuzzChatSurface({
         ...(attachments.length ? { attachments } : {}),
       });
       addMessages([optimistic]);
+      releaseHistoryAnchorForSend();
       if (!sendShortcut) {
         const nextInputRevision = composerInputRevisionRef.current + 1;
         composerInputRevisionRef.current = nextInputRevision;
@@ -3354,6 +3378,7 @@ export function BuzzChatSurface({
     roomRepoAccessIssue,
     roomSurface,
     desktopExperience,
+    releaseHistoryAnchorForSend,
   ]);
 
   const handleCornerProposalDecision = useCallback(
@@ -4547,6 +4572,16 @@ export function BuzzChatSurface({
             viewerRole={viewerChannelRole}
             actionId={grantActionId}
             onDecision={handleGrantDecision}
+            onOpenSource={(roomId, messageId) =>
+              router.navigate({
+                pathname: '/beeline/chat/[channelId]',
+                params: {
+                  channelId: roomId,
+                  notificationMessageId: messageId,
+                  notificationResponseId: `squire-grant:${item.id}`,
+                },
+              })
+            }
           />
         );
       }

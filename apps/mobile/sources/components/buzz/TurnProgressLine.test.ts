@@ -233,7 +233,7 @@ describe('the per-turn progress indicator', () => {
     expect(bar.props.style).not.toHaveProperty('backgroundColor');
   });
 
-  it('lets transcript actions receive touches through its transparent overlay', () => {
+  it('keeps the status row on the default touch path', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, {
         label: 'beebee thinking\u2026',
@@ -249,10 +249,10 @@ describe('the per-turn progress indicator', () => {
     const label = renderer.root.findAllByType('Text')[0];
     const stop = renderer.root.findByProps({ testID: 'turn-progress-line-stop' });
 
-    expect(bar?.props.pointerEvents).toBe('box-none');
-    expect(pulse.props.pointerEvents).toBe('box-none');
-    expect(glyph.props.pointerEvents).toBe('none');
-    expect(label.props.pointerEvents).toBe('none');
+    expect(bar?.props.pointerEvents).toBeUndefined();
+    expect(pulse.props.pointerEvents).toBeUndefined();
+    expect(glyph.props.pointerEvents).toBeUndefined();
+    expect(label.props.pointerEvents).toBeUndefined();
     expect(stop.props.pointerEvents).toBeUndefined();
   });
 
@@ -400,7 +400,7 @@ describe('the per-turn progress indicator', () => {
     const settledBar = renderer.root
       .findAllByType('View')
       .find((node) => node.props.testID === 'turn-settled-line');
-    expect(settledBar?.props.pointerEvents).toBe('none');
+    expect(settledBar?.props.pointerEvents).toBeUndefined();
     // The settled row shares the live row's vocabulary: the same mark, in the
     // same fixed cell, completed and still.
     const cell = renderer.root.findByProps({ testID: 'turn-settled-line-glyph' });

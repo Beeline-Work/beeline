@@ -131,6 +131,13 @@ vi.mock('react-native-keyboard-controller', async () => {
       ReactModule.createElement('KeyboardAwareScrollView', props, props.children),
   };
 });
+vi.mock('react-native-gesture-handler', async () => {
+  const ReactModule = await import('react');
+  return {
+    Swipeable: (props: any) =>
+      ReactModule.createElement('Swipeable', props, props.children, props.renderRightActions?.()),
+  };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -579,14 +586,15 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
-  it('keeps removal on the row detail and removes a person from the Workspace through it', async () => {
+  it('opens role settings on tap and confirms Workspace removal from a left swipe', async () => {
     const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+    const swipe = renderer.root.findByProps({ testID: `member-${MEMBER}-swipe` });
+    expect(swipe.props.renderRightActions).toBeTypeOf('function');
     await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-roles` })).toBeDefined();
     expect(
-      renderer.root.findByProps({ testID: `remove-person-${MEMBER}` }).findByType('Text' as any)
-        .props.children,
-    ).toBe('Remove from Workspace');
+      renderer.root.findByProps({ testID: `remove-person-${MEMBER}` }).props.accessibilityLabel,
+    ).toBe('Remove Builder from Workspace');
     await press(renderer, `remove-person-${MEMBER}`);
 
     expect(modal.confirm).toHaveBeenCalledWith(
@@ -598,7 +606,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-identity` })).toHaveLength(0);
   });
 
-  it('offers an admin no removal of an owner or another admin', async () => {
+  it('lets an admin remove a peer admin but never offers owner removal', async () => {
     state.workspace = {
       ...baseWorkspace('admin'),
       members: [
@@ -608,12 +616,42 @@ describe('Members workspace management', () => {
       ],
     };
     const renderer = await render();
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(
-      renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` }).length,
-    ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: `member-${OWNER}-swipe` })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `remove-person-${OWNER}` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` }).props.disabled).toBe(
+      true,
+    );
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-swipe` })).toBeDefined();
+    await press(renderer, `remove-person-${MEMBER}`);
+    expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
+  });
+
+  it('hides role and removal controls from a non-manager', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` }).props.disabled).toBe(
+      true,
+    );
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-swipe` })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+  });
+
+  it('keeps the member when removal confirmation is canceled', async () => {
+    modal.confirm.mockResolvedValue(false);
+    const renderer = await render();
+    await press(renderer, `remove-person-${MEMBER}`);
+    expect(modal.confirm).toHaveBeenCalledOnce();
     expect(client.removeMember).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
   });
 
   it('lets an admin change a member role but exposes no editor for an owner', async () => {
@@ -624,6 +662,14 @@ describe('Members workspace management', () => {
       true,
     );
     await press(renderer, `member-${MEMBER}-identity`);
+    expect(
+      renderer.root.findByProps({ testID: `member-${MEMBER}-member` }).props.accessibilityState
+        .selected,
+    ).toBe(true);
+    expect(
+      renderer.root.findByProps({ testID: `member-${MEMBER}-admin` }).props.accessibilityState
+        .selected,
+    ).toBe(false);
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
       true,
     );
@@ -631,6 +677,29 @@ describe('Members workspace management', () => {
 
     expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
     expect(client.waitUntilMemberRole).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
+    expect(
+      renderer.root
+        .findByProps({ testID: `member-${MEMBER}-identity` })
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children),
+    ).toEqual(['@builder', 'admin']);
+  });
+
+  it('lets an owner persist a role change and reflects the selected role', async () => {
+    const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
+      false,
+    );
+    await press(renderer, `member-${MEMBER}-owner`);
+    expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'owner');
+    expect(
+      renderer.root
+        .findByProps({ testID: `member-${MEMBER}-identity` })
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children),
+    ).toEqual(['@builder', 'owner']);
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-swipe` })).toHaveLength(0);
   });
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {

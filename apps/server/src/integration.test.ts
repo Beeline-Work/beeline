@@ -609,6 +609,57 @@ describe('monolith integration', () => {
     ]);
   });
 
+  it('persists manager role changes and refuses an admin editing a peer admin', async () => {
+    const adminToken = await phoneToken('role-change-admin');
+    const adminId = createHash('sha256').update('github:role-change-admin').digest('hex');
+    const memberId = createHash('sha256').update('github:role-change-member').digest('hex');
+    await phoneToken('role-change-member');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+
+    expect(
+      (
+        await operation(
+          'addWorkspaceMember',
+          { workspaceId: WORKSPACE, memberId, role: 'admin' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(200);
+    const currentRole = async () =>
+      (
+        await database.query<{ role: string }>(
+          `SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+          [WORKSPACE, memberId],
+        )
+      ).rows[0]?.role;
+    expect(await currentRole()).toBe('admin');
+
+    expect(
+      (
+        await operation(
+          'addWorkspaceMember',
+          { workspaceId: WORKSPACE, memberId, role: 'member' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(403);
+    expect(await currentRole()).toBe('admin');
+    expect(
+      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' })).status,
+    ).toBe(200);
+    expect(await currentRole()).toBe('member');
+    expect(
+      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'owner' }))
+        .status,
+    ).toBe(200);
+    expect(await currentRole()).toBe('owner');
+  });
+
   it('restores a tombstoned Workspace member when an invite-only Room becomes public', async () => {
     const memberToken = await phoneToken('publicize-tombstoned-member');
     const memberId = createHash('sha256')
@@ -1252,15 +1303,19 @@ describe('monolith integration', () => {
     await operation('addRoomMember', { roomId: room.id, memberId: bobId });
     await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
 
-    // The authority ladder is addWorkspaceMember's: nobody removes themselves,
-    // an admin never removes an equal, an agent is not a person.
+    // Owners are protected, peers may remove peers, and agents use their own path.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN })).status,
     ).toBe(403);
     expect(
-      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken))
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN }, aliceToken))
         .status,
     ).toBe(403);
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken))
+        .status,
+    ).toBe(204);
+    await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'admin' });
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: AGENT })).status,
     ).toBe(400);
@@ -1295,9 +1350,13 @@ describe('monolith integration', () => {
        GROUP BY message.author_id,message.text`,
       [workspaceId],
     );
-    expect(removalDms.rows).toEqual([
-      { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
-    ]);
+    expect(removalDms.rows).toHaveLength(2);
+    expect(removalDms.rows).toEqual(
+      expect.arrayContaining([
+        { author_id: SYSTEM_IDENTITY_ID, text: '@alice removed @bob', count: 2 },
+        { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
+      ]),
+    );
     // Gone means gone: the second removal has no membership to act on.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,

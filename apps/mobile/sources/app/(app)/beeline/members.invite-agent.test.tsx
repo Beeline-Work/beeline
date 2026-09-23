@@ -38,6 +38,13 @@ vi.mock('react-native-keyboard-controller', async () => {
       ReactModule.createElement('KeyboardAwareScrollView', props, props.children),
   };
 });
+vi.mock('react-native-gesture-handler', async () => {
+  const ReactModule = await import('react');
+  return {
+    Swipeable: (props: any) =>
+      ReactModule.createElement('Swipeable', props, props.children, props.renderRightActions?.()),
+  };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

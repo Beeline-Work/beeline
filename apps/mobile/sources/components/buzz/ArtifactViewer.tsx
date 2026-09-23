@@ -16,6 +16,7 @@ import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 import type { CodeDocument } from '@/buzz/code-document';
 import * as Clipboard from 'expo-clipboard';
 import { copyPicture, sharePicture } from '@/buzz/picture-actions';
+import { useCopiedToast } from '@/components/buzz/CopiedToast';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -48,6 +49,7 @@ export function ArtifactViewerScreen({
   // the status tray the way every full-screen surface does.
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const { showCopied, showCopyFailed, toast } = useCopiedToast('artifact-viewer-copied');
   return (
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
@@ -58,7 +60,15 @@ export function ArtifactViewerScreen({
           <Pressable
             accessibilityLabel="Copy code"
             accessibilityRole="button"
-            onPress={() => void Clipboard.setStringAsync(document.code)}
+            onPress={() =>
+              void Clipboard.setStringAsync(document.code).then(
+                (copied) =>
+                  copied
+                    ? showCopied('Code copied to clipboard')
+                    : showCopyFailed("Couldn't copy code"),
+                () => showCopyFailed("Couldn't copy code"),
+              )
+            }
             style={styles.headerAction}
             testID="artifact-viewer-copy"
           >
@@ -69,7 +79,13 @@ export function ArtifactViewerScreen({
             <Pressable
               accessibilityLabel="Copy image"
               accessibilityRole="button"
-              onPress={() => void copyPicture(attachment!)}
+              onPress={() =>
+                void copyPicture(attachment!).then((copied) =>
+                  copied
+                    ? showCopied('Image copied to clipboard')
+                    : showCopyFailed("Couldn't copy image"),
+                )
+              }
               style={styles.headerAction}
               testID="artifact-viewer-copy"
             >
@@ -121,6 +137,7 @@ export function ArtifactViewerScreen({
           />
         )}
       </View>
+      {toast}
     </View>
   );
 }

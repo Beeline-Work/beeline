@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
   artifactPdfLocalUri: vi.fn(),
-  copyPicture: vi.fn(),
+  copyPicture: vi.fn(async () => true),
   sharePicture: vi.fn(),
   showPictureActions: vi.fn(),
   copyText: vi.fn(async () => true),
@@ -27,6 +27,7 @@ const theme = vi.hoisted(() => ({
     textPrimary: '#eee',
     ledgerQuiet: '#777',
     space: { sm: 8, md: 12 },
+    layout: { row: 64 },
     type: { body: {}, bodyStrong: {}, meta: {} },
   },
 }));
@@ -76,6 +77,14 @@ vi.mock('@/buzz/picture-actions', () => ({
   showPictureActions: mocks.showPictureActions,
 }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: mocks.copyText }));
+vi.mock('react-native-reanimated', () => ({
+  default: {
+    View: (props: Record<string, unknown>) =>
+      React.createElement('AnimatedView', props, props.children as React.ReactNode),
+  },
+  FadeInDown: {},
+  FadeOutDown: {},
+}));
 vi.mock('@/components/buzz/MonoMarkdown', () => ({
   MonoMarkdown: (props: Record<string, unknown>) =>
     React.createElement('MonoMarkdown', props, null),
@@ -166,6 +175,74 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
       await Promise.resolve();
     });
     expect(mocks.copyText).toHaveBeenCalledWith(document.code);
+    const toast = renderer.root.findByProps({ testID: 'artifact-viewer-copied' });
+    expect(toast.findAllByType('Text' as any).map((t: any) => t.props.children)).toContain(
+      'Code copied to clipboard',
+    );
+  });
+
+  it('confirms a copied picture with a toast that dismisses itself', async () => {
+    vi.useFakeTimers();
+    try {
+      const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+      const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+        await Promise.resolve();
+      });
+      const toast = renderer.root.findByProps({ testID: 'artifact-viewer-copied' });
+      expect(toast.findAllByType('Text' as any).map((t: any) => t.props.children)).toContain(
+        'Image copied to clipboard',
+      );
+      act(() => vi.advanceTimersByTime(2000));
+      expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-copied' })).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a failed picture copy with a failure toast that dismisses itself', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.copyPicture.mockResolvedValueOnce(false);
+      const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+      const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+        await Promise.resolve();
+      });
+      const toast = renderer.root.findByProps({ testID: 'artifact-viewer-copied' });
+      const texts = toast.findAllByType('Text' as any).map((t: any) => t.props.children);
+      expect(texts).toContain("Couldn't copy image");
+      expect(texts).toContain('!');
+      act(() => vi.advanceTimersByTime(2000));
+      expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-copied' })).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['resolves false', () => mocks.copyText.mockResolvedValueOnce(false)],
+    ['rejects', () => mocks.copyText.mockRejectedValueOnce(new Error('denied'))],
+  ])('reports a failed code copy with a failure toast when the clipboard %s', async (_name, fail) => {
+    fail();
+    const document = {
+      type: 'code' as const,
+      title: 'typescript',
+      inscription: 'typescript · 1 line · 8 B',
+      code: 'second()',
+      language: 'typescript',
+    };
+    const renderer = render(<ArtifactViewerScreen document={document} onClose={mocks.onClose} />);
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+      await Promise.resolve();
+    });
+    const toast = renderer.root.findByProps({ testID: 'artifact-viewer-copied' });
+    expect(toast.findAllByType('Text' as any).map((t: any) => t.props.children)).toContain(
+      "Couldn't copy code",
+    );
   });
 
   it('renders HTML in the sandboxed WebView: script off, guarded, no message bridge', async () => {

@@ -55,6 +55,7 @@ import {
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
+  decideSquirePermission,
   isHostMcpPermissionRequest,
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
@@ -771,8 +772,13 @@ export class MonolithRoomTurnLoop {
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
-      permissionAllowlist: (request) =>
-        isRoomMcpPermissionRequest(request, mountedServers, hostServers),
+      permissionHandler: async (request) => {
+        if (!isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'reject';
+        const squire = await decideSquirePermission(request, () =>
+          this.options.api.execute('authorizeSquireCall', { roomId: this.options.roomId }),
+        );
+        return squire ?? 'allow';
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,

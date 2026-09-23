@@ -4,6 +4,7 @@ import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
 import {
+  notifyAgentConfigChange,
   notifyConnectorAssignment,
   POSTGRES_LIVE_CHANNEL,
   PostgresLiveListener,
@@ -362,6 +363,38 @@ describe('Postgres live fanout', () => {
             event.type === 'invalidate' &&
             event.reason === 'connector-assignment' &&
             event.targetAgentId === AUTHOR,
+        ),
+    );
+  });
+
+  it('delivers a Squire machine-grant wake as an agent-config invalidation', async () => {
+    const agent = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, agent],
+    );
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    await notifyAgentConfigChange(database, agent, WORKSPACE);
+
+    await eventually(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'invalidate' &&
+            event.reason === 'agent-config' &&
+            event.targetAgentId === agent &&
+            event.roomId === ROOM,
         ),
     );
   });

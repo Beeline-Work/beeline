@@ -46,6 +46,7 @@ import {
   isAgentGrantKind,
   isCommandGrantScript,
   parseCommandGrantTarget,
+  squireCallAllowed,
   type AgentGrantEscalation,
   type AgentGrantKind,
   type CommandGrantRule,
@@ -204,6 +205,7 @@ export class DaemonService {
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
+      'authorizeSquireCall',
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
@@ -329,6 +331,16 @@ export class DaemonService {
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
+          await db.query(
+            `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
+            [(result as { grantId: string }).grantId, command.id],
+          );
+        }
+        if (
+          name === 'authorizeSquireCall' &&
+          (result as { status?: string }).status === 'pending' &&
+          (result as { grantId?: string }).grantId
+        ) {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
             [(result as { grantId: string }).grantId, command.id],
@@ -769,6 +781,11 @@ export class DaemonService {
       case 'consumeAgentGrant':
         return (await this.consumeAgentGrant(
           input as Input<'consumeAgentGrant'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'authorizeSquireCall':
+        return (await this.authorizeSquireCall(
+          input as Input<'authorizeSquireCall'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'readAgentWorkbench':
@@ -3637,6 +3654,104 @@ export class DaemonService {
     return this.writeResult();
   }
 
+  /**
+   * Squire is mounted per session, not per speaker. Each call still checks who
+   * triggered the turn: the owner passes; anyone else needs a live mcp/squire
+   * grant keyed to them. A miss posts the existing Once/Always/No card in the
+   * owner's Trusty Squire DM.
+   */
+  private async authorizeSquireCall(input: Input<'authorizeSquireCall'>, agentId: string) {
+    await this.access(input.roomId, agentId);
+    const context = (
+      await this.database.query<{
+        workspace_id: string;
+        owner_id: string;
+      }>(
+        `SELECT room.workspace_id,a.owner_id
+         FROM rooms room
+         JOIN agents a ON a.agent_id=$2
+         WHERE room.id=$1`,
+        [input.roomId, agentId],
+      )
+    ).rows[0];
+    if (!context) throw new Error('agent not found');
+    const sourceMessageId = this.authorizedCommand?.source_message_id;
+    const requesterRow = (
+      await this.database.query<{ id: string }>(
+        `SELECT identity.id
+         FROM agent_commands command
+         JOIN messages message ON message.id=command.source_message_id
+         JOIN identities identity ON identity.id=message.author_id
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
+           AND message.presentation<>'activity'
+           AND ($3::text IS NULL OR command.source_message_id=$3)
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+        [input.roomId, agentId, sourceMessageId ?? null],
+      )
+    ).rows[0];
+    const requesterId = requesterRow?.id ?? context.owner_id;
+    const listed = await this.listAgentGrants(agentId, input.roomId);
+    const verdict = squireCallAllowed({
+      requesterId,
+      ownerId: context.owner_id,
+      grants: listed.grants,
+    });
+    if (verdict.allowed) {
+      if (verdict.consume && verdict.grantId)
+        await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
+      return {
+        allowed: true as const,
+        ...(verdict.grantId ? { grantId: verdict.grantId } : {}),
+      };
+    }
+    const pending = (
+      await this.database.query<{ id: string }>(
+        `SELECT id FROM agent_grants
+         WHERE agent_id=$1 AND workspace_id=$2 AND kind='mcp' AND target='squire'
+           AND requested_by=$3 AND status='pending'
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [agentId, context.workspace_id, requesterId],
+      )
+    ).rows[0];
+    if (pending) {
+      const card = (
+        await this.database.query<{ id: string }>(
+          `SELECT id FROM messages
+           WHERE card_type='grant-request'
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(card->'grants') entry
+               WHERE entry->>'grantId'=$1
+             )
+           ORDER BY created_at DESC,id DESC LIMIT 1`,
+          [pending.id],
+        )
+      ).rows[0];
+      return {
+        allowed: false as const,
+        grantId: pending.id,
+        status: 'pending' as const,
+        ...(card ? { messageId: card.id } : {}),
+      };
+    }
+    const asked = await this.requestAgentGrant(
+      {
+        roomId: input.roomId,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'use Trusty Squire on this turn',
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        ...(input.generationId ? { generationId: input.generationId } : {}),
+      },
+      agentId,
+    );
+    return {
+      allowed: false as const,
+      grantId: asked.grantId,
+      status: asked.status,
+      ...(asked.messageId ? { messageId: asked.messageId } : {}),
+    };
+  }
+
   // --- R5: connector offers -------------------------------------------------
 
   /**
@@ -4425,6 +4540,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   openRoomPoll: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
+  authorizeSquireCall: true,
   readAgentWorkbench: true,
   offerConnector: true,
   createCorner: true,

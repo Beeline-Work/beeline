@@ -21,6 +21,7 @@ import {
   prepareRoomAgentHome,
 } from './agent-home.js';
 import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
+import { decideSquirePermission } from './read-only-policy.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -806,7 +807,12 @@ export class MonolithCornerTurnLoop {
       agentCwd: this.options.worktreePath,
       agentLabel: harnessLabel,
       autoApprovePermissions: true,
-      permissionHandler: () => Promise.resolve('allow'),
+      permissionHandler: async (request) => {
+        const squire = await decideSquirePermission(request, () =>
+          this.options.api.execute('authorizeSquireCall', { roomId: this.options.cornerId }),
+        );
+        return squire ?? 'allow';
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,

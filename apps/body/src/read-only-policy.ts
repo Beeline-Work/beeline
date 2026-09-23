@@ -1,4 +1,4 @@
-import type { AcpPermissionRequest } from './acp.js';
+import type { AcpPermissionDecision, AcpPermissionRequest } from './acp.js';
 import { CODE_OWNED_HOST_MCP_NAMES, isHostMcpIdentity } from './mcp-route-class.js';
 
 export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
@@ -289,6 +289,19 @@ export function isHostMcpPermissionRequest(
   return toolIdentityCandidates(request.toolCall).some((candidate) =>
     isHostMcpIdentity(candidate, hostServers),
   );
+}
+
+/**
+ * Per-call Squire gate. Returns undefined when the request is not a Squire
+ * tool so the caller can apply its ordinary MCP allowlist.
+ */
+export async function decideSquirePermission(
+  request: AcpPermissionRequest,
+  authorize: () => Promise<{ allowed: boolean }>,
+): Promise<AcpPermissionDecision | undefined> {
+  if (!isHostMcpPermissionRequest(request, CODE_OWNED_HOST_MCP_NAMES)) return undefined;
+  const result = await authorize();
+  return result.allowed ? 'allow' : 'reject';
 }
 
 /** The only host-governed mutations available directly from a thin Room. */

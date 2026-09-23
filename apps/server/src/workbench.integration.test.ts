@@ -164,6 +164,60 @@ describe('workbench connectors', () => {
     return paired.connectorId;
   }
 
+  it('writes owner-approved Squire ledger grants for every owner agent on the machine', async () => {
+    const SIBLING = 'd'.repeat(64);
+    const MACHINE = 'machine-squire-box';
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Moth','moth')`,
+      [SIBLING],
+    );
+    await database.query(`UPDATE agents SET machine_id=$2 WHERE agent_id=$1`, [HELPER, MACHINE]);
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`,
+      [SIBLING, HUMAN, MACHINE],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, SIBLING],
+    );
+
+    await pairOwnerConnector();
+
+    const grants = await database.query<{
+      agent_id: string;
+      requested_by: string;
+      decided_by: string;
+      status: string;
+      kind: string;
+      target: string;
+      reason: string;
+    }>(
+      `SELECT agent_id,requested_by,decided_by,status,kind,target,reason FROM agent_grants
+       WHERE kind='mcp' AND target='squire' ORDER BY agent_id`,
+    );
+    expect(grants.rows).toEqual([
+      {
+        agent_id: HELPER,
+        requested_by: HUMAN,
+        decided_by: HUMAN,
+        status: 'approved',
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'Trusty Squire connected on this machine',
+      },
+      {
+        agent_id: SIBLING,
+        requested_by: HUMAN,
+        decided_by: HUMAN,
+        status: 'approved',
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'Trusty Squire connected on this machine',
+      },
+    ]);
+    expect(grants.rows.map((row) => row.agent_id)).not.toContain(OTHER_HELPER);
+  });
+
   it('pairs, syncs metadata, and scopes the workbench view to the viewer', async () => {
     const connectorId = await pairOwnerConnector();
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {

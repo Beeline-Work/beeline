@@ -284,6 +284,11 @@ module.exports = withoutIosPushCapabilities;\n`,
       expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "29"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
-    240_000,
+    // Five real fingerprint runs, each hashing the whole mobile tree plus
+    // node_modules. A quiet runner does one in tens of seconds, but under the
+    // suite's competing workers each run slows several-fold and five of them
+    // outgrew 240s — the same head's NATIVE FINGERPRINT job (one run) passed.
+    // 600s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
+    600_000,
   );
 });

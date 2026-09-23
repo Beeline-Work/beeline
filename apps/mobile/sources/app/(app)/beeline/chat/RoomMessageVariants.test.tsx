@@ -1319,7 +1319,7 @@ describe('Room message variant components', () => {
     expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('opens a desktop picture message in the work pane and exposes its context menu', () => {
+  it('opens a desktop picture message in the centered viewer and exposes its context menu', () => {
     render(
       <OrdinaryLedgerMessage
         message={message({
@@ -1364,13 +1364,18 @@ describe('Room message variant components', () => {
       expect.objectContaining({ name: 'receipt.png' }),
     );
     act(() => open.props.onPress());
-    expect(desktopArtifactPane.openArtifactInDesktopWorkPane).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attachment: expect.objectContaining({ name: 'receipt.png' }),
-      }),
-    );
+    expect(modal.show).toHaveBeenCalledWith({
+      component: expect.any(Function),
+      props: {
+        attachment: expect.objectContaining({
+          name: 'receipt.png',
+          mimeType: 'image/png',
+        }),
+      },
+      placement: 'fill',
+    });
+    expect(desktopArtifactPane.openArtifactInDesktopWorkPane).not.toHaveBeenCalled();
     expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
-    expect(modal.show).not.toHaveBeenCalled();
   });
 
   it('groups photo artifacts from one message into one card while leaving other artifacts alone', () => {

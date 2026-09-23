@@ -12,6 +12,7 @@ import {
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
 import { copyPicture, sharePicture } from '@/buzz/picture-actions';
 import { ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
@@ -40,6 +41,7 @@ export function DesktopArtifactPane({
 }) {
   const format = artifactFormat(attachment.mimeType);
   const title = attachment.title ?? attachment.name;
+  const { showCopied, toast } = useCopiedToast('desktop-artifact-copied');
   const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${format} · ${formatAttachmentSize(attachment.size)}`;
   return (
     <View style={styles.screen} testID="desktop-artifact-pane">
@@ -57,7 +59,11 @@ export function DesktopArtifactPane({
             <Pressable
               accessibilityLabel="Copy image"
               accessibilityRole="button"
-              onPress={() => void copyPicture(attachment)}
+              onPress={() =>
+                void copyPicture(attachment).then((copied) => {
+                  if (copied) showCopied('Image copied to clipboard');
+                })
+              }
               style={styles.headerAction}
               testID="desktop-artifact-copy"
             >
@@ -114,6 +120,7 @@ export function DesktopArtifactPane({
           </Text>
         </View>
       )}
+      {toast}
     </View>
   );
 }

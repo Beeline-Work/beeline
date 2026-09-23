@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   fetchArtifactBytes: vi.fn(),
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
-  copyPicture: vi.fn(),
+  copyPicture: vi.fn(async () => true),
   sharePicture: vi.fn(),
   showPictureActions: vi.fn(),
   onClose: vi.fn(),
@@ -32,25 +32,35 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+vi.mock('react-native-reanimated', () => ({
+  default: {
+    View: (props: Record<string, unknown>) =>
+      React.createElement('AnimatedView', props, props.children as React.ReactNode),
+  },
+  FadeInDown: {},
+  FadeOutDown: {},
+}));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+const theme = vi.hoisted(() => ({
+  buzz: {
+    border: '#333',
+    bgBase: '#111',
+    textPrimary: '#eee',
+    ledgerQuiet: '#777',
+    accent: '#b08a4a',
+    space: { sm: 8, md: 12 },
+    layout: { row: 64 },
+    type: { body: {}, bodyStrong: {}, machine: {}, meta: {} },
+  },
 }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) =>
-      factory({
-        buzz: {
-          border: '#333',
-          bgBase: '#111',
-          textPrimary: '#eee',
-          ledgerQuiet: '#777',
-          accent: '#b08a4a',
-          space: { sm: 8, md: 12 },
-          type: { body: {}, bodyStrong: {}, machine: {}, meta: {} },
-        },
-      }),
+    create: (factory: (theme: unknown) => unknown) => factory(theme),
   },
+  useUnistyles: () => ({ theme }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
   fetchArtifactBytes: mocks.fetchArtifactBytes,
@@ -194,6 +204,33 @@ describe('the desktop work pane artifact view', () => {
     expect(mocks.copyPicture).toHaveBeenCalledWith(photo);
     expect(mocks.sharePicture).toHaveBeenCalledWith(photo);
     expect(mocks.showPictureActions).toHaveBeenCalledWith(photo);
+  });
+
+  it('confirms a copied picture with a toast that dismisses itself, and none on failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const photo = attachment({ mimeType: 'image/png', name: 'chart.png', title: 'Chart' });
+      const renderer = render(<DesktopArtifactPane attachment={photo} onClose={mocks.onClose} />);
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'desktop-artifact-copy' }).props.onPress();
+        await Promise.resolve();
+      });
+      const toast = renderer.root.findByProps({ testID: 'desktop-artifact-copied' });
+      expect(toast.findAllByType('Text' as any).map((t: any) => t.props.children)).toContain(
+        'Image copied to clipboard',
+      );
+      act(() => vi.advanceTimersByTime(2000));
+      expect(renderer.root.findAllByProps({ testID: 'desktop-artifact-copied' })).toHaveLength(0);
+
+      mocks.copyPicture.mockResolvedValueOnce(false);
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'desktop-artifact-copy' }).props.onPress();
+        await Promise.resolve();
+      });
+      expect(renderer.root.findAllByProps({ testID: 'desktop-artifact-copied' })).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('zooms a desktop raster with the wheel and resets from an accessible control', () => {

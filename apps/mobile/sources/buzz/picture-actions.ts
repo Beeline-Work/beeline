@@ -16,11 +16,14 @@ function safePictureName(name: string): string {
   return safe || 'picture';
 }
 
-export async function copyPicture(attachment: AttachmentReference): Promise<void> {
+/** Copies the picture; true once it is on the clipboard, false after the failure alert. */
+export async function copyPicture(attachment: AttachmentReference): Promise<boolean> {
   try {
     await Clipboard.setImageAsync(await artifactBase64(attachment));
+    return true;
   } catch {
     Modal.alert('Could not copy image', 'The image could not be copied. Try again.');
+    return false;
   }
 }
 

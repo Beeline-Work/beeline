@@ -253,9 +253,13 @@ Chromium and Windows Chrome 153 on Chad. It did not exercise pictures.
 ### Picture-send geometry follow-up
 
 `run-send.mjs` now sends photo attachment, text, image artifact, photo attachment,
-then text. Its fixture models the `AttachmentCard` 46×46 thumbnail/58px row and
-the `ArtifactCard` 220px preview with caption and footer. A 300ms source switch
-models the asynchronous media authorization/image-source load. At 100ms and
+then text. Its fixture models the `AttachmentCard` 46×46 thumbnail/58px row.
+The image artifact mounts the production `ArtifactCard` and `ArtifactImage`
+components using their actual style callbacks and Obsidian theme tokens;
+stand-ins replace only session, storage, viewer, PDF, and navigation services
+outside the image card's layout. A 300ms source switch models the attachment's
+media authorization, while the artifact image source resolves after 300ms.
+At 100ms and
 550ms after each send it measures the painted image element, card, enclosing
 message row, adjacent rows and scroll tail; the later sample requires each
 image to have loaded. The painted element is React Native Web's inner
@@ -266,8 +270,8 @@ zero adjacent-row overlaps, zero painted-image/card bounds outside their row,
 zero tail gap, and the newest row visible. The Windows run used Chrome CDP in
 the guest and the `CDP_HTTP_URL`/`PROOF_URL` options of `run-send.mjs`.
 
-These are **source-shaped fixture results**, not a reproduction of the
-reported bug or a fix. The fixture does not mount the full `AttachmentCard` or
-`ArtifactCard` component, exercise an actual upload/outbox send, or run inside
-Beeline's WebView2. The current production app remains on GitHub sign-in on
-Chad, so live post-send pixel and row bounds remain unmeasured.
+These are **fixture results**, not a reproduction of the reported bug or a
+fix. The fixture does not mount the full `AttachmentCard` component, exercise
+an actual upload/outbox send, or run inside Beeline's WebView2. The current
+production app remains on GitHub sign-in on Chad, so live post-send pixel and
+row bounds remain unmeasured.

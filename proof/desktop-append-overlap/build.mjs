@@ -2,11 +2,19 @@ import { build } from 'esbuild';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(here, '../../apps/mobile');
 const mobileNodeModules = process.env.MOBILE_NODE_MODULES ?? path.join(mobileRoot, 'node_modules');
 const nodePaths = [mobileNodeModules];
+const artifactServiceStubs = new Set([
+  '@/buzz/artifact-preview-cache', '@/buzz/artifact-pdf', '@/buzz/artifact-link',
+  '@/buzz/chat-attachment', '@/buzz/desktop-artifact-pane',
+  '@/components/buzz/artifact-webview', '@/components/buzz/sandbox-webview',
+  '@/components/buzz/ArtifactPdfView', '@/components/buzz/ArtifactViewer',
+  '@/components/buzz/ChevronGlyph', '@/components/buzz/MonoMarkdown', '@/modal',
+]);
 
 await build({
   entryPoints: [path.join(here, 'app.tsx')],
@@ -35,6 +43,16 @@ await build({
     {
       name: 'rnw-shim',
       setup(buildApi) {
+        buildApi.onResolve({ filter: /^react-native-unistyles$/ }, () => ({
+          path: path.join(here, 'unistyles-proof.ts'),
+        }));
+        buildApi.onResolve({ filter: /^@\// }, (args) => {
+          if (artifactServiceStubs.has(args.path)) {
+            return { path: path.join(here, 'artifact-proof-deps.tsx') };
+          }
+          const source = path.join(mobileRoot, 'sources', args.path.slice(2));
+          return { path: existsSync(`${source}.tsx`) ? `${source}.tsx` : `${source}.ts` };
+        });
         buildApi.onResolve({ filter: /^react-native$/ }, () => ({
           path: path.join(mobileNodeModules, 'react-native-web/dist/index.js'),
         }));

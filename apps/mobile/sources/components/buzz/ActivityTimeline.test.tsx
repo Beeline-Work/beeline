@@ -403,10 +403,15 @@ describe('the output sheet', () => {
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'tool-run-group-read' })).toBeTruthy();
     expect(hostNodes(renderer, /thought/)).toHaveLength(0);
-    const draft = renderer.root.findByProps({ testID: 'activity-message-draft' });
-    expect(draft.props.markdown).toBe('The reply is taking shape.');
-    expect(draft.props.textStyle.fontFamily).toBe(groknight.proseItalic);
-    expect(draft.props.textStyle.color).toBe(groknight.ledgerQuiet);
+    const draft = hostNodes(renderer, /^activity-message-draft$/)[0]!;
+    expect(draft.props.children).toBe('The reply is taking shape.');
+    // The one plain Text carries the provisional tone the settle cross-fade
+    // fades out of; the style reaches the host as `style`, the composite as
+    // `textStyle`.
+    const draftStyle = renderer.root.findByProps({ testID: 'activity-message-draft' }).props
+      .textStyle;
+    expect(draftStyle.fontFamily).toBe(groknight.proseItalic);
+    expect(draftStyle.color).toBe(groknight.ledgerQuiet);
   });
 
   it('prints who asked, in the sheet, not the transcript', () => {
@@ -509,7 +514,7 @@ describe('agent prose and drafts', () => {
         stamp="now"
       />,
     );
-    expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
+    expect(hostNodes(renderer, /^activity-message-draft$/)[0]!.props.children).toBe(
       'The answer is arriving.',
     );
     // The draft lane is untouched by the ledger: prose stays prose, and the
@@ -528,7 +533,7 @@ describe('agent prose and drafts', () => {
     ).toBeLessThanOrEqual(3);
   });
 
-  it('routes streamed prose through the Room-style Markdown renderer, never the thought lane', () => {
+  it('prints streamed prose literally, never through the Markdown renderer or the thought lane', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -543,14 +548,12 @@ describe('agent prose and drafts', () => {
       />,
     );
 
-    expect(
-      renderer.root
-        .findAllByType('MonoMarkdown')
-        .map((node: { props: { markdown: string; testID?: string } }) => ({
-          markdown: node.props.markdown,
-          testID: node.props.testID,
-        })),
-    ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
+    // Option A: the live lane is one plain Text. The finished reply, and the
+    // durable corner narration above it, are the Markdown surfaces.
+    expect(renderer.root.findAllByType('MonoMarkdown')).toEqual([]);
+    const draft = hostNodes(renderer, /^activity-message-draft$/)[0]!;
+    expect(draft.props.children).toBe('**The reply is ready**');
+    expect(renderedText(renderer)).toContain('**The reply is ready**');
   });
 
   it("renders the settled row's byline — IdentityMark + name + model + stamp — on the live draft", () => {

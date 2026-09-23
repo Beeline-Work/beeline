@@ -6,6 +6,8 @@ import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   clampDesktopPaneWidth,
   DESKTOP_INSPECTOR_DEFAULT_WIDTH,
+  DESKTOP_INSPECTOR_MIN_WIDTH,
+  DESKTOP_TRANSCRIPT_MIN_WIDTH,
   desktopComposerKeyAction,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
@@ -179,13 +181,30 @@ export function DesktopRoomInspector({
     };
   }, [client, selectedCornerId]);
 
+  // Mirrors the navigation divider in SidebarNavigator. The pane is the last
+  // child of its row, so its layout x plus its width is the row's width.
+  // Reserve DESKTOP_TRANSCRIPT_MIN_WIDTH for the transcript, but only when the
+  // row is wide enough that doing so still leaves the pane its own minimum.
+  const [rowWidth, setRowWidth] = React.useState<number | null>(null);
+  const maxWidthForTranscript =
+    rowWidth === null ? Number.POSITIVE_INFINITY : rowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
+  const renderedWidth = clampDesktopPaneWidth(
+    'inspector',
+    maxWidthForTranscript >= DESKTOP_INSPECTOR_MIN_WIDTH
+      ? Math.min(width, maxWidthForTranscript)
+      : width,
+  );
+  // Read the latest width through a ref so the PanResponder is never rebuilt
+  // mid-drag: on web, rebuilding it resets the gesture's move accounting.
+  const renderedWidthRef = React.useRef(renderedWidth);
+  renderedWidthRef.current = renderedWidth;
   const resizePan = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
-          dragStart.current = width;
+          dragStart.current = renderedWidthRef.current;
         },
         onPanResponderMove: (_, gesture) =>
           setWidth(clampDesktopPaneWidth('inspector', dragStart.current - gesture.dx)),
@@ -195,15 +214,27 @@ export function DesktopRoomInspector({
           void saveDesktopPaneWidth('inspector', next);
         },
       }),
-    [width],
+    [],
   );
 
   const cornerList = inspectorCornerWindow(corners, cornersExpanded);
   const summary = corners.find((corner) => corner.corner.id === selectedCornerId);
 
   return (
-    <View style={[styles.inspector, { width }]} testID="desktop-inspector">
-      <View {...resizePan.panHandlers} style={styles.resizer} testID="desktop-inspector-resizer" />
+    <View
+      style={[styles.inspector, { width: renderedWidth }]}
+      onLayout={(event) => {
+        const { x, width: laidOutWidth } = event.nativeEvent.layout;
+        setRowWidth(Math.round(x + laidOutWidth));
+      }}
+      testID="desktop-inspector"
+    >
+      <View
+        {...resizePan.panHandlers}
+        accessibilityLabel="Resize work pane"
+        style={styles.resizer}
+        testID="desktop-inspector-resizer"
+      />
       {artifact ? (
         <DesktopArtifactPane
           attachment={artifact.attachment}
@@ -767,7 +798,15 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.colors.divider,
     position: 'relative',
   },
-  resizer: { position: 'absolute', left: -4, top: 0, bottom: 0, width: 8, zIndex: 4 },
+  resizer: {
+    position: 'absolute',
+    left: -3,
+    top: 0,
+    bottom: 0,
+    width: 7,
+    cursor: 'col-resize',
+    zIndex: 4,
+  } as any,
   header: {
     minHeight: 58,
     flexDirection: 'row',

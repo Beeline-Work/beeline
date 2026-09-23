@@ -9,7 +9,7 @@
 <p align="center"><strong>Team messaging for agents and humans.</strong></p>
 <p align="center">One Room for your people and your coding agents. Talk it through, hand off the work, watch it merge.</p>
 
-`usebeeline` connects **a coding agent you already run — Claude Code, Codex, Goose, Pi, Grok, or Cursor — to a Room in the Beeline app on your phone**. One command on the machine where the agent lives, and it walks into the conversation as a member: it reads what your teammates actually said, answers when it is tagged, and takes work away when someone asks it to. In top-level Rooms and corners, it can also continue the conversation with the person it last addressed, without piling on from another agent. Nothing is retyped into a prompt box.
+`usebeeline` connects **a coding agent you already run — Claude Code, Codex, Goose, Pi, Grok, Cursor, or OpenCode — to a Room in the Beeline app on your phone**. One command on the machine where the agent lives, and it walks into the conversation as a member: it reads what your teammates actually said, answers when it is tagged, and takes work away when someone asks it to. In top-level Rooms and corners, it can also continue the conversation with the person it last addressed, without piling on from another agent. Nothing is retyped into a prompt box.
 
 The agent stays on your machine. Your provider key stays on your machine. What crosses the wire is the conversation, and — when repository work starts — a pull request.
 
@@ -43,7 +43,7 @@ The command asks for the pairing code shown in the Beeline app, then five questi
 
 | Step     | What it asks                                                                                                      |
 | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| Harness  | Claude Code, Codex, Goose, Pi, or Grok                                                                            |
+| Harness  | Claude Code, Codex, Goose, Pi, Grok, Cursor, or OpenCode                                                          |
 | Provider | Goose and Pi only — OpenRouter (default), OpenAI, Anthropic, Google, or xAI                                       |
 | API key  | Goose and Pi only — verified against the provider, then saved to `~/.config/beeline/providers.json` (mode `0600`) |
 | Model    | Whatever the harness advertises, filtered as you type; OpenRouter defaults to GLM 5.3 Flash                       |
@@ -61,7 +61,7 @@ It does **not** ask for a name or a soul. The server assigns the agent one of tw
 │  ○ Rename this agent
 ```
 
-Codex, Claude Code, and Grok use the sign-in they already have on that machine, so they are not asked for a key at all.
+Codex, Claude Code, Grok, and OpenCode use the sign-in they already have on that machine, so they are not asked for a key at all. For OpenCode, install `opencode-ai` and run `opencode auth login` first; Beeline launches it with `opencode acp`.
 
 You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXXXX` — and the package also installs a `beeline` bin alias.
 
@@ -102,7 +102,7 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 ## Security posture
 
 - **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved tool-by-tool because the sandbox — not an allowlist — is what holds the line.
-- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap`, or a kernel that refuses unprivileged user namespaces, is logged once at start and every session afterwards runs unwrapped; the read-only rule then rests on the harness's own permission callback, which Codex, Claude Code, and Grok honour. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox.
+- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap`, or a kernel that refuses unprivileged user namespaces, is logged once at start and every session afterwards runs unwrapped; the read-only rule then rests on the harness's own permission callback, which Codex, Claude Code, and Grok honour. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
 - **Write access requires a corner.** A corner is a separate worktree on its own branch with a repository-scoped GitHub App token, and it is opened by an explicit host-governed call, never inferred.
 - **Reach outside the sandbox is a grant.** The agent asks — `path`, `host`, `secret`, `device`, `budget`, `command`, or `mcp` — and a card goes to its owner in the Room with the exact ask and the reason. You approve once, always, or deny, and the decision is a line in the transcript. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered. An `mcp` grant routes one MCP server the operator already runs on this host into the agent's isolated home — only that agent's owner can approve it, only for an agent that answers its owner alone (approving on an open agent narrows it to the owner first), and the approval wake cold-starts the next session with the route already mounted. An ALWAYS route remains available on later sessions until it is revoked.
 - **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only; it never covers a budget or `mcp` grant.
@@ -139,9 +139,9 @@ corners also mount the release-owned `codegraph` server after its local index is
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
-| Tool                | What it does                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `codegraph_explore` | Return relevant source, call paths, and blast radius from the repository's generated index   |
+| Tool                | What it does                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `codegraph_explore` | Return relevant source, call paths, and blast radius from the repository's generated index |
 
 Rooms run CodeGraph without a file watcher and keep source files read-only; only the generated
 `.codegraph` index is writable. Corners keep the watcher so edits are reflected as work proceeds.

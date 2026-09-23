@@ -947,6 +947,34 @@ export class AcpClient extends EventEmitter {
     mode: SessionMode | undefined,
   ): Promise<void> {
     if (!mode) return;
+    // OpenCode exposes its build/plan agents as a config axis rather than ACP
+    // `modes`. Select it at the same lifecycle boundary as other harness modes.
+    if (/(^|[/\\])opencode(\.[a-z]+)?$/i.test(this.agentLabel)) {
+      const options = raw.configOptions as
+        | Array<{
+            id?: string;
+            category?: string;
+            currentValue?: string;
+            options?: Array<{ value?: string }>;
+          }>
+        | undefined;
+      const axis = options?.find((option) => option.id === 'mode' && option.category === 'mode');
+      const desired = mode === 'readonly' ? 'plan' : 'build';
+      if (!axis?.options?.some((option) => option.value === desired)) {
+        if (mode === 'readonly' && !this.osSandbox) {
+          throw new Error('OpenCode did not advertise plan mode for an unsandboxed Room');
+        }
+        return;
+      }
+      if (axis.currentValue !== desired) {
+        await this.request('session/set_config_option', {
+          sessionId,
+          configId: 'mode',
+          value: desired,
+        });
+      }
+      return;
+    }
     const modes = raw.modes as
       | {
           availableModes?: Array<{ id?: string }>;

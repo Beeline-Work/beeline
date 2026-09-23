@@ -65,7 +65,11 @@ export function filterAgentModelCatalog(
   agentEnv: Record<string, string>,
 ): AgentModelConfigOption[] {
   const allowed = filterAllowedModelConfigOptions(raw);
-  return agent.kind === 'goose' ? allowed : filterModelOptionsByCredentials(allowed, agentEnv);
+  // OpenCode only advertises enabled models and keeps provider credentials in
+  // its own auth store; the env-only Pi filter would erase every provider/model.
+  return agent.kind === 'goose' || agent.kind === 'opencode'
+    ? allowed
+    : filterModelOptionsByCredentials(allowed, agentEnv);
 }
 
 /**

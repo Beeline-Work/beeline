@@ -43,7 +43,9 @@ function capture(): { output: Pick<NodeJS.WritableStream, 'write'>; text: () => 
 
 describe('pair agent auto-selection', () => {
   it('fails clearly when no real ACP-capable agent is installed', async () => {
-    await expect(selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false })).rejects.toThrow(
+    await expect(
+      selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false }),
+    ).rejects.toThrow(
       /No supported ACP-capable coding agent.*codex.*claude.*goose.*pi.*--agent reference.*LLM key.*--agent custom/s,
     );
   });
@@ -110,6 +112,19 @@ describe('pair agent auto-selection', () => {
       args: ['agent', 'stdio'],
     });
     expect(log.text()).toContain('[beeline] using grok (auto-detected)');
+  });
+
+  it('pairs an installed OpenCode through its ACP subcommand', async () => {
+    const directory = await executables('opencode');
+    const selected = await selectPairAgentCommand({
+      env: { ...PATH_ONLY, PATH: directory },
+      interactive: false,
+    });
+    expect(selected).toEqual({
+      kind: 'opencode',
+      command: resolve(directory, 'opencode'),
+      args: ['acp'],
+    });
   });
 
   it('refuses to guess among several detected agents without a TTY', async () => {

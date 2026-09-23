@@ -46,7 +46,6 @@ import {
 } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { artifactFormat } from '@/buzz/artifact';
-import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { ArtifactCard } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
@@ -1271,11 +1270,9 @@ function AttachmentCard({
     };
   }, [image]);
   const open = () => {
+    // A picture opens the same centered full-screen viewer on every surface,
+    // desktop included; the work pane keeps only its documents.
     if (attachment.mimeType.startsWith('image/')) {
-      if (isDesktop) {
-        openArtifactInDesktopWorkPane({ attachment });
-        return;
-      }
       Modal.show({
         component: ArtifactViewerScreen,
         props: { attachment },

@@ -86,7 +86,11 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     [activeAttachment],
   );
   const openFull = useCallback(() => {
-    if (isDesktop) {
+    // A picture is not a document: every surface opens the same centered
+    // full-screen viewer, so desktop reads an image the way mobile does. The
+    // work pane keeps its documents — its sandboxed iframe is the right shape
+    // for markup and PDFs, not for a raster.
+    if (isDesktop && format !== 'image') {
       openArtifactInDesktopWorkPane({
         attachment: activeAttachment,
         authorHandle: activeAuthorHandle,
@@ -101,7 +105,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       // nothing — a dimmed room with an invisible viewer.
       placement: 'fill',
     });
-  }, [activeAttachment, activeAuthorHandle, isDesktop]);
+  }, [activeAttachment, activeAuthorHandle, format, isDesktop]);
 
   // What is left external is what nothing on the device can paint — a ZIP, an
   // octet-stream, anything unrecognized. Those keep the file-style row and the

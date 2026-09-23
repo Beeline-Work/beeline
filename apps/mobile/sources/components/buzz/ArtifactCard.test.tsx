@@ -504,9 +504,9 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(renderer.root.findAllByProps({ testID: 'artifact-photo-position' })).toHaveLength(0);
   });
 
-  // The audit found desktop had no image viewer at all: Open was gone and the
-  // browser link was the only way to see the picture.
-  it('opens a photo in the desktop work pane, with the browser link still there', async () => {
+  // The desktop work pane is for documents: a picture opens the same centered
+  // full-screen viewer mobile gets, with the browser link still on the card.
+  it('opens a desktop photo in the centered viewer, with the browser link still there', async () => {
     mocks.platformOS.value = 'web';
     const renderer = render(
       <ArtifactCard
@@ -521,7 +521,8 @@ describe('the artifact card is the preview (mock 1b)', () => {
     await act(async () => {
       hostNodes(renderer, 'artifact-open')[0]!.props.onPress();
     });
-    expect(mocks.openArtifactInDesktopWorkPane).toHaveBeenCalled();
+    expect(mocks.modalShow).toHaveBeenCalled();
+    expect(mocks.openArtifactInDesktopWorkPane).not.toHaveBeenCalled();
   });
 
   // The desktop host has no WebView to snapshot, so the card paints page one in
@@ -556,7 +557,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(mocks.modalShow).toHaveBeenCalled();
   });
 
-  it('Open on desktop routes to the work pane, never the modal', async () => {
+  it('Open on desktop sends a document to the work pane, never the modal', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} isDesktop />);
     await flush();

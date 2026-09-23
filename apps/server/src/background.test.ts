@@ -623,7 +623,7 @@ describe('background advisory-lock ownership', () => {
           }),
           '7'.repeat(64),
           directRoom,
-          '8'.repeat(64),
+          '9'.repeat(64),
           JSON.stringify({
             direction: 'up',
             cornerId: directRoom,

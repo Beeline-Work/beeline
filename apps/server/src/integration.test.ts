@@ -266,6 +266,7 @@ describe('monolith integration', () => {
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
+      'authorizeSquireCall',
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
@@ -8712,6 +8713,174 @@ describe('monolith integration', () => {
         )
       ).rows[0]!.card.grants[0]!.status,
     ).toBe('denied');
+  });
+
+  it('does not let a non-owner requester use mounted Squire without that owner\'s applicable approval', async () => {
+    const MACHINE = 'machine-squire-box';
+    const SIBLING = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`,
+      [SIBLING],
+    );
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`,
+      [SIBLING, HUMAN, MACHINE],
+    );
+    await database.query(`UPDATE agents SET machine_id=$2 WHERE agent_id=$1`, [AGENT, MACHINE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, SIBLING],
+    );
+
+    expect(
+      (
+        await operation('pairConnector', {
+          workspaceId: WORKSPACE,
+          connectorType: 'trusty-squire',
+          helperAgentId: AGENT,
+        })
+      ).status,
+    ).toBe(200);
+
+    const machineGrants = await database.query<{
+      agent_id: string;
+      requested_by: string;
+      decided_by: string;
+      status: string;
+      kind: string;
+      target: string;
+    }>(
+      `SELECT agent_id,requested_by,decided_by,status,kind,target FROM agent_grants
+       WHERE kind='mcp' AND target='squire' AND status='approved' ORDER BY agent_id`,
+    );
+    expect(machineGrants.rows).toEqual([
+      expect.objectContaining({
+        agent_id: AGENT,
+        requested_by: HUMAN,
+        decided_by: HUMAN,
+        status: 'approved',
+        kind: 'mcp',
+        target: 'squire',
+      }),
+      expect.objectContaining({
+        agent_id: SIBLING,
+        requested_by: HUMAN,
+        decided_by: HUMAN,
+        status: 'approved',
+        kind: 'mcp',
+        target: 'squire',
+      }),
+    ]);
+
+    const mounted = (await (
+      await daemonOperation('listAgentGrants', { roomId: ROOM })
+    ).json()) as { grants: Array<{ kind: string; target: string; requestedBy: string }> };
+    expect(mounted.grants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'mcp', target: 'squire', requestedBy: HUMAN }),
+      ]),
+    );
+
+    const memberToken = await phoneToken('squire-caller');
+    const requesterId = createHash('sha256').update('github:squire-caller').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: requesterId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
+    const sourceId = createHash('sha256').update('squire-non-owner-call').digest('hex');
+    expect(
+      (
+        await operation(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: sourceId,
+            text: '@bee use Squire',
+            mentions: [AGENT],
+          },
+          memberToken,
+        )
+      ).status,
+    ).toBe(200);
+
+    const held = (await (
+      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: sourceId })
+    ).json()) as {
+      allowed: boolean;
+      grantId: string;
+      status: string;
+      messageId: string;
+    };
+    expect(held).toEqual(
+      expect.objectContaining({ allowed: false, status: 'pending', grantId: expect.any(String) }),
+    );
+    const card = (
+      await database.query<{
+        room_id: string;
+        author_id: string;
+        card: { requester: { pubkey: string }; grants: Array<{ target: string; status: string }> };
+      }>(`SELECT room_id,author_id,card FROM messages WHERE id=$1`, [held.messageId])
+    ).rows[0]!;
+    expect(card.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(card.room_id).not.toBe(ROOM);
+    expect(card.card.requester.pubkey).toBe(requesterId);
+    expect(card.card.grants).toEqual([
+      expect.objectContaining({ target: 'squire', status: 'pending' }),
+    ]);
+
+    expect(
+      (await operation('decideAgentGrant', { grantId: held.grantId, decision: 'always' })).status,
+    ).toBe(200);
+    const allowed = (await (
+      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: sourceId })
+    ).json()) as { allowed: boolean };
+    expect(allowed.allowed).toBe(true);
+
+    const otherToken = await phoneToken('squire-other');
+    const otherId = createHash('sha256').update('github:squire-other').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: otherId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: otherId });
+    const otherSource = createHash('sha256').update('squire-other-call').digest('hex');
+    expect(
+      (
+        await operation(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: otherSource,
+            text: '@bee use Squire too',
+            mentions: [AGENT],
+          },
+          otherToken,
+        )
+      ).status,
+    ).toBe(200);
+    const otherHeld = (await (
+      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: otherSource })
+    ).json()) as { allowed: boolean; status: string };
+    expect(otherHeld).toEqual(expect.objectContaining({ allowed: false, status: 'pending' }));
+
+    const ownerSource = createHash('sha256').update('squire-owner-call').digest('hex');
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: ROOM,
+          messageId: ownerSource,
+          text: '@bee use Squire',
+          mentions: [AGENT],
+        })
+      ).status,
+    ).toBe(200);
+    const ownerPass = (await (
+      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: ownerSource })
+    ).json()) as { allowed: boolean };
+    expect(ownerPass.allowed).toBe(true);
   });
 
   /**

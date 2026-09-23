@@ -122,6 +122,7 @@ import {
   defaultConnectorSteps,
   dmParticipantsIncludeConnectorIdentity,
   ensureConnectorDirectMessageRoom,
+  grantSquireToOwnerMachineAgents,
   isConnectableConnector,
   isMetadataStale,
 } from './workbench.js';
@@ -2464,6 +2465,21 @@ export class PhoneService {
             [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
           );
         }
+      }
+      const machineId = input.machineId || input.agentPubkey;
+      const squireOnMachine = await database.query(
+        `SELECT 1 FROM workspace_connectors
+         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type='trusty-squire'
+           AND machine_id=$3 AND status IN ('installing','connected')`,
+        [pairing.workspace_id, pairing.created_by, machineId],
+      );
+      if (squireOnMachine.rowCount) {
+        await grantSquireToOwnerMachineAgents(database, {
+          workspaceId: pairing.workspace_id,
+          ownerIdentityId: pairing.created_by,
+          machineId,
+          agentId: input.agentPubkey,
+        });
       }
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
@@ -6337,6 +6353,13 @@ export class PhoneService {
       input.connectorType,
       viewerId,
     );
+    if (input.connectorType === 'trusty-squire') {
+      await grantSquireToOwnerMachineAgents(database, {
+        workspaceId: ws.workspace_id,
+        ownerIdentityId: viewerId,
+        machineId,
+      });
+    }
     return {
       connectorId: existing.id,
       status: {

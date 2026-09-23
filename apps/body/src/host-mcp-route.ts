@@ -13,6 +13,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import {
   classifyImportedMcpServer,
+  hasSquireBrokerEnvironment,
   isCodeOwnedHostMcpName,
   MCP_ROUTE_CLASS_KEY,
 } from './mcp-route-class.js';
@@ -100,7 +101,10 @@ function isSquireDeclaration(name: string, declaration: Record<string, unknown>)
     (typeof declaration.command === 'string' && declaration.command) ||
     (typeof declaration.cmd === 'string' && declaration.cmd) ||
     '';
-  return Boolean(command) && isTrustySquireMcpLaunch(command, stringArray(declaration.args));
+  return (
+    (Boolean(command) && isTrustySquireMcpLaunch(command, stringArray(declaration.args))) ||
+    hasSquireBrokerEnvironment(declaration)
+  );
 }
 
 /** True when a granted name resolves to a Squire host route. */
@@ -108,7 +112,15 @@ export function grantedSquireHostRoute(
   granted: readonly string[],
   declarations: Record<string, Record<string, unknown>> = {},
 ): boolean {
-  return granted.some((name) => {
+  return grantedSquireHostRouteNames(granted, declarations).length > 0;
+}
+
+/** Granted route identities whose declarations mount the Squire façade. */
+export function grantedSquireHostRouteNames(
+  granted: readonly string[],
+  declarations: Record<string, Record<string, unknown>> = {},
+): string[] {
+  return granted.filter((name) => {
     if (isCodeOwnedHostMcpName(name)) return true;
     const declaration = declarations[name];
     return Boolean(declaration && isSquireDeclaration(name, declaration));

@@ -33,6 +33,41 @@ export async function notifyConnectorHelper(
   if (row?.helper_agent_id) await notifyConnectorAssignment(database, row.helper_agent_id);
 }
 
+/**
+ * Hot-restart wake: every daemon live subscription of these Rooms filters on
+ * the target agent, so idle retained sessions retire and the next turn
+ * cold-activates against the current MCP set.
+ */
+export async function notifyAgentConfigChange(
+  database: Pick<SqlDatabase, 'query'>,
+  agentId: string,
+  workspaceId?: string,
+): Promise<void> {
+  const rooms = await database.query<{ room_id: string }>(
+    workspaceId
+      ? `SELECT membership.room_id FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.identity_id=$1 AND membership.workspace_id=$2
+           AND membership.removed_at IS NULL AND room.archived_at IS NULL`
+      : `SELECT membership.room_id FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.identity_id=$1
+           AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
+    workspaceId ? [agentId, workspaceId] : [agentId],
+  );
+  for (const room of rooms.rows) {
+    await database.query(`SELECT pg_notify($1, $2)`, [
+      POSTGRES_LIVE_CHANNEL,
+      JSON.stringify({
+        table: 'agent_config',
+        operation: 'UPDATE',
+        roomId: room.room_id,
+        agentId,
+      }),
+    ]);
+  }
+}
+
 export const POSTGRES_LIVE_SCHEMA = `
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE

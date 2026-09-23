@@ -42,8 +42,23 @@ export function classifyImportedMcpServer(input: ImportedMcpServerInput): McpRou
   const command = input.command ?? mcpLaunchCommand(input.declaration);
   const args = input.args ?? mcpLaunchArgs(input.declaration);
   if (command && isTrustySquireMcpLaunch(command, args)) return 'host';
+  if (hasSquireBrokerEnvironment(input.declaration)) return 'host';
   if (operatorMarkedHost(input.declaration)) return 'host';
   return 'local';
+}
+
+/** An already configured broker route still carries Squire authority. */
+export function hasSquireBrokerEnvironment(
+  declaration: Record<string, unknown> | undefined,
+): boolean {
+  if (!declaration) return false;
+  for (const key of ['env', 'envs']) {
+    const env = declaration[key];
+    if (!env || typeof env !== 'object' || Array.isArray(env)) continue;
+    const socket = (env as Record<string, unknown>).TRUSTY_SQUIRE_BROKER_SOCKET;
+    if (typeof socket === 'string' && socket.trim()) return true;
+  }
+  return false;
 }
 
 export function hostMcpIdentityPrefixes(name: string): string[] {

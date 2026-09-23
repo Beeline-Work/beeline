@@ -20,7 +20,12 @@ import {
   hostImportedMcpDeclarations,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
+import {
+  claimGrantedHostRoutes,
+  grantedHostRouteWires,
+  grantedSquireHostRouteNames,
+} from './host-mcp-route.js';
+import { decideSquirePermission } from './read-only-policy.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -843,6 +848,11 @@ export class MonolithCornerTurnLoop {
       command,
       args: agentArgs,
     });
+    const hostDeclarations = hostImportedMcpDeclarations({
+      operatorHome,
+      agentKind: this.options.config.agentKind,
+    });
+    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,
@@ -850,7 +860,14 @@ export class MonolithCornerTurnLoop {
       agentCwd: this.options.worktreePath,
       agentLabel: harnessLabel,
       autoApprovePermissions: true,
-      permissionHandler: () => Promise.resolve('allow'),
+      permissionHandler: async (request) => {
+        const squire = await decideSquirePermission(
+          request,
+          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.cornerId }),
+          squireRoutes,
+        );
+        return squire ?? 'allow';
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,
@@ -931,10 +948,7 @@ export class MonolithCornerTurnLoop {
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
-      hostImportedMcpDeclarations({
-        operatorHome,
-        agentKind: this.options.config.agentKind,
-      }),
+      hostDeclarations,
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and

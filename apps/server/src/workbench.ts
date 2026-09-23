@@ -15,7 +15,9 @@ import {
   type WorkbenchCatalogEntry,
 } from '@beeline/api-contract/workbench';
 import type { ConnectionGrant } from '@beeline/api-contract/daemon';
+import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { notifyAgentConfigChange } from './postgres-live.js';
 import {
   directMessageRoomId,
   restateSystemLine,
@@ -439,3 +441,74 @@ export function defaultConnectorSteps(): readonly ConnectorStep[] {
     { label: 'Connect provider account', status: 'pending' },
   ];
 }
+
+const SQUIRE_MACHINE_GRANT_REASON = 'Trusty Squire connected on this machine';
+
+/**
+ * Standing owner-approved mcp/squire grants for every agent this person owns
+ * on this machine, recorded in the grant ledger. Idle sessions restart through
+ * the existing agent-config wake so the next turn mounts the route.
+ */
+export async function grantSquireToOwnerMachineAgents(
+  database: SqlDatabase,
+  input: {
+    workspaceId: string;
+    ownerIdentityId: string;
+    machineId: string;
+    agentId?: string;
+  },
+): Promise<string[]> {
+  const dmRoomId = await ensureConnectorDirectMessageRoom(
+    database,
+    input.workspaceId,
+    'trusty-squire',
+    input.ownerIdentityId,
+  );
+  const agents = await database.query<{ agent_id: string }>(
+    input.agentId
+      ? `SELECT a.agent_id FROM agents a
+         JOIN memberships m ON m.identity_id=a.agent_id AND m.workspace_id=$1
+           AND m.room_id IS NULL AND m.removed_at IS NULL
+         WHERE a.agent_id=$4 AND a.owner_id=$2
+           AND COALESCE(a.machine_id, a.agent_id)=$3`
+      : `SELECT a.agent_id FROM agents a
+         JOIN memberships m ON m.identity_id=a.agent_id AND m.workspace_id=$1
+           AND m.room_id IS NULL AND m.removed_at IS NULL
+         WHERE a.owner_id=$2 AND COALESCE(a.machine_id, a.agent_id)=$3`,
+    input.agentId
+      ? [input.workspaceId, input.ownerIdentityId, input.machineId, input.agentId]
+      : [input.workspaceId, input.ownerIdentityId, input.machineId],
+  );
+  const granted: string[] = [];
+  for (const agent of agents.rows) {
+    const inserted = await database.query<{ id: string }>(
+      `INSERT INTO agent_grants(
+         id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
+         decided_by,decided_at,auto
+       )
+       SELECT $1,$2,$3,'mcp',$4,$5,$6,$7,'approved',$6,now(),false
+       WHERE NOT EXISTS (
+         SELECT 1 FROM agent_grants
+         WHERE agent_id=$2 AND workspace_id=$3 AND kind='mcp' AND target=$4
+           AND requested_by=$6 AND status IN ('approved','once')
+           AND (expires_at IS NULL OR expires_at>now())
+       )
+       RETURNING id`,
+      [
+        randomUUID(),
+        agent.agent_id,
+        input.workspaceId,
+        SQUIRE_MCP_TARGET,
+        SQUIRE_MACHINE_GRANT_REASON,
+        input.ownerIdentityId,
+        dmRoomId,
+      ],
+    );
+    if (inserted.rowCount) {
+      granted.push(agent.agent_id);
+      await notifyAgentConfigChange(database, agent.agent_id, input.workspaceId);
+    }
+  }
+  return granted;
+}
+

@@ -31,6 +31,7 @@ import {
 import {
   claimGrantedHostRoutes,
   grantedHostRouteWires,
+  grantedSquireHostRouteNames,
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -55,6 +56,7 @@ import {
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
+  decideSquirePermission,
   isHostMcpPermissionRequest,
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
@@ -725,13 +727,15 @@ export class MonolithRoomTurnLoop {
     }
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
+    const hostDeclarations = hostImportedMcpDeclarations({
+      operatorHome,
+      agentKind: this.options.config.agentKind,
+    });
+    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
-      hostImportedMcpDeclarations({
-        operatorHome,
-        agentKind: this.options.config.agentKind,
-      }),
+      hostDeclarations,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
@@ -771,8 +775,15 @@ export class MonolithRoomTurnLoop {
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
-      permissionAllowlist: (request) =>
-        isRoomMcpPermissionRequest(request, mountedServers, hostServers),
+      permissionHandler: async (request) => {
+        if (!isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'reject';
+        const squire = await decideSquirePermission(
+          request,
+          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.roomId }),
+          squireRoutes,
+        );
+        return squire ?? 'allow';
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,

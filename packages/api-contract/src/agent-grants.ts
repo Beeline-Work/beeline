@@ -363,3 +363,47 @@ export function interpreterScriptArgument(
   }
   return undefined;
 }
+
+/** The mcp grant target that mounts Trusty Squire. */
+export const SQUIRE_MCP_TARGET = 'squire';
+
+export function isSquireMcpGrant(grant: { kind: string; target: string }): boolean {
+  return grant.kind === 'mcp' && grant.target.trim() === SQUIRE_MCP_TARGET;
+}
+
+/** A live grant the per-call Squire gate can match against a turn requester. */
+export type SquireCallGrant = {
+  readonly grantId?: string;
+  readonly kind: string;
+  readonly target: string;
+  readonly status: string;
+  readonly requestedBy: string;
+};
+
+/**
+ * Whether this turn's requester may call a mounted Squire. The owner's turns
+ * pass. Anyone else needs a live mcp/squire grant whose `requestedBy` is them
+ * — Always is requester-specific, never agent+workspace alone.
+ */
+export function squireCallAllowed(input: {
+  requesterId: string;
+  ownerId: string;
+  grants: readonly SquireCallGrant[];
+}): { allowed: true; grantId?: string; consume?: boolean } | { allowed: false } {
+  if (input.requesterId === input.ownerId) return { allowed: true };
+  const live = input.grants.filter(
+    (grant) =>
+      isSquireMcpGrant(grant) &&
+      (grant.status === 'approved' || grant.status === 'once') &&
+      grant.requestedBy === input.requesterId,
+  );
+  const match =
+    live.find((grant) => grant.status === 'approved') ?? live.find((grant) => grant.status === 'once');
+  if (!match) return { allowed: false };
+  return {
+    allowed: true,
+    ...(match.grantId ? { grantId: match.grantId } : {}),
+    ...(match.status === 'once' ? { consume: true } : {}),
+  };
+}
+

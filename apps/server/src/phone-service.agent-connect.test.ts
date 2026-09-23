@@ -610,6 +610,55 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(result.helpers[0]!.id).toBe(AGENT_A); // falls back to agent_id
   });
 
+  it('grants Squire to a future owner agent pairing onto the connected machine', async () => {
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+    const existing = await database.query<{ agent_id: string; requested_by: string; decided_by: string }>(
+      `SELECT agent_id,requested_by,decided_by FROM agent_grants
+       WHERE kind='mcp' AND target='squire' AND status='approved'`,
+    );
+    expect(existing.rows).toEqual([
+      { agent_id: AGENT_A, requested_by: OWNER, decided_by: OWNER },
+    ]);
+
+    const code = 'ABCD1234-EF567890';
+    await database.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
+       VALUES($1,$2,$3,$4)`,
+      [
+        createHash('sha256').update(code).digest('hex'),
+        WORKSPACE,
+        OWNER,
+        new Date(Date.now() + 60_000),
+      ],
+    );
+    const claim = await phone.claimAgentConnectPairing({
+      code,
+      agentPubkey: AGENT_B,
+      model: 'gpt-5.4',
+      machineId: MACHINE_X,
+      machineName: 'squire-box',
+    });
+    expect(claim.status).toBe('claimed');
+    const granted = await database.query<{
+      agent_id: string;
+      requested_by: string;
+      decided_by: string;
+      status: string;
+    }>(
+      `SELECT agent_id,requested_by,decided_by,status FROM agent_grants
+       WHERE kind='mcp' AND target='squire' AND status='approved' ORDER BY agent_id`,
+    );
+    expect(granted.rows).toEqual([
+      { agent_id: AGENT_A, requested_by: OWNER, decided_by: OWNER, status: 'approved' },
+      { agent_id: AGENT_B, requested_by: OWNER, decided_by: OWNER, status: 'approved' },
+    ]);
+  });
+
   it('pairing by machine_id creates one connector shared by both agents on that machine', async () => {
     await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
     await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');

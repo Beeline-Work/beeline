@@ -206,6 +206,12 @@ export type DaemonOperationMap = {
   openRoomPoll: Operation<OpenRoomPollInput, AskRoomChoiceResult>;
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
+  /**
+   * Per-call Squire gate: the owner's turns pass; any other requester needs a
+   * live mcp/squire grant keyed to them. A miss posts the existing Once/Always/No
+   * card in the owner's Trusty Squire DM and returns pending.
+   */
+  authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
   readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;
   /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
@@ -705,6 +711,13 @@ export type AgentGrantListResult = {
 };
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
+export type AuthorizeSquireCallInput = TurnOutputAuthority & RoomInput;
+export type AuthorizeSquireCallResult = {
+  readonly allowed: boolean;
+  readonly grantId?: string;
+  readonly status?: AgentGrantStatus;
+  readonly messageId?: string;
+};
 
 // ── Connector offers (R5) ─────────────────────────────────────────
 

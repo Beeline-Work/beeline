@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -135,7 +136,10 @@ describe('pi MCP bridge, against a live stdio MCP server', () => {
     parameters: unknown;
     execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<unknown>;
   };
-  async function bridgeFor(): Promise<{
+  async function bridgeFor(
+    name = 'beeline-agent',
+    authorizationEnv: Record<string, string> = {},
+  ): Promise<{
     tools: Map<string, BridgedTool>;
     readCalls: () => Promise<{ params: { name: string; arguments: unknown }; surface: string }[]>;
   }> {
@@ -171,11 +175,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       bridgePath,
       piMcpBridgeSource([
         {
-          name: 'beeline-agent',
+          name,
           command: process.execPath,
           args: [serverPath],
-          env: [{ name: 'BEELINE_MCP_SURFACE', value: 'agent' }],
+          env: [
+            { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
+            ...(name === 'vault'
+              ? [{ name: 'TRUSTY_SQUIRE_BROKER_SOCKET', value: '/host/broker.sock' }]
+              : []),
+          ],
         },
+        ...(name === 'beeline-agent'
+          ? []
+          : [
+              {
+                name: 'beeline-agent',
+                command: process.execPath,
+                args: [serverPath],
+                env: Object.entries(authorizationEnv).map(([name, value]) => ({ name, value })),
+              },
+            ]),
       ]),
       'utf8',
     );
@@ -195,6 +214,64 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           .map((line) => JSON.parse(line)),
     };
   }
+
+  it.each(['squire', 'vault'])(
+    'gates every Pi %s call against the current turn before contacting Squire',
+    async (name) => {
+      const root = await home();
+      const contextPath = resolve(root, 'turn.json');
+      const context = { roomId: 'room', requestId: 'request-1', generationId: 'generation' };
+      await writeFile(contextPath, JSON.stringify(context));
+      let verdict: unknown = { allowed: false };
+      let status = 200;
+      const requests: unknown[] = [];
+      const server = createServer(async (request, response) => {
+        expect(request.url).toBe('/v1/daemon/operations/authorizeSquireCall');
+        expect(request.headers.authorization).toBe('Bearer daemon-token');
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        requests.push(JSON.parse(body));
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(verdict));
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const address = server.address() as { port: number };
+        const { tools, readCalls } = await bridgeFor(name, {
+          BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${address.port}`,
+          BEELINE_DAEMON_TOKEN: 'daemon-token',
+          BEELINE_TURN_CONTEXT_FILE: contextPath,
+        });
+        const tool = tools.get(`${name}__subscribe_events`)!;
+        await expect(tool.execute('denied', {})).rejects.toThrow();
+        expect(await readCalls()).toEqual([]);
+        expect(requests).toEqual([context]);
+        verdict = { allowed: true };
+        await tool.execute('approved', {});
+        expect(await readCalls()).toHaveLength(1);
+        await writeFile(contextPath, JSON.stringify({ ...context, requestId: 'request-2' }));
+        verdict = { allowed: false };
+        await expect(tool.execute('different-requester', {})).rejects.toThrow();
+        expect(requests.at(-1)).toEqual({ ...context, requestId: 'request-2' });
+        verdict = { allowed: 'true' };
+        await expect(tool.execute('malformed', {})).rejects.toThrow();
+        status = 503;
+        verdict = { allowed: true };
+        await expect(tool.execute('unavailable', {})).rejects.toThrow();
+        await writeFile(contextPath, '{}');
+        await expect(tool.execute('missing-context', {})).rejects.toThrow();
+        expect(await readCalls()).toHaveLength(1);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+      const { tools, readCalls } = await bridgeFor(name);
+      await expect(
+        tools.get(`${name}__subscribe_events`)!.execute('no-auth', {}),
+      ).rejects.toThrow();
+      expect(await readCalls()).toEqual([]);
+    },
+  );
 
   it('republishes every tool the server lists, with its own schema', async () => {
     const { tools } = await bridgeFor();

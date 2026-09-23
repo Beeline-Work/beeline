@@ -2092,6 +2092,24 @@ describe('thin monolith corner turn', () => {
     );
     expect(rawOnly.output).toBe('first\n\nsecond');
 
+    const grokError = await cornerToolActivity(
+      {
+        id: 'grok-error',
+        kind: 'execute',
+        title: 'open_corner',
+        status: 'failed',
+        rawOutput: {
+          type: 'MCP',
+          tool_name: 'open_corner',
+          server_name: 'beeline-agent',
+          output: { Error: 'the objective is 43 words; the limit is 24' },
+          is_error: true,
+        },
+      },
+      '/worktree',
+    );
+    expect(grokError.output).toBe('the objective is 43 words; the limit is 24');
+
     await expect(
       cornerToolActivity(
         {

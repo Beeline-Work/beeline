@@ -270,6 +270,7 @@ function outputText(value: unknown): string {
   if (Array.isArray(value)) return value.map(outputText).filter(Boolean).join('\n');
   const object = record(value);
   if (!object) return '';
+  const entries = Object.entries(object);
   for (const key of [
     'formatted_output',
     'stdout',
@@ -279,9 +280,11 @@ function outputText(value: unknown): string {
     'content',
     'message',
     'result',
+    'error',
   ]) {
-    if (key in object) {
-      const text = outputText(object[key]);
+    for (const [entryKey, entryValue] of entries) {
+      if (entryKey.toLowerCase() !== key) continue;
+      const text = outputText(entryValue);
       if (text) return text;
     }
   }

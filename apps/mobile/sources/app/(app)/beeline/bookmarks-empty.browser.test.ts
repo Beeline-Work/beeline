@@ -21,7 +21,6 @@ function dataShims(mobile: string): Record<string, string> {
     '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => null;`,
-    '@/buzz/bookmark-events': 'export const publishBookmarkChange = () => undefined;',
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     '@expo/vector-icons': `import React from 'react';
     export const Ionicons = (props) => React.createElement('span', { 'data-icon': props.name });`,

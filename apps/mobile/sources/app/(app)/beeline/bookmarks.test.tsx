@@ -80,7 +80,6 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     room = roomRead;
   },
 }));
-vi.mock('@/buzz/bookmark-events', () => ({ publishBookmarkChange: vi.fn() }));
 vi.mock('@/components/DesktopRoomInspector', async () => {
   const ReactModule = await import('react');
   return {

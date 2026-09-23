@@ -273,7 +273,6 @@ import {
   monolithPhoneOperation,
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
-import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   forwardMessageToRoom,
@@ -3031,8 +3030,6 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        if (activeCommunityId)
-          publishBookmarkChange({ workspaceId: activeCommunityId, bookmarked });
         refreshSignal.force();
       } catch (error) {
         setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));

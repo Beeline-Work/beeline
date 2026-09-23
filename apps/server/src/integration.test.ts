@@ -2778,6 +2778,13 @@ describe('monolith integration', () => {
     expect((await daemonOperation('postAgentActivity', pinnedInput)).status).toBe(200);
     expect((await daemonOperation('postAgentActivity', pinnedInput)).status).toBe(200);
 
+    const conversation = await daemonOperation('getRoomConversation', {
+      roomId: cornerId,
+      narrationRequestId: input.requestId,
+    });
+    expect(conversation.status).toBe(200);
+    expect((await conversation.json()).savedNarration).toEqual(['I inspected the package.']);
+
     const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
     expect(isRoomView(reopened)).toBe(true);
     const replayed = reopened.toolRows?.filter(

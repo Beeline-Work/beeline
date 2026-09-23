@@ -264,6 +264,8 @@ export type RoomCursorInput = RoomInput & {
 export type RoomConversationWindow = 'recent' | 'earliest' | 'continuity';
 export type RoomConversationInput = RoomCursorInput & {
   readonly window?: RoomConversationWindow;
+  /** Include narration already saved for this turn, so a retry can avoid repeating it. */
+  readonly narrationRequestId?: string;
 };
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
 export type CornerCursorInput = CornerInput & {
@@ -352,7 +354,10 @@ export type DaemonAttachment = {
   readonly size?: number;
   readonly thumbnailUrl?: string;
 };
-export type RoomConversationResult = RoomInboxResult;
+export type RoomConversationResult = RoomInboxResult & {
+  /** Durable corner output text for narrationRequestId, scoped to the reading agent. */
+  readonly savedNarration?: readonly string[];
+};
 export type RoomAuthorityResult = {
   readonly workspaceId: string;
   readonly role?: 'owner' | 'admin' | 'member';

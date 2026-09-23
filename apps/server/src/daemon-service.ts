@@ -1608,6 +1608,20 @@ export class DaemonService {
     const expiredMedia = await this.expiredMediaIds(
       visiblePage.flatMap((row) => row.attachments ?? []),
     );
+    const savedNarration =
+      name === 'getRoomConversation' && input.narrationRequestId
+        ? (
+            await this.database.query<{ text: string }>(
+              `SELECT item->>'text' text FROM messages message,
+                      jsonb_array_elements(message.activity) item
+               WHERE message.room_id=$1 AND message.author_id=$2
+                 AND message.request_id=$3 AND message.presentation='activity'
+                 AND item->>'kind'='output' AND item->>'text' IS NOT NULL
+               ORDER BY message.created_at,message.id`,
+              [roomId, agentId, input.narrationRequestId],
+            )
+          ).rows.map((row) => row.text)
+        : undefined;
     // Same future-stamp rule as the startAtLatest high-water: the returned
     // cursor advances only onto rows the clock has reached. A not-yet-settled
     // line is still DELIVERED (it mentions nobody whose daemon it could
@@ -1638,6 +1652,7 @@ export class DaemonService {
         ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
       ...(cursor ? { cursor } : {}),
+      ...(savedNarration ? { savedNarration } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
   }

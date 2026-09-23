@@ -404,6 +404,25 @@ describe('relay tools', () => {
       'getRoomConversation',
     ]);
   });
+  it('passes a transcript cursor only after listing the member corner', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(
+      door.origin,
+      {
+        cornerId: CORNER,
+        earliest: true,
+        after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      { name: 'inspect_corner' },
+    );
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls.find((call) => call.operation === 'getRoomConversation')).toMatchObject({
+      roomId: CORNER,
+      limit: 200,
+      window: 'earliest',
+      after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+  });
   it('refuses steering from a corner turn', async () => {
     const door = await daemonDoor();
     const steer = await callTool(

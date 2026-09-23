@@ -365,11 +365,15 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'inspect_corner',
     description:
-      'Read the status and newest transcript page of a corner you belong to in this Room.',
+      'Read the status and newest transcript page of a corner you belong to in this Room. Pass after from a previous earliest page to walk older history.',
     inputSchema: {
       type: 'object',
       required: ['cornerId'],
-      properties: { cornerId: { type: 'string' } },
+      properties: {
+        cornerId: { type: 'string' },
+        after: { type: 'string', description: 'Opaque cursor from a previous earliest page.' },
+        earliest: { type: 'boolean', description: 'Start at the oldest page.' },
+      },
       additionalProperties: false,
     },
   },
@@ -2776,6 +2780,10 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
       if (typeof args.cornerId !== 'string' || !args.cornerId)
         throw new Error('cornerId is required');
+      if (args.after !== undefined && (typeof args.after !== 'string' || !args.after))
+        throw new Error('after must be a nonempty cursor');
+      if (args.earliest !== undefined && typeof args.earliest !== 'boolean')
+        throw new Error('earliest must be true or false');
       const corners = await daemonExecute('listRoomCorners', { roomId });
       if (
         !Array.isArray(corners.corners) ||
@@ -2789,7 +2797,12 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
         throw new Error('corner is not available in this Room');
       const [status, transcript] = await Promise.all([
         daemonExecute('getCornerRestoreState', { cornerId: args.cornerId }),
-        daemonExecute('getRoomConversation', { roomId: args.cornerId, limit: 200 }),
+        daemonExecute('getRoomConversation', {
+          roomId: args.cornerId,
+          limit: 200,
+          ...(args.after ? { after: args.after } : {}),
+          ...(args.earliest ? { window: 'earliest' } : {}),
+        }),
       ]);
       return JSON.stringify({ status, transcript });
     }

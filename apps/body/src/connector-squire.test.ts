@@ -21,6 +21,7 @@ import {
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
   revokeGrants,
+  SQUIRE_CONNECT_PACKAGE,
   squireConnectProcessEnv,
   squireConnectSession,
   squireProfileLockPath,
@@ -520,8 +521,8 @@ describe('installSquire', () => {
   it('verifies the resolved version, then runs connect with --json', async () => {
     const streamInvocations: string[][] = [];
     const { run, invocations } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.16' },
     ]);
     await installSquire({
       workspaceId: 'ws-1',
@@ -542,11 +543,11 @@ describe('installSquire', () => {
     });
     // Verification (registry read + npx probe) happens BEFORE connect runs.
     expect(invocations).toEqual([
-      ['npm', 'view', '@trusty-squire/mcp@1.1.16-rc.4', 'version'],
-      ['npx', '-y', '@trusty-squire/mcp@1.1.16-rc.4', '--version'],
+      ['npm', 'view', '@trusty-squire/mcp@latest', 'version'],
+      ['npx', '-y', '@trusty-squire/mcp@latest', '--version'],
     ]);
     expect(streamInvocations).toEqual([
-      ['npx', '-y', '@trusty-squire/mcp@1.1.16-rc.4', 'connect', '--target=codex', '--json'],
+      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--target=codex', '--json'],
     ]);
   });
 
@@ -681,63 +682,67 @@ describe('installSquire', () => {
 });
 
 describe('version resolution', () => {
-  it('accepts the plain pinned spec when npx already resolves that release', async () => {
+  it('tracks the latest dist-tag, never a source-level version pin', () => {
+    expect(SQUIRE_CONNECT_PACKAGE).toBe('@trusty-squire/mcp@latest');
+  });
+
+  it('accepts the plain latest spec when npx already resolves that release', async () => {
     const { run, invocations } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.16' },
     ]);
     const resolution = await resolveSquireConnectSpec(run);
     expect(resolution).toEqual({
-      npxArgs: ['-y', '@trusty-squire/mcp@1.1.16-rc.4'],
-      resolvedVersion: '1.1.16-rc.4',
-      currentRelease: '1.1.16-rc.4',
+      npxArgs: ['-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.16',
+      currentRelease: '1.1.16',
       reResolved: false,
     });
-    expect(invocations[0]).toEqual(['npm', 'view', '@trusty-squire/mcp@1.1.16-rc.4', 'version']);
+    expect(invocations[0]).toEqual(['npm', 'view', '@trusty-squire/mcp@latest', 'version']);
   });
 
   it('detects a stale npx copy and re-resolves with --prefer-online', async () => {
     const { run, invocations } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.3' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.15' },
+      { stdout: '1.1.16' },
     ]);
     const resolution = await resolveSquireConnectSpec(run);
     expect(resolution).toEqual({
-      npxArgs: ['--prefer-online', '-y', '@trusty-squire/mcp@1.1.16-rc.4'],
-      resolvedVersion: '1.1.16-rc.4',
-      currentRelease: '1.1.16-rc.4',
+      npxArgs: ['--prefer-online', '-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.16',
+      currentRelease: '1.1.16',
       reResolved: true,
     });
     expect(invocations[2]).toEqual([
       'npx',
       '--prefer-online',
       '-y',
-      '@trusty-squire/mcp@1.1.16-rc.4',
+      '@trusty-squire/mcp@latest',
       '--version',
     ]);
   });
 
   it('runs the registry-resolved release when the cache refuses to move', async () => {
     const { run } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.3' },
-      { stdout: '1.1.16-rc.3' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.15' },
+      { stdout: '1.1.15' },
     ]);
     const resolution = await resolveSquireConnectSpec(run);
-    expect(resolution.npxArgs).toEqual(['-y', '@trusty-squire/mcp@1.1.16-rc.4']);
+    expect(resolution.npxArgs).toEqual(['-y', '@trusty-squire/mcp@1.1.16']);
     expect(resolution.reResolved).toBe(true);
   });
 
   it('does not block connect when the registry is unreachable', async () => {
     const { run, invocations } = scriptedRunner([
       { code: 1, stdout: 'npm error network down' },
-      { stdout: '1.1.16-rc.3' },
+      { stdout: '1.1.15' },
     ]);
     const resolution = await resolveSquireConnectSpec(run);
     expect(resolution).toEqual({
-      npxArgs: ['-y', '@trusty-squire/mcp@1.1.16-rc.4'],
-      resolvedVersion: '1.1.16-rc.3',
+      npxArgs: ['-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.15',
       reResolved: false,
     });
     expect(invocations).toHaveLength(2);
@@ -746,9 +751,9 @@ describe('version resolution', () => {
   it('carries the re-resolved spec into the connect invocation', async () => {
     const streamInvocations: string[][] = [];
     const { run } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.3' },
-      { stdout: '1.1.16-rc.3' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.15' },
+      { stdout: '1.1.15' },
     ]);
     const logs: string[] = [];
     const result = await installSquire({
@@ -774,7 +779,7 @@ describe('version resolution', () => {
     expect(streamInvocations[0]).toEqual([
       'npx',
       '-y',
-      '@trusty-squire/mcp@1.1.16-rc.4',
+      '@trusty-squire/mcp@1.1.16',
       'connect',
       '--target=codex',
       '--json',
@@ -823,8 +828,8 @@ describe('connect session claim', () => {
     await spawnLongLivedConnect();
     const claim = squireConnectSession()!;
     const { run } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.16' },
     ]);
     await installSquire({
       workspaceId: 'ws-1',
@@ -923,8 +928,8 @@ describe('on-disk profile claim reclaim', () => {
     const dir = claimDir();
     writeLock(dir.lockPath, 2_147_483_647);
     const { run } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.16' },
     ]);
     const result = await installSquire({
       workspaceId: 'ws-1',
@@ -949,8 +954,8 @@ describe('on-disk profile claim reclaim', () => {
     const dir = claimDir();
     let env: NodeJS.ProcessEnv | undefined;
     const { run } = scriptedRunner([
-      { stdout: '1.1.16-rc.4' },
-      { stdout: '1.1.16-rc.4' },
+      { stdout: '1.1.16' },
+      { stdout: '1.1.16' },
     ]);
     const result = await installSquire({
       workspaceId: 'ws-1',

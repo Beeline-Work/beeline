@@ -105,6 +105,46 @@ function mergeNewerCommittedMessages(
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
 
+/** Whether a turn already held for an agent outranks an incoming one. Turn
+ * times are whole seconds, so a tie within one generation keeps terminal state
+ * over `working`. */
+function turnOutranks(held: RoomViewAgentTurn, incoming: RoomViewAgentTurn): boolean {
+  if (held.createdAt !== incoming.createdAt) return held.createdAt > incoming.createdAt;
+  return (
+    held.requestId === incoming.requestId &&
+    held.generationId === incoming.generationId &&
+    held.status !== 'working' &&
+    incoming.status === 'working'
+  );
+}
+
+/** A read that raced a turn delta must not walk that agent's turn backwards
+ * or drop it: no follow-up read comes after a delta to correct it. The server
+ * only omits an agent's latest turn past the bound, which the merge reapplies. */
+function keepNewerAgentTurns(
+  previous: readonly RoomViewAgentTurn[],
+  next: readonly RoomViewAgentTurn[],
+): readonly RoomViewAgentTurn[] {
+  // A projected view may omit the list; there is then nothing to keep.
+  if (!previous?.length || !next) return next;
+  const nextByAgent = new Map(next.map((turn) => [turn.agentPubkey, turn]));
+  const held = previous.filter((turn) => {
+    const current = nextByAgent.get(turn.agentPubkey);
+    return !current || turnOutranks(turn, current);
+  });
+  if (held.length === 0) return next;
+  const heldAgents = new Set(held.map((turn) => turn.agentPubkey));
+  const merged = [...next.filter((turn) => !heldAgents.has(turn.agentPubkey)), ...held]
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+    )
+    .slice(0, ROOM_VIEW_AGENT_LIMIT);
+  const unchanged =
+    merged.length === next.length && merged.every((turn, index) => turn === next[index]);
+  return unchanged ? next : merged;
+}
+
 export function reconcileRoomView(previous: RoomView | null, next: RoomView): RoomView {
   if (!previous) return next;
   const messages = shareResponseArrayByKey(
@@ -120,10 +160,12 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
   const briefing = next.briefing
     ? shareResponseArrayByKey(previous.briefing ?? [], next.briefing, (message) => message.id)
     : undefined;
+  const latestAgentTurns = keepNewerAgentTurns(previous.latestAgentTurns, next.latestAgentTurns);
   return shareResponseValue(previous, {
     ...next,
     messages,
     members,
+    ...(latestAgentTurns !== next.latestAgentTurns ? { latestAgentTurns } : {}),
     ...(briefing ? { briefing } : {}),
   }) as RoomView;
 }
@@ -146,17 +188,7 @@ export function reconcileRoomTurnDelta(view: RoomView, turn: RoomViewAgentTurn):
   const previous = view.latestAgentTurns.find(
     (candidate) => candidate.agentPubkey === turn.agentPubkey,
   );
-  const sameGeneration =
-    previous?.requestId === turn.requestId && previous.generationId === turn.generationId;
-  if (
-    previous &&
-    (previous.createdAt > turn.createdAt ||
-      (sameGeneration &&
-        previous.createdAt === turn.createdAt &&
-        previous.status !== 'working' &&
-        turn.status === 'working'))
-  )
-    return view;
+  if (previous && turnOutranks(previous, turn)) return view;
   const latestAgentTurns = [
     ...view.latestAgentTurns.filter((candidate) => candidate.agentPubkey !== turn.agentPubkey),
     turn,

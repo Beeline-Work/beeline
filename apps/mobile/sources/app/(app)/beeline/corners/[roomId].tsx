@@ -23,6 +23,7 @@ import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { NewCornerDialog } from '@/components/buzz/NewCornerDialog';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { isDraftFrame } from '@/sync/transport/live-frames';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
 
@@ -80,7 +81,9 @@ export default function BuzzCorners() {
       const filters = cached?.watchFilters ?? [
         { kinds: [9, 9000, 9001, 9007, 30078], '#h': [decodedId] },
       ];
-      unsubscribe = await relay.surfaceSubscribe(filters, () => scheduler?.signal());
+      unsubscribe = await relay.surfaceSubscribe(filters, (event) => {
+        if (!isDraftFrame(event)) scheduler?.signal();
+      });
       if (cancelled) return unsubscribe();
       await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {

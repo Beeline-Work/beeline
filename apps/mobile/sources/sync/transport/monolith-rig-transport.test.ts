@@ -9,6 +9,9 @@ const controls = vi.hoisted(() => ({
 }));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
 
+vi.mock('react-native', () => ({
+  AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+}));
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(7),
 }));

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('react-native', () => ({
+  AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+}));
+
 import { LiveConnection } from './live-connection';
 
 const ROOM_A = 'room-a';
@@ -57,6 +61,8 @@ function stubSockets(): TestSocket[] {
 
 function createConnection(authorization = vi.fn().mockResolvedValue('phone-session')) {
   const identityListeners = new Set<() => void>();
+  const foregroundListeners = new Set<() => void>();
+  const app = { background: false };
   const connection = new LiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
@@ -64,12 +70,22 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);
     },
+    subscribeForeground: (listener) => {
+      foregroundListeners.add(listener);
+      return () => foregroundListeners.delete(listener);
+    },
+    isBackground: () => app.background,
   });
   return {
     connection,
     authorization,
+    app,
     changeIdentity: () => {
       for (const listener of identityListeners) listener();
+    },
+    foreground: () => {
+      app.background = false;
+      for (const listener of foregroundListeners) listener();
     },
   };
 }
@@ -458,6 +474,88 @@ describe('LiveConnection', () => {
     sockets[1]!.open();
     expect(sockets[1]!.sent).toEqual([
       JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A, ROOM_B] }),
+    ]);
+
+    connection.dispose();
+  });
+
+  it('replaces an open socket on foreground and resubscribes every held room', async () => {
+    const { connection, foreground } = createConnection();
+    const received: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => received.push(event));
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+
+    foreground();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    expect(sockets[0]!.closed).toBe(true);
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(received).toEqual([
+      { monolithLive: { type: 'subscribed', roomId: ROOM_A } },
+      { monolithLive: { type: 'subscribed', roomId: ROOM_A } },
+    ]);
+
+    // The replaced socket's late frames and close no longer reach anyone.
+    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message' });
+    sockets[0]!.drop();
+    expect(received).toHaveLength(2);
+    expect(sockets).toHaveLength(2);
+
+    connection.dispose();
+  });
+
+  it('skips the reconnect backoff on foreground', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.drop();
+    expect(sockets).toHaveLength(1);
+
+    foreground();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(2);
+
+    connection.dispose();
+  });
+
+  it('reconnects on demand when a read proves the socket missed events', async () => {
+    const { connection } = createConnection();
+    connection.reconnect();
+    expect(sockets).toHaveLength(0);
+
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    connection.reconnect();
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.open();
+
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    expect(sockets[0]!.closed).toBe(true);
+    connection.reconnect();
+    expect(sockets).toHaveLength(2);
+
+    connection.dispose();
+  });
+
+  it('polls nothing while backgrounded and runs the overdue poll on foreground', async () => {
+    vi.useFakeTimers();
+    const { connection, app, foreground } = createConnection();
+    const received: unknown[] = [];
+    await connection.register([], (event) => received.push(event));
+    sockets[0]!.open();
+
+    app.background = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(received).toEqual([]);
+
+    foreground();
+    expect(received).toEqual([
+      { monolithLive: { type: 'invalidate', roomId: '', reason: 'poll' } },
     ]);
 
     connection.dispose();

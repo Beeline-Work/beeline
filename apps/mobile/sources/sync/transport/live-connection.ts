@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
@@ -35,6 +36,9 @@ type LiveConnectionDeps = {
   authorization: () => Promise<string>;
   liveUrl: () => string;
   subscribeIdentityChange: (listener: () => void) => () => void;
+  /** Fires when the app returns to the foreground from the background. */
+  subscribeForeground: (listener: () => void) => () => void;
+  isBackground: () => boolean;
 };
 
 const FALLBACK_INTERVAL_MS = 30_000;
@@ -89,9 +93,11 @@ export class LiveConnection {
   private nextRegistrationId = 1;
   private generation = 0;
   private readonly unsubscribeIdentity: () => void;
+  private readonly unsubscribeForeground: () => void;
 
   constructor(private readonly deps: LiveConnectionDeps) {
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
+    this.unsubscribeForeground = deps.subscribeForeground(() => this.handleForeground());
   }
 
   register(filters: SurfaceFilters, listener: SurfaceListener): Promise<() => void> {
@@ -122,6 +128,32 @@ export class LiveConnection {
   dispose(): void {
     this.handleIdentityChanged();
     this.unsubscribeIdentity();
+    this.unsubscribeForeground();
+  }
+
+  /**
+   * Replace the socket now. A backgrounded socket can look open while the
+   * server has long stopped delivering to it; the fresh socket's resubscribe
+   * frames are every surface's covering read. Also called when a read proves
+   * the current socket missed events.
+   */
+  reconnect(): void {
+    if (this.connectInFlight) return;
+    if (this.socket?.readyState === 0) return;
+    if (!this.socket && !this.reconnectTimer) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.reconnectDelayMs = 1_000;
+    const current = this.socket;
+    this.socket = undefined;
+    this.dropSocketState();
+    current?.close();
+    void this.ensureSocket();
+  }
+
+  private handleForeground(): void {
+    this.tickFallbacks();
+    this.reconnect();
   }
 
   private handleIdentityChanged(): void {
@@ -174,22 +206,26 @@ export class LiveConnection {
 
   private ensureFallback(): void {
     if (this.fallbackTimer) return;
-    this.fallbackTimer = setInterval(() => {
-      const now = Date.now();
-      for (const registration of this.registrations.values()) {
-        if (
-          registration.closed ||
-          registration.tickDueAt === undefined ||
-          now < registration.tickDueAt
-        )
-          continue;
-        registration.tickDueAt = now + FALLBACK_INTERVAL_MS;
-        const roomId = [...registration.roomIds][0] ?? '';
-        registration.listener({
-          monolithLive: { type: 'invalidate', roomId, reason: 'poll' },
-        });
-      }
-    }, FALLBACK_INTERVAL_MS);
+    this.fallbackTimer = setInterval(() => this.tickFallbacks(), FALLBACK_INTERVAL_MS);
+  }
+
+  /** A hidden app polls nothing; the foreground runs whatever fell due. */
+  private tickFallbacks(): void {
+    if (this.deps.isBackground()) return;
+    const now = Date.now();
+    for (const registration of this.registrations.values()) {
+      if (
+        registration.closed ||
+        registration.tickDueAt === undefined ||
+        now < registration.tickDueAt
+      )
+        continue;
+      registration.tickDueAt = now + FALLBACK_INTERVAL_MS;
+      const roomId = [...registration.roomIds][0] ?? '';
+      registration.listener({
+        monolithLive: { type: 'invalidate', roomId, reason: 'poll' },
+      });
+    }
   }
 
   private ensureSocket(): Promise<void> {
@@ -226,16 +262,20 @@ export class LiveConnection {
       next.onclose = () => {
         if (this.socket !== next) return;
         this.socket = undefined;
-        this.seenSubscribed.clear();
-        this.pendingSubscribe.clear();
-        this.overlays.clear();
-        this.traceOwners.clear();
+        this.dropSocketState();
         this.scheduleReconnect();
       };
     } catch {
       if (generation !== this.generation) return;
       this.scheduleReconnect();
     }
+  }
+
+  private dropSocketState(): void {
+    this.seenSubscribed.clear();
+    this.pendingSubscribe.clear();
+    this.overlays.clear();
+    this.traceOwners.clear();
   }
 
   private scheduleReconnect(): void {
@@ -367,6 +407,18 @@ export function sharedLiveConnection(): LiveConnection {
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
+    subscribeForeground: (listener) => {
+      let backgrounded = AppState.currentState === 'background';
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'background') backgrounded = true;
+        else if (state === 'active' && backgrounded) {
+          backgrounded = false;
+          listener();
+        }
+      });
+      return () => subscription.remove();
+    },
+    isBackground: () => AppState.currentState === 'background',
   });
   return shared;
 }

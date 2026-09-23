@@ -114,6 +114,71 @@ describe('Room view presentation', () => {
     ]);
   });
 
+  it('does not let a stale full snapshot walk a newer turn delta backwards', () => {
+    const working = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 10,
+    };
+    const complete = { ...working, status: 'complete' as const, createdAt: 12 };
+    const other = { ...working, agentPubkey: 'other', createdAt: 11 };
+    const settled = reconcileRoomTurnDelta(
+      { ...emptyRoom(), latestAgentTurns: [working] },
+      complete,
+    );
+    const staleRead = { ...emptyRoom(), latestAgentTurns: [working, other] };
+
+    expect(reconcileRoomView(settled, staleRead).latestAgentTurns).toEqual([complete, other]);
+    const laterWork = { ...working, requestId: 'next', createdAt: 13 };
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [laterWork] })
+        .latestAgentTurns,
+    ).toEqual([laterWork]);
+  });
+
+  it('does not let a same-second stale snapshot reopen a terminal turn delta', () => {
+    const working = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 10,
+    };
+    const complete = { ...working, status: 'complete' as const };
+    const settled = reconcileRoomTurnDelta(
+      { ...emptyRoom(), latestAgentTurns: [working] },
+      complete,
+    );
+
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [working] })
+        .latestAgentTurns,
+    ).toEqual([complete]);
+    const retried = { ...working, requestId: 'retry' };
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [retried] })
+        .latestAgentTurns,
+    ).toEqual([retried]);
+  });
+
+  it('does not let a stale full snapshot drop an agent first turn delta', () => {
+    const working = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 10,
+    };
+    const other = { ...working, agentPubkey: 'other', requestId: 'other', createdAt: 9 };
+    const painted = reconcileRoomTurnDelta(emptyRoom(), working);
+
+    expect(
+      reconcileRoomView(painted, { ...emptyRoom(), latestAgentTurns: [] }).latestAgentTurns,
+    ).toEqual([working]);
+    expect(
+      reconcileRoomView(painted, { ...emptyRoom(), latestAgentTurns: [other] }).latestAgentTurns,
+    ).toEqual([working, other]);
+  });
+
   it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
     const [corner] = cornerSummaries([

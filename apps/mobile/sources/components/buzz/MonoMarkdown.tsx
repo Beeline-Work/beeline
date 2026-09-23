@@ -139,10 +139,15 @@ type MonoMarkdownProps = {
   /** Arms the transcript return anchor before the full-page reader opens. */
   onOpenCode?: (messageId: string) => void;
   /**
-   * The trailing characters that have only just arrived on a streaming draft
-   * (`components/buzz/StreamingProse.tsx`, C98). They take `style` on top of
-   * the body tone so the fade lands on the new text alone; everything before
-   * them is left exactly as it was rendered a frame ago.
+   * The trailing characters that have only just arrived on a message (C98).
+   * They take `style` on top of the body tone so a fade lands on the new text
+   * alone; everything before them is left exactly as it was rendered a frame
+   * ago.
+   *
+   * The live draft lane is NOT a caller: it prints its words through one plain
+   * `Text` (`components/buzz/StreamingProse.tsx`), because rebuilding this
+   * block tree for every cumulative snapshot is the #1588 regression. This
+   * stays for a durable surface that wants to mark its own arriving tail.
    *
    * Scoped to the LAST block, which is where a stream is always writing. A
    * fence or a table closing the message simply does not fade — better than

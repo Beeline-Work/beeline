@@ -1140,7 +1140,11 @@ export class MonolithCornerTurnLoop {
               const [conversation, roster, delivered, activeReviewerInstruction] =
                 await trace.measure('context-fetch', () =>
                   Promise.all([
-                    api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
+                    api.execute('getRoomConversation', {
+                      roomId: cornerId,
+                      limit: 200,
+                      narrationRequestId: requestId,
+                    }),
                     this.roster(),
                     this.attachmentDir && attachments.length
                       ? deliverAttachments(
@@ -1512,11 +1516,20 @@ export class MonolithCornerTurnLoop {
               // server's own check notes says nothing new, and that turn
               // settles through its receipt instead.
               const durableReply = spoken(reply);
-              deliberateNoReply = isDeliberateCornerNoReply(reply, restates);
+              // A timed-out attempt can have saved its narration before the
+              // command is retried under the same request id. Its fresh stream
+              // has no offset for that earlier ledger row.
+              const repeatedNarration = Boolean(
+                durableReply &&
+                  conversation.savedNarration?.some(
+                    (saved) => spoken(durableReplyText(saved)) === durableReply,
+                  ),
+              );
+              deliberateNoReply = repeatedNarration || isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>
                 stream.settle(
-                  durableReply,
-                  durableReply
+                  repeatedNarration ? '' : durableReply,
+                  durableReply && !repeatedNarration
                     ? {
                         ...(requestedById ? { triggerMessageId: requestId } : {}),
                       }

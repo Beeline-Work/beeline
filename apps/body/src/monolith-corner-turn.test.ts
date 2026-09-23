@@ -1355,6 +1355,59 @@ describe('corner close-request polling cadence', () => {
     }
   });
 
+  it('does not reply with narration saved by a timed-out attempt of the same request', async () => {
+    // Reproduction: the first attempt saved this output beside a tool, then
+    // timed out. The resumed command keeps its request id and says it again.
+    const narration = 'I checked the release path.';
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        return closeReads === 1
+          ? {
+              items: [
+                {
+                  id: 'human-msg',
+                  authorId: '22'.repeat(32),
+                  createdAt: 1,
+                  type: 'message',
+                  body: 'Continue',
+                  attachments: [],
+                },
+              ],
+              cursor: 'human-msg',
+            }
+          : { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') {
+        expect(input.narrationRequestId).toBe('human-msg');
+        return { items: [], cursor: 'latest', savedNarration: [narration] };
+      }
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_id, _prompt, _timeout, draft) => {
+      draft?.(narration, narration, narration);
+      return { stopReason: 'end_turn', updates: [], agentText: narration, toolCalls: [] };
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(writes.some((write) => write.name === 'postRoomMessage')).toBe(false);
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postAgentTurnReceipt',
+        input: expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
+      }),
+    );
+  });
+
   it('does not publish an unfinished corner tool as successful activity', async () => {
     let closeReads = 0;
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];

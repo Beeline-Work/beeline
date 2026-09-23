@@ -54,7 +54,8 @@ const PARTICIPLE_VERBS: Readonly<Record<string, string>> = {
 };
 
 /** Verb words the harness leads its own titles with, stripped off the object. */
-const TITLE_VERB = /^(?:read|ran|run|wrote|write|edited?|searched(?:\s+for)?|listed|fetched|inspected|reasoned\s+about|opened|updated|reviewed)\s+/i;
+const TITLE_VERB =
+  /^(?:read|ran|run|wrote|write|edited?|searched(?:\s+for)?|listed|fetched|inspected|reasoned\s+about|opened|updated|reviewed)\s+/i;
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -74,7 +75,13 @@ export function middleTruncate(value: string, limit = TOOL_CALL_OBJECT_MAX): str
 }
 
 function basename(path: string): string {
-  return path.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  return (
+    path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1) ?? path
+  );
 }
 
 /** `env A=b bash -lc 'npm test'` -> `npm test`. */
@@ -151,6 +158,34 @@ function textLeaves(value: unknown): string[] {
   return [];
 }
 
+/** Older rows could be cut in the middle of a JSON string. Recover only the
+ * known output field, stopping at its closing quote or the end of the row. */
+function legacyTruncatedText(raw: string): string | undefined {
+  const match =
+    /"(?:formatted_output|stdout|stderr|output|text|content|message|result)"\s*:\s*"/.exec(raw);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  let encoded = '';
+  for (let index = start; index < raw.length; index++) {
+    const char = raw[index]!;
+    if (char === '"') break;
+    if (char === '\\' && index + 1 < raw.length) {
+      encoded += char + raw[++index];
+    } else {
+      encoded += char;
+    }
+  }
+  // Decode a complete escape at a time. A dangling escape or partial unicode
+  // escape remains literal instead of making the entire legacy row disappear.
+  return encoded.replace(/\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g, (escape) => {
+    try {
+      return JSON.parse(`"${escape}"`) as string;
+    } catch {
+      return escape;
+    }
+  });
+}
+
 /**
  * The call's real output, or nothing.
  *
@@ -161,11 +196,13 @@ function textLeaves(value: unknown): string[] {
 export function toolCallOutput(raw: string | undefined): string[] {
   if (!raw?.trim()) return [];
   const envelope = parsed(raw);
-  const text = envelope === undefined ? raw : textLeaves(envelope).join('\n');
-  return text
+  const text =
+    envelope === undefined ? (legacyTruncatedText(raw) ?? raw) : textLeaves(envelope).join('\n');
+  if (!text.trim()) return [];
+  const lines = text
     .split(/\r?\n/)
-    .map((line) => line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd())
-    .filter((line) => line.trim().length > 0);
+    .map((line) => line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd());
+  return lines;
 }
 
 /** `1.4s`, `2m 05s` — tabular, and only ever shown above the floor. */
@@ -179,14 +216,18 @@ export function formatToolCallDuration(ms: number | undefined): string | undefin
 function verbAndObject(step: TurnActivityAction, output: readonly string[]) {
   const kind = step.toolKind?.toLowerCase();
   const mcp = mcpParts(step.title) ?? mcpParts(step.command);
-  const file = step.files?.[0]?.path ?? field(parsed(step.input), ['path', 'file_path', 'filename']);
+  const file =
+    step.files?.[0]?.path ?? field(parsed(step.input), ['path', 'file_path', 'filename']);
 
   if (step.command) {
     const command = bareCommand(step.command);
     const git = command.match(/^git\s+(.+)$/i);
     if (git) return { verb: 'git', object: git[1] ?? command };
     if (mcp) {
-      return { verb: mcp.tool, object: command.replace(/^mcp__[\w.-]+__[\w.-]+\s*/, '') || mcp.server };
+      return {
+        verb: mcp.tool,
+        object: command.replace(/^mcp__[\w.-]+__[\w.-]+\s*/, '') || mcp.server,
+      };
     }
     return { verb: 'ran', object: command };
   }
@@ -213,7 +254,9 @@ function verbAndObject(step: TurnActivityAction, output: readonly string[]) {
 
 /** The harness title, stripped of the verb the column already carries. */
 function titleObject(step: TurnActivityAction): string {
-  const title = oneLine(step.title).replace(/^#+\s*/, '').replace(/^\*\*|\*\*$/g, '');
+  const title = oneLine(step.title)
+    .replace(/^#+\s*/, '')
+    .replace(/^\*\*|\*\*$/g, '');
   return title.replace(TITLE_VERB, '') || title;
 }
 

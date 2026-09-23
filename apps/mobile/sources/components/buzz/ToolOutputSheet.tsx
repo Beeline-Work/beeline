@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text } from 'react-native';
+import { ScrollView, Text, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { typeRoles } from '@/buzz/groknight';
 import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
@@ -46,6 +47,8 @@ export function ToolOutputSheet({
   onClose,
   testID = 'tool-output-sheet',
 }: ToolOutputSheetProps) {
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -75,7 +78,15 @@ export function ToolOutputSheet({
       title={title}
       visible={visible}
     >
-      <ScrollView contentContainerStyle={styles.sheetContent} style={styles.sheetScroll}>
+      <ScrollView
+        contentContainerStyle={styles.sheetContent}
+        nestedScrollEnabled
+        style={[
+          styles.sheetScroll,
+          { maxHeight: Math.max(0, Math.round(windowHeight * 0.82) - 130 - insets.bottom) },
+        ]}
+        testID="tool-output-scroll"
+      >
         {highlight ? (
           <CodeHighlighter code={detail ?? ''} language={language} />
         ) : (

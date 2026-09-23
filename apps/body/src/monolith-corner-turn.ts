@@ -243,25 +243,63 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function clampBytes(value: string, maxBytes: number): string {
-  const clean = value.trim();
+function clampBytes(value: string, maxBytes: number, preserveWhitespace = false): string {
+  const clean = preserveWhitespace ? value : value.trim();
   if (Buffer.byteLength(clean) <= maxBytes) return clean;
   const suffix = '\n…[truncated]';
   const allowed = maxBytes - Buffer.byteLength(suffix);
-  return `${Buffer.from(clean).subarray(0, Math.max(0, allowed)).toString('utf8')}${suffix}`;
+  let end = Math.max(0, allowed);
+  const bytes = Buffer.from(clean);
+  // Do not persist a replacement glyph produced by cutting a UTF-8 sequence.
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+  return `${bytes.subarray(0, end).toString('utf8')}${suffix}`;
+}
+
+function outputText(value: unknown): string {
+  if (typeof value === 'string') {
+    if (!/^[\s]*[\[{\"]/.test(value)) return value;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (typeof parsed === 'string') return parsed;
+      return outputText(parsed);
+    } catch {
+      // The harness can also send ordinary, unencoded text.
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(outputText).filter(Boolean).join('\n');
+  const object = record(value);
+  if (!object) return '';
+  for (const key of [
+    'formatted_output',
+    'stdout',
+    'stderr',
+    'output',
+    'text',
+    'content',
+    'message',
+    'result',
+  ]) {
+    if (key in object) {
+      const text = outputText(object[key]);
+      if (text) return text;
+    }
+  }
+  return serialized(value);
 }
 
 function outputExcerpt(value: unknown): string | undefined {
-  const redacted = redactToolDetail(serialized(value));
+  const redacted = redactToolDetail(outputText(value));
   if (!redacted.trim()) return undefined;
   if (/\b(?:git[- ]credential|credential[- ]helper)\b/i.test(redacted)) {
     return 'Credential-helper output omitted.';
   }
   const lines = redacted.split(/\r?\n/).map((line) => line.trimEnd());
-  if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES);
+  if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES, true);
   return clampBytes(
     [...lines.slice(0, 4), '…[output omitted]…', ...lines.slice(-4)].join('\n'),
     TOOL_OUTPUT_MAX_BYTES,
+    true,
   );
 }
 
@@ -367,7 +405,7 @@ export async function cornerToolActivity(
   }
   const paths = filePaths([call.rawInput, call.content, call.locations], worktreePath);
   const argumentsSummary = toolArguments(call);
-  const output = outputExcerpt(call.content);
+  const output = outputExcerpt(call.content ?? call.rawOutput);
   return {
     kind: 'tool',
     title: title.slice(0, 240),

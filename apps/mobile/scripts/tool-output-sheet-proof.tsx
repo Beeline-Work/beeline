@@ -77,12 +77,23 @@ async function measure() {
     width > PHONE_SHEET_MAX_WIDTH,
     `desktop sheet at ${width} is no wider than the ${PHONE_SHEET_MAX_WIDTH} a phone gets`,
   );
+  const outputScroll = document.querySelector<HTMLElement>('[data-testid="tool-output-scroll"]');
+  assert(outputScroll != null, 'the output scroll view is missing');
+  assert(
+    outputScroll!.getBoundingClientRect().bottom <= window.innerHeight,
+    'the output scroll view extends beyond the viewport',
+  );
+  assert(outputScroll!.scrollHeight > outputScroll!.clientHeight, 'long output did not scroll');
 
   // The sheet reports the supplied size once. The Copy row adds no duplicate.
   const bearing = sizeBearingText();
   assert(bearing.length === 1, `byte size reads ${bearing.length} times: ${bearing.join(' | ')}`);
   const copyRow = document.querySelector<HTMLElement>('[data-testid="tool-output-copy"]')!;
-  assert(!copyRow.textContent?.includes(size), `Copy row still reports the size: ${copyRow.textContent}`);
+  assert(
+    !copyRow.textContent?.includes(size),
+    `Copy row still reports the size: ${copyRow.textContent}`,
+  );
+  assert(copyRow.getBoundingClientRect().bottom <= window.innerHeight, 'Copy output is offscreen');
 
   const unrecognised = (window as unknown as { __console: string[] }).__console.filter((entry) =>
     /does not recognize|accessibilityElementsHidden|importantForAccessibility/.test(entry),

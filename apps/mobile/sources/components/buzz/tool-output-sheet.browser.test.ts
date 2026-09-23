@@ -12,6 +12,7 @@ it.skipIf(!existsSync(CHROME))(
       mobile,
       shims: webProofShims(mobile),
       width: 1440,
+      height: 500,
     });
     expect(status, stderr).toBe(0);
     expect(result).toBe('PASS');

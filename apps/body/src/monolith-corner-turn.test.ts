@@ -2065,6 +2065,33 @@ describe('thin monolith corner turn', () => {
     expect(activity.output).not.toContain('middle line that is omitted');
     expect(JSON.stringify(activity)).not.toContain('super-secret');
 
+    const encoded = await cornerToolActivity(
+      {
+        id: 'encoded',
+        kind: 'execute',
+        title: 'Bash',
+        status: 'completed',
+        content: JSON.stringify({ formatted_output: '  first\n\nsecond\n' + 'é'.repeat(4000) }),
+      },
+      '/worktree',
+    );
+    expect(encoded.output).toContain('  first\n\nsecond');
+    expect(encoded.output).not.toContain('formatted_output');
+    expect(Buffer.byteLength(encoded.output!)).toBeLessThanOrEqual(3200);
+    expect(encoded.output).not.toContain('\ufffd');
+
+    const rawOnly = await cornerToolActivity(
+      {
+        id: 'raw-only',
+        kind: 'execute',
+        title: 'Bash',
+        status: 'completed',
+        rawOutput: { output: { text: 'first\n\nsecond' } },
+      },
+      '/worktree',
+    );
+    expect(rawOnly.output).toBe('first\n\nsecond');
+
     await expect(
       cornerToolActivity(
         {

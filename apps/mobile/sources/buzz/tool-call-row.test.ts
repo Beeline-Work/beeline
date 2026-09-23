@@ -40,14 +40,30 @@ describe('toolCallOutput', () => {
 
   it('lifts the real text out of a content envelope', () => {
     expect(
-      toolCallOutput('[{"type":"content","content":{"type":"text","text":"12 passed\\n1 skipped"}}]'),
+      toolCallOutput(
+        '[{"type":"content","content":{"type":"text","text":"12 passed\\n1 skipped"}}]',
+      ),
     ).toEqual(['12 passed', '1 skipped']);
   });
 
-  it('passes plain text through, dropping blank lines and ANSI', () => {
+  it('preserves internal blank lines while removing ANSI', () => {
     expect(toolCallOutput('first line\n\n\u001b[31mred line\u001b[0m')).toEqual([
       'first line',
+      '',
       'red line',
+    ]);
+  });
+
+  it('keeps leading indentation and blank lines in the displayed output', () => {
+    expect(toolCallOutput('\n  indented\n')).toEqual(['', '  indented', '']);
+  });
+
+  it('recovers escaped newlines from a legacy JSON row cut mid-string', () => {
+    expect(toolCallOutput('{"formatted_output":"first\\n\\nsecond\\nthird')).toEqual([
+      'first',
+      '',
+      'second',
+      'third',
     ]);
   });
 });
@@ -66,35 +82,54 @@ describe('formatToolCallDuration', () => {
 
 describe('toolCallLabel', () => {
   it('a shell call is the command itself — the glyph carries the family', () => {
-    expect(toolCallLabel(step({ id: 'a', toolKind: 'execute', command: 'npm test', title: 'Bash' }))).toBe(
-      'npm test',
-    );
+    expect(
+      toolCallLabel(step({ id: 'a', toolKind: 'execute', command: 'npm test', title: 'Bash' })),
+    ).toBe('npm test');
   });
 
   it('keeps only the subcommand for git', () => {
     expect(
-      toolCallLabel(step({ id: 'g', toolKind: 'execute', command: 'git status --short', title: 'Bash' })),
+      toolCallLabel(
+        step({ id: 'g', toolKind: 'execute', command: 'git status --short', title: 'Bash' }),
+      ),
     ).toBe('status --short');
   });
 
   it('prefers the command over the harness title, which describes another call', () => {
     expect(
       toolCallLabel(
-        step({ id: 'l', toolKind: 'execute', command: 'ls -la sources', title: 'Reviewed the current changes' }),
+        step({
+          id: 'l',
+          toolKind: 'execute',
+          command: 'ls -la sources',
+          title: 'Reviewed the current changes',
+        }),
       ),
     ).toBe('ls -la sources');
   });
 
   it('names a read by its basename', () => {
     expect(
-      toolCallLabel(step({ id: 'r', toolKind: 'read', title: 'Read', files: [{ path: 'apps/mobile/Ledger.tsx' }] })),
+      toolCallLabel(
+        step({
+          id: 'r',
+          toolKind: 'read',
+          title: 'Read',
+          files: [{ path: 'apps/mobile/Ledger.tsx' }],
+        }),
+      ),
     ).toBe('Ledger.tsx');
   });
 
   it('names a write by its basename', () => {
     expect(
       toolCallLabel(
-        step({ id: 'w', toolKind: 'edit', title: 'Edit files', files: [{ path: 'sources/buzz/tool-call-row.ts' }] }),
+        step({
+          id: 'w',
+          toolKind: 'edit',
+          title: 'Edit files',
+          files: [{ path: 'sources/buzz/tool-call-row.ts' }],
+        }),
       ),
     ).toBe('tool-call-row.ts');
   });
@@ -114,13 +149,15 @@ describe('toolCallLabel', () => {
   });
 
   it('leads an MCP call with the tool’s own short name — a verb that IS information stays', () => {
-    expect(toolCallLabel(step({ id: 'm', toolKind: 'other', title: 'mcp__squire__list_credentials' }))).toBe(
-      'list_credentials squire',
-    );
+    expect(
+      toolCallLabel(step({ id: 'm', toolKind: 'other', title: 'mcp__squire__list_credentials' })),
+    ).toBe('list_credentials squire');
   });
 
   it('reads an older transcript’s folded rollup row as the calls it counts', () => {
-    expect(toolCallLabel(step({ id: 'sum', toolKind: 'read', title: 'reading 8' }))).toBe('8 calls');
+    expect(toolCallLabel(step({ id: 'sum', toolKind: 'read', title: 'reading 8' }))).toBe(
+      '8 calls',
+    );
   });
 
   it('truncates in the middle at the label cap — the tail flags carry the meaning', () => {

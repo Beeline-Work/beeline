@@ -12,6 +12,7 @@ import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from '../../server/src/database.js';
 import { taggedIdentityIdsSql } from '../../server/src/message-mentions.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
@@ -1741,6 +1742,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           [ROOM],
         )
       ).rows.map((row) => row.text);
+    const accessPolicyLines = async () =>
+      (
+        await database.query<{ author_id: string; text: string }>(
+          `SELECT message.author_id,message.text FROM messages message
+           JOIN rooms room ON room.id=message.room_id
+           WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
+             AND message.card_type='agent-access'
+           ORDER BY message.created_at,message.id`,
+          [WORKSPACE],
+        )
+      ).rows;
     const turns = async () =>
       (await database.query(`SELECT 1 FROM agent_turns WHERE room_id=$1`, [ROOM])).rows.length;
 
@@ -1788,18 +1800,22 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });
-      // The same helper, the same record, one more system line: the change.
-      // The refusal is stamped up to 1s past its cause (system-line.ts's
-      // ordering floor), so which of these two lines the clock reached first
-      // is timing, not fact — assert the pair, never their order.
-      const lines = await systemLines();
-      expect(lines).toHaveLength(2);
-      expect(lines).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining('did not answer @bananaman614305'),
-          '@lunchboxfortwo changed who may address @bee · anyone may ask now',
-        ]),
-      );
+      // The same helper and runtime record obey the live change, while the
+      // shared Room retains only its refusal. Workspace configuration goes to
+      // each active person's read-only @system DM.
+      expect(await systemLines()).toEqual([
+        expect.stringContaining('did not answer @bananaman614305'),
+      ]);
+      expect(await accessPolicyLines()).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: '@lunchboxfortwo changed who may address @bee · anyone may ask now',
+        },
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: '@lunchboxfortwo changed who may address @bee · anyone may ask now',
+        },
+      ]);
     } finally {
       abort.abort();
       await loop;

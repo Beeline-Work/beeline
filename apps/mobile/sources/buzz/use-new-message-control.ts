@@ -53,7 +53,7 @@ export function useNewMessageControl({
   newestMessageId: string | null;
   firstUnreadMessageId: string | null;
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
-  /** Tail distance also suppresses a corner's chevron at its visible tail. */
+  /** Tail distance, which decides auto-follow and nothing this control shows. */
   isPinnedToTail: () => boolean;
   /** Room unread state is disabled in corners; only the tail chevron remains. */
   enabled?: boolean;
@@ -67,6 +67,8 @@ export function useNewMessageControl({
   badgeCount: number;
   catchUpVisible: boolean;
   observeVisibleMessages: (visible: readonly ChatDisplayMessage[]) => void;
+  /** The list's scroll handler reports tail distance; only corners render it. */
+  observeTailPinned: (pinned: boolean) => void;
   settleQueueAtBoundary: (boundaryId: string) => void;
 } {
   const [queue, setQueue] = useState<NewMessageQueue>(EMPTY_NEW_MESSAGE_QUEUE);
@@ -76,6 +78,9 @@ export function useNewMessageControl({
   // unanswered viewport would flash one over every Room at open.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
   const [hasObservedVisibility, setHasObservedVisibility] = useState(false);
+  // A corner's chevron also yields to tail position, as state so a scroll that
+  // leaves the viewable set unchanged still redraws it. Rooms never set it.
+  const [tailPinned, setTailPinned] = useState(true);
   // The glyph's own end. Set when a viewability pass AFTER the opening one
   // reports the newest row on screen — the reader's own scroll down, or their
   // tap on the disc, which lands there and reports.
@@ -93,6 +98,7 @@ export function useNewMessageControl({
     setQueue(EMPTY_NEW_MESSAGE_QUEUE);
     setNewestMessageVisible(false);
     setHasObservedVisibility(false);
+    setTailPinned(true);
     hasObservedVisibilityRef.current = false;
     visibleMessagesRef.current = [];
   }, [roomId, enabled]);
@@ -172,6 +178,13 @@ export function useNewMessageControl({
     [enabled],
   );
 
+  const observeTailPinned = useCallback(
+    (pinned: boolean) => {
+      if (!enabled) setTailPinned(pinned);
+    },
+    [enabled],
+  );
+
   const settleQueueAtBoundary = useCallback(
     (boundaryId: string) => {
       if (!enabled) return;
@@ -196,7 +209,7 @@ export function useNewMessageControl({
       // An inverted corner list can retain an older viewability report while
       // opening at offset zero. Tail position is decisive for its bare
       // chevron; corners have no unread state to reconcile with that report.
-      (enabled || !isPinnedToTailRef.current()),
+      (enabled || !tailPinned),
     badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
     // The offer rides the line, so it cannot outlive it: no line drawn, no
     // offer, and reaching the tail takes both.
@@ -206,6 +219,7 @@ export function useNewMessageControl({
       !boundaryRead &&
       catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
     observeVisibleMessages,
+    observeTailPinned,
     settleQueueAtBoundary,
   };
 }

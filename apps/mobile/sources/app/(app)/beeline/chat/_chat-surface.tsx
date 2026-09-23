@@ -1746,85 +1746,6 @@ export function BuzzChatSurface({
     }
     return undefined;
   }, [combinedMessages, roomRepository?.targetBranch]);
-  const slashVerbs = useMemo(
-    () =>
-      availableSlashVerbs(
-        {
-          canBuild: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              roomSurface?.viewer.permissions.send,
-          ),
-          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
-          canCatchUp: Boolean(
-            !isCorner &&
-              !viewerIsAgent &&
-              roomSurface?.viewer.permissions.send &&
-              roomParticipants.some((participant) => participant.kind === 'agent') &&
-              firstUnreadMessageId &&
-              openingUnreadCounts &&
-              (openingUnreadCounts.agentTurns >= 6 || openingUnreadCounts.messages >= 15),
-          ),
-          canManageSchedules: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              getBuzzRuntimeConfig().monolithEnabled,
-          ),
-          canRunWorkflows: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              roomSurface?.repositoryResolution === 'repository',
-          ),
-          canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
-          canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
-          canCloseCorner: isCorner && !viewerIsAgent,
-          canChangeTargetBranch: Boolean(
-            !isCorner &&
-            !viewerIsAgent &&
-            canManageWorkspace &&
-            pendingTargetBranchProposal &&
-            !targetBranchActionId,
-          ),
-          canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
-          canInvitePerson: Boolean(
-            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
-          ),
-        },
-        currentSlashQuery ?? '',
-      ),
-    [
-      currentSlashQuery,
-      canManageWorkspace,
-      firstUnreadMessageId,
-      openingUnreadCounts,
-      isCorner,
-      isDirectMessage,
-      latestOpenPoll,
-      pendingCornerRequest,
-      pendingTargetBranchProposal,
-      targetBranchActionId,
-      viewerChannelRole,
-      viewerIsAgent,
-      roomSurface?.repositoryResolution,
-      roomSurface?.viewer.permissions.send,
-      roomParticipants,
-    ],
-  );
-  const slashMenuVisible = Boolean(
-    composerFocused &&
-    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
-    dismissedSlashText !== inputText,
-  );
-  const paletteItemCount =
-    mentionAgentCommands.length + cornerAppCommands.length + slashVerbs.length;
-  useEffect(() => {
-    setHighlightedSlashVerbIndex(0);
-  }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   // Load the addressed agent's published command list on demand — the palette
   // renders ONLY from this published record, never a hardcoded inventory. A
   // failed read stays unknown and never blocks typing.
@@ -2074,6 +1995,7 @@ export function BuzzChatSurface({
     badgeCount: newMessageBadgeCount,
     catchUpVisible: catchUpEligible,
     observeVisibleMessages,
+    observeTailPinned,
     settleQueueAtBoundary,
   } = useNewMessageControl({
     roomId: decodedId,
@@ -2148,6 +2070,77 @@ export function BuzzChatSurface({
   }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
   const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
+  const slashVerbs = useMemo(
+    () =>
+      availableSlashVerbs(
+        {
+          canBuild: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              roomSurface?.viewer.permissions.send,
+          ),
+          canAnswerPoll: Boolean(!viewerIsAgent && latestOpenPoll),
+          // The verb is the line's door under another name: one gate, so
+          // neither can offer a catch-up the other has withdrawn.
+          canCatchUp: catchUpOfferVisible,
+          canManageSchedules: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              getBuzzRuntimeConfig().monolithEnabled,
+          ),
+          canRunWorkflows: Boolean(
+            !isCorner &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              roomSurface?.repositoryResolution === 'repository',
+          ),
+          canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
+          canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
+          canCloseCorner: isCorner && !viewerIsAgent,
+          canChangeTargetBranch: Boolean(
+            !isCorner &&
+            !viewerIsAgent &&
+            canManageWorkspace &&
+            pendingTargetBranchProposal &&
+            !targetBranchActionId,
+          ),
+          canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+          canInvitePerson: Boolean(
+            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
+          ),
+        },
+        currentSlashQuery ?? '',
+      ),
+    [
+      catchUpOfferVisible,
+      currentSlashQuery,
+      canManageWorkspace,
+      isCorner,
+      isDirectMessage,
+      latestOpenPoll,
+      pendingCornerRequest,
+      pendingTargetBranchProposal,
+      targetBranchActionId,
+      viewerChannelRole,
+      viewerIsAgent,
+      roomSurface?.repositoryResolution,
+      roomSurface?.viewer.permissions.send,
+    ],
+  );
+  const slashMenuVisible = Boolean(
+    composerFocused &&
+    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
+    dismissedSlashText !== inputText,
+  );
+  const paletteItemCount =
+    mentionAgentCommands.length + cornerAppCommands.length + slashVerbs.length;
+  useEffect(() => {
+    setHighlightedSlashVerbIndex(0);
+  }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   const transcriptLandingAnchorId = messageAnchorId || (!isCorner && firstUnreadMessageId) || '';
   // A live message/card change follows to the newest end. The decision is one
@@ -2397,6 +2390,7 @@ export function BuzzChatSurface({
       const node = event.currentTarget;
       isPinnedToTailRef.current =
         node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
+      observeTailPinned(isPinnedToTailRef.current);
       if (
         (!isPinnedToTailRef.current ||
           node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) &&
@@ -2405,7 +2399,7 @@ export function BuzzChatSurface({
         loadOlderTranscriptMessages();
       }
     },
-    [loadOlderTranscriptMessages],
+    [loadOlderTranscriptMessages, observeTailPinned],
   );
   // Older history paging in above the reader grows the content from the
   // top, not the bottom — hold the reader's place by the real measured
@@ -5179,6 +5173,7 @@ export function BuzzChatSurface({
             onScroll={(event) => {
               const { contentOffset } = event.nativeEvent;
               isPinnedToTailRef.current = contentOffset.y <= TAIL_PIN_THRESHOLD;
+              observeTailPinned(isPinnedToTailRef.current);
             }}
             scrollEventThrottle={100}
             onViewableItemsChanged={observeVisibleTranscriptMessages}

@@ -23,6 +23,11 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
     expect(chatSource).toContain('catchUpOffered: catchUpOfferVisible');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
+    // `/catch-up` is the line's door under another name, so it closes with it.
+    expect(chatSource).toContain('canCatchUp: catchUpOfferVisible,');
+    // Both lists report tail distance, so a corner's chevron follows a scroll
+    // that leaves the viewable set unchanged.
+    expect(chatSource.match(/observeTailPinned\(isPinnedToTailRef\.current\);/g)).toHaveLength(2);
     // The coupling this change removed, in either of the shapes it had. The
     // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
     // catch-up sheet's range legitimately falls back to the server cursor

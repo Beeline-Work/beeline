@@ -650,7 +650,7 @@ ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_status_check;
 ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_status_check
   CHECK (status IN ('working', 'complete', 'failed', 'cancelled'));
 CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
-CREATE INDEX IF NOT EXISTS agent_turns_room_started ON agent_turns(room_id,started_at DESC);
+CREATE INDEX IF NOT EXISTS agent_turns_room_created ON agent_turns(room_id,created_at DESC);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

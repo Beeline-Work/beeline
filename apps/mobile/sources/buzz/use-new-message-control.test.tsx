@@ -69,7 +69,14 @@ const SEED = ['seed-0', 'seed-1', 'seed-2', 'seed-3', 'seed-4'].map(row);
  */
 const handles: {
   report?: (visible: readonly ChatDisplayMessage[]) => void;
+  observeTailPinned?: (pinned: boolean) => void;
 } = {};
+
+/**
+ * The surface's tail reading lives in a ref its scroll handler writes, so a
+ * scroll changes it without rendering anything. `scroll` plays that handler.
+ */
+const tail = { pinned: true };
 
 function TranscriptHarness({
   messages,
@@ -86,6 +93,7 @@ function TranscriptHarness({
   pinnedToTail: boolean;
   enabled?: boolean;
 }) {
+  tail.pinned = pinnedToTail;
   const control = useNewMessageControl({
     roomId: 'room-1',
     queueableMessages: messages,
@@ -93,10 +101,13 @@ function TranscriptHarness({
     newestMessageId: messages.at(-1)?.id ?? null,
     firstUnreadMessageId,
     openingUnreadCounts,
-    isPinnedToTail: () => pinnedToTail,
+    isPinnedToTail: () => tail.pinned,
     enabled,
   });
   handles.report = control.observeVisibleMessages;
+  handles.observeTailPinned = control.observeTailPinned;
+  const { observeTailPinned } = control;
+  React.useEffect(() => observeTailPinned?.(pinnedToTail), [observeTailPinned, pinnedToTail]);
   const renderItem = useRoomMessageRenderItem({
     render: (item) => <Text>{item.text}</Text>,
     continuedIds: React.useMemo(() => new Set<string>(), []),
@@ -151,6 +162,14 @@ function update(renderer: ReactTestRenderer, props: HarnessProps): void {
 
 function report(visible: readonly ChatDisplayMessage[]): void {
   act(() => handles.report?.(visible));
+}
+
+/** The list scrolled: the surface's `onScroll`, which renders nothing itself. */
+function scroll(pinned: boolean): void {
+  act(() => {
+    tail.pinned = pinned;
+    handles.observeTailPinned?.(pinned);
+  });
 }
 
 /** The retired floating bar. Nothing may ever draw one again. */
@@ -414,6 +433,20 @@ describe('the transcript new-message control', () => {
     expect(onScreen(renderer)).toBe(
       'unread line: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed · disc long-press: gone',
     );
+  });
+
+  it('CORNER-TAIL-2: a corner scrolled off its tail shows the chevron without waiting for a render', () => {
+    const corner: HarnessProps = { ...AT_TAIL, enabled: false };
+    const renderer = mount(corner);
+    // The inverted list opened at offset zero still reporting older rows.
+    report([SEED[1]!, SEED[2]!]);
+    expect(discs(renderer)).toHaveLength(0);
+    // The reader scrolls up into those same rows. The viewable set does not
+    // change, so the list runs no viewability pass; only the scroll reports.
+    scroll(false);
+    expect(discs(renderer)).toHaveLength(1);
+    scroll(true);
+    expect(discs(renderer)).toHaveLength(0);
   });
 
   it('UDIV-04: keeps the opening glyph anchored while later arrivals use the jump control', () => {

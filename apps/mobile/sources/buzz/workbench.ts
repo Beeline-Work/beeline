@@ -301,6 +301,7 @@ export type ConnectorInstallState = {
 export type ConnectionGrant = {
   grantId: string;
   createdAt?: number;
+  revokingAt?: number;
   rateLimitPerHour?: number;
   spendCapUsd?: number;
 };

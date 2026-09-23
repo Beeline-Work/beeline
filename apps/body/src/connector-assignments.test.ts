@@ -250,7 +250,23 @@ describe('ConnectorAssignmentLoop', () => {
     expect(api.calls.map((call) => call.op)).toEqual([
       'getConnectorAssignments',
       'postConnectorVault',
+      'revokeConnectionGrants',
     ]);
+  });
+
+  it('leaves revoke queued when the provider drop fails', async () => {
+    const api = apiMock([
+      { kind: 'revoke-grants', connectorId: 'conn-1', reference: 'cred_a' },
+    ]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      revokeGrants: async () => ({ revoked: 0, failed: 1 }),
+    });
+    await loop.runOnce();
+    await settle();
+    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments']);
   });
 
   it('ignores uninstall assignments (the server reaps those rows itself)', async () => {

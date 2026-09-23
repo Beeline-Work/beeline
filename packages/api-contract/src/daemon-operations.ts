@@ -832,6 +832,7 @@ export type ConnectionGrant = {
   readonly credentialRef: string;
   readonly createdAt: number;
   readonly revokedAt?: number;
+  readonly revokingAt?: number;
   readonly rateLimitPerHour?: number;
   readonly spendCapUsd?: number;
 };
@@ -893,6 +894,8 @@ export type PostConnectionUsageInput = {
 
 export type InstallConnectorInput = AgentInput & {
   readonly connectorId: string;
+  /** Echo of the assignment's pairing generation; a stale report is ignored. */
+  readonly pairingGeneration?: number;
   /** Connector-specific configuration; empty for phase 1. */
   readonly config?: Record<string, unknown>;
   /** Final install report (the completion of a `postConnectorStatus` run). */
@@ -923,6 +926,8 @@ export type GetConnectorStatusInput = AgentInput & {
  */
 export type PostConnectorStatusInput = AgentInput & {
   readonly connectorId: string;
+  /** Echo of the assignment's pairing generation; a stale report is ignored. */
+  readonly pairingGeneration?: number;
   readonly steps: readonly ConnectorStep[];
   readonly squireVersion?: string;
   readonly signedInAs?: string;
@@ -966,6 +971,7 @@ export type ConnectorAssignment =
       readonly kind: 'install';
       readonly connectorId: string;
       readonly connectorType: ConnectorKind;
+      readonly pairingGeneration?: number;
     }
   | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
   | { readonly kind: 'refresh-google-grant'; readonly connectorId: string;
@@ -980,6 +986,7 @@ export type ConnectorAssignment =
       readonly kind: 'uninstall';
       readonly connectorId: string;
       readonly connectorType: ConnectorKind;
+      readonly pairingGeneration?: number;
     };
 
 export type ConnectorAssignmentsResult = {

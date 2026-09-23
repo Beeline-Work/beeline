@@ -46,7 +46,10 @@ export interface WorkbenchSource {
     ref: string;
     viewerId: string;
   }): Promise<ConnectionDetailView | null>;
-  revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }>;
+  revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{
+    revoked: number;
+    pending?: number;
+  }>;
   disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void>;
 }
 
@@ -239,6 +242,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         .map((grant) => ({
           grantId: grant.grantId,
           createdAt: grant.createdAt,
+          ...(grant.revokingAt !== undefined ? { revokingAt: grant.revokingAt } : {}),
           ...(grant.rateLimitPerHour !== undefined
             ? { rateLimitPerHour: grant.rateLimitPerHour }
             : {}),
@@ -256,7 +260,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     };
   }
 
-  async revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }> {
+  async revokeAllGrants(input: {
+    workspaceId: string;
+    ref: string;
+  }): Promise<{ revoked: number; pending?: number }> {
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     const connection = dto.connections.find((candidate) => candidate.reference === input.ref);
     if (!connection) return { revoked: 0 };
@@ -264,7 +271,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       workspaceId: input.workspaceId,
       connectionId: connection.connectionId,
     });
-    return { revoked: result.revoked };
+    return {
+      revoked: result.revoked,
+      ...(result.pending ? { pending: result.pending } : {}),
+    };
   }
 
   async disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void> {

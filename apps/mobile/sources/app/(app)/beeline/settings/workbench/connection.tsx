@@ -75,13 +75,23 @@ export default function ConnectionDetailScreen() {
     if (!detail) return;
     setRevoking(true);
     try {
-      const { revoked } = await getWorkbenchSource().revokeAllGrants({ workspaceId, ref });
-      setDetail({
-        ...detail,
-        grants: [],
-        connection: { ...detail.connection, grantCount: 0 },
-      });
-      setRevokedLine(`Revoked ${revoked} ${revoked === 1 ? 'grant' : 'grants'}`);
+      const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, ref });
+      if (pending) {
+        setDetail({
+          ...detail,
+          grants: detail.grants.map((grant) =>
+            grant.revokingAt ? grant : { ...grant, revokingAt: Math.floor(Date.now() / 1000) },
+          ),
+        });
+        setRevokedLine(`Revoking ${pending} ${pending === 1 ? 'grant' : 'grants'} — waiting for the helper`);
+      } else {
+        setDetail({
+          ...detail,
+          grants: [],
+          connection: { ...detail.connection, grantCount: 0 },
+        });
+        setRevokedLine(`Revoked ${revoked} ${revoked === 1 ? 'grant' : 'grants'}`);
+      }
       setConfirmRevoke(false);
     } catch {
       setError('Some grants could not be revoked — try again');
@@ -98,7 +108,7 @@ export default function ConnectionDetailScreen() {
   const revokeQuestion = useMemo(
     () =>
       `Revoke ${grantCount === 1 ? 'this grant' : `all ${grantCount} grants`}? Agents using ` +
-      'them will lose access to this key immediately.',
+      'them will lose access after the helper confirms the revoke.',
     [grantCount],
   );
 

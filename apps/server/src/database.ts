@@ -1157,6 +1157,7 @@ CREATE TABLE IF NOT EXISTS workspace_connectors (
   status_error text,
   -- Edge-triggered work tokens for the helper ('sync','revoke-grants:<ref>').
   pending_ops jsonb NOT NULL DEFAULT '[]'::jsonb,
+  pairing_generation integer NOT NULL DEFAULT 1,
   connected_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -1168,6 +1169,7 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,
@@ -1218,8 +1220,10 @@ CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
 -- of need. The addressee is the person whose message woke the offering turn
 -- (whose keys the tool will hold); they or a Workspace manager accept it.
 -- Accepting starts the connector on the offering agent's machine through the
--- same row pairConnector writes. The helper's connected report settles the
--- Room card and resumes the paused turn.
+-- same row pairConnector writes. Adapted kinds (Squire, YouTube) also require
+-- the acceptor to own that helper; a foreign Workbench row cannot inherit
+-- that machine's vault. The helper's connected report settles the Room card
+-- and resumes the paused turn.
 CREATE TABLE IF NOT EXISTS connector_offers (
   id uuid PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,

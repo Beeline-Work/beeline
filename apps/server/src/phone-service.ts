@@ -6910,6 +6910,9 @@ export class PhoneService {
     before: { createdAt: number; id: string } | undefined,
     limit: number,
   ) {
+    // `createdAt` is the compatibility display stamp and is rounded to
+    // seconds. Resolve the cursor row so siblings stored inside that second
+    // cannot disappear between pages.
     const rows = (
       await this.database.query<MessageRow>(
         `SELECT m.*,
@@ -6920,9 +6923,16 @@ export class PhoneService {
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND ${hiddenWakeCardSql('m')}
-         ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
+         ${
+           before
+             ? `AND (m.created_at,m.id)<(
+                  SELECT cursor.created_at,cursor.id FROM messages cursor
+                  WHERE cursor.room_id=$1 AND cursor.id=$2
+                )`
+             : ''
+         }
          ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
-        before ? [roomId, before.createdAt, before.id] : [roomId],
+        before ? [roomId, before.id] : [roomId],
       )
     ).rows;
     await this.enrichMessageTags(rows);

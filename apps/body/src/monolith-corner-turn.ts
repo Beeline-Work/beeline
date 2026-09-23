@@ -1220,6 +1220,14 @@ export class MonolithCornerTurnLoop {
               const publishedToolCalls = new Set<string>();
               const observedToolCalls = new Set<string>();
               const pendingToolNarrations = new Map<string, string>();
+              /**
+               * The stream snapshot each pending narration was taken at. It
+               * becomes this turn's persisted offset only once that narration
+               * reaches the ledger, so a tool call that never settles — or a
+               * narration the final-reply dedupe drops — never moves it and
+               * the text stays in the draft and the reply.
+               */
+              const pendingToolOffsets = new Map<string, string>();
               const pendingToolActivities = new Map<string, DaemonActivity[]>();
               let lastNarratedToolCall: string | undefined;
               let activityAttempt = 0;
@@ -1240,8 +1248,13 @@ export class MonolithCornerTurnLoop {
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
                     observedToolCalls.add(key);
+                    // The ledger consumes the stream up to its current end, so
+                    // the snapshot the offset would move to is simply what the
+                    // lane has seen at the moment of the take.
+                    const at = stream.streamedText;
                     const narration = takeInterimNarration();
                     pendingToolNarrations.set(key, narration);
+                    pendingToolOffsets.set(key, at);
                     if (narration) lastNarratedToolCall = key;
                   }
                   if (
@@ -1285,7 +1298,13 @@ export class MonolithCornerTurnLoop {
                         cornerActivityKey: key,
                         activity,
                       });
+                      // Only now is that prose somewhere a reader can scroll
+                      // to, so only now does the draft stop showing it and the
+                      // reply stop carrying it.
+                      const at = pendingToolOffsets.get(key);
+                      if (narration && at !== undefined) stream.markPersisted(at);
                       pendingToolNarrations.delete(key);
+                      pendingToolOffsets.delete(key);
                       pendingToolActivities.delete(key);
                     })
                     .then(() => undefined)
@@ -1328,6 +1347,7 @@ export class MonolithCornerTurnLoop {
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
                 pendingToolNarrations.clear();
+                pendingToolOffsets.clear();
                 pendingToolActivities.clear();
                 lastNarratedToolCall = undefined;
                 stream.beginRun();
@@ -1414,8 +1434,12 @@ export class MonolithCornerTurnLoop {
                   (checksTurn && (this.yoloMode || Boolean(this.reviewerHandle))))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
-                replyBeforeNudge = durableReplyText(result.agentText);
+                // The flush comes first: it is what puts this run's narration
+                // in the ledger, so the offset it leaves behind is the one
+                // this half of the reply has to be measured against. The next
+                // prompt's `beginRun` then clears it for a fresh stream.
                 await flushToolCalls(result.toolCalls, '');
+                replyBeforeNudge = durableReplyText(stream.remainderOf(result.agentText));
                 // This is the same warm session: identity, soul and merge
                 // authority remain in its system prompt and need not be
                 // repeated in this focused follow-up.
@@ -1439,11 +1463,25 @@ export class MonolithCornerTurnLoop {
                 stream.close();
                 throw new TurnStoppedError('turn stopped by the requester');
               }
-              let reply = durableReplyText(result.agentText);
-              if (!reply && explained?.recoveredText)
-                reply = durableReplyText(explained.recoveredText);
-              reply = [replyBeforeNudge, reply].filter(Boolean).join('\n\n');
-              await flushToolCalls(result.toolCalls, reply, true);
+              let answer = durableReplyText(result.agentText);
+              // Recovered text comes from the harness's own session record,
+              // not from this stream, so no offset measured here describes it.
+              let fromStream = Boolean(answer);
+              if (!answer && explained?.recoveredText) {
+                answer = durableReplyText(explained.recoveredText);
+                fromStream = false;
+              }
+              const withNudgeReply = (text: string): string =>
+                [replyBeforeNudge, text].filter(Boolean).join('\n\n');
+              // The dedupe inside the flush compares a pending narration with
+              // the answer as it stands BEFORE any cut: that comparison is how
+              // a narration duplicating the whole answer gets dropped instead
+              // of saved, which is also what keeps the offset off it.
+              await flushToolCalls(result.toolCalls, withNudgeReply(answer), true);
+              // Past the flush the persisted offset is final for this turn, so
+              // the answer can give up whatever head the ledger now carries.
+              if (fromStream) answer = durableReplyText(stream.remainderOf(result.agentText));
+              const reply = withNudgeReply(answer);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);
@@ -1464,10 +1502,13 @@ export class MonolithCornerTurnLoop {
                   `[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`,
                 );
               }
-              // The reply is posted WHOLE, never a slice: a corner that narrated
-              // before a tool call still lands its closing message. A reply that
-              // only restates the server's own check notes says nothing new, and
-              // that turn settles through its receipt instead.
+              // The reply is the remainder past this turn's persisted offset:
+              // everything the ledger did not already save, cut only where the
+              // saved snapshot provably reaches into the closing run, so a
+              // corner that narrated before a tool call still lands that
+              // closing message entire. A reply that only restates the
+              // server's own check notes says nothing new, and that turn
+              // settles through its receipt instead.
               const durableReply = spoken(reply);
               deliberateNoReply = isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>

@@ -155,7 +155,7 @@ describe('Workbench settings screen', () => {
     const texts = details.findAll((node: any) => typeof node.props?.children === 'string');
     const prose = texts.map((node: any) => node.props.children);
     expect(prose).toContain(
-      'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
+      'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
     );
   });
 

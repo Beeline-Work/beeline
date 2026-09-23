@@ -41,7 +41,7 @@ const view: WorkbenchView = {
       id: 'trusty-squire',
       name: 'Trusty Squire',
       description:
-        'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
+        'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
       available: true,
     },
     { id: 'wallet', name: 'Wallet', description: 'crypto wallet for agents', available: false },
@@ -135,7 +135,7 @@ describe('connector row copy', () => {
 
   it('keeps the user-story description while disconnected', () => {
     expect(connectorDescription(view.connectors[0])).toBe(
-      'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
+      'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
     );
   });
 });

@@ -2732,6 +2732,7 @@ describe('monolith integration', () => {
   });
 
   it('keeps a replayed corner narration activity singular after reopening', async () => {
+    await database.query(`UPDATE agents SET selected_model='grok-4-fast' WHERE agent_id=$1`, [AGENT]);
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'replayed-narration-corner',
@@ -2773,6 +2774,7 @@ describe('monolith integration', () => {
     expect((await daemonOperation('postAgentActivity', input)).status).toBe(409);
     const replayInput = { ...input, cornerActivityKey: 'read-package-replay' };
     expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
+    await database.query(`UPDATE agents SET selected_model='newer-model' WHERE agent_id=$1`, [AGENT]);
     expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
 
     const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
@@ -2783,6 +2785,7 @@ describe('monolith integration', () => {
     expect(replayed).toHaveLength(1);
     expect(replayed?.[0]).toMatchObject({
       presentation: 'activity',
+      agentModel: 'grok-4-fast',
       activity: [
         { kind: 'output', title: 'Update', text: 'I inspected the package.' },
         { kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' },

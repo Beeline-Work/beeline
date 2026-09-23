@@ -2805,8 +2805,9 @@ export class DaemonService {
       : id();
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity)
-         VALUES($1,$2,$3,'','activity',$4,$5::jsonb)
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity,agent_model)
+         VALUES($1,$2,$3,'','activity',$4,$5::jsonb,
+           (SELECT selected_model FROM agents WHERE agent_id=$3))
          ON CONFLICT(id) DO NOTHING
          RETURNING id,created_at`,
         [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],

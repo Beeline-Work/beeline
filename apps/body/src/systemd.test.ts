@@ -246,7 +246,8 @@ describe('trusty squire host broker unit', () => {
     });
     expect(calls).toEqual([
       ['daemon-reload'],
-      ['enable', '--now', TRUSTY_SQUIRE_BROKER_UNIT_NAME],
+      ['enable', TRUSTY_SQUIRE_BROKER_UNIT_NAME],
+      ['restart', '--no-block', TRUSTY_SQUIRE_BROKER_UNIT_NAME],
     ]);
     const written = await readFile(systemdBrokerUnitPath({ XDG_CONFIG_HOME: root }), 'utf8');
     expect(written).toBe(trustySquireBrokerUnit());

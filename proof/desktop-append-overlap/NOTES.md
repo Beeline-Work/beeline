@@ -252,26 +252,45 @@ Chromium and Windows Chrome 153 on Chad. It did not exercise pictures.
 
 ### Picture-send geometry follow-up
 
-`run-send.mjs` now sends photo attachment, text, image artifact, photo attachment,
-then text. Its fixture models the `AttachmentCard` 46×46 thumbnail/58px row.
-The image artifact mounts the production `ArtifactCard` and `ArtifactImage`
-components using their actual style callbacks and Obsidian theme tokens;
-stand-ins replace only session, storage, viewer, PDF, and navigation services
-outside the image card's layout. A 300ms source switch models the attachment's
-media authorization, while the artifact image source resolves after 300ms.
-At 100ms and
-550ms after each send it measures the painted image element, card, enclosing
-message row, adjacent rows and scroll tail; the later sample requires each
-image to have loaded. The painted element is React Native Web's inner
-background-image child, not its outer `Image` View.
+`run-send.mjs` sends photo attachment, text, image artifact, photo attachment,
+then text. The build extracts the production `AttachmentCard` function and its
+styles from `RoomMessageVariants.tsx`, failing if its source markers change.
+The artifact mounts production `ArtifactCard` and `ArtifactImage` directly.
+Both use the actual Obsidian theme tokens; stand-ins replace session, storage,
+viewer, PDF, and navigation services. A 300ms source switch takes the photo
+from file glyph to image; the artifact image source resolves after 300ms.
+At 100ms and 550ms after each send the proof measures the painted image,
+card, enclosing message row, adjacent rows and scroll tail. The later sample
+requires every image to have loaded. React Native Web paints an image in an
+inner background-image child, not the outer `Image` View.
 
 Linux Chromium and Windows Chrome 153 on Chad each passed all ten samples:
 zero adjacent-row overlaps, zero painted-image/card bounds outside their row,
 zero tail gap, and the newest row visible. The Windows run used Chrome CDP in
 the guest and the `CDP_HTTP_URL`/`PROOF_URL` options of `run-send.mjs`.
 
-These are **fixture results**, not a reproduction of the reported bug or a
-fix. The fixture does not mount the full `AttachmentCard` component, exercise
-an actual upload/outbox send, or run inside Beeline's WebView2. The current
-production app remains on GitHub sign-in on Chad, so live post-send pixel and
-row bounds remain unmeasured.
+### Rapid photo-send tail landing
+
+The driver also appends five photos with zero-delay task breaks, then measures
+before and after their images load. On Linux Chromium, `NO_SEND_COMMIT=1`
+(the prior send wiring) reproducibly left the newest row immediately below
+the transcript viewport: 104px tail gap, previous row ending at y=470 and
+newest row spanning y=470–574, while the viewport ended at y=470. A scroll
+event had changed the pin ref to false before the final row committed, so the
+`ResizeObserver` held position. The original proof's visibility check compared
+against `window.innerHeight` (700), incorrectly calling that row visible; it
+now uses the transcript viewport bounds.
+
+`_chat-surface.tsx` now records the own-send message id before appending and
+lands on the tail in a layout effect only when that exact row is in the DOM.
+The same Linux burst then has 0px tail gap and a visible newest row before and
+after image load; all adjacent row and painted-image bounds stay separate.
+On Windows Chrome 153 in Chad, the fixed mixed sends and burst also pass with
+0px tail gap and no geometric overlap. The Windows comparison run without
+the committed-row landing also passed; this timing race was reproduced in the
+Linux fixture, not on Windows.
+
+These are **fixture results**, not a reproduction of the reported Windows
+painted-row overlap. The proof does not exercise a real upload/outbox send or
+run inside Beeline's WebView2. The production app and public web UI still
+require sign-in on Chad; live post-send pixel and row bounds remain unmeasured.

@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +40,45 @@ await build({
   jsx: 'automatic',
   sourcemap: false,
   plugins: [
+    {
+      name: 'production-photo-card',
+      setup(buildApi) {
+        buildApi.onResolve({ filter: /^@proof\/photo-card$/ }, () => ({
+          path: 'photo-card', namespace: 'production-photo-card',
+        }));
+        buildApi.onLoad({ filter: /.*/, namespace: 'production-photo-card' }, async () => {
+          const source = await readFile(path.join(mobileRoot,
+            'sources/app/(app)/beeline/chat/RoomMessageVariants.tsx'), 'utf8');
+          const start = source.indexOf('function AttachmentCard({');
+          const end = source.indexOf('\nfunction SwipeToReply(', start);
+          const stylesStart = source.indexOf('  attachmentCard: {', end);
+          const stylesEnd = source.indexOf('  // Notification lifecycle card accordion', stylesStart);
+          if ([start, end, stylesStart, stylesEnd].some((index) => index < 0)) {
+            throw new Error('The production AttachmentCard source changed; update the proof extraction');
+          }
+          const card = source.slice(start, end).replace('function AttachmentCard(', 'export function AttachmentCard(');
+          const cardStyles = source.slice(stylesStart, stylesEnd);
+          return {
+            loader: 'tsx', resolveDir: here,
+            contents: `import React, { useEffect, useState } from 'react';
+import { Image, Pressable, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { Typography } from '../../apps/mobile/sources/constants/Typography';
+import { formatAttachmentSize, openArtifactInDesktopWorkPane, ArtifactViewerScreen, Modal } from './artifact-proof-deps';
+type AttachmentReference = any;
+const getBuzzRuntimeConfig = () => ({ monolithEnabled: false });
+const monolithSession = { authorization: async () => '' };
+const openExternalUrl = async (_url: string) => {};
+const attachmentOpenUrl = (_attachment: AttachmentReference) => '';
+const showPictureActions = (_attachment: AttachmentReference) => {};
+const styles = StyleSheet.create((theme) => ({
+${cardStyles}
+}));
+${card}`,
+          };
+        });
+      },
+    },
     {
       name: 'rnw-shim',
       setup(buildApi) {

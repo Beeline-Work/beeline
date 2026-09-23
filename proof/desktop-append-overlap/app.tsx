@@ -1,15 +1,17 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 // The real decision under test, exactly as the app imports it.
-import { shouldFollowDesktopTail } from '../../apps/mobile/sources/buzz/room-scroll-follow';
+import { shouldFollowDesktopTail, useScrollFollowOnArrival } from '../../apps/mobile/sources/buzz/room-scroll-follow';
 import { ArtifactCard } from '../../apps/mobile/sources/components/buzz/ArtifactCard';
+import { AttachmentCard } from '@proof/photo-card';
 
 // Deterministic variable-height rows, like real ledger entries.
 const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42, 66];
 // Mirrors the production constant in _chat-surface.tsx.
 const TAIL_PIN_THRESHOLD = 50;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
+const NO_SEND_COMMIT = new URLSearchParams(location.search).has('no-send-commit');
 
 type Msg = { id: string; h: number; kind?: 'photo' | 'artifact' };
 const IMAGE_URI = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1200"><rect width="2000" height="1200" fill="#bc7194"/><circle cx="1000" cy="600" r="400" fill="#f5dc88"/></svg>')}`;
@@ -52,15 +54,7 @@ function Row({ msg }: { msg: Msg }) {
         style={{ color: '#d7d7df', fontSize: 13 }}
       >{`message ${msg.id} · height ${msg.h}`}</Text>
       {msg.kind === 'photo' ? (
-        <View testID={`photo-card-${msg.id}`} style={styles.photoCard}>
-          <Image testID={`photo-image-${msg.id}`} resizeMode="cover"
-            source={{ uri: imageReady ? IMAGE_URI : '' }} style={styles.photoThumbnail} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: '#ddd' }}>large-photo.png</Text>
-            <Text style={{ color: '#aaa' }}>IMAGE/PNG · 1.2 MB</Text>
-          </View>
-          <Text style={{ color: '#ddd' }}>↗</Text>
-        </View>
+        <AttachmentCard attachment={{ ...ARTIFACT_ATTACHMENT, thumbnailUrl: imageReady ? IMAGE_URI : undefined }} isDesktop />
       ) : msg.kind === 'artifact' ? (
         <ArtifactCard attachment={ARTIFACT_ATTACHMENT as any} isDesktop />
       ) : null}
@@ -90,8 +84,32 @@ function App() {
   const isPinnedToTailRef = useRef(true);
   const isUserDraggingRef = useRef(false);
   const hasLandingAnchorRef = useRef(false);
+  const pendingOwnSendTailIdRef = useRef<string | null>(null);
   const prependOldestIdRef = useRef<string | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
+  const newestId = messages.at(-1)?.id ?? null;
+  const arrivalFollow = useScrollFollowOnArrival({
+    newestId,
+    isPinnedToTail: isPinnedToTailRef.current,
+    isUserDragging: isUserDraggingRef.current,
+    openLandsOnTail: false,
+  });
+  useLayoutEffect(() => {
+    if (hasLandingAnchorRef.current || arrivalFollow === 'hold') return;
+    requestAnimationFrame(() => {
+      const scrollNode = scrollNodeRef.current;
+      if (scrollNode) scrollNode.scrollTop = scrollNode.scrollHeight;
+    });
+  }, [newestId]);
+  useLayoutEffect(() => {
+    if (NO_SEND_COMMIT) return;
+    const pendingId = pendingOwnSendTailIdRef.current;
+    const scrollNode = scrollNodeRef.current;
+    if (!pendingId || !scrollNode || !document.querySelector(`[data-row="${pendingId}"]`)) return;
+    scrollNode.scrollTop = scrollNode.scrollHeight;
+    isPinnedToTailRef.current = true;
+    pendingOwnSendTailIdRef.current = null;
+  }, [messages]);
 
   const setContentNode = useCallback((node: HTMLElement | null) => {
     contentObserverRef.current?.disconnect();
@@ -153,17 +171,21 @@ function App() {
       ) as HTMLElement | null;
       const rows = Array.from(document.querySelectorAll('[data-row]')) as HTMLElement[];
       const rects = rows.map((r) => r.getBoundingClientRect());
-      const images = Array.from(document.querySelectorAll('[data-testid^="photo-image-"], [data-testid="artifact-image-loading"], [data-testid="artifact-preview-image"]')) as HTMLElement[];
-      const imageBounds = images.map((img) => {
-        const row = img.closest('[data-row]') as HTMLElement;
-        const card = img.closest('[data-testid^="photo-card-"], [data-testid="artifact-image-large-photo.png"]') as HTMLElement;
-        const paintNode = img.firstElementChild as HTMLElement | null;
-        const image = (paintNode ?? img).getBoundingClientRect();
+      const cards = Array.from(document.querySelectorAll('[data-testid="chat-attachment-large-photo.png"], [data-testid="artifact-image-large-photo.png"]')) as HTMLElement[];
+      const imageBounds = cards.map((card) => {
+        const row = card.closest('[data-row]') as HTMLElement;
+        const isPhoto = card.dataset.testid?.startsWith('chat-attachment-');
+        const imageNode = isPhoto
+          ? card.firstElementChild as HTMLElement
+          : card.querySelector('[data-testid="artifact-image-loading"], [data-testid="artifact-preview-image"]') as HTMLElement;
+        const loaded = Array.from(imageNode.querySelectorAll('img')).some((node) => node.complete && node.naturalWidth > 0);
+        const paintNode = loaded ? imageNode.firstElementChild as HTMLElement : imageNode;
+        const image = paintNode.getBoundingClientRect();
         const cardRect = card.getBoundingClientRect();
         const rowRect = row.getBoundingClientRect();
         return {
           row: row.dataset.row,
-          loaded: Array.from(img.querySelectorAll('img')).some((node) => node.complete && node.naturalWidth > 0),
+          loaded,
           image: { top: image.top, bottom: image.bottom },
           card: { top: cardRect.top, bottom: cardRect.bottom },
           rowBounds: { top: rowRect.top, bottom: rowRect.bottom },
@@ -181,8 +203,11 @@ function App() {
       const tailGap = scroller
         ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
         : null;
-      const newestRowVisible =
-        rects.length > 0 ? rects[rects.length - 1].bottom <= window.innerHeight : null;
+      const viewport = scroller?.getBoundingClientRect();
+      const newestRowVisible = rects.length > 0 && viewport
+        ? rects[rects.length - 1].top >= viewport.top - 0.5 &&
+          rects[rects.length - 1].bottom <= viewport.bottom + 0.5
+        : null;
       const verdict = {
         label,
         nofix: NOFIX,
@@ -226,10 +251,13 @@ function App() {
       };
       // Mirror the real send path: append an optimistic row, release any
       // history anchor, mark the tail pinned, then land on the next frame.
+      let nextSendId = messages.length;
       (window as any).__sendOne = (kind?: Msg['kind']) => {
+        const id = `sent${nextSendId++}`;
+        pendingOwnSendTailIdRef.current = id;
         setMessages((prev) => [
           ...prev,
-          { id: `sent${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length], kind },
+          { id, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length], kind },
         ]);
         hasLandingAnchorRef.current = false;
         isPinnedToTailRef.current = true;
@@ -306,10 +334,6 @@ function App() {
 }
 
 const styles = StyleSheet.create({
-  // Geometry from RoomMessageVariants.tsx AttachmentCard.
-  photoCard: { minWidth: 0, width: '100%', minHeight: 58, marginTop: 8,
-    paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  photoThumbnail: { width: 46, height: 46, backgroundColor: '#34343a' },
   messageList: { flex: 1 },
   desktopScroll: { overflowX: 'hidden', overflowY: 'auto' } as any,
   messageListContent: {

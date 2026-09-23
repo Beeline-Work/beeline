@@ -492,6 +492,8 @@ export type PostRoomMessageInput = TurnOutputAuthority &
       readonly fromRoomId: string;
       readonly toRoomId: string;
       readonly direction: 'down' | 'up';
+      /** A question receives one muted, linked report in the parent Room. */
+      readonly reply?: 'once';
     };
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &

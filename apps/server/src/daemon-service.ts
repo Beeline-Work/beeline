@@ -192,8 +192,9 @@ export class DaemonService {
           ? candidate.cornerId
           : undefined;
     let cornerReviewer = false;
+    let isCorner = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      ({ cornerReviewer } = await this.access(scopedRoom, authenticatedAgentId));
+      ({ cornerReviewer, isCorner } = await this.access(scopedRoom, authenticatedAgentId));
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
@@ -230,7 +231,13 @@ export class DaemonService {
       // turn, which is exactly the stall this handback exists to remove. So the
       // reviewer takes the transactional path below, where the verdict and the
       // handoff commit together or not at all.
-      !cornerReviewer
+      !cornerReviewer &&
+      // A corner question's final reply must create its linked Room report in
+      // the same transaction that completes the corner command.
+      !(
+        isCorner &&
+        (await this.isCornerQuestionReply(scopedRoom, authenticatedAgentId, candidate.requestId))
+      )
     ) {
       const output = await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
@@ -362,6 +369,7 @@ export class DaemonService {
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
+          await scoped.postCornerQuestionReport(command, message.id, authenticatedAgentId);
           // Every reviewer verdict lands here, tagged or not. `db` is the
           // transaction that inserts the reply and completes its command, so a
           // handoff that throws takes the verdict down with it and the retry
@@ -2146,6 +2154,69 @@ export class DaemonService {
     ).rows[0]!;
     return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
   }
+  /** Only an explicit question may carry a corner answer into its parent Room. */
+  private async isCornerQuestionReply(roomId: string, agentId: string, requestId: unknown) {
+    if (typeof requestId !== 'string') return false;
+    const result = await this.database.query(
+      `SELECT 1 FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+       WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+         AND command.reason='relay_question' AND source.card_type='relay' LIMIT 1`,
+      [roomId, agentId, requestId],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  private async postCornerQuestionReport(command: CommandRow, answerId: string, agentId: string) {
+    if (command.reason !== 'relay_question') return;
+    const source = (
+      await this.database.query<{
+        room_id: string;
+        text: string;
+        card: { fromRoomId?: string; reply?: string };
+        parent_id: string;
+        corner_name: string;
+        answer: string;
+      }>(
+        `SELECT source.room_id,source.text,source.card,corner.parent_id,corner.name corner_name,
+                answer.text answer
+         FROM messages source JOIN rooms corner ON corner.id=source.room_id
+         JOIN messages answer ON answer.id=$2 AND answer.room_id=corner.id
+         WHERE source.id=$1 AND source.card_type='relay'`,
+        [command.source_message_id, answerId],
+      )
+    ).rows[0];
+    if (!source || source.card?.reply !== 'once' || source.card.fromRoomId !== source.parent_id)
+      throw new Error('corner question source is invalid');
+    const anchor = (
+      await this.database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND card_type='daemon-fact'
+           AND card->>'type'='corner-open' AND card->>'cornerId'=$2
+         ORDER BY created_at,id LIMIT 1`,
+        [source.parent_id, source.room_id],
+      )
+    ).rows[0]?.id;
+    await this.database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,$4,'card','relay',$5::jsonb)`,
+      [
+        id(),
+        source.parent_id,
+        agentId,
+        source.answer,
+        JSON.stringify({
+          fromRoomId: source.room_id,
+          toRoomId: source.parent_id,
+          direction: 'up',
+          fromName: source.corner_name,
+          cornerId: source.room_id,
+          ...(anchor ? { anchorMessageId: anchor } : {}),
+          received: true,
+        }),
+      ],
+    );
+    this.live.publish({ type: 'invalidate', roomId: source.parent_id, reason: 'message', agentId });
+  }
+
   /** A hand-off is an intermediate command output, never the sender's final reply. */
   private async postRelay(input: Input<'postRoomMessage'>, agentId: string) {
     const relay = input.relay!;
@@ -2156,7 +2227,8 @@ export class DaemonService {
       typeof relay.toRoomId !== 'string' ||
       typeof input.text !== 'string' ||
       !input.text.trim() ||
-      input.text.length > 16000
+      input.text.length > 16000 ||
+      (relay.reply !== undefined && relay.reply !== 'once')
     )
       throw new Error('invalid relay');
     if (relay.direction === 'up') throw new Error('relay up is retired');
@@ -2199,6 +2271,7 @@ export class DaemonService {
       fromName: pair.room_name,
       cornerId,
       received,
+      ...(relay.reply === 'once' ? { reply: 'once' } : {}),
     };
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
@@ -2212,7 +2285,7 @@ export class DaemonService {
       agentId: target,
       sourceMessageId: saved.id,
       parent: command,
-      reason: 'relay_steer',
+      reason: relay.reply === 'once' ? 'relay_question' : 'relay_steer',
     });
     if (!queued) throw new Error('relay target unavailable or delegation limit reached');
     this.live.publish({ type: 'invalidate', roomId: relay.toRoomId, reason: 'message', agentId });
@@ -4377,17 +4450,21 @@ export class DaemonService {
    * the review handoff asks its own question only for them, and an ordinary
    * Room reply — the hottest write in the product — pays nothing for it.
    */
-  private async access(roomId: string, agentId: string): Promise<{ cornerReviewer: boolean }> {
-    const result = await this.database.query<{ corner_reviewer: boolean }>(
+  private async access(
+    roomId: string,
+    agentId: string,
+  ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
+    const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND parent.reviewer_agent_id=$2
-       ) corner_reviewer
+       ) corner_reviewer,
+       EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner
        FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId],
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
-    return { cornerReviewer: result.rows[0]!.corner_reviewer };
+    return { cornerReviewer: result.rows[0]!.corner_reviewer, isCorner: result.rows[0]!.is_corner };
   }
 
   /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */

@@ -147,6 +147,7 @@ export class PushDeliveryLoop {
           AND m.presentation IS DISTINCT FROM 'activity'
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
+          AND (m.card_type IS DISTINCT FROM 'relay' OR m.card->>'direction' IS DISTINCT FROM 'up')
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
           AND btrim(m.text)<>''
           AND NOT EXISTS (

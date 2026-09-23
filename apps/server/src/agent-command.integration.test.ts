@@ -1408,6 +1408,53 @@ it('stores an ambiguous agent tag as prose without dispatching either candidate'
 });
 
 describe('Room/corner relays', () => {
+  it('links one muted question answer to the corner card and leaves steers unanswered', async () => {
+    const anchor = id();
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,'Corner opened','card','daemon-fact',$4::jsonb)`,
+      [anchor, R, A, JSON.stringify({ type: 'corner-open', cornerId: C })],
+    );
+    await send('@hoots ask the corner');
+    const roomCommand = (await commands(A))[0]!;
+    await claim(roomCommand);
+    const question = await result(roomCommand, 'What remains?', 'g1', {
+      relay: { fromRoomId: R, toRoomId: C, direction: 'down', reply: 'once' },
+    });
+    const cornerCommand = (await commands(B, C))[0]!;
+    expect(cornerCommand.reason).toBe('relay_question');
+    await claim(cornerCommand);
+    const answer = await result(cornerCommand, 'The tests remain.');
+    const reports = await db.query<{
+      id: string;
+      card: { anchorMessageId: string; direction: string };
+    }>(
+      `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='relay'
+       AND card->>'direction'='up' AND text='The tests remain.'`,
+      [R],
+    );
+    expect(reports.rows).toHaveLength(1);
+    expect(reports.rows[0]!.card).toMatchObject({ anchorMessageId: anchor, direction: 'up' });
+    expect(
+      (await phone.readRoom(R, H))!.messages.find((message) => message.id === reports.rows[0]!.id)
+        ?.relay,
+    ).toMatchObject({ direction: 'up', cornerId: C, anchorMessageId: anchor });
+    expect(
+      (await phone.readRoom(C, H))!.messages.find((message) => message.id === question.id)?.relay,
+    ).toMatchObject({ reply: 'once' });
+    await result(cornerCommand, 'The tests remain.');
+    expect((await db.query(`SELECT 1 FROM messages WHERE id=$1`, [answer.id])).rowCount).toBe(1);
+    expect(
+      (
+        await db.query(
+          `SELECT id FROM messages WHERE room_id=$1 AND card_type='relay' AND card->>'direction'='up' AND text='The tests remain.'`,
+          [R],
+        )
+      ).rowCount,
+    ).toBe(1);
+    await result(roomCommand, 'Asked the corner.');
+  });
+
   it.each([A, B])(
     'queues a member hand-off from %s without completing its source turn',
     async (sender) => {
@@ -1582,13 +1629,19 @@ describe('heartbeat authority across a lapsed lease', () => {
       sourceMessageId: source,
       reason: 'human_tag',
     }))!;
-    await claim({ ...command, roomId: R, agentId: A, turnRequestId: command.turn_request_id } as never);
+    await claim({
+      ...command,
+      roomId: R,
+      agentId: A,
+      turnRequestId: command.turn_request_id,
+    } as never);
 
     // One gap long enough to expire the lease: a deploy, a network blip, a 5xx
     // window, or a slow heartbeat request.
-    await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [
-      command.id,
-    ]);
+    await db.query(
+      `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
+      [command.id],
+    );
     await db.query(
       `UPDATE agent_turns SET created_at=now()-interval '100 seconds'
        WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,

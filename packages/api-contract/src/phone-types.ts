@@ -201,6 +201,7 @@ export type RoomViewMessage = {
     readonly cornerId: string;
     readonly anchorMessageId?: string;
     readonly received: boolean;
+    readonly reply?: 'once';
   };
   readonly id: string;
   readonly text: string;

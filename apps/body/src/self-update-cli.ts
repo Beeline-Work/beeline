@@ -120,7 +120,9 @@ export async function requireLayout(): Promise<BeelineInstallLayout> {
   if (layout) return layout;
   const discovered = discoveredBeelineInstallLayout(process.env);
   if ((await readInstalledBundleIdentity(discovered)) !== undefined) return discovered;
-  throw new Error('this host has no Beeline install; run `npx usebeeline connect` first.');
+  throw new Error(
+    'this host has no Beeline install; run `npx usebeeline connect` first.',
+  );
 }
 
 async function runningDaemonConfigPaths(): Promise<string[]> {

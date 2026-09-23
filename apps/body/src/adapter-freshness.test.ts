@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { latestAdapterInstallCommand } from './agent-command.js';
+import { latestAdapterInstallCommand, type AgentCommand, type AgentKind } from './agent-command.js';
+import { loadConnectModelCatalog } from './connect-command.js';
 import { refreshRuntimeHarnessAdapters } from './self-update-cli.js';
 
 describe('harness adapter freshness', () => {
@@ -12,6 +13,42 @@ describe('harness adapter freshness', () => {
       command: 'npm',
       args: ['install', '-g', packageSpec],
     });
+  });
+
+  it('refreshes before the wizard resolves and probes the adapter it will persist', async () => {
+    let installed = false;
+    const refreshAdapter = vi.fn(async (kind: AgentKind) => {
+      expect(kind).toBe('codex');
+      installed = true;
+    });
+    const resolveAgent = vi.fn((): AgentCommand => {
+      expect(installed).toBe(true);
+      return { kind: 'codex', command: '/latest/bin/codex-acp', args: [] };
+    });
+    const fetchCatalog = vi.fn(async (agent: Pick<AgentCommand, 'command' | 'args'>) => {
+      expect(agent.command).toBe('/latest/bin/codex-acp');
+      return {
+        raw: [],
+        catalog: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'gpt-6-sol',
+            options: [{ id: 'gpt-6-sol', name: 'GPT 6 Soul' }],
+          },
+        ],
+      };
+    });
+
+    await expect(
+      loadConnectModelCatalog({ harness: 'codex' }, { refreshAdapter, resolveAgent, fetchCatalog }),
+    ).resolves.toMatchObject({
+      currentValue: 'gpt-6-sol',
+      options: [{ id: 'gpt-6-sol', name: 'GPT 6 Soul' }],
+    });
+    expect(refreshAdapter).toHaveBeenCalledTimes(1);
+    expect(resolveAgent).toHaveBeenCalledTimes(1);
+    expect(fetchCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes each stored adapter once for update and start fan-out', async () => {

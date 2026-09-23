@@ -80,7 +80,7 @@ export type PostRoomEventInput = TurnOutputAuthority &
     readonly mentionAgentIds?: readonly string[];
   };
 
-export type AgentCommandAction = 'input' | 'resume' | 'stop';
+export type AgentCommandAction = 'input' | 'resume' | 'stop' | 'restart';
 export type AgentCommand = {
   readonly id: string;
   readonly roomId: string;
@@ -1090,7 +1090,7 @@ export function isAgentCommand(value: unknown): value is AgentCommand {
   )
     return false;
   if (
-    !['input', 'resume', 'stop'].includes(String(c.action)) ||
+    !['input', 'resume', 'stop', 'restart'].includes(String(c.action)) ||
     !Number.isInteger(c.agentDepth) ||
     Number(c.agentDepth) < 0 ||
     Number(c.agentDepth) > 3

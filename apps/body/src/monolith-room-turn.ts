@@ -302,6 +302,8 @@ export interface MonolithRoomTurnOptions {
   pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   onCornerOpened?: () => void;
+  onRestartRequested?: () => void;
+  canStartTurn?: () => boolean;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
   /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
@@ -1373,6 +1375,8 @@ export class MonolithRoomTurnLoop {
         onPoll: () => this.options.health.poll(),
         onError: (error) => console.error('[thin-core] Room command failed', error),
         stop: (requestId) => this.stopTurn(requestId),
+        restart: () => this.options.onRestartRequested?.(),
+        canStartTurn: this.options.canStartTurn,
         run: async (command) => {
           const item = {
             ...command.source,

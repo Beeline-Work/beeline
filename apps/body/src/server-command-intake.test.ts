@@ -82,6 +82,38 @@ describe('command intake mechanics', () => {
     });
     expect(run).not.toHaveBeenCalled();
   });
+  it('claims restart without acknowledging it and hands control to the daemon drain', async () => {
+    const controller = new AbortController();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') {
+        return {
+          commandProtocol: 1,
+          commands: [command('work-while-draining'), command('restart-1', 'restart')],
+        };
+      }
+      return { id: 'ok' };
+    });
+    const restart = vi.fn(() => controller.abort());
+    const run = vi.fn();
+    await runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run,
+      stop: vi.fn(),
+      restart,
+      canStartTurn: () => false,
+    });
+    expect(restart).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(execute.mock.calls.map((call) => call[0])).toEqual([
+      'getAgentCommands',
+      'claimAgentCommand',
+    ]);
+    expect(execute.mock.calls[1]?.[1]).toMatchObject({ commandId: 'restart-1' });
+  });
   it('claims one live-pushed command and forwards release identity without availability', async () => {
     const controller = new AbortController();
     let onState:

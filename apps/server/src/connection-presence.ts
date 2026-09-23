@@ -1,10 +1,11 @@
 import { isServerEventKind } from '@beeline/api-contract/phone';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { CommittedTurnLiveRow, LiveHub } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
+import { systemLine } from './system-line.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
@@ -468,6 +469,36 @@ export async function announceAgentLifecycle(
            body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
         [roomId, agentId, JSON.stringify(body)],
       );
+    const restarts = await db.query<{
+      id: string;
+      room_id: string;
+      source_message_id: string;
+      handle: string | null;
+      name: string;
+    }>(
+      `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
+       FROM identities identity
+       WHERE command.agent_id=$1 AND command.agent_id=identity.id
+         AND command.action='restart' AND command.state='claimed'
+         AND command.lifecycle_before IS DISTINCT FROM $2
+       RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
+      [agentId, lifecycle],
+    );
+    for (const restart of restarts.rows)
+      await systemLine(db, {
+        id: createHash('sha256')
+          .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
+          .digest('hex'),
+        roomId: restart.room_id,
+        authorId: agentId,
+        subject: {
+          kind: 'agent',
+          id: agentId,
+          name: restart.handle ? `@${restart.handle}` : restart.name,
+        },
+        verb: 'reconnected after restart',
+        afterMessageId: restart.source_message_id,
+      });
     // Presence is an agent fact. Change one durable row; the PostgreSQL
     // listener expands its one notification across current Room memberships.
     return true;

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
  agent_id text NOT NULL REFERENCES identities(id),
  source_message_id text NOT NULL REFERENCES messages(id),
  turn_request_id text NOT NULL,
- action text NOT NULL CHECK(action IN ('input','resume','stop')),
+ action text NOT NULL CHECK(action IN ('input','resume','stop','restart')),
  reason text NOT NULL,
  root_command_id text NOT NULL,
  parent_command_id text,
@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS agent_commands (
  UNIQUE(room_id,source_message_id,agent_id,action)
 );
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
+ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check;
+ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
@@ -70,6 +74,8 @@ export type CommandRow = {
   lease_expires_at: Date | null;
   result_message_id: string | null;
   hiccup_attempts: number;
+  lifecycle_before: string | null;
+  restart_confirmed_at: Date | null;
 };
 
 /** Read the same root requester that cancelAgentTurn authorizes, including relayed turns. */
@@ -230,7 +236,283 @@ export async function createAgentCommand(
   return result.rows[0];
 }
 
-export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Promise<void> {
+export const TAGGED_AGENT_LIFECYCLE_COMMANDS = [
+  'restart',
+  'status',
+  'stop',
+  'retry',
+  'debug',
+  'help',
+] as const;
+export type TaggedAgentLifecycleCommand = (typeof TAGGED_AGENT_LIFECYCLE_COMMANDS)[number];
+
+export function parseTaggedAgentLifecycleCommand(
+  text: string,
+  handle: string | null,
+): TaggedAgentLifecycleCommand | undefined {
+  if (!handle) return undefined;
+  const match = text.trim().match(/^@([^\s]+)\s+(restart|status|stop|retry|debug|help)$/i);
+  if (!match || match[1]!.toLocaleLowerCase() !== handle.toLocaleLowerCase()) return undefined;
+  return match[2]!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
+}
+
+type LifecycleTarget = {
+  agent_id: string;
+  owner_id: string;
+  handle: string | null;
+  name: string;
+  room_role: string;
+  access_policy: unknown;
+  lifecycle_id: string | null;
+  release_version: string | null;
+  source_sha: string | null;
+  presence_status: string | null;
+  presence_updated_at: Date | null;
+};
+
+function lifecycleSubject(target: LifecycleTarget) {
+  return {
+    kind: 'agent' as const,
+    id: target.agent_id,
+    name: target.handle ? `@${target.handle}` : target.name,
+  };
+}
+
+async function routeTaggedLifecycleCommand(
+  db: SqlDatabase,
+  source: { room_id: string; author_id: string; text: string; tagged_ids: string[] },
+  sourceId: string,
+): Promise<boolean> {
+  if (
+    source.tagged_ids.length !== 1 ||
+    !/^@[^\s]+\s+(?:restart|status|stop|retry|debug|help)$/i.test(source.text.trim())
+  )
+    return false;
+  const target = (
+    await db.query<LifecycleTarget>(
+      `SELECT agent.agent_id,agent.owner_id,identity.handle,identity.name,
+         sender.role room_role,agent.access_policy,
+         presence.body->>'lifecycleId' lifecycle_id,
+         presence.body->>'releaseVersion' release_version,
+         presence.body->>'sourceSha' source_sha,
+         presence.body->>'status' presence_status,presence.updated_at presence_updated_at
+       FROM agents agent
+       JOIN identities identity ON identity.id=agent.agent_id
+       JOIN memberships target_member ON target_member.room_id=$2
+         AND target_member.identity_id=agent.agent_id AND target_member.removed_at IS NULL
+       JOIN memberships sender ON sender.room_id=$2
+         AND sender.identity_id=$3 AND sender.removed_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT body,updated_at FROM live_outputs
+         WHERE agent_id=agent.agent_id AND kind='presence'
+         ORDER BY updated_at DESC LIMIT 1
+       ) presence ON true
+       WHERE agent.agent_id=$1
+       FOR SHARE OF agent,target_member,sender`,
+      [source.tagged_ids[0], source.room_id, source.author_id],
+    )
+  ).rows[0];
+  if (!target) return false;
+  const action = parseTaggedAgentLifecycleCommand(source.text, target.handle);
+  if (!action) return false;
+
+  const manager = target.room_role === 'owner' || target.room_role === 'admin';
+  const ownsAgent = target.owner_id === source.author_id;
+  const mayAddress = senderMayAddressAgent(
+    parseAgentAccessPolicy(target.access_policy),
+    source.author_id,
+    target.owner_id,
+  );
+  const deny = async (consequence: string) => {
+    await systemLine(db, {
+      id: createHash('sha256')
+        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:denied`)
+        .digest('hex'),
+      roomId: source.room_id,
+      authorId: target.agent_id,
+      subject: lifecycleSubject(target),
+      verb: `did not ${action}`,
+      consequence,
+      afterMessageId: sourceId,
+    });
+  };
+  if (!mayAddress) {
+    await deny('the sender may not address this agent');
+    return true;
+  }
+  if ((action === 'restart' || action === 'debug') && !ownsAgent && !manager) {
+    await deny('only its owner or a Room manager may use that command');
+    return true;
+  }
+
+  const active = (
+    await db.query<{
+      request_id: string;
+      command_id: string;
+      root_source_message_id: string;
+      requested_by: string;
+    }>(
+      `SELECT turn.request_id,command.id command_id,command.root_source_message_id,
+         root.author_id requested_by
+       FROM agent_turns turn
+       JOIN agent_commands command ON command.room_id=turn.room_id
+         AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
+         AND command.action IN ('input','resume')
+       JOIN messages root ON root.id=command.root_source_message_id
+       WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
+       ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1`,
+      [source.room_id, target.agent_id],
+    )
+  ).rows[0];
+  const line = async (verb: string, consequence?: string) =>
+    systemLine(db, {
+      id: createHash('sha256')
+        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:${action}`)
+        .digest('hex'),
+      roomId: source.room_id,
+      authorId: target.agent_id,
+      subject: lifecycleSubject(target),
+      verb,
+      ...(consequence ? { consequence } : {}),
+      afterMessageId: sourceId,
+    });
+
+  if (action === 'help') {
+    await line('supports lifecycle commands', 'restart · status · stop · retry · debug · help');
+    return true;
+  }
+  const online =
+    target.presence_status === 'online' &&
+    Boolean(target.presence_updated_at) &&
+    Date.now() - target.presence_updated_at!.getTime() < 90_000;
+  if (action === 'status') {
+    await line(
+      online ? 'is online' : 'is offline',
+      active ? 'one turn is running' : 'no turn is running',
+    );
+    return true;
+  }
+  if (action === 'debug') {
+    const details = [
+      `lifecycle ${target.lifecycle_id ?? 'unknown'}`,
+      `release ${target.release_version ?? 'unknown'}`,
+      `source ${target.source_sha?.slice(0, 12) ?? 'unknown'}`,
+      active ? `turn ${active.request_id}` : 'no active turn',
+    ];
+    await line('reported diagnostics', details.join(' · '));
+    return true;
+  }
+  if (action === 'stop') {
+    if (!active) {
+      await line('has nothing to stop');
+      return true;
+    }
+    if (!ownsAgent && !manager && active.requested_by !== source.author_id) {
+      await deny('only the requester, its owner, or a Room manager may stop that turn');
+      return true;
+    }
+    const parent = (
+      await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 FOR UPDATE`, [
+        active.command_id,
+      ])
+    ).rows[0]!;
+    await createAgentCommand(db, {
+      roomId: source.room_id,
+      agentId: target.agent_id,
+      sourceMessageId: sourceId,
+      turnRequestId: active.request_id,
+      action: 'stop',
+      reason: 'tagged_lifecycle_stop',
+      parent,
+      retainDepth: true,
+    });
+    await db.query(
+      `UPDATE agent_turns SET status='cancelled',created_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+      [source.room_id, target.agent_id, active.request_id],
+    );
+    await db.query(
+      `UPDATE agent_commands SET state='cancelled',completed_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+         AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+      [source.room_id, target.agent_id, active.request_id],
+    );
+    await line('stopped its running turn');
+    return true;
+  }
+  if (action === 'retry') {
+    const failed = (
+      await db.query<CommandRow>(
+        `SELECT command.* FROM agent_commands command
+         JOIN agent_turns turn ON turn.room_id=command.room_id
+           AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+         WHERE command.room_id=$1 AND command.agent_id=$2
+           AND command.action IN ('input','resume') AND turn.status='failed'
+         ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
+        [source.room_id, target.agent_id],
+      )
+    ).rows[0];
+    if (!failed) {
+      await line('has no failed turn to retry');
+      return true;
+    }
+    const requester = (
+      await db.query<{ author_id: string }>(`SELECT author_id FROM messages WHERE id=$1`, [
+        failed.root_source_message_id,
+      ])
+    ).rows[0]?.author_id;
+    if (!ownsAgent && !manager && requester !== source.author_id) {
+      await deny('only the requester, its owner, or a Room manager may retry that turn');
+      return true;
+    }
+    await createAgentCommand(db, {
+      roomId: source.room_id,
+      agentId: target.agent_id,
+      sourceMessageId: sourceId,
+      turnRequestId: failed.turn_request_id,
+      action: 'resume',
+      reason: 'tagged_lifecycle_retry',
+      parent: failed,
+      retainDepth: true,
+    });
+    await line('queued a retry for its last failed turn');
+    return true;
+  }
+
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+    `agent-restart:${target.agent_id}`,
+  ]);
+  const existingRestart = (
+    await db.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE agent_id=$1 AND action='restart'
+       AND state IN ('pending','claimed') ORDER BY created_at DESC LIMIT 1`,
+      [target.agent_id],
+    )
+  ).rows[0];
+  if (existingRestart) {
+    await line('already has a restart in progress');
+    return true;
+  }
+  const restart = await createAgentCommand(db, {
+    roomId: source.room_id,
+    agentId: target.agent_id,
+    sourceMessageId: sourceId,
+    action: 'restart',
+    reason: 'tagged_lifecycle_restart',
+  });
+  if (restart)
+    await db.query(`UPDATE agent_commands SET lifecycle_before=$2 WHERE id=$1`, [
+      restart.id,
+      target.lifecycle_id,
+    ]);
+  await line(
+    'queued a restart',
+    active ? 'running turn will drain first' : 'helper will reconnect to confirm',
+  );
+  return true;
+}
+
+export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Promise<boolean> {
   // Who this message tags is read in the SAME statement that reads the message.
   // Routing is on the write path of every human message in every Room, so the
   // tags cost no round trip of their own.
@@ -250,7 +532,8 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       [sourceId],
     )
   ).rows[0];
-  if (!source) return;
+  if (!source) return false;
+  if (await routeTaggedLifecycleCommand(db, source, sourceId)) return true;
   // A human message reaches an agent only when it addresses that agent: a
   // typed tag, or membership of a direct conversation. Nothing routes on
   // transcript adjacency — an untagged top-level message starts no turn.
@@ -281,6 +564,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
   }
+  return false;
 }
 
 export async function routeAgentResult(
@@ -476,7 +760,8 @@ export async function claimAgentCommand(
            FOR UPDATE
          ), working AS (
            INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-           SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible WHERE action<>'stop'
+           SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible
+           WHERE action<>'stop' AND action<>'restart'
            ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
              status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now()
            WHERE agent_turns.status<>'cancelled'
@@ -486,13 +771,14 @@ export async function claimAgentCommand(
              lease_expires_at=now()+interval '90 seconds',claimed_at=now()
            FROM eligible
            WHERE command.id=eligible.id AND
-             (eligible.action='stop' OR EXISTS(SELECT 1 FROM working))
+             (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
            RETURNING command.*
          )
          SELECT claimed.*,true turn_claimed FROM claimed
          UNION ALL
          SELECT eligible.*,false turn_claimed FROM eligible
-         WHERE eligible.action<>'stop' AND NOT EXISTS(SELECT 1 FROM working)`,
+         WHERE eligible.action<>'stop' AND eligible.action<>'restart'
+           AND NOT EXISTS(SELECT 1 FROM working)`,
       [commandId, roomId, agentId, generation],
     )
   ).rows[0];
@@ -637,7 +923,7 @@ export async function readAgentCommands(
          AND busy.state='claimed' AND busy.lease_expires_at>now()
      )
    )
- ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'resume' THEN 1 ELSE 2 END,c.created_at,c.id LIMIT 100`,
+ ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,c.created_at,c.id LIMIT 100`,
     [roomId, agentId],
   );
   return {

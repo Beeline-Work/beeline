@@ -42,6 +42,7 @@ export class ThinDaemonCore {
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onHiccupRestart?: (attempt: number) => void;
+      onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
   ) {

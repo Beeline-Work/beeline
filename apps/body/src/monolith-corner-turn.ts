@@ -411,6 +411,8 @@ export interface MonolithCornerTurnOptions {
   onPoll(): void;
   onFailure(retryInMs: number): void;
   onCloseRequested(): Promise<void>;
+  onRestartRequested?: () => void;
+  canStartTurn?: () => boolean;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
@@ -1607,6 +1609,8 @@ export class MonolithCornerTurnLoop {
         onPoll: () => this.options.onPoll(),
         onError: (error) => console.error('[thin-core] corner command failed', error),
         stop: (requestId) => this.stopTurn(requestId),
+        restart: () => this.options.onRestartRequested?.(),
+        canStartTurn: this.options.canStartTurn,
         closed: async () => {
           if (this.closePushed) {
             this.closePushed = false;

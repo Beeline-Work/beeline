@@ -37,6 +37,7 @@ import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { ThinDaemonCore } from './thin-core.js';
+import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import { hiccupBackoffMs } from '@beeline/api-contract/daemon';
 import {
@@ -322,6 +323,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   };
   let stoppingStatus = 'daemon stopped';
   try {
+    let lifecycleRestartDrain: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
       onConfigChanged: refreshCatalog,
@@ -336,6 +338,31 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         }
         const timer = setTimeout(() => process.exit(0), delay);
         timer.unref?.();
+      },
+      onRestartRequested: () => {
+        if (lifecycleRestartDrain) return;
+        const deadlineAt = Date.now() + DEFAULT_DRAIN_DEADLINE_MS;
+        stoppingStatus =
+          `restart requested; active work draining; ` +
+          `exit_deadline=${new Date(deadlineAt).toISOString()}`;
+        void notifier.progress(stoppingStatus);
+        core.setDrainDeadlineAt(deadlineAt);
+        lifecycleRestartDrain = (async () => {
+          while (core.activeTurnCount() > 0 && Date.now() < deadlineAt) {
+            await new Promise<void>((resolveWait) => setTimeout(resolveWait, 250));
+          }
+          const forced = core.activeTurnCount() > 0;
+          if (forced) await core.prepareForForcedUpdateRestart();
+          else core.quiesceForUpdateIfIdle();
+          stoppingStatus = forced
+            ? 'restart requested; drain deadline reached; active work cancelled'
+            : 'restart requested; active work drained';
+          await notifier.stopping(stoppingStatus);
+          controller.abort();
+        })().catch((error) => {
+          console.error('[thin-core] requested restart drain failed:', error);
+          controller.abort();
+        });
       },
     });
     // Busy means a turn is executing right now. An idle helper restarts on the

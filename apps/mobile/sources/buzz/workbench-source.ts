@@ -278,9 +278,16 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
   }
 
   async disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void> {
+    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    const row = dto.connectors.find(
+      (candidate) =>
+        candidate.connectorId === input.connectorId ||
+        candidate.connectorType === input.connectorId,
+    );
+    if (!row) return;
     await monolithPhoneOperation('unpairConnector', {
       workspaceId: input.workspaceId,
-      connectorId: input.connectorId,
+      connectorId: row.connectorId,
     });
   }
 }

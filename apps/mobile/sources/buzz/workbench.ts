@@ -10,6 +10,7 @@
  * projection the screens render from, so member B's Workbench never paints
  * member A's connections even if a rogue payload arrives.
  */
+import { connectorAdapter } from '@beeline/api-contract/workbench';
 
 export type WorkbenchConnectorId =
   | 'trusty-squire'
@@ -111,7 +112,8 @@ export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
 /** How a tool row's trailing instrument reads (board revision 2): a state
  *  word beside its state dot, or the ONE compact Connect button when the
  *  tool is not connected and not `soon`. The dot is never the only signal —
- *  the word carries the state. */
+ *  the word carries the state. Adapted kinds (Squire, YouTube) take Connect
+ *  / Reconnect / Disconnect / revoke-grants from `workbenchActions()`. */
 export type ConnectorInstrument = {
   /** The trailing state word; absent when the row carries its Connect button. */
   value?: 'connected' | 'installing' | 'error' | 'soon';
@@ -120,25 +122,73 @@ export type ConnectorInstrument = {
   valueTone?: 'danger' | 'accent';
   /** The row carries its one Connect action. */
   connect: boolean;
+  reconnect: boolean;
+  disconnect: boolean;
+  revokeGrants: boolean;
 };
 
+const NO_ADAPTER_ACTIONS = {
+  reconnect: false,
+  disconnect: false,
+  revokeGrants: false,
+} as const;
+
 /** Project a connector's lifecycle into its row instrument. `undefined`
- *  status reads as not connected; an unavailable tool reads `soon`. */
+ *  status reads as not connected; an unavailable tool reads `soon`. Pass
+ *  the connector id so adapted kinds read controls from the typed adapter. */
 export function connectorInstrument(
   status: WorkbenchConnectorStatus | 'soon' | undefined,
+  connectorId?: string,
 ): ConnectorInstrument {
+  if (status === 'soon') {
+    return { value: 'soon', connect: false, ...NO_ADAPTER_ACTIONS };
+  }
+  const adapter = connectorId ? connectorAdapter(connectorId) : undefined;
+  const actions = adapter?.workbenchActions(
+    !status || status === 'disconnected' ? undefined : status,
+  );
+  const adapted = {
+    connect: actions?.includes('connect') ?? false,
+    reconnect: actions?.includes('reconnect') ?? false,
+    disconnect: actions?.includes('disconnect') ?? false,
+    revokeGrants: actions?.includes('revoke-grants') ?? false,
+  };
   switch (status) {
     case 'connected':
-      return { value: 'connected', glyph: 'live', connect: false };
+      return {
+        value: 'connected',
+        glyph: 'live',
+        ...(adapter ? adapted : { connect: false, ...NO_ADAPTER_ACTIONS }),
+      };
     case 'installing':
-      return { value: 'installing', glyph: 'pulse', valueTone: 'accent', connect: false };
+      return {
+        value: 'installing',
+        glyph: 'pulse',
+        valueTone: 'accent',
+        ...(adapter ? adapted : { connect: false, ...NO_ADAPTER_ACTIONS }),
+      };
     case 'error':
-      return { connect: true };
-    case 'soon':
-      return { value: 'soon', connect: false };
+      return adapter ? adapted : { connect: true, ...NO_ADAPTER_ACTIONS };
     default:
-      return { connect: true };
+      return adapter ? adapted : { connect: true, ...NO_ADAPTER_ACTIONS };
   }
+}
+
+export type ConnectorExpandedAction = {
+  action: 'reconnect' | 'disconnect';
+  label: string;
+};
+
+/** Adapter actions that do not take the trailing Connect slot: they live in
+ *  the expanded tool details so a connected/installing row keeps its state
+ *  word. */
+export function connectorExpandedActions(
+  instrument: ConnectorInstrument,
+): readonly ConnectorExpandedAction[] {
+  return [
+    ...(instrument.reconnect ? [{ action: 'reconnect' as const, label: 'Reconnect' }] : []),
+    ...(instrument.disconnect ? [{ action: 'disconnect' as const, label: 'Disconnect' }] : []),
+  ];
 }
 
 /**
@@ -508,8 +558,22 @@ export function connectionFactDate(timestamp: number | undefined): string {
   return date.toLocaleDateString('en', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** A grant the helper has not yet confirmed as revoked. */
+export function connectionGrantPending(grant: ConnectionGrant): boolean {
+  return grant.revokingAt !== undefined;
+}
+
+/** Vault keys are Squire; revoke is offered only when the adapter says so. */
+export function connectionRevokeOffered(): boolean {
+  return (
+    connectorAdapter('trusty-squire')?.workbenchActions('connected').includes('revoke-grants') ===
+    true
+  );
+}
+
 /** The limits that make a live grant judgeable at a glance. */
 export function connectionGrantLimits(grant: ConnectionGrant): string {
+  if (connectionGrantPending(grant)) return 'revoking';
   return (
     [
       grant.rateLimitPerHour === undefined ? undefined : `${grant.rateLimitPerHour}/hour`,
@@ -528,8 +592,14 @@ export function connectionCreatedByLine(detail: ConnectionDetailView): string {
 
 /** `2 live grants` — the server's grants carry no agent attribution. */
 export function connectionGrantsLine(detail: ConnectionDetailView): string {
-  if (!detail.grants.length) return 'none';
-  return `${detail.grants.length} live grant${detail.grants.length === 1 ? '' : 's'}`;
+  const live = detail.grants.filter((grant) => !connectionGrantPending(grant));
+  if (!live.length) {
+    if (!detail.grants.length) return 'none';
+    return detail.grants.length === 1
+      ? '1 grant revoking'
+      : `${detail.grants.length} grants revoking`;
+  }
+  return `${live.length} live grant${live.length === 1 ? '' : 's'}`;
 }
 
 /** `none`, or the tightest per-grant cap the vault reports. */

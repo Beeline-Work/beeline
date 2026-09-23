@@ -313,4 +313,37 @@ describe('Workbench settings screen', () => {
     );
     expect(navigation.push.mock.calls[0][0].params.ref).toBe('cred_vercel');
   });
+
+  it('offers adapter reconnect and disconnect on a connected Squire row', async () => {
+    const source = new MockWorkbenchSource();
+    await source.pairConnector({
+      workspaceId: 'workspace-1',
+      connectorId: 'trusty-squire',
+      helperId: 'helper-squire-box',
+    });
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
+    expect(squire.props.action).toBeUndefined();
+    expect(squire.props.value).toBe('connected');
+    act(() => squire.props.onPress());
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-reconnect' }).props
+        .title,
+    ).toBe('Reconnect');
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-disconnect' }).props
+        .title,
+    ).toBe('Disconnect');
+    await act(async () => {
+      renderer.root.findByProps({
+        testID: 'workbench-connector-trusty-squire-disconnect',
+      }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const after = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
+    expect(after.props.action).toBe('Connect');
+  });
 });

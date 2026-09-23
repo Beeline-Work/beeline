@@ -14,9 +14,12 @@ import {
   connectionTitle,
   connectionsForViewer,
   connectorDescription,
+  connectorExpandedActions,
   connectorIdentityHandle,
   connectorIdentityId,
   connectorInstrument,
+  connectionGrantPending,
+  connectionRevokeOffered,
   googleEntryConnector,
   googleEntryState,
   isConnectorIdentityId,
@@ -95,13 +98,29 @@ describe('Workbench sovereignty', () => {
 
 describe('connector row copy', () => {
   it('reads soon connectors and never lets them act', () => {
-    expect(connectorInstrument('soon')).toEqual({ value: 'soon', connect: false });
+    expect(connectorInstrument('soon')).toEqual({
+      value: 'soon',
+      connect: false,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
+    });
     expect(view.connectors[1].available).toBe(false);
   });
 
   it('reads a disconnected connector as its Connect button, no state word', () => {
-    expect(connectorInstrument(undefined)).toEqual({ connect: true });
-    expect(connectorInstrument('disconnected')).toEqual({ connect: true });
+    expect(connectorInstrument(undefined)).toEqual({
+      connect: true,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
+    });
+    expect(connectorInstrument('disconnected')).toEqual({
+      connect: true,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
+    });
   });
 
   it('reads the settled, in-flight and broken states with their dots', () => {
@@ -109,16 +128,84 @@ describe('connector row copy', () => {
       value: 'connected',
       glyph: 'live',
       connect: false,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
     });
     expect(connectorInstrument('installing')).toEqual({
       value: 'installing',
       glyph: 'pulse',
       valueTone: 'accent',
       connect: false,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
     });
     expect(connectorInstrument('error')).toEqual({
       connect: true,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
     });
+  });
+
+  it('takes Squire and YouTube Workbench controls from the typed adapter', () => {
+    expect(connectorInstrument(undefined, 'trusty-squire')).toEqual({
+      connect: true,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
+    });
+    expect(connectorInstrument('installing', 'trusty-squire')).toEqual({
+      value: 'installing',
+      glyph: 'pulse',
+      valueTone: 'accent',
+      connect: false,
+      reconnect: false,
+      disconnect: true,
+      revokeGrants: false,
+    });
+    expect(connectorInstrument('connected', 'trusty-squire')).toEqual({
+      value: 'connected',
+      glyph: 'live',
+      connect: false,
+      reconnect: true,
+      disconnect: true,
+      revokeGrants: true,
+    });
+    expect(connectorInstrument('error', 'trusty-squire')).toEqual({
+      connect: true,
+      reconnect: true,
+      disconnect: true,
+      revokeGrants: false,
+    });
+    expect(connectorInstrument('connected', 'google-youtube')).toEqual({
+      value: 'connected',
+      glyph: 'live',
+      connect: false,
+      reconnect: true,
+      disconnect: true,
+      revokeGrants: false,
+    });
+    expect(connectorInstrument('connected', 'google-gmail')).toEqual({
+      value: 'connected',
+      glyph: 'live',
+      connect: false,
+      reconnect: false,
+      disconnect: false,
+      revokeGrants: false,
+    });
+  });
+
+  it('lists adapter reconnect and disconnect in expanded details, and Squire revoke on keys', () => {
+    expect(connectorExpandedActions(connectorInstrument('connected', 'trusty-squire'))).toEqual([
+      { action: 'reconnect', label: 'Reconnect' },
+      { action: 'disconnect', label: 'Disconnect' },
+    ]);
+    expect(connectorExpandedActions(connectorInstrument(undefined, 'trusty-squire'))).toEqual([]);
+    expect(connectionRevokeOffered()).toBe(true);
+    expect(connectionGrantPending({ grantId: 'hoots', revokingAt: 1 })).toBe(true);
+    expect(connectionGrantPending({ grantId: 'hoots' })).toBe(false);
   });
 
   it('describes a connected connector by what it runs on', () => {
@@ -261,6 +348,12 @@ describe('connection detail copy', () => {
       '1 live grant',
     );
     expect(connectionGrantsLine({ ...detail, grants: [] })).toBe('none');
+    expect(
+      connectionGrantsLine({
+        ...detail,
+        grants: [{ grantId: 'hoots', createdAt: 1, revokingAt: 2 }],
+      }),
+    ).toBe('1 grant revoking');
   });
 
   it('reports the tightest per-grant spend cap, or none', () => {
@@ -292,6 +385,7 @@ describe('connection detail copy', () => {
       '60/hour · $25 cap',
     );
     expect(connectionGrantLimits({ grantId: 'agent' })).toBe('no limits reported');
+    expect(connectionGrantLimits({ grantId: 'agent', revokingAt: 1 })).toBe('revoking');
     expect(connectionFactDate(undefined)).toBe('not reported');
     expect(connectionFactDate(Number.NaN)).toBe('not reported');
     expect(connectionFactDate(Date.parse('2026-09-15T12:00:00Z'))).toContain('2026');

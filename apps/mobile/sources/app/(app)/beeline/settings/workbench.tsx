@@ -19,6 +19,7 @@ import {
   connectionInstrument,
   connectionTitle,
   connectionsForViewer,
+  connectorExpandedActions,
   connectorInstrument,
   isGoogleToolConnectorId,
   type WorkbenchView,
@@ -54,6 +55,7 @@ export default function WorkbenchScreen() {
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
       setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId }));
@@ -78,6 +80,23 @@ export default function WorkbenchScreen() {
       } as unknown as Href);
     },
     [workspaceId, viewerId],
+  );
+
+  const disconnectConnector = useCallback(
+    async (connectorId: string) => {
+      if (disconnectingId) return;
+      setDisconnectingId(connectorId);
+      setNetworkFailure(null);
+      try {
+        await getWorkbenchSource().disconnectConnector({ workspaceId, connectorId });
+        await load();
+      } catch {
+        setNetworkFailure('load');
+      } finally {
+        setDisconnectingId(null);
+      }
+    },
+    [disconnectingId, load, workspaceId],
   );
 
   const openWallet = useCallback(() => {
@@ -141,8 +160,21 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector, index) => {
-            const instrument = connectorInstrument(connector.available ? connector.status : 'soon');
+            const instrument = connectorInstrument(
+              connector.available ? connector.status : 'soon',
+              connector.id,
+            );
             const canConnect = instrument.connect && connector.available;
+            const extraActions = connectorExpandedActions(instrument).map((entry) => ({
+              label: entry.label,
+              testID: `workbench-connector-${connector.id}-${entry.action}`,
+              tone: entry.action === 'disconnect' ? ('destructive' as const) : ('action' as const),
+              disabled: disconnectingId === connector.id,
+              onPress:
+                entry.action === 'disconnect'
+                  ? () => void disconnectConnector(connector.id)
+                  : () => connectConnector(connector.id),
+            }));
             const isWallet = connector.id === 'wallet';
             if (isWallet) {
               return (
@@ -175,27 +207,7 @@ export default function WorkbenchScreen() {
                   key="google"
                   connectors={connectors}
                   onPressConnect={(id) => connectConnector(id)}
-                />
-              );
-            }
-            const isSquire = connector.id === 'trusty-squire';
-            if (isSquire) {
-              return (
-                <ToolDetailsCell
-                  key={connector.id}
-                  action={canConnect ? 'Connect' : undefined}
-                  actionTestID={`workbench-connector-${connector.id}-connect`}
-                  detailText={connector.description}
-                  errorText={
-                    connector.status === 'error'
-                      ? (connector.errorMessage ?? 'Connection failed')
-                      : undefined
-                  }
-                  onAction={canConnect ? () => connectConnector(connector.id) : undefined}
-                  testID={`workbench-connector-${connector.id}`}
-                  title={connector.name}
-                  value={instrument.value}
-                  valueTone={instrument.valueTone}
+                  onPressDisconnect={(id) => void disconnectConnector(id)}
                 />
               );
             }
@@ -210,6 +222,7 @@ export default function WorkbenchScreen() {
                     ? (connector.errorMessage ?? 'Connection failed')
                     : undefined
                 }
+                extraActions={extraActions}
                 onAction={canConnect ? () => connectConnector(connector.id) : undefined}
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}

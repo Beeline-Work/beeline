@@ -16,7 +16,9 @@ import {
   connectionDetailState,
   connectionFactDate,
   connectionGrantLimits,
+  connectionGrantPending,
   connectionHostsLine,
+  connectionRevokeOffered,
   type ConnectionDetailView,
 } from '@/buzz/workbench';
 
@@ -104,7 +106,14 @@ export default function ConnectionDetailScreen() {
   const label = detail ? connectionDetailLabel(detail.connection) : undefined;
   const state = detail ? connectionDetailState(detail.connection) : undefined;
   const fieldNames = detail?.connection.fieldNames ?? [];
-  const grantCount = detail?.grants.length ?? 0;
+  const liveGrants = detail?.grants.filter((grant) => !connectionGrantPending(grant)) ?? [];
+  const pendingGrants = detail?.grants.filter(connectionGrantPending) ?? [];
+  const grantCount = liveGrants.length;
+  const revokeOffered = connectionRevokeOffered();
+  const pendingLine =
+    pendingGrants.length > 0
+      ? `Revoking ${pendingGrants.length} ${pendingGrants.length === 1 ? 'grant' : 'grants'} — waiting for the helper`
+      : null;
   const revokeQuestion = useMemo(
     () =>
       `Revoke ${grantCount === 1 ? 'this grant' : `all ${grantCount} grants`}? Agents using ` +
@@ -200,12 +209,17 @@ export default function ConnectionDetailScreen() {
             {detail.grants.length ? (
               detail.grants.map((grant) => (
                 <SettingsRow
-                  description={`Granted ${connectionFactDate(grant.createdAt)}`}
+                  description={
+                    connectionGrantPending(grant)
+                      ? 'Revoking — waiting for the helper'
+                      : `Granted ${connectionFactDate(grant.createdAt)}`
+                  }
                   disabled
                   key={grant.grantId}
                   testID={`connection-grant-${grant.grantId}`}
                   title={grant.grantId}
                   value={connectionGrantLimits(grant)}
+                  valueTone={connectionGrantPending(grant) ? 'accent' : undefined}
                 />
               ))
             ) : (
@@ -250,12 +264,12 @@ export default function ConnectionDetailScreen() {
             )}
           </View>
         ) : null}
-        {detail && grantCount > 0 ? (
+        {detail && revokeOffered && grantCount > 0 ? (
           <View testID="connection-management">
             <Text style={styles.sectionLabel}>Manage</Text>
             {!confirmRevoke ? (
               <SettingsRow
-                disabled={revoking}
+                disabled={revoking || pendingGrants.length > 0}
                 onPress={() => {
                   setError(null);
                   setConfirmRevoke(true);
@@ -292,9 +306,9 @@ export default function ConnectionDetailScreen() {
             </TouchableOpacity>
           </View>
         ) : null}
-        {revokedLine ? (
+        {revokedLine || pendingLine ? (
           <Text style={styles.savedMark} testID="connection-revoked-line">
-            {revokedLine}
+            {revokedLine ?? pendingLine}
           </Text>
         ) : null}
         {error ? (

@@ -56,8 +56,10 @@ if (youtubeAssign.join(',') !== 'refresh-google-grant')
 line('Squire owner connect', 'allowed');
 line('Squire other disconnect', `refused (${squireOther.reason})`);
 line('Squire connected Workbench', squireWorkbench.join(', '));
+line('Squire installing Workbench', SQUIRE_CONNECTOR_ADAPTER.workbenchActions('installing').join(', '));
 line('YouTube owner connect', 'allowed');
 line('YouTube owner revoke-grants', 'refused');
 line('YouTube other disconnect', `refused (${youtubeOther.reason})`);
 line('YouTube connected assignments', youtubeAssign.join(', '));
-line('observable', 'owner-only Squire and YouTube lifecycle; YouTube has no vault revoke');
+line('YouTube connected Workbench', YOUTUBE_CONNECTOR_ADAPTER.workbenchActions('connected').join(', '));
+line('observable', 'owner-only Squire and YouTube lifecycle; Workbench controls from workbenchActions(); stale reports cannot overwrite disconnect or re-pair');

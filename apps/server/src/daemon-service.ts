@@ -1099,44 +1099,44 @@ export class DaemonService {
    * settle, plus the sign-in surface and installed version it learned. A
    * report carrying `errorMessage` marks the run failed; otherwise the row
    * stays installing until `installConnector` completes it.
+   *
+   * Status, helper, and pairing generation are revalidated in the UPDATE so a
+   * disconnect or re-pair that lands between a stale helper's read and write
+   * cannot overwrite the newer lifecycle.
    */
   private async connectorStatusReport(
     input: Input<'postConnectorStatus'>,
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
     const row = (
-      await this.database.query<{ id: string; pairing_generation: number }>(
-        `SELECT id,pairing_generation FROM workspace_connectors
-          WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing'`,
-        [input.connectorId, agentId],
+      await this.database.query<{ id: string }>(
+        `UPDATE workspace_connectors
+         SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
+             status_error=COALESCE($3::text,status_error),
+             status_steps=$2::jsonb,
+             squire_version=COALESCE($4,squire_version),
+             signed_in_as=COALESCE($5,signed_in_as),
+             sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
+             updated_at=now()
+         WHERE id=$1::uuid
+           AND helper_agent_id=$8
+           AND status='installing'
+           AND ($9::int IS NULL OR pairing_generation=$9)
+         RETURNING id`,
+        [
+          input.connectorId,
+          JSON.stringify(input.steps),
+          input.errorMessage ?? null,
+          input.squireVersion ?? null,
+          input.signedInAs ?? null,
+          input.signIn ? JSON.stringify(input.signIn) : null,
+          input.signIn !== undefined,
+          agentId,
+          input.pairingGeneration ?? null,
+        ],
       )
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
-    if (
-      input.pairingGeneration !== undefined &&
-      input.pairingGeneration !== row.pairing_generation
-    )
-      throw new Error('connector not found for this helper');
-    await this.database.query(
-      `UPDATE workspace_connectors
-       SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
-           status_error=COALESCE($3::text,status_error),
-           status_steps=$2::jsonb,
-           squire_version=COALESCE($4,squire_version),
-           signed_in_as=COALESCE($5,signed_in_as),
-           sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
-           updated_at=now()
-       WHERE id=$1::uuid`,
-      [
-        row.id,
-        JSON.stringify(input.steps),
-        input.errorMessage ?? null,
-        input.squireVersion ?? null,
-        input.signedInAs ?? null,
-        input.signIn ? JSON.stringify(input.signIn) : null,
-        input.signIn !== undefined,
-      ],
-    );
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
 

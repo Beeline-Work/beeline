@@ -2,8 +2,9 @@
  * The helper's connector work queue (Workbench PR 2).
  *
  * The server leaves one row per (connector, owner) in `pending_ops` whenever
- * a human pairs, revokes, or unpairs; `getConnectorAssignments` drains it on
- * read. This loop is what makes that queue REAL on the helper: a Connect tap
+ * a human pairs, revokes, or unpairs. `getConnectorAssignments` clears `sync`
+ * on read; `revoke-grants` stays queued until this loop confirms the provider
+ * drop. This loop is what makes that queue REAL on the helper: a Connect tap
  * pushes `connector-assignment` over the live socket, `wake()` drains then,
  * and a 5-minute poll is only recovery. The one thing nothing on the wire
  * announces is the human finishing a sign-in, so while this helper owns a
@@ -31,15 +32,14 @@ import type {
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
-import { unlinkSync } from 'node:fs';
 import {
   installGoogleTool,
   isGoogleToolConnectorType,
   persistManualGoogleCredentials,
-  manualGoogleCredentialsSearchPaths,
   type InstallGoogleToolResult,
   type ResolvedGoogleCredentials,
 } from './connector-google.js';
+import { clearYoutubeGrant, isAdaptedYoutube } from './connector-adapters.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CONNECT_TIMEOUT_MS,
@@ -257,15 +257,10 @@ export class ConnectorAssignmentLoop {
       return;
     }
     const youtubeRows = assignments.filter((assignment) =>
-      assignment.connectorType === 'google-youtube');
+      isAdaptedYoutube(assignment.connectorType));
     if (youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
       youtubeRows.every((assignment) => assignment.kind === 'uninstall')) {
-      try {
-        unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-          this.log(`could not clear Google grant: ${describe(error)}`);
-      }
+      clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
     }
     let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
@@ -312,6 +307,7 @@ export class ConnectorAssignmentLoop {
         assignment.connectorId,
         assignment.connectorType,
         sharedCredentials,
+        assignment.kind === 'install' ? assignment.pairingGeneration : undefined,
       );
     }
   }
@@ -342,11 +338,15 @@ export class ConnectorAssignmentLoop {
   }
 
   private async handle(assignment: ConnectorAssignment): Promise<void> {
+    const pairingGeneration =
+      assignment.kind === 'install' || assignment.kind === 'uninstall'
+        ? assignment.pairingGeneration
+        : undefined;
     if (assignment.kind === 'install') {
       if (assignment.connectorType === 'tailscale') {
-        await this.runTailscaleInstall(assignment.connectorId);
+        await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
       } else {
-        await this.runInstall(assignment.connectorId);
+        await this.runInstall(assignment.connectorId, pairingGeneration);
       }
     } else if (assignment.kind === 'sync' && assignment.connectorType !== 'tailscale') {
       await this.runSync();
@@ -359,10 +359,19 @@ export class ConnectorAssignmentLoop {
   }
 
   /** Install Tailscale and publish its browser login URL until the tailnet is connected. */
-  private async runTailscaleInstall(connectorId: string): Promise<void> {
+  private async runTailscaleInstall(
+    connectorId: string,
+    pairingGeneration?: number,
+  ): Promise<void> {
+    const generation = pairingGeneration !== undefined ? { pairingGeneration } : {};
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId,
+          steps,
+          ...generation,
+        });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }
@@ -381,6 +390,7 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
+        ...generation,
       });
       return;
     }
@@ -390,6 +400,7 @@ export class ConnectorAssignmentLoop {
       steps: result.steps,
       signIn: result.status === 'installing' ? result.signIn : null,
       ...(result.status === 'error' ? { errorMessage: result.errorMessage } : {}),
+      ...generation,
     });
     if (result.status === 'installing' && this.tailscaleWatch === undefined) {
       this.tailscaleWatch = this.schedule(() => {
@@ -410,10 +421,17 @@ export class ConnectorAssignmentLoop {
     connectorId: string,
     connectorType: ConnectorKind,
     sharedCredentials: () => Promise<ResolvedGoogleCredentials>,
+    pairingGeneration?: number,
   ): Promise<void> {
+    const generation = pairingGeneration !== undefined ? { pairingGeneration } : {};
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId,
+          steps,
+          ...generation,
+        });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }
@@ -421,18 +439,15 @@ export class ConnectorAssignmentLoop {
     const result = await this.installGoogle(connectorType, report, sharedCredentials);
     if (result.status === 'installing') return;
     if (result.status === 'error') {
-      if (connectorType === 'google-youtube') {
-        try { unlinkSync(manualGoogleCredentialsSearchPaths(this.googleHome())[0]!); }
-        catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-            this.log(`could not clear YouTube grant: ${describe(error)}`);
-        }
+      if (isAdaptedYoutube(connectorType)) {
+        clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
       }
       await this.api.execute('postConnectorStatus', {
         agentId: this.agentId,
         connectorId,
         steps: result.steps,
         errorMessage: result.errorMessage,
+        ...generation,
       });
       return;
     }
@@ -440,11 +455,13 @@ export class ConnectorAssignmentLoop {
       agentId: this.agentId,
       connectorId,
       ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
+      ...generation,
     });
   }
 
   /** Install Trusty Squire, reporting every step as it settles. */
-  private async runInstall(connectorId: string): Promise<void> {
+  private async runInstall(connectorId: string, pairingGeneration?: number): Promise<void> {
+    const generation = pairingGeneration !== undefined ? { pairingGeneration } : {};
     // The row stays `installing` for the whole time the human is signing in,
     // and the server re-issues this assignment on EVERY poll until it leaves
     // that state. A connect this helper spawned and still owns IS that
@@ -477,12 +494,18 @@ export class ConnectorAssignmentLoop {
         steps: [{ label: 'waiting for sign-in', status: 'failed', reason: CEREMONY_EXPIRED }],
         signIn: null,
         errorMessage: CEREMONY_EXPIRED,
+        ...generation,
       });
       return;
     }
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
-        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId,
+          steps,
+          ...generation,
+        });
       } catch (error) {
         this.log(`step report failed: ${describe(error)}`);
       }
@@ -500,6 +523,7 @@ export class ConnectorAssignmentLoop {
         steps: result.steps,
         signIn: null,
         errorMessage: result.errorMessage,
+        ...generation,
       });
       return;
     }
@@ -508,6 +532,7 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
+        ...generation,
       });
       await this.reportVault(connectorId);
       return;
@@ -521,6 +546,7 @@ export class ConnectorAssignmentLoop {
       steps: result.steps,
       signIn: result.signIn ?? null,
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
+      ...generation,
     });
     this.watchConnectSignIn();
   }
@@ -563,6 +589,11 @@ export class ConnectorAssignmentLoop {
       `revoked ${outcome.revoked} grant(s) on ${reference}` +
         (outcome.failed ? `, ${outcome.failed} failed` : ''),
     );
+    if (outcome.failed) return;
+    await this.api.execute('revokeConnectionGrants', {
+      agentId: this.agentId,
+      ref: reference,
+    });
     void connectorId;
   }
 

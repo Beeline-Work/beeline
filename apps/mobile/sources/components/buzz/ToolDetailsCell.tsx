@@ -23,6 +23,13 @@ export type ToolDetailsCellProps = {
   actionTestID?: string;
   detailText: string;
   errorText?: string;
+  extraActions?: readonly {
+    label: string;
+    onPress: () => void;
+    testID: string;
+    tone?: 'action' | 'destructive';
+    disabled?: boolean;
+  }[];
   onAction?: () => void;
   value?: string;
   /** Tone for the trailing value (an erroring tool reads danger, work in
@@ -40,6 +47,7 @@ export function ToolDetailsCell({
   actionTestID,
   detailText,
   errorText,
+  extraActions,
   onAction,
   value,
   valueTone,
@@ -80,6 +88,16 @@ export function ToolDetailsCell({
       {expanded ? (
         <View style={styles.body} testID={`${testID}-details`}>
           <Text style={styles.detailLine}>{detailText}</Text>
+          {extraActions?.map((entry) => (
+            <SettingsRow
+              disabled={entry.disabled}
+              key={entry.testID}
+              onPress={entry.onPress}
+              testID={entry.testID}
+              title={entry.label}
+              tone={entry.tone}
+            />
+          ))}
         </View>
       ) : null}
     </View>

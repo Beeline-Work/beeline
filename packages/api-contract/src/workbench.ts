@@ -206,6 +206,8 @@ export type ConnectionGrantView = {
   readonly credentialRef: string;
   readonly createdAt: number;
   readonly revokedAt?: number;
+  /** Set while the helper has not yet confirmed the revoke. */
+  readonly revokingAt?: number;
   readonly rateLimitPerHour?: number;
   readonly spendCapUsd?: number;
 };
@@ -216,6 +218,8 @@ export type RevokeConnectionGrantsInput = {
 export type RevokeConnectionGrantsResult = {
   readonly revoked: number;
   readonly failed: number;
+  /** Queued for the helper; access remains until it confirms. */
+  readonly pending?: number;
 };
 
 // --- Helper work queue (server → helper delivery) --------------------------------
@@ -228,3 +232,9 @@ export type {
   PostConnectionUsageInput,
   VaultConnectionMeta,
 } from './daemon-operations.js';
+
+export {
+  CONNECTOR_ADAPTER_DENIED,
+  connectorAdapter,
+  connectorRequesterRole,
+} from './connector-adapter.js';

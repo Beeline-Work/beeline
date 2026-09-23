@@ -62,7 +62,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 
 import ConnectionDetailScreen from './connection';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
-import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
+import { MockWorkbenchSource, VERCEL_CONNECTION } from '@/buzz/workbench-source.mock';
 
 const originalConsoleError = console.error;
 
@@ -261,5 +261,29 @@ describe('Connection detail screen', () => {
       'another member',
     );
     expect(renderer.root.findAllByProps({ testID: 'connection-detail-metadata' })).toHaveLength(0);
+  });
+
+  it('reopens a pending revoke as revoking and disables repeat revoke', async () => {
+    const source = new MockWorkbenchSource();
+    source.readConnectionDetail = async () => ({
+      ...VERCEL_CONNECTION,
+      grants: [
+        { grantId: 'hoots', createdAt: 1, spendCapUsd: 25, revokingAt: 1_757_808_000 },
+        { grantId: 'terra', createdAt: 2, revokingAt: 1_757_808_000 },
+      ],
+    });
+    setWorkbenchSource(source);
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'connection-grant-hoots' }).props.value).toBe(
+      'revoking',
+    );
+    expect(renderer.root.findByProps({ testID: 'connection-grant-hoots' }).props.description).toBe(
+      'Revoking — waiting for the helper',
+    );
+    expect(renderer.root.findByProps({ testID: 'connection-revoked-line' }).props.children).toBe(
+      'Revoking 2 grants — waiting for the helper',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'connection-revoke-grants' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-management' })).toHaveLength(0);
   });
 });

@@ -5,6 +5,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import {
   googleEntryConnector,
   googleToolRows,
+  connectorExpandedActions,
   connectorInstrument,
   type WorkbenchConnector,
 } from '@/buzz/workbench';
@@ -19,14 +20,16 @@ import {
 export function GoogleEntryRow({
   connectors,
   onPressConnect,
+  onPressDisconnect,
 }: {
   connectors: readonly WorkbenchConnector[];
   onPressConnect: (id: WorkbenchConnector['id']) => void;
+  onPressDisconnect: (id: WorkbenchConnector['id']) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const instrument = connectorInstrument(entry.status);
+  const instrument = connectorInstrument(entry.status, entry.id);
   const errorText =
     entry.status === 'error'
       ? (entry.errorMessage ?? 'Connection failed')
@@ -46,24 +49,40 @@ export function GoogleEntryRow({
       {expanded ? (
         <View style={styles.details} testID="google-entry-details">
           <Text style={styles.tool}>{entry.description}</Text>
-          {googleToolRows(connectors).map((tool) => {
-            const toolInstrument = connectorInstrument(tool.status);
+          {googleToolRows(connectors).flatMap((tool) => {
+            const toolInstrument = connectorInstrument(tool.status, tool.id);
             const canConnect = tool.available && toolInstrument.connect;
-            return <SettingsRow
-              key={tool.id}
-              testID={`google-tool-${tool.id}`}
-              title={tool.name}
-              value={toolInstrument.value}
-              valueTone={toolInstrument.valueTone}
-              action={canConnect ? 'Connect' : undefined}
-              description={tool.status === 'error' ? tool.errorMessage : undefined}
-              descriptionTone={tool.status === 'error' ? 'danger' : undefined}
-              trailingPress={canConnect ? {
-                accessibilityLabel: `Connect ${tool.name}`,
-                onPress: () => onPressConnect(tool.id),
-                testID: `google-tool-${tool.id}-connect`,
-              } : undefined}
-            />;
+            const extras = connectorExpandedActions(toolInstrument);
+            return [
+              <SettingsRow
+                key={tool.id}
+                testID={`google-tool-${tool.id}`}
+                title={tool.name}
+                value={toolInstrument.value}
+                valueTone={toolInstrument.valueTone}
+                action={canConnect ? 'Connect' : undefined}
+                description={tool.status === 'error' ? tool.errorMessage : undefined}
+                descriptionTone={tool.status === 'error' ? 'danger' : undefined}
+                trailingPress={canConnect ? {
+                  accessibilityLabel: `Connect ${tool.name}`,
+                  onPress: () => onPressConnect(tool.id),
+                  testID: `google-tool-${tool.id}-connect`,
+                } : undefined}
+              />,
+              ...extras.map((control) => (
+                <SettingsRow
+                  key={`${tool.id}-${control.action}`}
+                  testID={`google-tool-${tool.id}-${control.action}`}
+                  title={control.label}
+                  tone={control.action === 'disconnect' ? 'destructive' : 'action'}
+                  onPress={() =>
+                    control.action === 'disconnect'
+                      ? onPressDisconnect(tool.id)
+                      : onPressConnect(tool.id)
+                  }
+                />
+              )),
+            ];
           })}
         </View>
       ) : null}

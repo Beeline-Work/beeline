@@ -74,6 +74,7 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
+import { connectorAdapter } from '@beeline/api-contract/workbench';
 import {
   applyVaultList,
   connectorCatalog,
@@ -948,7 +949,8 @@ export class DaemonService {
   /**
    * The helper's work queue for connectors it serves. Install/uninstall are
    * derived from the connector's own status (idempotent across polls); sync
-   * and revoke-grants are edge-triggered tokens the read clears.
+   * is an edge-triggered token the read clears. Revoke-grants stays queued
+   * until the helper confirms the provider drop.
    */
   private async connectorAssignments(agentId: string): Promise<Output<'getConnectorAssignments'>> {
     const connectors = (
@@ -957,8 +959,9 @@ export class DaemonService {
         connector_type: string;
         status: string;
         pending_ops: string[];
+        pairing_generation: number;
       }>(
-        `SELECT id,connector_type,status,pending_ops FROM workspace_connectors
+        `SELECT id,connector_type,status,pending_ops,pairing_generation FROM workspace_connectors
          WHERE helper_agent_id=$1 AND status IN ('installing','connected','error','disconnected')
          ORDER BY created_at`,
         [agentId],
@@ -966,21 +969,45 @@ export class DaemonService {
     ).rows;
     const assignments: ConnectorAssignment[] = [];
     for (const row of connectors) {
-      if (row.status === 'installing')
-        assignments.push({
-          kind: 'install',
-          connectorId: row.id,
-          connectorType: row.connector_type as never,
-        });
-      if (row.status === 'disconnected')
-        assignments.push({
-          kind: 'uninstall',
-          connectorId: row.id,
-          connectorType: row.connector_type as never,
-        });
-      if (row.status === 'connected' && row.connector_type === 'google-youtube')
-        assignments.push({ kind: 'refresh-google-grant', connectorId: row.id,
-          connectorType: row.connector_type as never });
+      const adapter = connectorAdapter(row.connector_type);
+      const generation = { pairingGeneration: row.pairing_generation };
+      if (adapter) {
+        for (const kind of adapter.assignmentKinds(
+          row.status as 'disconnected' | 'installing' | 'connected' | 'error',
+        )) {
+          if (kind !== 'install' && kind !== 'uninstall' && kind !== 'refresh-google-grant')
+            continue;
+          assignments.push(
+            kind === 'refresh-google-grant'
+              ? {
+                  kind,
+                  connectorId: row.id,
+                  connectorType: row.connector_type as never,
+                }
+              : {
+                  kind,
+                  connectorId: row.id,
+                  connectorType: row.connector_type as never,
+                  ...generation,
+                },
+          );
+        }
+      } else {
+        if (row.status === 'installing')
+          assignments.push({
+            kind: 'install',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+            ...generation,
+          });
+        if (row.status === 'disconnected')
+          assignments.push({
+            kind: 'uninstall',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+            ...generation,
+          });
+      }
       for (const op of row.pending_ops ?? []) {
         if (op === 'sync')
           assignments.push({
@@ -1002,7 +1029,12 @@ export class DaemonService {
       .map((row) => row.id);
     if (pendingIds.length)
       await this.database.query(
-        `UPDATE workspace_connectors SET pending_ops='[]'::jsonb WHERE id = ANY($1::uuid[])`,
+        `UPDATE workspace_connectors SET pending_ops = COALESCE((
+           SELECT jsonb_agg(to_jsonb(elem))
+           FROM jsonb_array_elements_text(pending_ops) AS elem
+           WHERE elem LIKE 'revoke-grants:%'
+         ), '[]'::jsonb)
+         WHERE id = ANY($1::uuid[])`,
         [pendingIds],
       );
     return { assignments };
@@ -1019,13 +1051,18 @@ export class DaemonService {
   ): Promise<Output<'installConnector'>> {
     const result = await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ id: string }>(
-          `SELECT id FROM workspace_connectors
-            WHERE id=$1::uuid AND helper_agent_id=$2 FOR UPDATE`,
+        await database.query<{ id: string; pairing_generation: number }>(
+          `SELECT id,pairing_generation FROM workspace_connectors
+            WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
         )
       ).rows[0];
       if (!row) throw new Error('connector not found for this helper');
+      if (
+        input.pairingGeneration !== undefined &&
+        input.pairingGeneration !== row.pairing_generation
+      )
+        throw new Error('connector not found for this helper');
       await database.query(
         `UPDATE workspace_connectors
          SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
@@ -1062,6 +1099,12 @@ export class DaemonService {
    * settle, plus the sign-in surface and installed version it learned. A
    * report carrying `errorMessage` marks the run failed; otherwise the row
    * stays installing until `installConnector` completes it.
+   *
+   * Status, helper, and pairing generation are revalidated in the UPDATE so a
+   * disconnect or re-pair that lands between a stale helper's read and write
+   * cannot overwrite the newer lifecycle. An omitted generation is generation
+   * 1: a pre-generation helper can still report against the first pairing and
+   * cannot match a later one.
    */
   private async connectorStatusReport(
     input: Input<'postConnectorStatus'>,
@@ -1069,38 +1112,41 @@ export class DaemonService {
   ): Promise<Output<'postConnectorStatus'>> {
     const row = (
       await this.database.query<{ id: string }>(
-        `SELECT id FROM workspace_connectors WHERE id=$1::uuid AND helper_agent_id=$2`,
-        [input.connectorId, agentId],
+        `UPDATE workspace_connectors
+         SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
+             status_error=COALESCE($3::text,status_error),
+             status_steps=$2::jsonb,
+             squire_version=COALESCE($4,squire_version),
+             signed_in_as=COALESCE($5,signed_in_as),
+             sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
+             updated_at=now()
+         WHERE id=$1::uuid
+           AND helper_agent_id=$8
+           AND status='installing'
+           AND pairing_generation=$9
+         RETURNING id`,
+        [
+          input.connectorId,
+          JSON.stringify(input.steps),
+          input.errorMessage ?? null,
+          input.squireVersion ?? null,
+          input.signedInAs ?? null,
+          input.signIn ? JSON.stringify(input.signIn) : null,
+          input.signIn !== undefined,
+          agentId,
+          input.pairingGeneration ?? 1,
+        ],
       )
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
-    await this.database.query(
-      `UPDATE workspace_connectors
-       SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
-           status_error=COALESCE($3::text,status_error),
-           status_steps=$2::jsonb,
-           squire_version=COALESCE($4,squire_version),
-           signed_in_as=COALESCE($5,signed_in_as),
-           sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
-           updated_at=now()
-       WHERE id=$1::uuid`,
-      [
-        row.id,
-        JSON.stringify(input.steps),
-        input.errorMessage ?? null,
-        input.squireVersion ?? null,
-        input.signedInAs ?? null,
-        input.signIn ? JSON.stringify(input.signIn) : null,
-        input.signIn !== undefined,
-      ],
-    );
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
 
   /**
    * One helper vault report (metadata only): upserted into the sovereign
-   * connection rows of every live trusty-squire connector this helper serves.
-   * One helper carries ONE Squire account, so one report covers them all.
+   * connection rows of every live trusty-squire connector this helper serves
+   * whose owner is this helper's owner. One helper carries ONE Squire account;
+   * a foreign Workbench row on the same helper does not inherit that vault.
    */
   private async connectorVaultReport(
     input: Input<'postConnectorVault'>,
@@ -1108,8 +1154,10 @@ export class DaemonService {
   ): Promise<Output<'postConnectorVault'>> {
     const connectors = (
       await this.database.query<{ id: string; owner_identity_id: string }>(
-        `SELECT id,owner_identity_id FROM workspace_connectors
-         WHERE helper_agent_id=$1 AND connector_type='trusty-squire' AND status='connected'`,
+        `SELECT c.id,c.owner_identity_id FROM workspace_connectors c
+         JOIN agents a ON a.agent_id=c.helper_agent_id
+         WHERE c.helper_agent_id=$1 AND c.connector_type='trusty-squire' AND c.status='connected'
+           AND c.owner_identity_id=a.owner_id`,
         [agentId],
       )
     ).rows;
@@ -1299,7 +1347,7 @@ export class DaemonService {
     };
   }
 
-  /** Marks the connection's grants revoked server-side and stages the helper revoke. */
+  /** Helper confirmation that the provider dropped the grants. */
   private async connectionGrantRevoke(
     input: Input<'revokeConnectionGrants'>,
     agentId: string,
@@ -1321,22 +1369,25 @@ export class DaemonService {
     if (!row) throw new Error(`unknown connection reference ${input.ref}`);
     const live = (row.grants ?? []).filter((grant) => !grant.revokedAt);
     const revokedAt = Math.floor(Date.now() / 1000);
-    const updated = (row.grants ?? []).map((grant) =>
-      grant.revokedAt ? grant : { ...grant, revokedAt },
-    );
+    const updated = (row.grants ?? []).map((grant) => {
+      if (grant.revokedAt) return grant;
+      const next: Record<string, unknown> = { ...grant, revokedAt };
+      delete next.revokingAt;
+      return next;
+    });
     await this.database.query(
       `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
       [row.id, JSON.stringify(updated)],
     );
-    if (live.length) {
-      await this.database.query(
-        `UPDATE workspace_connectors
-         SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
-         WHERE id=$1::uuid`,
-        [row.connector_id, JSON.stringify([`revoke-grants:${row.reference}`])],
-      );
-      await notifyConnectorHelper(this.database, row.connector_id);
-    }
+    await this.database.query(
+      `UPDATE workspace_connectors SET pending_ops = COALESCE((
+         SELECT jsonb_agg(to_jsonb(elem))
+         FROM jsonb_array_elements_text(pending_ops) AS elem
+         WHERE elem <> $2
+       ), '[]'::jsonb), updated_at=now()
+       WHERE id=$1::uuid`,
+      [row.connector_id, `revoke-grants:${row.reference}`],
+    );
     return { revoked: live.length, failed: 0 };
   }
 

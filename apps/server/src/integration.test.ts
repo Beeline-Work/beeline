@@ -8231,13 +8231,19 @@ describe('monolith integration', () => {
       ).rows[0]!.status,
     ).toBe('pending');
 
-    // The addressee accepts: the connector pairs on the OFFERING agent's
-    // machine, owned by the acceptor, through the same row Connect writes.
-    const accepted = await operation(
+    // The addressee does not own the offering helper, so Squire pairing is refused.
+    const refusedCrossOwner = await operation(
       'acceptConnectorOffer',
       { offerId: offer.offerId },
       zeke.token,
     );
+    expect(refusedCrossOwner.status).toBe(403);
+    expect(await refusedCrossOwner.json()).toEqual({
+      error: 'connector not found (access denied)',
+    });
+    // The helper owner accepts: the connector pairs on that machine through
+    // the same row Connect writes.
+    const accepted = await operation('acceptConnectorOffer', { offerId: offer.offerId });
     expect(accepted.status).toBe(200);
     const acceptance = (await accepted.json()) as {
       connectorId: string;
@@ -8264,7 +8270,7 @@ describe('monolith integration', () => {
       )
     ).rows[0];
     expect(connector).toEqual({
-      owner_identity_id: zeke.id,
+      owner_identity_id: HUMAN,
       helper_agent_id: AGENT,
       machine_id: 'machine-otter-1',
       status: 'installing',
@@ -8279,7 +8285,7 @@ describe('monolith integration', () => {
     ]);
     // The same actor can retry the ceremony after an install failure without
     // minting a second connector row or prematurely resuming the turn.
-    const retry = await operation('acceptConnectorOffer', { offerId: offer.offerId }, zeke.token);
+    const retry = await operation('acceptConnectorOffer', { offerId: offer.offerId });
     expect(retry.status).toBe(200);
     expect(await retry.json()).toEqual({
       ...acceptance,
@@ -8305,7 +8311,7 @@ describe('monolith integration', () => {
       }),
     );
     expect(connecting.rows[0]!.card.acceptedBy).toEqual(
-      expect.objectContaining({ pubkey: zeke.id, kind: 'human', name: 'Zeke', handle: 'zeke' }),
+      expect.objectContaining({ pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' }),
     );
     expect(
       await database.query(
@@ -8341,10 +8347,10 @@ describe('monolith integration', () => {
     const decision = inbox.items.filter(
       (item) => item.type === 'system' && /\badded\b/.test(item.body),
     );
-    expect(decision.map((item) => item.body)).toEqual(['@zeke added Trusty Squire']);
-    expect(decision[0]!.authorId).toBe(zeke.id);
+    expect(decision.map((item) => item.body)).toEqual(['@owner added Trusty Squire']);
+    expect(decision[0]!.authorId).toBe(HUMAN);
     expect(decision[0]!.systemEvent).toEqual({
-      subject: { kind: 'person', id: zeke.id, name: '@zeke' },
+      subject: { kind: 'person', id: HUMAN, name: '@owner' },
       verb: 'added',
       kind: 'connector-offer-decided',
       object: { text: 'Trusty Squire' },
@@ -8367,7 +8373,7 @@ describe('monolith integration', () => {
       expect(settledCard?.connectorOffer).toEqual(
         expect.objectContaining({
           status: 'accepted',
-          acceptedBy: expect.objectContaining({ pubkey: zeke.id, name: 'Zeke' }),
+          acceptedBy: expect.objectContaining({ pubkey: HUMAN, name: 'Owner' }),
           connectorId: acceptance.connectorId,
         }),
       );
@@ -8378,7 +8384,7 @@ describe('monolith integration', () => {
     expect(
       history.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text)),
     ).toEqual([]);
-    // The addressee now has the tool; a fresh offer of it is refused, and
+    // The helper owner now has the tool; a fresh offer of it is refused, and
     // workbench_status says so.
     const duplicate = await daemonOperation('offerConnector', {
       roomId: ROOM,

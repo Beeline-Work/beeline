@@ -131,6 +131,9 @@ import type {
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
 import {
+  CONNECTOR_ADAPTER_DENIED,
+  connectorAdapter,
+  connectorRequesterRole,
   faviconDomain,
   isGoogleToolConnectorKind,
 } from '@beeline/api-contract/workbench';
@@ -5013,10 +5016,12 @@ export class PhoneService {
    *
    * Starting the ceremony is configuration, not authority: it pairs the connector on the
    * OFFERING agent's machine through the very row the Workbench page's own
-   * Connect writes (`armConnectorPairing`), so every later credential use goes
-   * through the connector's unchanged receipts and approvals, and the vault
-   * stays write-only. The card remains `connecting`; the helper's connected
-   * report settles it and emits the hidden resume line.
+   * Connect writes (`armConnectorPairing`). Adapted kinds still require the
+   * acceptor to own that helper, so a foreign Workbench cannot inherit its
+   * vault. Every later credential use goes through the connector's unchanged
+   * receipts and approvals, and the vault stays write-only. The card remains
+   * `connecting`; the helper's connected report settles it and emits the hidden
+   * resume line.
    */
   private async acceptConnectorOffer(
     input: Input<'acceptConnectorOffer'>,
@@ -6222,8 +6227,10 @@ export class PhoneService {
    * The one row write behind every pairing: the Workbench page's Connect
    * (`pairConnector`, where the person picks one of their own machines) and an
    * accepted connector offer (`acceptConnectorOffer`, where the machine is the
-   * offering agent's). Authorization is the caller's; this arms the row the
-   * helper daemon derives its install from and opens the status DM.
+   * offering agent's). Adapted kinds refuse an acceptor who does not own that
+   * helper, so a foreign Workbench row cannot inherit its vault. Authorization
+   * is otherwise the caller's; this arms the row the helper daemon derives its
+   * install from and opens the status DM.
    */
   private async armConnectorPairing(
     database: SqlDatabase,
@@ -6237,6 +6244,17 @@ export class PhoneService {
   ): Promise<Output<'pairConnector'>> {
     if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
       throw new Error('Google OAuth is not configured on this Beeline server');
+    const adapter = connectorAdapter(input.connectorType);
+    if (adapter) {
+      const helperOwner = (
+        await database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`,
+          [input.helperAgentId],
+        )
+      ).rows[0];
+      const role = connectorRequesterRole(input.ownerIdentityId, helperOwner?.owner_id ?? '');
+      if (!adapter.authorize('connect', role).allowed) throw new Error(CONNECTOR_ADAPTER_DENIED);
+    }
     const viewerId = input.ownerIdentityId;
     const machineId = input.machineId;
     const ws = { workspace_id: input.workspaceId };
@@ -6253,8 +6271,8 @@ export class PhoneService {
     await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-         status,status_steps
-       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
+         status,status_steps,pairing_generation
+       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1)
        ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
@@ -6263,6 +6281,7 @@ export class PhoneService {
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,
+           pairing_generation=workspace_connectors.pairing_generation + 1,
            updated_at=now()`,
       [
         id,
@@ -6330,19 +6349,32 @@ export class PhoneService {
   }
 
   private async assertOwnedConnector(connectorId: string, viewerId: string) {
-    // Human-scoped: a connector is owned by the viewer, wherever it is stored.
+    // Human-scoped: a connector is owned by the viewer. Adapted kinds
+    // (Squire, YouTube) take that verdict from the typed adapter so
+    // cross-requester disconnect is the adapter's refusal, not a second rule.
     const row = await this.database.query<{
       id: string;
       connector_type: Input<'pairConnector'>['connectorType'];
       status: string;
       helper_agent_id: string;
+      owner_identity_id: string;
     }>(
-      `SELECT id,connector_type,status,helper_agent_id FROM workspace_connectors
-       WHERE id=$1::uuid AND owner_identity_id=$2`,
-      [connectorId, viewerId],
+      `SELECT id,connector_type,status,helper_agent_id,owner_identity_id
+       FROM workspace_connectors WHERE id=$1::uuid`,
+      [connectorId],
     );
     if (!row.rowCount) throw new Error('connector not found (access denied)');
-    return row.rows[0]!;
+    const connector = row.rows[0]!;
+    const adapter = connectorAdapter(connector.connector_type);
+    if (adapter) {
+      const role = connectorRequesterRole(viewerId, connector.owner_identity_id);
+      if (!adapter.authorize('disconnect', role).allowed)
+        throw new Error('connector not found (access denied)');
+      return connector;
+    }
+    if (connector.owner_identity_id !== viewerId)
+      throw new Error('connector not found (access denied)');
+    return connector;
   }
 
   /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
@@ -6490,19 +6522,32 @@ export class PhoneService {
         connector_type: Input<'pairConnector'>['connectorType'];
         reference: string;
         grants: Array<Record<string, unknown>>;
+        owner_identity_id: string;
       }>(
-        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants
+        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants,
+                c.owner_identity_id
          FROM workspace_connections c
          JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE c.id=$1::uuid AND c.owner_identity_id=$2`,
-        [input.connectionId, viewerId],
+         WHERE c.id=$1::uuid`,
+        [input.connectionId],
       )
     ).rows[0];
     if (!connection) throw new Error('connection not found (access denied)');
-    const live = (connection.grants ?? []).filter((grant) => !grant.revokedAt);
-    const revokedAt = Math.floor(Date.now() / 1000);
+    const adapter = connectorAdapter(connection.connector_type);
+    const role = connectorRequesterRole(viewerId, connection.owner_identity_id);
+    if (adapter) {
+      if (!adapter.authorize('revoke-grants', role).allowed)
+        throw new Error('connection not found (access denied)');
+    } else if (connection.owner_identity_id !== viewerId) {
+      throw new Error('connection not found (access denied)');
+    }
+    const live = (connection.grants ?? []).filter((grant) => !grant.revokedAt && !grant.revokingAt);
+    const alreadyPending = (connection.grants ?? []).filter(
+      (grant) => !grant.revokedAt && grant.revokingAt,
+    ).length;
+    const revokingAt = Math.floor(Date.now() / 1000);
     const updated = (connection.grants ?? []).map((grant) =>
-      grant.revokedAt ? grant : { ...grant, revokedAt },
+      grant.revokedAt || grant.revokingAt ? grant : { ...grant, revokingAt },
     );
     await this.database.query(
       `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
@@ -6517,7 +6562,8 @@ export class PhoneService {
       );
       await notifyConnectorHelper(this.database, connection.connector_id);
     }
-    return { revoked: live.length, failed: 0 };
+    const pending = live.length + alreadyPending;
+    return pending ? { revoked: 0, failed: 0, pending } : { revoked: 0, failed: 0 };
   }
 
   private async assertRoomIsWritable(roomId: string, author: string): Promise<void> {

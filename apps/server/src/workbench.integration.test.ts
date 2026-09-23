@@ -19,6 +19,7 @@ import {
 } from './workbench.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
+const RECIPIENT = createHash('sha256').update('github:recipient').digest('hex');
 const HELPER = 'b'.repeat(64);
 const OTHER_HELPER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -43,13 +44,13 @@ describe('workbench connectors', () => {
       `INSERT INTO identities(id,kind,name,handle,github_subject)
        VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL),
              ($3,'human','Recipient','recipient','recipient'),($4,'agent','Wasp','wasp',NULL)`,
-      [HUMAN, HELPER, createHash('sha256').update('github:recipient').digest('hex'), OTHER_HELPER],
+      [HUMAN, HELPER, RECIPIENT, OTHER_HELPER],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$4)`, [
       HELPER,
       HUMAN,
       OTHER_HELPER,
-      createHash('sha256').update('github:recipient').digest('hex'),
+      RECIPIENT,
     ]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(
@@ -58,7 +59,7 @@ describe('workbench connectors', () => {
       [
         WORKSPACE,
         HUMAN,
-        createHash('sha256').update('github:recipient').digest('hex'),
+        RECIPIENT,
         HELPER,
         OTHER_HELPER,
       ],
@@ -563,14 +564,33 @@ describe('workbench connectors', () => {
     const revoked = (await phoneOperation('revokeConnectionGrants', {
       workspaceId: WORKSPACE,
       connectionId,
-    })) as { revoked: number };
-    expect(revoked.revoked).toBe(1);
-    // The helper is asked to drop its egress grants on the next poll.
+    })) as { revoked: number; pending?: number };
+    expect(revoked).toEqual({ revoked: 0, failed: 0, pending: 1 });
+    const pendingGrants = await database.query<{ grants: Array<Record<string, unknown>> }>(
+      `SELECT grants FROM workspace_connections WHERE id=$1::uuid`,
+      [connectionId],
+    );
+    expect(pendingGrants.rows[0]!.grants[0]).toMatchObject({ grantId: 'hoots' });
+    expect(pendingGrants.rows[0]!.grants[0]!.revokedAt).toBeUndefined();
+    expect(pendingGrants.rows[0]!.grants[0]!.revokingAt).toEqual(expect.any(Number));
+    // The helper is asked to drop its egress grants on the next poll, and the
+    // queue stays until that helper confirms.
     const queue = await daemonOperation('getConnectorAssignments', {});
     const kinds = (queue.body as { assignments?: { kind: string }[] }).assignments?.map(
       (a) => a.kind,
     );
     expect(kinds).toContain('revoke-grants');
+    const retry = await daemonOperation('getConnectorAssignments', {});
+    expect(
+      (retry.body as { assignments?: { kind: string }[] }).assignments?.map((a) => a.kind),
+    ).toContain('revoke-grants');
+    await daemonOperation('revokeConnectionGrants', { ref: 'github.com/acme/tooling' });
+    const confirmed = await database.query<{ grants: Array<Record<string, unknown>> }>(
+      `SELECT grants FROM workspace_connections WHERE id=$1::uuid`,
+      [connectionId],
+    );
+    expect(confirmed.rows[0]!.grants[0]!.revokedAt).toEqual(expect.any(Number));
+    expect(confirmed.rows[0]!.grants[0]!.revokingAt).toBeUndefined();
 
     await phoneOperation('unpairConnector', { workspaceId: WORKSPACE, connectorId });
     const cleared = await database.query<{ count: string }>(
@@ -648,7 +668,12 @@ describe('workbench connectors', () => {
     const queue = await daemonOperation('getConnectorAssignments', {});
     expect(
       (queue.body as { assignments?: { kind: string; connectorId: string }[] }).assignments,
-    ).toContainEqual({ kind: 'install', connectorId: staleId, connectorType: 'trusty-squire' });
+    ).toContainEqual({
+      kind: 'install',
+      connectorId: staleId,
+      connectorType: 'trusty-squire',
+      pairingGeneration: 2,
+    });
   });
 
   it('re-pairing a connected connector starts a fresh install again', async () => {
@@ -814,6 +839,7 @@ describe('workbench connectors', () => {
       kind: 'install',
       connectorId: paired.connectorId,
       connectorType: 'tailscale',
+      pairingGeneration: 1,
     });
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
       catalog: { connectorType: string; available: boolean }[];
@@ -921,5 +947,272 @@ describe('workbench connectors', () => {
       text: 'hello?',
     });
     expect(response.status).toBe(403);
+  });
+
+  it('routes YouTube lifecycle through its adapter: owner unpairs, another requester cannot', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-youtube',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await database.query(
+      `UPDATE workspace_connectors SET status='connected', connected_at=now()
+       WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    expect(
+      (queue.body as { assignments?: { kind: string; connectorType: string }[] }).assignments,
+    ).toContainEqual({
+      kind: 'refresh-google-grant',
+      connectorId: paired.connectorId,
+      connectorType: 'google-youtube',
+    });
+    expect(
+      (await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId: paired.connectorId }, recipientToken))
+        .status,
+    ).toBe(403);
+    await phoneOperation('unpairConnector', {
+      workspaceId: WORKSPACE,
+      connectorId: paired.connectorId,
+    });
+    const row = await database.query<{ status: string }>(
+      `SELECT status FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('disconnected');
+  });
+
+  it('does not copy a helper vault onto a Workbench row the helper owner does not own', async () => {
+    await pairOwnerConnector();
+    const foreignId = randomUUID();
+    await database.query(
+      `INSERT INTO workspace_connectors(
+         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+         status,status_steps
+       ) VALUES ($1,$2,$3,'trusty-squire',$4,$4,'connected','[]'::jsonb)`,
+      [foreignId, WORKSPACE, RECIPIENT, HELPER],
+    );
+    await daemonOperation('postConnectorVault', {
+      connections: [
+        {
+          reference: 'leaked.example/key',
+          service: 'github',
+          label: 'leaked',
+          fieldNames: ['token'],
+          allowedHosts: ['github.com'],
+          createdAt: Math.floor(Date.now() / 1000),
+          stale: false,
+          state: 'active',
+        },
+      ],
+    });
+    const ownerView = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string }[];
+    };
+    expect(ownerView.connections.map((row) => row.reference)).toEqual(['leaked.example/key']);
+    const otherView = (await phoneOperation(
+      'readWorkbench',
+      { workspaceId: WORKSPACE },
+      recipientToken,
+    )) as { connections: { reference: string }[] };
+    expect(otherView.connections).toEqual([]);
+  });
+
+  it('ignores a late install report after unpair', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await phoneOperation('unpairConnector', {
+      workspaceId: WORKSPACE,
+      connectorId: paired.connectorId,
+    });
+    const late = await daemonOperation('installConnector', {
+      connectorId: paired.connectorId,
+      pairingGeneration: 1,
+    });
+    expect(late.status).toBe(404);
+    const row = await database.query<{ status: string }>(
+      `SELECT status FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('disconnected');
+  });
+
+  it('a stale status report cannot overwrite a disconnect', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      pairingGeneration: 1,
+    });
+    await phoneOperation('unpairConnector', {
+      workspaceId: WORKSPACE,
+      connectorId: paired.connectorId,
+    });
+    const late = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'trusty-squire failed', status: 'failed' }],
+      errorMessage: 'late helper error',
+      pairingGeneration: 1,
+    });
+    expect(late.status).toBe(404);
+    const row = await database.query<{ status: string; status_error: string | null }>(
+      `SELECT status,status_error FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('disconnected');
+    expect(row.rows[0]!.status_error).toBeNull();
+  });
+
+  it('a stale status report cannot overwrite a re-pair', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    const late = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'trusty-squire failed', status: 'failed' }],
+      errorMessage: 'stale generation error',
+      pairingGeneration: 1,
+    });
+    expect(late.status).toBe(404);
+    const row = await database.query<{
+      status: string;
+      status_error: string | null;
+      pairing_generation: number;
+    }>(
+      `SELECT status,status_error,pairing_generation FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('installing');
+    expect(row.rows[0]!.status_error).toBeNull();
+    expect(row.rows[0]!.pairing_generation).toBe(2);
+  });
+
+  it('a generation-less status report cannot overwrite a re-pair', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    const late = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'trusty-squire failed', status: 'failed' }],
+      errorMessage: 'stale generation-less error',
+    });
+    expect(late.status).toBe(404);
+    const row = await database.query<{
+      status: string;
+      status_error: string | null;
+      pairing_generation: number;
+    }>(
+      `SELECT status,status_error,pairing_generation FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('installing');
+    expect(row.rows[0]!.status_error).toBeNull();
+    expect(row.rows[0]!.pairing_generation).toBe(2);
+  });
+
+  it('a generation-less status report still updates an eligible generation-1 row', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    const report = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+    });
+    expect(report.status).toBe(200);
+    const row = await database.query<{
+      status: string;
+      status_steps: { label: string; status: string }[];
+      pairing_generation: number;
+    }>(
+      `SELECT status,status_steps,pairing_generation FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('installing');
+    expect(row.rows[0]!.status_steps).toEqual([{ label: 'waiting for sign-in', status: 'pending' }]);
+    expect(row.rows[0]!.pairing_generation).toBe(1);
+  });
+
+  it('an explicit current-generation status report succeeds; stale generations and disconnected rows remain rejected', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    const first = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      pairingGeneration: 1,
+    });
+    expect(first.status).toBe(200);
+
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    const current = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      pairingGeneration: 2,
+    });
+    expect(current.status).toBe(200);
+
+    const stale = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'trusty-squire failed', status: 'failed' }],
+      errorMessage: 'stale generation error',
+      pairingGeneration: 1,
+    });
+    expect(stale.status).toBe(404);
+
+    await phoneOperation('unpairConnector', {
+      workspaceId: WORKSPACE,
+      connectorId: paired.connectorId,
+    });
+    const disconnected = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'trusty-squire failed', status: 'failed' }],
+      errorMessage: 'late helper error',
+      pairingGeneration: 2,
+    });
+    expect(disconnected.status).toBe(404);
+
+    const row = await database.query<{
+      status: string;
+      status_error: string | null;
+      pairing_generation: number;
+      status_steps: { label: string; status: string }[];
+    }>(
+      `SELECT status,status_error,pairing_generation,status_steps FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(row.rows[0]!.status).toBe('disconnected');
+    expect(row.rows[0]!.status_error).toBeNull();
+    expect(row.rows[0]!.pairing_generation).toBe(2);
+    expect(row.rows[0]!.status_steps).toEqual([]);
   });
 });

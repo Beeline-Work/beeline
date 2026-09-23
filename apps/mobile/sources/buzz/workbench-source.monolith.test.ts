@@ -129,3 +129,30 @@ describe('MonolithWorkbenchSource connections', () => {
     expect(view.connections[0].faviconDomain).toBeUndefined();
   });
 });
+
+describe('MonolithWorkbenchSource disconnectConnector', () => {
+  afterEach(() => {
+    state.calls.length = 0;
+  });
+
+  it('resolves a catalog type to the helper row id before unpairing', async () => {
+    state.readWorkbenchOutput = {
+      ...workbenchDto([]),
+      connectors: [
+        {
+          connectorId: 'row-uuid',
+          connectorType: 'trusty-squire',
+          status: { status: 'connected', steps: [], signIn: null },
+        },
+      ],
+    };
+    await new MonolithWorkbenchSource().disconnectConnector({
+      workspaceId: 'ws1',
+      connectorId: 'trusty-squire',
+    });
+    expect(state.calls.find((call) => call.op === 'unpairConnector')!.input).toEqual({
+      workspaceId: 'ws1',
+      connectorId: 'row-uuid',
+    });
+  });
+});

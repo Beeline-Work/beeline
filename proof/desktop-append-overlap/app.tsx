@@ -125,8 +125,11 @@ function App() {
       const rows = Array.from(document.querySelectorAll('[data-row]')) as HTMLElement[];
       const rects = rows.map((r) => r.getBoundingClientRect());
       let overlaps = 0;
+      let minimumRowGap = Infinity;
       for (let i = 1; i < rects.length; i++) {
-        if (rects[i].top < rects[i - 1].bottom - 0.5) overlaps++;
+        const gap = rects[i].top - rects[i - 1].bottom;
+        minimumRowGap = Math.min(minimumRowGap, gap);
+        if (gap < -0.5) overlaps++;
       }
       const tailGap = scroller
         ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
@@ -140,6 +143,13 @@ function App() {
         tailGap: tailGap === null ? null : Math.round(tailGap),
         newestRowVisible,
         overlaps,
+        minimumRowGap: Number.isFinite(minimumRowGap) ? minimumRowGap : null,
+        newestRowBounds: rects.length
+          ? { top: rects[rects.length - 1].top, bottom: rects[rects.length - 1].bottom }
+          : null,
+        previousRowBounds: rects.length > 1
+          ? { top: rects[rects.length - 2].top, bottom: rects[rects.length - 2].bottom }
+          : null,
         // No budget/cap left in the measured-DOM follow; report whether the
         // reader is still pinned (the only state the follow now tracks).
         budgetLeft: isPinnedToTailRef.current ? 1 : 0,
@@ -165,6 +175,20 @@ function App() {
           ...prev,
           { id: `m${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length] },
         ]);
+      };
+      // Mirror the real send path: append an optimistic row, release any
+      // history anchor, mark the tail pinned, then land on the next frame.
+      (window as any).__sendOne = () => {
+        setMessages((prev) => [
+          ...prev,
+          { id: `sent${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length] },
+        ]);
+        hasLandingAnchorRef.current = false;
+        isPinnedToTailRef.current = true;
+        requestAnimationFrame(() => {
+          const scroller = scrollNodeRef.current;
+          if (scroller) scroller.scrollTop = scroller.scrollHeight;
+        });
       };
       // History paging shape: rows prepend, newest id unchanged, so the
       // follow must not re-arm and must not yank the reader back down.

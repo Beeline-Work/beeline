@@ -231,3 +231,19 @@ escape 30/60/500 early+late -> follow never re-arms toward the tail
 from the real module, same `ResizeObserver`/prepend-layout-effect/pin-check
 shape) rather than re-deriving it, so a regression in either place is a
 regression in both.
+
+## Windows post-send check (2026-09-23)
+
+The installed production Beeline on Chad's Windows guest is version 0.2.41.
+Its session reports `SESSION EXPIRED · TICKET_EXPIRED`; the installed Preview
+version 0.2.20 reports an invalid Room response. Neither currently permits a
+real Room send, so the reported app behavior has not yet been reproduced.
+
+`run-send.mjs` exercises five consecutive optimistic appends in the existing
+measured-DOM fixture, starting with the reader scrolled into history. The
+same compiled fixture ran under Chrome 153 on Chad's Windows guest through
+CDP, as well as under Linux Chromium. Every send measured `tailGap=0`,
+`minimumRowGap=0`, `overlaps=0`, and a visible newest row. The newest and
+preceding row bounds are printed after each send. This covers the DOM flow
+and send-follow wiring represented by the fixture; it does not substitute for
+a signed-in Tauri/WebView2 send through the actual Room and composer.

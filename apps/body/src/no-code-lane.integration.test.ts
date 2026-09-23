@@ -281,10 +281,10 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
     const release = this.release;
     this.release = undefined;
     await release?.();
+    this.emit('end');
   }
   async drop(): Promise<void> {
     await this.end();
-    this.emit('end');
   }
 }
 
@@ -469,7 +469,10 @@ afterEach(async () => {
   abort?.abort();
   await listener?.stop();
   await new Promise((r) => setTimeout(r, 150));
-  if (server) await new Promise<void>((done) => server.close(() => done()));
+  if (server) {
+    server.closeAllConnections();
+    await new Promise<void>((done) => server.close(() => done()));
+  }
   if (objectStorage) await objectStorage.close();
   if (database) await database.close();
 }, HOOK_TIMEOUT_MS);

@@ -588,6 +588,7 @@ export function LedgerSteer({
         <MonoMarkdown
           markdown={bodyText}
           mentionHandles={mentionHandles}
+          mentionStyle={styles.steerMention}
           onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
@@ -996,6 +997,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerBright,
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
+  },
+  // A sent tag keeps its token boundary on Android instead of collapsing
+  // back into the surrounding body tone.
+  steerMention: {
+    color: theme.buzz.accent,
+    backgroundColor: theme.buzz.brassWash,
+    borderRadius: 2,
+    paddingHorizontal: 2,
   },
   roomUpdate: {
     position: 'relative',

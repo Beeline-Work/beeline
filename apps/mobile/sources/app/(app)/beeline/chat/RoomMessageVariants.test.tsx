@@ -2169,6 +2169,37 @@ describe('Room message variant components', () => {
     expect(onMention).not.toHaveBeenCalled();
   });
 
+  it("passes a sent message's resolved mention handles to the steer renderer", () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'self-mention',
+          text: 'Ask @beebee for the result',
+          isUser: true,
+          pubkey: 'viewer',
+          mentionPubkeys: ['member-id'],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'member-id', handle: 'beebee' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(renderer.root.findByType('LedgerSteer' as never).props.mentionHandles).toEqual([
+      'beebee',
+    ]);
+  });
+
   it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {
     const onDecision = vi.fn();
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };

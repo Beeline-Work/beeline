@@ -128,6 +128,8 @@ type MonoMarkdownProps = {
   leadingInline?: React.ReactNode;
   /** Handles backed by this event's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
+  /** Optional surface-owned treatment layered over the shared mention tone. */
+  mentionStyle?: TextStyle;
   /** Invoked for a resolved member mention. The handle is normalized. */
   onMention?: (handle: string) => void;
   /** Known rooms/corners of THIS workspace; omitted → no reference is linked. */
@@ -202,7 +204,12 @@ export function tableColumnWeights(rows: string[][]): number[] {
 /** Block kinds whose renderer starts with a `Text` that can host the handle. */
 const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
-function spanStyle(span: MentionSpan, base: TextStyle, tailStyle?: TextStyle) {
+function spanStyle(
+  span: MentionSpan,
+  base: TextStyle,
+  mentionStyle?: TextStyle,
+  tailStyle?: TextStyle,
+) {
   return [
     base,
     span.styles.includes('bold') && styles.bold,
@@ -210,9 +217,10 @@ function spanStyle(span: MentionSpan, base: TextStyle, tailStyle?: TextStyle) {
     span.styles.includes('italic') && styles.italic,
     span.styles.includes('code') && styles.inlineCode,
     span.url && styles.link,
-    // A resolved channel reference shares the tagged-token brass: the same
-    // interactive-text vocabulary as a @mention, never a new accent or chip.
+    // A resolved channel reference shares the tagged-token brass. A mention
+    // may then add its owning surface's treatment (the sent-message chip).
     (span.mention || span.channelRef) && styles.mention,
+    span.mention && mentionStyle,
     // Last, so the arriving tail's tone wins over the settled body's.
     span.tail && tailStyle,
   ];
@@ -223,6 +231,7 @@ function InlineMarkdown({
   base,
   onLink,
   liveMentionHandles,
+  mentionStyle,
   onMention,
   channelIndex,
   onChannelReference,
@@ -232,6 +241,7 @@ function InlineMarkdown({
   base: TextStyle;
   onLink: (url: string) => void;
   liveMentionHandles: ReadonlySet<string>;
+  mentionStyle?: TextStyle;
   onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
@@ -263,7 +273,7 @@ function InlineMarkdown({
                   ? () => onLink(span.url!)
                   : undefined
           }
-          style={spanStyle(span, base, tail?.style)}
+          style={spanStyle(span, base, mentionStyle, tail?.style)}
         >
           {span.text}
         </Text>
@@ -308,6 +318,7 @@ export function monoMarkdownPropsAreEqual(
   return (
     previous.markdown === next.markdown &&
     previous.textStyle === next.textStyle &&
+    previous.mentionStyle === next.mentionStyle &&
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
@@ -371,6 +382,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   textStyle,
   leadingInline,
   mentionHandles,
+  mentionStyle,
   onMention,
   channelIndex,
   onChannelReference,
@@ -419,6 +431,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                mentionStyle={mentionStyle}
                 onMention={onMention}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
@@ -436,6 +449,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                mentionStyle={mentionStyle}
                 onMention={onMention}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
@@ -462,6 +476,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                     base={base}
                     onLink={onLink}
                     liveMentionHandles={liveMentionHandles}
+                    mentionStyle={mentionStyle}
                     onMention={onMention}
                     channelIndex={channelIndex}
                     onChannelReference={onChannelReference}

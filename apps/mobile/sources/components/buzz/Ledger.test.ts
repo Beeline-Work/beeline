@@ -276,6 +276,31 @@ describe('the ledger — an agent turn', () => {
 });
 
 describe('the ledger — a human turn is plain body text', () => {
+  it('renders a resolved mention in a sent message as a brass chip', () => {
+    const steer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'sent-mention',
+        byline: { name: 'You', stamp: '16:22', isViewer: true },
+        bodyText: '@bbc Can you show me the link to foreman?',
+        bodyTestID: 'sent-mention-body',
+        mentionHandles: ['bbc'],
+      }),
+    );
+
+    const mention = steer.root.findAllByType('Text').find((node) => node.props.children === '@bbc');
+    const style = Object.assign(
+      {},
+      ...(Array.isArray(mention?.props.style) ? mention.props.style : [mention?.props.style ?? {}]),
+    ) as Record<string, unknown>;
+
+    expect(style).toMatchObject({
+      color: groknight.accent,
+      backgroundColor: groknight.brassWash,
+      borderRadius: 2,
+      paddingHorizontal: 2,
+    });
+  });
+
   it('renders your message at body weight and size — NEVER the bolded lead', () => {
     // The explicit captain correction: an earlier mockup auto-bolded user
     // messages into headlines. The only thing marking your turn as yours is

@@ -97,7 +97,13 @@ export interface SqlDatabase {
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
-  oldestActiveQueryAgeMs?(applicationNames?: readonly string[]): Promise<number | null>;
+  /** Age of the oldest query this process still has in flight, or null when it
+   *  has none. Measured here rather than read from `pg_stat_activity`, which
+   *  needs `pg_read_all_stats`: without it Postgres blanks `state` on every
+   *  backend, so the old probe's `state='active'` predicate matched nothing and
+   *  the field was permanently null in production — a monitor that could not
+   *  fail. This one is scoped to this process's own pool and says so. */
+  oldestActiveQueryAgeMs?(): Promise<number | null>;
 }
 
 export interface ClosableDatabase extends SqlDatabase {
@@ -149,6 +155,20 @@ export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> 
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   readonly #pause: Pause;
+  /** Start time of every query this process currently has in flight, keyed by
+   *  a monotonic ticket so identical concurrent statements cannot collide. */
+  readonly #inFlight = new Map<number, number>();
+  #nextTicket = 0;
+
+  async #timed<T>(work: () => Promise<T>): Promise<T> {
+    const ticket = this.#nextTicket++;
+    this.#inFlight.set(ticket, Date.now());
+    try {
+      return await work();
+    } finally {
+      this.#inFlight.delete(ticket);
+    }
+  }
 
   constructor(
     connectionString: string,
@@ -174,24 +194,21 @@ export class PostgresDatabase implements ClosableDatabase {
     };
   }
 
-  async oldestActiveQueryAgeMs(
-    applicationNames: readonly string[] = [APP_DATABASE_NAME, ENRICHMENT_DATABASE_NAME],
-  ): Promise<number | null> {
-    const result = await this.query<{ age_ms: number | null }>(
-      `SELECT max(extract(epoch FROM (clock_timestamp()-query_start))*1000)::float8 age_ms
-       FROM pg_stat_activity
-       WHERE pid<>pg_backend_pid() AND state='active' AND application_name=ANY($1::text[])`,
-      [applicationNames],
-    );
-    return result.rows[0]?.age_ms ?? null;
+  async oldestActiveQueryAgeMs(): Promise<number | null> {
+    let oldest: number | undefined;
+    for (const startedAt of this.#inFlight.values())
+      if (oldest === undefined || startedAt < oldest) oldest = startedAt;
+    return oldest === undefined ? null : Date.now() - oldest;
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    const raw = await this.#retryTransientConnection(() =>
-      values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
+    const raw = await this.#timed(() =>
+      this.#retryTransientConnection(() =>
+        values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
+      ),
     );
     const result = Array.isArray(raw) ? raw.at(-1) : raw;
     return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
@@ -235,9 +252,9 @@ export class PostgresDatabase implements ClosableDatabase {
           sql: string,
           values: unknown[] = [],
         ) => {
-          const raw = values.length
-            ? await client.query<Row>(sql, values)
-            : await client.query<Row>(sql);
+          const raw = await this.#timed(() =>
+            values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
+          );
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
           return {
             rows: result?.rows ?? [],

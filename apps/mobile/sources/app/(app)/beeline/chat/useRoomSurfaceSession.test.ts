@@ -592,6 +592,41 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('keeps a retry turn delta that lands while a same-second Room read is in flight', async () => {
+    const at = Math.floor(Date.now() / 1_000);
+    const finished = {
+      requestId: 'request-a',
+      agentPubkey: 'agent-a',
+      status: 'complete' as const,
+      createdAt: at,
+    };
+    const retry = { ...finished, requestId: 'request-b', status: 'working' as const };
+    controls.cached = { ...roomView('room-a'), latestAgentTurns: [finished] };
+    controls.roomResponse = { ...roomView('room-a'), latestAgentTurns: [finished] };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      const read = controls.schedulers[0]!.fetch();
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'turn-delta', roomId: 'room-a', turn: retry },
+      });
+      controls.schedulers[0]!.apply(await read);
+    });
+
+    expect(current.roomSurface?.latestAgentTurns).toEqual([retry]);
+    await act(async () => renderer.unmount());
+  });
+
   it('paints one committed reply exactly once without a follow-up Room read', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;

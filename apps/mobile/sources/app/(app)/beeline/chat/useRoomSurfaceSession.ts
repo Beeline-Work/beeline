@@ -9,6 +9,7 @@ import {
   isRoomView,
   type LiveOverlay,
   type RoomView,
+  type RoomViewAgentTurn,
 } from '@beeline/buzz-client';
 import {
   isRoomViewTimeoutError,
@@ -428,6 +429,10 @@ export function useRoomSurfaceSession({
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
     let liveReadApplied = false;
+    // Turn deltas heard while a Room read is in flight. Turn times are whole
+    // seconds, so the read cannot tell a same-second retry from a stale turn;
+    // replaying these in order on top of the read keeps what the socket said.
+    let turnDeltasDuringRead: RoomViewAgentTurn[] | undefined;
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
@@ -662,6 +667,7 @@ export function useRoomSurfaceSession({
                   }
                 : undefined;
               if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
+              if (live.type === 'turn-delta') turnDeltasDuringRead?.push(live.turn);
               const current = reconciledViewRef.current;
               if (!current) {
                 visibleScheduler()?.force();
@@ -958,6 +964,7 @@ export function useRoomSurfaceSession({
             pendingReadTraces = [];
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
+            turnDeltasDuringRead = [];
             try {
               const view = await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
@@ -967,6 +974,7 @@ export function useRoomSurfaceSession({
               return view;
             } catch (error) {
               logLiveTrace('room-read-error', traces);
+              turnDeltasDuringRead = undefined;
               throw error;
             }
           },
@@ -978,7 +986,14 @@ export function useRoomSurfaceSession({
               readFoundUnheardMessage(reconciledViewRef.current, view);
             heardSinceRead = false;
             liveReadApplied = true;
-            applyView(view, identity.publicKey, relayUrl, true);
+            const replayedTurns = turnDeltasDuringRead ?? [];
+            turnDeltasDuringRead = undefined;
+            applyView(
+              replayedTurns.reduce(reconcileRoomTurnDelta, view),
+              identity.publicKey,
+              relayUrl,
+              true,
+            );
             if (missedLive) nextTransport.reconnectLive();
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;

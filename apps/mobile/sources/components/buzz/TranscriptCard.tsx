@@ -70,6 +70,7 @@ export type TranscriptCardChoice = {
 export type TranscriptCardProps = {
   tier: TranscriptCardTier;
   title: ReactNode;
+  wrapTitle?: boolean;
   subline?: ReactNode;
   sublineTestID?: string;
   stamp?: string;
@@ -204,6 +205,7 @@ const EMPTY_CARD_LIVE_MOTION: CardLiveMotion = {
 export function TranscriptCard({
   tier,
   title,
+  wrapTitle = false,
   subline,
   sublineTestID,
   stamp,
@@ -357,9 +359,10 @@ export function TranscriptCard({
                   active={animateArrival || liveMotion.title}
                   durationMs={animateArrival ? TRANSCRIPT_SETTLE_MS : liveMotion.durationMs}
                   ellipsizeMode="tail"
-                  numberOfLines={1}
+                  numberOfLines={wrapTitle ? undefined : 1}
                   steadyColor={steady.title}
                   style={styles.title}
+                  testID={testID ? `${testID}-title` : undefined}
                 >
                   {title}
                 </SettlingText>
@@ -490,6 +493,7 @@ function TranscriptCardChoicePlate({
             choice.selected ? styles.choiceLetterSelected : null,
             choice.costly ? styles.choiceLetterCostly : null,
           ]}
+          testID={`transcript-card-choice-letter-${choice.id}`}
         >
           <Text
             style={[
@@ -814,6 +818,7 @@ const styles = StyleSheet.create((theme) => {
     choices: {
       gap: card.space.sm,
       paddingTop: metric.rowVertical,
+      paddingBottom: metric.rowVertical,
       paddingHorizontal: metric.side,
     },
     choicePlate: {
@@ -848,8 +853,10 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 12,
     },
     choiceLetter: {
-      width: metric.identitySize,
-      height: metric.identitySize,
+      minWidth: metric.identitySize,
+      minHeight: metric.identitySize,
+      paddingHorizontal: 2,
+      paddingVertical: 2,
       borderWidth: 1,
       borderColor: card.borderStrong,
       borderRadius: card.radius,

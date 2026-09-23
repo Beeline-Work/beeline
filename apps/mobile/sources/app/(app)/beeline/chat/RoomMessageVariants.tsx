@@ -571,6 +571,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
         />
       }
       title={card.prompt}
+      wrapTitle={card.mode === 'poll'}
       subline={subline || card.constraint}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}

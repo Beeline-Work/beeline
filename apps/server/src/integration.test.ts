@@ -4849,6 +4849,30 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
+  it('renames a human corner through a name-only updateRoom', async () => {
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'quiet amber corner',
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    expect(
+      (await operation('updateRoom', { roomId: cornerId, name: '  bright river corner  ' })).status,
+    ).toBe(204);
+    expect(
+      (await database.query<{ name: string }>(`SELECT name FROM rooms WHERE id=$1`, [cornerId]))
+        .rows[0]?.name,
+    ).toBe('bright river corner');
+
+    const visibility = await operation('updateRoom', {
+      roomId: cornerId,
+      visibility: 'invite-only',
+    });
+    expect(visibility.status).toBe(503);
+    expect(await visibility.json()).toEqual({ error: 'room lifecycle cannot target a corner' });
+  });
+
   it('binds one installed Corner App while preserving inherited Room membership', async () => {
     const installationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const manifest = {

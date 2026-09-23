@@ -94,6 +94,35 @@ describe('ChannelHeaderTitle', () => {
     expect(onOpenUrl).toHaveBeenCalledOnce();
   });
 
+  it('long-presses the title to rename without opening settings', () => {
+    const onOpenSettings = vi.fn();
+    const onRename = vi.fn();
+    const tree = render(
+      <ChannelHeaderTitle
+        kind="room"
+        onLongPress={onRename}
+        onPress={onOpenSettings}
+        title="#beeline"
+      />,
+    );
+    const title = tree.root.findByProps({ testID: 'chat-title' });
+    expect(title.props.accessibilityHint).toBe('Long press to rename');
+    act(() => title.props.onLongPress());
+    expect(onRename).toHaveBeenCalledOnce();
+    expect(onOpenSettings).not.toHaveBeenCalled();
+  });
+
+  it('long-presses a corner title to rename', () => {
+    const onRename = vi.fn();
+    const tree = render(
+      <ChannelHeaderTitle kind="corner" onLongPress={onRename} title="#beeline/quiet amber corner" />,
+    );
+    const title = tree.root.findByProps({ testID: 'chat-title' });
+    expect(title.props.accessibilityLabel).toBe('Rename beeline/quiet amber corner');
+    act(() => title.props.onLongPress());
+    expect(onRename).toHaveBeenCalledOnce();
+  });
+
   it('has no repository press target for a chat-only Room', () => {
     const tree = render(<RoomRepositorySubtitle onOpenUrl={vi.fn()} repositoryName={null} />);
     expect(tree.root.findAllByProps({ testID: 'room-repo-chip' })).toHaveLength(0);

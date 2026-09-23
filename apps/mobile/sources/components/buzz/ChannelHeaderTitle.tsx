@@ -15,20 +15,27 @@ export function ChannelHeaderTitle({
   kind,
   numberOfLines = 1,
   onPress,
+  onLongPress,
   testID = 'chat-title',
 }: {
   title: string;
   kind: ChannelHeaderKind;
   numberOfLines?: number;
   onPress?: () => void;
+  onLongPress?: () => void;
   testID?: string;
 }) {
   const mark = splitChannelHeaderTitle(title, kind);
+  const interactive = Boolean(onPress || onLongPress);
   return (
     <Text
-      accessibilityLabel={onPress ? `Open ${mark.name} settings` : undefined}
-      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityHint={onLongPress ? 'Long press to rename' : undefined}
+      accessibilityLabel={
+        onPress ? `Open ${mark.name} settings` : onLongPress ? `Rename ${mark.name}` : undefined
+      }
+      accessibilityRole={interactive ? 'button' : undefined}
       numberOfLines={numberOfLines}
+      onLongPress={onLongPress}
       onPress={onPress}
       style={[styles.name, kind === 'corner' && styles.cornerName]}
       testID={testID}

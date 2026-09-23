@@ -534,6 +534,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
   const AGENT_B = 'd'.repeat(64);
   const AGENT_C = 'e'.repeat(64);
   const WORKSPACE = '33333333-3333-4333-8333-333333333333';
+  const ROOM = '44444444-4444-4444-8444-444444444444';
   const MACHINE_X = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const MACHINE_Y = 'ffffffff-gggg-4hhh-8iii-jjjjjjjjjjjj';
 
@@ -545,6 +546,10 @@ describe('PhoneService machine grouping in readWorkbench', () => {
       [OWNER],
     );
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'MachineTest')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'owner')`,
@@ -639,6 +644,32 @@ describe('PhoneService machine grouping in readWorkbench', () => {
       OWNER,
     );
     expect(pairedAgain.connectorId).toBe(paired.connectorId);
+  });
+
+  it('binds a machine pairing to its live agent instead of an offline sibling', async () => {
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`,
+      [ROOM, AGENT_B],
+    );
+
+    const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(workbench.helpers).toEqual([
+      expect.objectContaining({ id: MACHINE_X, online: true }),
+    ]);
+
+    const paired = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+    const connector = await database.query<{ helper_agent_id: string }>(
+      `SELECT helper_agent_id FROM workspace_connectors WHERE id=$1`,
+      [paired.connectorId],
+    );
+    expect(connector.rows[0]!.helper_agent_id).toBe(AGENT_B);
   });
 
   it('pairing by agent_id (back-compat) still works for legacy agents', async () => {

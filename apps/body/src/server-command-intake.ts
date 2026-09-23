@@ -81,6 +81,8 @@ export async function runServerCommandIntake(options: {
   presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
   run: (command: AgentCommand) => Promise<void>;
   stop: (requestId: string) => void;
+  restart?: (command: AgentCommand) => void;
+  canStartTurn?: () => boolean;
   onWake?: (wake: (() => void) | undefined) => void;
   onPoll?: () => void;
   onError?: (error: unknown) => void;
@@ -144,7 +146,12 @@ export async function runServerCommandIntake(options: {
       if (options.closed && (await options.closed())) return;
       for (const command of [...pending.values()]) {
         validateServerCommand(command, roomId, agentId);
-        if (busy && command.action !== 'stop') continue;
+        if (busy && command.action !== 'stop' && command.action !== 'restart') continue;
+        if (
+          (command.action === 'input' || command.action === 'resume') &&
+          options.canStartTurn?.() === false
+        )
+          continue;
         pending.delete(command.id);
         // Reserve the id before the request yields. A slow reconciliation
         // response may contain the same command snapshot while this claim is
@@ -161,7 +168,12 @@ export async function runServerCommandIntake(options: {
           options.onError?.(error);
           continue;
         }
-        if (command.action === 'stop') {
+        if (command.action === 'restart') {
+          if (!options.restart) throw new Error('restart command is not supported by this helper');
+          // Leave the command claimed. A genuinely new process lifecycle completes
+          // it on announce; acknowledging before exit could falsely report success.
+          options.restart(command);
+        } else if (command.action === 'stop') {
           options.stop(command.turnRequestId);
           await api.execute('acknowledgeAgentCommand', {
             roomId,
@@ -198,7 +210,16 @@ export async function runServerCommandIntake(options: {
           pushIntakeAcknowledged ? 60_000 : (options.pollMs ?? 1_000),
         );
         signal?.addEventListener('abort', aborted, { once: true });
-        if (pending.size && !busy) done(false);
+        if (
+          !busy &&
+          [...pending.values()].some(
+            (command) =>
+              command.action === 'stop' ||
+              command.action === 'restart' ||
+              options.canStartTurn?.() !== false,
+          )
+        )
+          done(false);
       });
       if (signal?.aborted) break;
       // The slow sweep is only a recovery net. Never make a command that

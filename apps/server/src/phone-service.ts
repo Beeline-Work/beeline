@@ -3093,8 +3093,9 @@ export class PhoneService {
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
         };
       }
-      await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      const lifecycleCommand = await routeHumanMessage(database, id);
+      if (!lifecycleCommand)
+        await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -3227,8 +3228,9 @@ export class PhoneService {
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
         };
       }
-      await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      const lifecycleCommand = await routeHumanMessage(database, id);
+      if (!lifecycleCommand)
+        await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),

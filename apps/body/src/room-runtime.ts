@@ -437,6 +437,7 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
+  private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
    *  flagged: a wake that arrives while a reconcile is already running must
    *  survive its start-pass clearing, or a reconnect mid-reconcile waits a
@@ -462,6 +463,7 @@ export class RoomRuntimeCoordinator {
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onHiccupRestart?: (attempt: number) => void;
+      onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
   ) {
@@ -560,6 +562,12 @@ export class RoomRuntimeCoordinator {
     let count = 0;
     for (const room of this.running.values()) if (room.body.isBusy()) count += 1;
     return count;
+  }
+
+  private requestLifecycleRestart(): void {
+    if (this.restartRequested) return;
+    this.restartRequested = true;
+    this.options.onRestartRequested?.();
   }
 
   quiesceForUpdateIfIdle(): boolean {
@@ -858,6 +866,8 @@ export class RoomRuntimeCoordinator {
       onCornerOpened: () => {
         this.confirmationPending = true;
       },
+      onRestartRequested: () => this.requestLifecycleRestart(),
+      canStartTurn: () => !this.restartRequested,
     });
     const promise = loop
       .run()
@@ -1044,6 +1054,8 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
+        onRestartRequested: () => this.requestLifecycleRestart(),
+        canStartTurn: () => !this.restartRequested,
       });
       const promise = loop
         .run()

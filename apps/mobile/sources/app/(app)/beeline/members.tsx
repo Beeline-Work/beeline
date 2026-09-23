@@ -111,7 +111,7 @@ function canChangeRole(
 ): boolean {
   if (viewerPubkey === targetPubkey) return false;
   if (viewerRole === 'owner') return true;
-  return viewerRole === 'admin' && targetRole !== 'owner';
+  return viewerRole === 'admin' && targetRole === 'member';
 }
 
 function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean {
@@ -1047,6 +1047,11 @@ export default function BuzzMembers() {
                 const allowed = canAssignRole(surface.viewer.role, role);
                 return (
                   <TouchableOpacity
+                    accessibilityRole="radio"
+                    accessibilityState={{
+                      selected: member.role === role,
+                      disabled: !allowed || member.role === role || busy,
+                    }}
                     key={role}
                     disabled={!allowed || member.role === role || busy}
                     onPress={() => void setPersonRole(member.identity.pubkey, role)}

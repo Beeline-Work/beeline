@@ -598,6 +598,57 @@ describe('monolith integration', () => {
     ]);
   });
 
+  it('persists manager role changes and refuses an admin editing a peer admin', async () => {
+    const adminToken = await phoneToken('role-change-admin');
+    const adminId = createHash('sha256').update('github:role-change-admin').digest('hex');
+    const memberId = createHash('sha256').update('github:role-change-member').digest('hex');
+    await phoneToken('role-change-member');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+
+    expect(
+      (
+        await operation(
+          'addWorkspaceMember',
+          { workspaceId: WORKSPACE, memberId, role: 'admin' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(200);
+    const currentRole = async () =>
+      (
+        await database.query<{ role: string }>(
+          `SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+          [WORKSPACE, memberId],
+        )
+      ).rows[0]?.role;
+    expect(await currentRole()).toBe('admin');
+
+    expect(
+      (
+        await operation(
+          'addWorkspaceMember',
+          { workspaceId: WORKSPACE, memberId, role: 'member' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(403);
+    expect(await currentRole()).toBe('admin');
+    expect(
+      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' })).status,
+    ).toBe(200);
+    expect(await currentRole()).toBe('member');
+    expect(
+      (await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'owner' }))
+        .status,
+    ).toBe(200);
+    expect(await currentRole()).toBe('owner');
+  });
+
   it('restores a tombstoned Workspace member when an invite-only Room becomes public', async () => {
     const memberToken = await phoneToken('publicize-tombstoned-member');
     const memberId = createHash('sha256')

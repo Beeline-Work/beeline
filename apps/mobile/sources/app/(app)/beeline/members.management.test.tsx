@@ -618,10 +618,10 @@ describe('Members workspace management', () => {
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: `member-${OWNER}-swipe` })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: `remove-person-${OWNER}` })).toHaveLength(0);
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(
-      renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` }).length,
-    ).toBeGreaterThan(0);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` }).props.disabled).toBe(
+      true,
+    );
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-swipe` })).toBeDefined();
     await press(renderer, `remove-person-${MEMBER}`);
     expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
@@ -662,6 +662,14 @@ describe('Members workspace management', () => {
       true,
     );
     await press(renderer, `member-${MEMBER}-identity`);
+    expect(
+      renderer.root.findByProps({ testID: `member-${MEMBER}-member` }).props.accessibilityState
+        .selected,
+    ).toBe(true);
+    expect(
+      renderer.root.findByProps({ testID: `member-${MEMBER}-admin` }).props.accessibilityState
+        .selected,
+    ).toBe(false);
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
       true,
     );
@@ -669,6 +677,29 @@ describe('Members workspace management', () => {
 
     expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
     expect(client.waitUntilMemberRole).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
+    expect(
+      renderer.root
+        .findByProps({ testID: `member-${MEMBER}-identity` })
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children),
+    ).toEqual(['@builder', 'admin']);
+  });
+
+  it('lets an owner persist a role change and reflects the selected role', async () => {
+    const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
+      false,
+    );
+    await press(renderer, `member-${MEMBER}-owner`);
+    expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'owner');
+    expect(
+      renderer.root
+        .findByProps({ testID: `member-${MEMBER}-identity` })
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children),
+    ).toEqual(['@builder', 'owner']);
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-swipe` })).toHaveLength(0);
   });
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {

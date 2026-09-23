@@ -234,6 +234,7 @@ export interface GrantRequestCardProps {
   /** The grant whose decision is in flight. */
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
+  onOpenSource?(roomId: string, messageId: string): void;
 }
 
 /**
@@ -254,15 +255,21 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   viewerRole,
   actionId,
   onDecision,
+  onOpenSource,
 }: GrantRequestCardProps) {
   const request = message.grantRequest!;
   const display = resolveAgentDisplayIdentity(request.agent.pubkey, agent);
   // The server names the asking agent on the card; a loaded roster presentation
   // (soul name) wins once it exists, never a fallback placeholder.
   const agentName = agent ? display.name : request.agent.name;
+  const squireRoute = request.grants.some(
+    (grant) => grant.kind === 'mcp' && grant.target === 'squire',
+  );
   const canDecide =
     !viewerIsAgent &&
-    (viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (squireRoute
+      ? viewerPubkey === request.owner.pubkey
+      : viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (
     <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
@@ -294,6 +301,14 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                 },
               ]
             : [];
+        if (request.sourceRoomId && request.sourceMessageId && onOpenSource) {
+          actions.push({
+            label: 'View request',
+            accessibilityRole: 'link',
+            onPress: () => onOpenSource(request.sourceRoomId!, request.sourceMessageId!),
+            testID: `grant-${grant.grantId}-source`,
+          });
+        }
         return (
           <TranscriptCard
             key={grant.grantId}
@@ -314,7 +329,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                 <TranscriptCardHandle>@{agentName.replace(/^@/, '')}</TranscriptCardHandle> asks you
               </Text>
             }
-            subline={`${grantAskLine(grant)} · ${grant.reason}`}
+            subline={`${grantAskLine(grant)} · ${grant.reason}${squireRoute ? ` · requested by ${request.requester.name}` : ''}`}
             sublineTestID={`grant-${grant.grantId}-ask`}
             stamp={ledgerStamp(message.timestamp)}
             code={grant.script?.contents}

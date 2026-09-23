@@ -78,6 +78,8 @@ import {
   applyVaultList,
   connectorCatalog,
   connectorDisplayName,
+  connectorIdentityId,
+  ensureConnectorDirectMessageRoom,
   isMetadataStale,
   receiveConnectionUsage,
 } from './workbench.js';
@@ -760,7 +762,10 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listAgentGrants':
-        return (await this.listAgentGrants(authenticatedAgentId)) as Output<Name>;
+        return (await this.listAgentGrants(
+          authenticatedAgentId,
+          (input as Input<'listAgentGrants'>).roomId,
+        )) as Output<Name>;
       case 'consumeAgentGrant':
         return (await this.consumeAgentGrant(
           input as Input<'consumeAgentGrant'>,
@@ -3292,8 +3297,8 @@ export class DaemonService {
    * request_grant: the agent raises its hand. Under yolo the grant is approved
    * on the spot (auto=true) and one quiet system line records it; otherwise a
    * pending grant is stored and joins (or opens) this agent's one open card in
-   * the Room, addressed to the owner. Budget always asks (the cap is out of
-   * scope), even under yolo.
+   * the Room, addressed to the owner. Squire's host route asks in the owner's
+   * connector DM. Budget always asks (the cap is out of scope), even under yolo.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -3312,6 +3317,7 @@ export class DaemonService {
       throw new Error('grant ttlSeconds is invalid');
     const kind: AgentGrantKind = input.kind;
     const target = kind === 'command' ? input.target : input.target.trim();
+    const squireRoute = kind === 'mcp' && target === 'squire';
     let rule: CommandGrantRule | undefined;
     if (kind === 'command') {
       try {
@@ -3363,6 +3369,7 @@ export class DaemonService {
     // right message even when nothing in that message's text spells a handle —
     // a scheduled prompt wakes the agent by subscription, and a search for a
     // written tag would walk straight past it to some older line.
+    const sourceMessageId = this.authorizedCommand?.source_message_id;
     const requesterRow = (
       await this.database.query<{
         id: string;
@@ -3376,8 +3383,10 @@ export class DaemonService {
          JOIN messages message ON message.id=command.source_message_id
          JOIN identities identity ON identity.id=message.author_id
          WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
+           AND message.presentation<>'activity'
+           AND ($3::text IS NULL OR command.source_message_id=$3)
          ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [input.roomId, agentId],
+        [input.roomId, agentId, squireRoute ? (sourceMessageId ?? null) : null],
       )
     ).rows[0];
     const owner = {
@@ -3458,6 +3467,38 @@ export class DaemonService {
         });
         return { messageId: undefined };
       }
+      if (squireRoute) {
+        const ownerMember = await database.query(
+          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+           AND identity_id=$2 AND removed_at IS NULL`,
+          [context.workspace_id, context.owner_id],
+        );
+        if (!ownerMember.rowCount) throw new Error('Squire owner is no longer a workspace member');
+        const dmRoomId = await ensureConnectorDirectMessageRoom(
+          database,
+          context.workspace_id,
+          'trusty-squire',
+          context.owner_id,
+        );
+        const messageId = id();
+        await systemLine(database, {
+          id: messageId,
+          roomId: dmRoomId,
+          authorId: connectorIdentityId('trusty-squire'),
+          ...grantCardPhrase(agent, owner, [grantView]),
+          presentation: 'card',
+          cardType: 'grant-request',
+          card: {
+            agent,
+            owner,
+            requester,
+            grants: [grantView],
+            sourceRoomId: input.roomId,
+            ...(sourceMessageId ? { sourceMessageId } : {}),
+          },
+        });
+        return { messageId, cardRoomId: dmRoomId };
+      }
       // Several asks in one turn become one card: join this agent's open card
       // in the Room while every grant on it is still pending and it is recent.
       const open = (
@@ -3500,6 +3541,8 @@ export class DaemonService {
       return { messageId };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
+    if (result.cardRoomId)
+      this.live.publish({ type: 'invalidate', roomId: result.cardRoomId, reason: 'grant' });
     return {
       grantId,
       status,
@@ -3545,7 +3588,7 @@ export class DaemonService {
   }
 
   /** Every live rule for this agent: approved or once, unexpired, not revoked. */
-  private async listAgentGrants(agentId: string) {
+  private async listAgentGrants(agentId: string, roomId?: string) {
     const rows = await this.database.query<{
       id: string;
       workspace_id: string;
@@ -3563,8 +3606,9 @@ export class DaemonService {
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
        WHERE g.agent_id=$1 AND g.status IN ('approved','once')
          AND (g.expires_at IS NULL OR g.expires_at>now())
+         AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
-      [agentId],
+      [agentId, roomId ?? null],
     );
     return {
       grants: rows.rows.map((row) => ({

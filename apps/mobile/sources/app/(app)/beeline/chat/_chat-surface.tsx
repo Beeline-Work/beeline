@@ -4510,6 +4510,16 @@ export function BuzzChatSurface({
             viewerRole={viewerChannelRole}
             actionId={grantActionId}
             onDecision={handleGrantDecision}
+            onOpenSource={(roomId, messageId) =>
+              router.navigate({
+                pathname: '/beeline/chat/[channelId]',
+                params: {
+                  channelId: roomId,
+                  notificationMessageId: messageId,
+                  notificationResponseId: `squire-grant:${item.id}`,
+                },
+              })
+            }
           />
         );
       }

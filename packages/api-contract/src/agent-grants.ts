@@ -36,10 +36,6 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
   mcp: 'route',
 };
 
-/** Host MCP is a standing route, never a yolo auto-approval. */
-export const MCP_GRANT_CREATOR_ONLY_MESSAGE =
-  'host MCP is only for an agent that answers its owner';
-
 /**
  * A command grant is one exact line the agent may say. Shell metacharacters are
  * refused at request time so a rule can never smuggle a second command, a

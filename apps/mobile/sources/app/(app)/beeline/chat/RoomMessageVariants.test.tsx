@@ -2294,6 +2294,65 @@ describe('Room message variant components', () => {
     expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe('denied');
   });
 
+  it('shows a Squire request source and limits every decision to the agent owner', () => {
+    const onDecision = vi.fn();
+    const onOpenSource = vi.fn();
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const requester = { pubkey: 'alex', kind: 'human' as const, name: 'Alex' };
+    const pending = message({
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
+        owner,
+        requester,
+        sourceRoomId: 'source-room',
+        sourceMessageId: 'source-message',
+        grants: [
+          {
+            grantId: 'squire-grant',
+            kind: 'mcp',
+            target: 'squire',
+            reason: 'use the vault',
+            status: 'pending',
+            requestedBy: requester,
+            roomId: 'source-room',
+            createdAt: 1,
+            auto: false,
+          },
+        ],
+      },
+    });
+    const admin = render(
+      <GrantRequestCard
+        message={pending}
+        viewerIsAgent={false}
+        viewerPubkey="admin"
+        viewerRole="admin"
+        actionId={null}
+        onDecision={onDecision}
+        onOpenSource={onOpenSource}
+      />,
+    );
+    expect(admin.root.findAllByProps({ testID: 'grant-squire-grant-always' })).toHaveLength(0);
+    const ownerView = render(
+      <GrantRequestCard
+        message={pending}
+        viewerIsAgent={false}
+        viewerPubkey="owner"
+        viewerRole="member"
+        actionId={null}
+        onDecision={onDecision}
+        onOpenSource={onOpenSource}
+      />,
+    );
+    expect(
+      ownerView.root.findByProps({ testID: 'grant-squire-grant-ask' }).props.children,
+    ).toContain('requested by Alex');
+    act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-source' }).props.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
+    act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-once' }).props.onPress());
+    expect(onDecision).toHaveBeenCalledWith('squire-grant', 'once');
+  });
+
   describe('connector-offer card (R5)', () => {
     const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
     const zeke = { pubkey: 'zeke', kind: 'human' as const, name: 'Zeke', handle: 'zeke' };

@@ -20,7 +20,7 @@ import {
   hostImportedMcpDeclarations,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { grantedHostRoutesFromList, grantedHostRouteWires } from './host-mcp-route.js';
+import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -640,10 +640,12 @@ export class MonolithCornerTurnLoop {
 
   private async grantedHostRoutes(): Promise<string[]> {
     try {
-      return grantedHostRoutesFromList(
+      return claimGrantedHostRoutes(
         await this.options.api.execute('listAgentGrants', {
           agentId: this.agent.publicKey,
+          roomId: this.options.cornerId,
         }),
+        (grantId) => this.options.api.execute('consumeAgentGrant', { grantId }),
       );
     } catch {
       return [];

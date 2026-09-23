@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Image, StyleSheet } from 'react-native';
 // The real decision under test, exactly as the app imports it.
 import { shouldFollowDesktopTail } from '../../apps/mobile/sources/buzz/room-scroll-follow';
 
@@ -10,7 +10,8 @@ const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42,
 const TAIL_PIN_THRESHOLD = 50;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
 
-type Msg = { id: string; h: number };
+type Msg = { id: string; h: number; kind?: 'photo' | 'artifact' };
+const IMAGE_URI = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1200"><rect width="2000" height="1200" fill="#bc7194"/><circle cx="1000" cy="600" r="400" fill="#f5dc88"/></svg>')}`;
 
 function makeMessages(count: number): Msg[] {
   const out: Msg[] = [];
@@ -21,6 +22,14 @@ function makeMessages(count: number): Msg[] {
 }
 
 function Row({ msg }: { msg: Msg }) {
+  const [imageReady, setImageReady] = useState(false);
+  useEffect(() => {
+    if (!msg.kind) return;
+    // The production attachment acquires media authorization asynchronously;
+    // the artifact resolves its image source asynchronously too.
+    const timer = setTimeout(() => setImageReady(true), 300);
+    return () => clearTimeout(timer);
+  }, [msg.kind]);
   return (
     <View
       style={{
@@ -35,6 +44,26 @@ function Row({ msg }: { msg: Msg }) {
       <Text
         style={{ color: '#d7d7df', fontSize: 13 }}
       >{`message ${msg.id} · height ${msg.h}`}</Text>
+      {msg.kind === 'photo' ? (
+        <View testID={`photo-card-${msg.id}`} style={styles.photoCard}>
+          <Image testID={`photo-image-${msg.id}`} resizeMode="cover"
+            source={{ uri: imageReady ? IMAGE_URI : '' }} style={styles.photoThumbnail} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: '#ddd' }}>large-photo.png</Text>
+            <Text style={{ color: '#aaa' }}>IMAGE/PNG · 1.2 MB</Text>
+          </View>
+          <Text style={{ color: '#ddd' }}>↗</Text>
+        </View>
+      ) : msg.kind === 'artifact' ? (
+        <View testID={`artifact-card-${msg.id}`} style={styles.artifactCard}>
+          <View style={styles.artifactPreview}>
+            <Image testID={`artifact-image-${msg.id}`} resizeMode="cover"
+              source={{ uri: imageReady ? IMAGE_URI : '' }} style={styles.artifactImage} />
+          </View>
+          <View style={styles.artifactCaption}><Text style={{ color: '#ddd' }}>large-photo.png · image</Text></View>
+          <View style={styles.artifactFooter}><Text style={{ color: '#ddd' }}>Open in browser ↗</Text></View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -124,6 +153,24 @@ function App() {
       ) as HTMLElement | null;
       const rows = Array.from(document.querySelectorAll('[data-row]')) as HTMLElement[];
       const rects = rows.map((r) => r.getBoundingClientRect());
+      const images = Array.from(document.querySelectorAll('[data-testid^="photo-image-"], [data-testid^="artifact-image-"]')) as HTMLElement[];
+      const imageBounds = images.map((img) => {
+        const row = img.closest('[data-row]') as HTMLElement;
+        const card = img.closest('[data-testid^="photo-card-"], [data-testid^="artifact-card-"]') as HTMLElement;
+        const paintNode = img.firstElementChild as HTMLElement | null;
+        const image = (paintNode ?? img).getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        return {
+          row: row.dataset.row,
+          loaded: Array.from(img.querySelectorAll('img')).some((node) => node.complete && node.naturalWidth > 0),
+          image: { top: image.top, bottom: image.bottom },
+          card: { top: cardRect.top, bottom: cardRect.bottom },
+          rowBounds: { top: rowRect.top, bottom: rowRect.bottom },
+          outsideRow: image.top < rowRect.top - 0.5 || image.bottom > rowRect.bottom + 0.5 ||
+            cardRect.top < rowRect.top - 0.5 || cardRect.bottom > rowRect.bottom + 0.5,
+        };
+      });
       let overlaps = 0;
       let minimumRowGap = Infinity;
       for (let i = 1; i < rects.length; i++) {
@@ -143,6 +190,7 @@ function App() {
         tailGap: tailGap === null ? null : Math.round(tailGap),
         newestRowVisible,
         overlaps,
+        imageBounds,
         minimumRowGap: Number.isFinite(minimumRowGap) ? minimumRowGap : null,
         newestRowBounds: rects.length
           ? { top: rects[rects.length - 1].top, bottom: rects[rects.length - 1].bottom }
@@ -178,10 +226,10 @@ function App() {
       };
       // Mirror the real send path: append an optimistic row, release any
       // history anchor, mark the tail pinned, then land on the next frame.
-      (window as any).__sendOne = () => {
+      (window as any).__sendOne = (kind?: Msg['kind']) => {
         setMessages((prev) => [
           ...prev,
-          { id: `sent${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length] },
+          { id: `sent${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length], kind },
         ]);
         hasLandingAnchorRef.current = false;
         isPinnedToTailRef.current = true;
@@ -258,6 +306,19 @@ function App() {
 }
 
 const styles = StyleSheet.create({
+  // Geometry from RoomMessageVariants.tsx AttachmentCard.
+  photoCard: { minWidth: 0, width: '100%', minHeight: 58, marginTop: 8,
+    paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  photoThumbnail: { width: 46, height: 46, backgroundColor: '#34343a' },
+  // Geometry from ArtifactCard.tsx (220px preview, caption, footer).
+  artifactCard: { minWidth: 0, width: '100%', marginTop: 8, borderWidth: 1,
+    borderColor: '#555', borderRadius: 10, backgroundColor: '#16161c', overflow: 'hidden' },
+  artifactPreview: { height: 220, backgroundColor: '#34343a' },
+  artifactImage: { width: '100%', height: '100%' },
+  artifactCaption: { flexDirection: 'row', alignItems: 'baseline', gap: 8,
+    paddingHorizontal: 8, paddingTop: 8 },
+  artifactFooter: { minHeight: 44, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 8, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#555' },
   messageList: { flex: 1 },
   desktopScroll: { overflowX: 'hidden', overflowY: 'auto' } as any,
   messageListContent: {

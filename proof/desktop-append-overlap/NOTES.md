@@ -241,15 +241,33 @@ authorized a reinstall, the replacement Preview 0.2.20 from PR #1650 crashes
 at launch even with a clean profile (`0xc0000409`, fault offset `0x356ea5`);
 the old profile was preserved separately. Neither app currently permits a real
 Room send, so the reported app behavior has not yet been reproduced.
-The latest VM note says image sends trigger it while text sends appeared fine;
-the corner trigger describes post-send text row overlap. The exact failing send
-type and surface still need confirmation from a live Room reproduction.
+The reporter corrected the trigger to picture sends; ordinary text sends appear
+fine. A live Room reproduction remains necessary to establish the exact failing
+component and paint behavior.
 
-`run-send.mjs` exercises five consecutive optimistic appends in the existing
-measured-DOM fixture, starting with the reader scrolled into history. The
-same compiled fixture ran under Chrome 153 on Chad's Windows guest through
-CDP, as well as under Linux Chromium. Every send measured `tailGap=0`,
-`minimumRowGap=0`, `overlaps=0`, and a visible newest row. The newest and
-preceding row bounds are printed after each send. This covers the DOM flow
-and send-follow wiring represented by the fixture; it does not substitute for
-a signed-in Tauri/WebView2 send through the actual Room and composer.
+The first version of `run-send.mjs` exercised five fixed-height optimistic
+appends in the measured-DOM fixture, starting with the reader scrolled into
+history. It measured no adjacent-row overlap and a zero tail gap in Linux
+Chromium and Windows Chrome 153 on Chad. It did not exercise pictures.
+
+### Picture-send geometry follow-up
+
+`run-send.mjs` now sends photo attachment, text, image artifact, photo attachment,
+then text. Its fixture models the `AttachmentCard` 46×46 thumbnail/58px row and
+the `ArtifactCard` 220px preview with caption and footer. A 300ms source switch
+models the asynchronous media authorization/image-source load. At 100ms and
+550ms after each send it measures the painted image element, card, enclosing
+message row, adjacent rows and scroll tail; the later sample requires each
+image to have loaded. The painted element is React Native Web's inner
+background-image child, not its outer `Image` View.
+
+Linux Chromium and Windows Chrome 153 on Chad each passed all ten samples:
+zero adjacent-row overlaps, zero painted-image/card bounds outside their row,
+zero tail gap, and the newest row visible. The Windows run used Chrome CDP in
+the guest and the `CDP_HTTP_URL`/`PROOF_URL` options of `run-send.mjs`.
+
+These are **source-shaped fixture results**, not a reproduction of the
+reported bug or a fix. The fixture does not mount the full `AttachmentCard` or
+`ArtifactCard` component, exercise an actual upload/outbox send, or run inside
+Beeline's WebView2. The current production app remains on GitHub sign-in on
+Chad, so live post-send pixel and row bounds remain unmeasured.

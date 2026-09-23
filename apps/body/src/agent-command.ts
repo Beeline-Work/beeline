@@ -16,7 +16,14 @@ export const AGENT_KINDS = [
 ] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
-export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'grok', 'cursor'] as const;
+export const AUTO_DETECT_AGENT_KINDS = [
+  'codex',
+  'claude',
+  'goose',
+  'pi',
+  'grok',
+  'cursor',
+] as const;
 
 export interface AgentCommand {
   kind: AgentKind;
@@ -149,13 +156,11 @@ function nodeVersionBins(versionsDir: string, binSuffix: string): string[] {
 export function wellKnownExecutableDirs(env: NodeJS.ProcessEnv = process.env): string[] {
   const home = env.HOME?.trim() || homedir();
   const xdgData = env.XDG_DATA_HOME?.trim() || resolve(home, '.local', 'share');
-  const fnmRoots = [
-    env.FNM_DIR?.trim(),
-    resolve(xdgData, 'fnm'),
-    resolve(home, '.fnm'),
-  ].filter((root): root is string => Boolean(root));
-  const nvmRoots = [env.NVM_DIR?.trim(), resolve(home, '.nvm')].filter(
+  const fnmRoots = [env.FNM_DIR?.trim(), resolve(xdgData, 'fnm'), resolve(home, '.fnm')].filter(
     (root): root is string => Boolean(root),
+  );
+  const nvmRoots = [env.NVM_DIR?.trim(), resolve(home, '.nvm')].filter((root): root is string =>
+    Boolean(root),
   );
   const versioned: string[] = [];
   for (const root of fnmRoots) {
@@ -164,12 +169,7 @@ export function wellKnownExecutableDirs(env: NodeJS.ProcessEnv = process.env): s
   for (const root of nvmRoots) {
     versioned.push(...nodeVersionBins(join(root, 'versions', 'node'), 'bin'));
   }
-  return [
-    ...versioned,
-    resolve(home, '.local', 'bin'),
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-  ];
+  return [...versioned, resolve(home, '.local', 'bin'), '/usr/local/bin', '/opt/homebrew/bin'];
 }
 
 /**

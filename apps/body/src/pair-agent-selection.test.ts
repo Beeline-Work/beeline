@@ -43,7 +43,9 @@ function capture(): { output: Pick<NodeJS.WritableStream, 'write'>; text: () => 
 
 describe('pair agent auto-selection', () => {
   it('fails clearly when no real ACP-capable agent is installed', async () => {
-    await expect(selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false })).rejects.toThrow(
+    await expect(
+      selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false }),
+    ).rejects.toThrow(
       /No supported ACP-capable coding agent.*codex.*claude.*goose.*pi.*--agent reference.*LLM key.*--agent custom/s,
     );
   });
@@ -51,15 +53,26 @@ describe('pair agent auto-selection', () => {
   it('auto-selects and announces the sole detected agent', async () => {
     const directory = await executables('codex', 'codex-acp');
     const log = capture();
+    const installs: Array<{ command: string; args: string[] }> = [];
 
     const selected = await selectPairAgentCommand({
       env: { ...PATH_ONLY, PATH: directory },
       interactive: false,
       output: log.output,
+      install: async (command) => {
+        installs.push(command);
+      },
     });
 
     expect(selected).toMatchObject({ kind: 'codex', command: resolve(directory, 'codex-acp') });
-    expect(log.text()).toBe('[beeline] using codex (auto-detected)\n');
+    expect(installs).toEqual([
+      {
+        command: 'npm',
+        args: ['install', '-g', '@agentclientprotocol/codex-acp@latest'],
+      },
+    ]);
+    expect(log.text()).toContain('[beeline] refreshing codex adapter');
+    expect(log.text()).toContain('[beeline] using codex (auto-detected; adapter current)');
   });
 
   it('offers a picker over every detected agent and persists the selected command', async () => {

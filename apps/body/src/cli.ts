@@ -27,7 +27,12 @@ import {
   SQUIRE_BROKER_FLAG,
   SQUIRE_FACADE_FLAG,
 } from './squire-host.js';
-import { formatAgentCommand } from './agent-command.js';
+import {
+  formatAdapterInstallCommand,
+  formatAgentCommand,
+  installLatestAgentAdapter,
+  latestAdapterInstallCommand,
+} from './agent-command.js';
 import {
   AGENT_ACCESS_POLICIES,
   isAgentAccessPolicy,
@@ -173,6 +178,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   if (!activated) throw new Error('monolith daemon transport activation failed');
   runtime = activated.runtime;
   const daemonApi = activated.client;
+  const refreshRuntimeAdapter = async (): Promise<void> => {
+    const kind = runtime.agentKind;
+    if (!kind) return;
+    const install = latestAdapterInstallCommand(kind);
+    if (!install) return;
+    console.log(`[body] refreshing ${kind} adapter: ${formatAdapterInstallCommand(install)}`);
+    await installLatestAgentAdapter(kind);
+  };
+  try {
+    await refreshRuntimeAdapter();
+  } catch (error) {
+    console.error(
+      `[body] adapter refresh failed; validating the installed copy (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
   const agent = runtimeAgentCommand(runtime);
   await writeDaemonPidRecord(configPath, process.pid);
   const env: NodeJS.ProcessEnv = {
@@ -201,7 +221,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   }
   if (runtime.sharedSkills) config.sharedSkills = [...runtime.sharedSkills];
   if (runtime.modelSelection) {
-    await applyRuntimeModelPreflight(config, agent, runtime.modelSelection);
+    await applyRuntimeModelPreflight(
+      config,
+      agent,
+      runtime.modelSelection,
+      undefined,
+      refreshRuntimeAdapter,
+    );
     if (!config.modelUnavailable) {
       console.log('[body] persisted model/effort selection passed live startup validation');
     } else {

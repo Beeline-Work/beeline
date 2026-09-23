@@ -4,6 +4,7 @@ import * as clack from '@clack/prompts';
 import {
   detectInstalledAgentCommands,
   formatAdapterInstallCommand,
+  latestAdapterInstallCommand,
   resolveAgentCommand,
   runAdapterInstall,
   type AdapterInstallCommand,
@@ -84,14 +85,41 @@ export async function selectPairAgentCommand(opts: {
   const confirmInstall = opts.confirmInstall ?? clackConfirmInstall;
   const runInstall = opts.install ?? installAdapter;
 
+  const useReadyAgent = async (agent: AgentCommand, label: string): Promise<AgentCommand> => {
+    const refresh = latestAdapterInstallCommand(agent.kind);
+    if (!refresh) {
+      output.write(`[beeline] using ${agent.kind} (${label})\n`);
+      return agent;
+    }
+    output.write(
+      `[beeline] refreshing ${agent.kind} adapter: ${formatAdapterInstallCommand(refresh)}\n`,
+    );
+    try {
+      await runInstall(refresh, { cwd: opts.cwd, env: opts.env });
+      const refreshed = resolveAgentCommand({
+        kind: agent.kind,
+        env: opts.env,
+        cwd: opts.cwd,
+      });
+      output.write(`[beeline] using ${refreshed.kind} (${label}; adapter current)\n`);
+      return refreshed;
+    } catch (installError) {
+      throw new Error(
+        `Could not refresh the ${agent.kind} adapter: ${errorMessage(installError)}. ` +
+          `Install it with: ${formatAdapterInstallCommand(refresh)}`,
+      );
+    }
+  };
+
   if (opts.explicitKind !== undefined) {
     try {
-      return resolveAgentCommand({
+      const selected = resolveAgentCommand({
         kind: opts.explicitKind,
         customCommand: opts.customCommand,
         env: opts.env,
         cwd: opts.cwd,
       });
+      return await useReadyAgent(selected, 'selected');
     } catch (resolutionError) {
       const candidate = detectInstalledAgentCommands({ env: opts.env, cwd: opts.cwd }).find(
         (detected) => detected.kind === opts.explicitKind && detected.status === 'missing-adapter',
@@ -150,8 +178,7 @@ export async function selectPairAgentCommand(opts: {
       );
     }
     if (ready.length === 1) {
-      output.write(`[beeline] using ${ready[0]!.kind} (auto-detected)\n`);
-      return ready[0]!.agent;
+      return useReadyAgent(ready[0]!.agent, 'auto-detected');
     }
     const readyKinds = ready.map((candidate) => candidate.kind).join(', ');
     throw new Error(
@@ -161,8 +188,7 @@ export async function selectPairAgentCommand(opts: {
   }
 
   if (detected.length === 1 && detected[0]!.status === 'ready') {
-    output.write(`[beeline] using ${detected[0]!.kind} (auto-detected)\n`);
-    return detected[0]!.agent;
+    return useReadyAgent(detected[0]!.agent, 'auto-detected');
   }
 
   // A failed install for one candidate loops back to the picker rather than
@@ -173,8 +199,7 @@ export async function selectPairAgentCommand(opts: {
     const pickedKind = await selectAgent(detected);
     const selected = detected.find((candidate) => candidate.kind === pickedKind)!;
     if (selected.status === 'ready') {
-      output.write(`[beeline] using ${selected.kind} (selected)\n`);
-      return selected.agent;
+      return useReadyAgent(selected.agent, 'selected');
     }
     const manual = missingAdapterMessage(selected);
     output.write(

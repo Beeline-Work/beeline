@@ -495,9 +495,17 @@ describe('connect wizard', () => {
   });
 
   it('gives an unconfigured Goose the whole provider, key and model flow', async () => {
-    const fixture = promptFixture(['goose', 'openrouter', 'sk-or-v1-freshfreshfresh7', 'z-ai/glm-5.3-flash']);
+    const fixture = promptFixture([
+      'goose',
+      'openrouter',
+      'sk-or-v1-freshfreshfresh7',
+      'z-ai/glm-5.3-flash',
+    ]);
     const announced: string[] = [];
-    const keyStore: ConnectKeyStore = { read: vi.fn(async () => undefined), save: vi.fn(async () => {}) };
+    const keyStore: ConnectKeyStore = {
+      read: vi.fn(async () => undefined),
+      save: vi.fn(async () => {}),
+    };
     const seam = catalogSeam({
       credentialed: {
         currentValue: 'z-ai/glm-5.3-flash',
@@ -531,7 +539,12 @@ describe('connect wizard', () => {
   });
 
   it('falls back to asking when the probe times out, without a second attempt', async () => {
-    const fixture = promptFixture(['goose', 'openrouter', 'sk-or-v1-freshfreshfresh7', 'z-ai/glm-5.3-flash']);
+    const fixture = promptFixture([
+      'goose',
+      'openrouter',
+      'sk-or-v1-freshfreshfresh7',
+      'z-ai/glm-5.3-flash',
+    ]);
     const seam = catalogSeam({
       probeFailure: new Error('ACP session/new timed out after 12000ms'),
       credentialed: {
@@ -615,12 +628,7 @@ describe('connect wizard', () => {
   });
 
   it('asks provider and API key for Pi with OpenRouter and GLM defaults', async () => {
-    const fixture = promptFixture([
-      'pi',
-      'openrouter',
-      'secret-key',
-      'z-ai/glm-5.3-flash',
-    ]);
+    const fixture = promptFixture(['pi', 'openrouter', 'secret-key', 'z-ai/glm-5.3-flash']);
 
     await expect(
       collectConnectWizard(
@@ -659,12 +667,7 @@ describe('connect wizard', () => {
       read: vi.fn(async () => savedKey),
       save: vi.fn(async () => {}),
     };
-    const fixture = promptFixture([
-      'pi',
-      'openrouter',
-      'saved',
-      'z-ai/glm-5.3-flash',
-    ]);
+    const fixture = promptFixture(['pi', 'openrouter', 'saved', 'z-ai/glm-5.3-flash']);
 
     await expect(
       collectConnectWizard(
@@ -729,13 +732,11 @@ describe('connect wizard', () => {
   });
 
   it('falls back to an environment key without storing it', async () => {
-    const keyStore: ConnectKeyStore = { read: vi.fn(async () => undefined), save: vi.fn(async () => {}) };
-    const fixture = promptFixture([
-      'pi',
-      'openrouter',
-      'saved',
-      'z-ai/glm-5.3-flash',
-    ]);
+    const keyStore: ConnectKeyStore = {
+      read: vi.fn(async () => undefined),
+      save: vi.fn(async () => {}),
+    };
+    const fixture = promptFixture(['pi', 'openrouter', 'saved', 'z-ai/glm-5.3-flash']);
 
     await expect(
       collectConnectWizard(
@@ -907,7 +908,8 @@ describe('connect wizard', () => {
     try {
       await completeDevicePairing(
         {
-          agentSecretKey: '1'.repeat(64),          bodySecretKey: '3'.repeat(64),
+          agentSecretKey: '1'.repeat(64),
+          bodySecretKey: '3'.repeat(64),
           agentName: 'Scout',
           harness: 'codex',
           model: 'gpt-5.4',
@@ -1025,10 +1027,7 @@ describe('connect wizard', () => {
     // The probe returned nothing, so nothing is announced as found.
     expect(announced).toEqual([]);
     // Two questions: harness (select), model (autocomplete with fallback)
-    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
-      'select',
-      'autocomplete',
-    ]);
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select', 'autocomplete']);
     // The model picker call includes the explanatory note
     expect(fixture.calls[1]).toContain('cursor did not enumerate models');
   });
@@ -1178,9 +1177,9 @@ describe('connect wizard', () => {
   it('collapses any connect finish failure into one plain sentence without a stack', () => {
     const stacked = Object.assign(
       new Error(
-        'model "gemini-2.5-pro" is unavailable. Choose one of the values in the live harness catalog.\n'
-          + '    at applyAgentModelSelection (model-config.ts:501)\n'
-          + '    at completeDevicePairing (device-pairing.ts:68)',
+        'model "gemini-2.5-pro" is unavailable. Choose one of the values in the live harness catalog.\n' +
+          '    at applyAgentModelSelection (model-config.ts:501)\n' +
+          '    at completeDevicePairing (device-pairing.ts:68)',
       ),
       { name: 'ModelSelectionUnavailableError' },
     );

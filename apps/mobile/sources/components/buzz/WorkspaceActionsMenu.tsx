@@ -3,6 +3,7 @@ import { TouchableOpacity } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from './HullActionSheet';
+import { MEMBERS_LABEL } from '@/buzz/vocabulary';
 
 export function WorkspaceActionsMenu({
   onMembers,
@@ -35,7 +36,7 @@ export function WorkspaceActionsMenu({
         testID="workspace-menu-sheet"
       >
         <HullActionSheetRow
-          label="Members"
+          label={MEMBERS_LABEL}
           onPress={() => choose(onMembers)}
           testID="workspace-menu-members"
         />

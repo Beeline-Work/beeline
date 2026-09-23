@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 const bookmarks = readFileSync(new URL('./bookmarks.tsx', import.meta.url), 'utf8');
 const channels = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
+const toolbar = readFileSync(
+  new URL('../../../components/buzz/RoomListToolbar.tsx', import.meta.url),
+  'utf8',
+);
 const chat = readFileSync(new URL('./chat/_chat-surface.tsx', import.meta.url), 'utf8');
 const inspector = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
@@ -15,20 +19,18 @@ const ledger = readFileSync(
 );
 
 describe('private bookmark surfaces', () => {
-  it('opens phone bookmarks from the Room-list header glyph, not a deck cell', () => {
-    // The phone deck's bookmarks cell was retired (R4). The header glyph next
-    // to Members is the phone door; the desktop sidebar glyph remains the
-    // desktop door.
+  it('opens phone and desktop bookmarks from the conversation toolbar', () => {
     expect(channels).not.toContain('bookmarks-cell');
     expect(channels).not.toContain('bookmarkCount');
-    expect(channels).toContain('testID="workspace-bookmarks"');
-    expect(channels).toContain('<BookmarksGlyph');
+    expect(channels).toContain('<RoomListToolbar');
+    expect(toolbar).toContain('testID={desktop ? \'desktop-bookmarks\' : \'workspace-bookmarks\'}');
+    expect(toolbar).toContain('<BookmarksGlyph');
     expect(channels).toContain("pathname: '/beeline/bookmarks'");
     const sidebar = readFileSync(
       new URL('../../../components/SidebarView.tsx', import.meta.url),
       'utf8',
     );
-    expect(sidebar).toContain('testID="desktop-bookmarks"');
+    expect(sidebar).toContain('<RoomListToolbar');
     expect(sidebar).toContain("pathname: '/beeline/bookmarks'");
   });
 

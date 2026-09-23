@@ -186,7 +186,7 @@ describe('Beeline display branding', () => {
     });
     expect(appConfig).toContain('const name = "Beeline"');
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
-    expect(channelsScreen).toContain('{WORKSPACE_LABEL}');
+    expect(channelsScreen).toContain('workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}');
     expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
     expect(inviteScreen).toContain('Return to Beeline');

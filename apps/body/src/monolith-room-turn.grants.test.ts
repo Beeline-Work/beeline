@@ -9,7 +9,11 @@ import { credentialMaskPaths } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { GrantCommandRunner, type GrantRunnerRoom } from './grant-runner.js';
-import { MonolithRoomTurnLoop, pendingGrantToolCall } from './monolith-room-turn.js';
+import {
+  MonolithRoomTurnLoop,
+  pendingGrantToolCall,
+  resumePrompt,
+} from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -49,6 +53,22 @@ describe('grant decision recognition', () => {
         content: 'pending, card posted',
       }),
     ).toBe(false);
+  });
+
+  it('tells an approved MCP grant resume that the route is mounted now', () => {
+    const answer = formatGrantDecisionLine({
+      deciderName: 'Captain',
+      decision: 'always',
+      kind: 'mcp',
+      target: 'squire',
+    });
+
+    expect(resumePrompt({ body: answer, systemEvent: { kind: 'grant-decided' } })).toContain(
+      'The approved squire route is mounted in this session',
+    );
+    expect(resumePrompt({ body: answer, systemEvent: { kind: 'grant-decided' } })).toContain(
+      'do not restart, schedule another turn, or request the route again',
+    );
   });
 });
 

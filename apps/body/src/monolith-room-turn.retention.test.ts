@@ -47,6 +47,7 @@ async function twoTurns(
     agentKind?: BodyConfig['agentKind'];
     codegraphCommand?: string;
     repositoryBacked?: boolean;
+    grants?: () => Array<{ kind: 'mcp'; target: string; status: 'approved' }>;
     beforeTurns?: (paths: {
       operatorHome: string;
       agentHomeRoot: string;
@@ -110,6 +111,7 @@ async function twoTurns(
   let delivered = 0;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     if (name === 'getAgentConfiguration') return configurations[Math.min(delivered, 2) - 1 || 0];
+    if (name === 'listAgentGrants') return { grants: hooks?.grants?.() ?? [] };
     if (name === 'getRoomRepositoryState')
       return hooks?.repositoryBacked ? { resolution: 'repository' } : { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
@@ -289,6 +291,35 @@ describe('retained Room session', () => {
     expect(mountedInventories).toEqual([[], ['files']]);
     expect(activations).toBe(2);
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
+  });
+
+  it('cold-starts the approval wake with Squire and retains that grant afterward', async () => {
+    let approved = false;
+    const { activations, traces, mountedInventories } = await twoTurns(
+      [unchanged, unchanged],
+      [],
+      {
+        agentKind: 'goose',
+        thirdTurn: true,
+        grants: () =>
+          approved ? [{ kind: 'mcp', target: 'squire', status: 'approved' }] : [],
+        beforeTurns: async ({ operatorHome }) => {
+          await mkdir(join(operatorHome, '.config/goose'), { recursive: true });
+          await writeFile(join(operatorHome, '.config/goose/config.yaml'), 'extensions: {}\n');
+        },
+        betweenTurns: async () => {
+          approved = true;
+        },
+      },
+    );
+
+    expect(mountedInventories).toEqual([[], ['squire']]);
+    expect(activations).toBe(2);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
+      'cold',
+      'cold',
+      'warm',
+    ]);
   });
 
   it.each([

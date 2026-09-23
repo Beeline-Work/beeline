@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
@@ -230,6 +231,14 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
       `This is the answer to your connector offer: ${item.body}.`,
       'Your paused work resumes now. The tool is being installed on your machine; its sign-in and status reach the person through the tool’s own status message, not through you.',
       'Acknowledge in one short line (for example "Adding Trusty Squire now.") and continue the work that needed it, or say plainly what still has to happen before you can.',
+    ].join(' ');
+  }
+  const grant = parseGrantDecisionLine(item.body);
+  if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved ${grant.target} route is mounted in this session.`,
+      'Continue the paused work with that tool now; do not restart, schedule another turn, or request the route again.',
     ].join(' ');
   }
   return [

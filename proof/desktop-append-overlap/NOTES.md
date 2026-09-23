@@ -235,9 +235,15 @@ regression in both.
 ## Windows post-send check (2026-09-23)
 
 The installed production Beeline on Chad's Windows guest is version 0.2.41.
-Its session reports `SESSION EXPIRED · TICKET_EXPIRED`; the installed Preview
-version 0.2.20 reports an invalid Room response. Neither currently permits a
-real Room send, so the reported app behavior has not yet been reproduced.
+Its session reports `SESSION EXPIRED · TICKET_EXPIRED`. The original September 9
+Preview version 0.2.20 reported an invalid Room response. After the owner
+authorized a reinstall, the replacement Preview 0.2.20 from PR #1650 crashes
+at launch even with a clean profile (`0xc0000409`, fault offset `0x356ea5`);
+the old profile was preserved separately. Neither app currently permits a real
+Room send, so the reported app behavior has not yet been reproduced.
+The latest VM note says image sends trigger it while text sends appeared fine;
+the corner trigger describes post-send text row overlap. The exact failing send
+type and surface still need confirmation from a live Room reproduction.
 
 `run-send.mjs` exercises five consecutive optimistic appends in the existing
 measured-DOM fixture, starting with the reader scrolled into history. The

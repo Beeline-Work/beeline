@@ -137,6 +137,30 @@ describe('Room view presentation', () => {
     ).toEqual([laterWork]);
   });
 
+  it('does not let a same-second stale snapshot reopen a terminal turn delta', () => {
+    const working = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 10,
+    };
+    const complete = { ...working, status: 'complete' as const };
+    const settled = reconcileRoomTurnDelta(
+      { ...emptyRoom(), latestAgentTurns: [working] },
+      complete,
+    );
+
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [working] })
+        .latestAgentTurns,
+    ).toEqual([complete]);
+    const retried = { ...working, requestId: 'retry' };
+    expect(
+      reconcileRoomView(settled, { ...emptyRoom(), latestAgentTurns: [retried] })
+        .latestAgentTurns,
+    ).toEqual([retried]);
+  });
+
   it('does not let a stale full snapshot drop an agent first turn delta', () => {
     const working = {
       requestId: 'request',

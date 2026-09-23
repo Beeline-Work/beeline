@@ -105,6 +105,19 @@ function mergeNewerCommittedMessages(
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
 
+/** Whether a turn already held for an agent outranks an incoming one. Turn
+ * times are whole seconds, so a tie within one generation keeps terminal state
+ * over `working`. */
+function turnOutranks(held: RoomViewAgentTurn, incoming: RoomViewAgentTurn): boolean {
+  if (held.createdAt !== incoming.createdAt) return held.createdAt > incoming.createdAt;
+  return (
+    held.requestId === incoming.requestId &&
+    held.generationId === incoming.generationId &&
+    held.status !== 'working' &&
+    incoming.status === 'working'
+  );
+}
+
 /** A read that raced a turn delta must not walk that agent's turn backwards
  * or drop it: no follow-up read comes after a delta to correct it. The server
  * only omits an agent's latest turn past the bound, which the merge reapplies. */
@@ -117,7 +130,7 @@ function keepNewerAgentTurns(
   const nextByAgent = new Map(next.map((turn) => [turn.agentPubkey, turn]));
   const held = previous.filter((turn) => {
     const current = nextByAgent.get(turn.agentPubkey);
-    return !current || current.createdAt < turn.createdAt;
+    return !current || turnOutranks(turn, current);
   });
   if (held.length === 0) return next;
   const heldAgents = new Set(held.map((turn) => turn.agentPubkey));
@@ -175,17 +188,7 @@ export function reconcileRoomTurnDelta(view: RoomView, turn: RoomViewAgentTurn):
   const previous = view.latestAgentTurns.find(
     (candidate) => candidate.agentPubkey === turn.agentPubkey,
   );
-  const sameGeneration =
-    previous?.requestId === turn.requestId && previous.generationId === turn.generationId;
-  if (
-    previous &&
-    (previous.createdAt > turn.createdAt ||
-      (sameGeneration &&
-        previous.createdAt === turn.createdAt &&
-        previous.status !== 'working' &&
-        turn.status === 'working'))
-  )
-    return view;
+  if (previous && turnOutranks(previous, turn)) return view;
   const latestAgentTurns = [
     ...view.latestAgentTurns.filter((candidate) => candidate.agentPubkey !== turn.agentPubkey),
     turn,

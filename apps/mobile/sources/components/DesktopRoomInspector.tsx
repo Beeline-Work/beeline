@@ -190,7 +190,7 @@ export function DesktopRoomInspector({
     rowWidth === null ? Number.POSITIVE_INFINITY : rowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
   const renderedWidth = clampDesktopPaneWidth(
     'inspector',
-    maxWidthForTranscript > DESKTOP_INSPECTOR_MIN_WIDTH
+    maxWidthForTranscript >= DESKTOP_INSPECTOR_MIN_WIDTH
       ? Math.min(width, maxWidthForTranscript)
       : width,
   );

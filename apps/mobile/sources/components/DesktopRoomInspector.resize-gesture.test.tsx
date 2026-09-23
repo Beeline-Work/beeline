@@ -100,7 +100,10 @@ vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   saveDesktopPaneWidth: saveDesktopPaneWidthMock,
 }));
 
-import { DESKTOP_TRANSCRIPT_MIN_WIDTH } from '@/buzz/desktop-workbench-state';
+import {
+  DESKTOP_INSPECTOR_MIN_WIDTH,
+  DESKTOP_TRANSCRIPT_MIN_WIDTH,
+} from '@/buzz/desktop-workbench-state';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
 
 const room = {
@@ -247,5 +250,14 @@ describe('DesktopRoomInspector resize handle (real gesture layer)', () => {
     drag(500, -80);
     expect(paneWidth()).toBe(360);
     expect(rowWidth - paneWidth()).toBeGreaterThanOrEqual(DESKTOP_TRANSCRIPT_MIN_WIDTH);
+  });
+
+  it('keeps the transcript minimum when the row leaves exactly the pane minimum', async () => {
+    await renderInspector();
+    const rowWidth = DESKTOP_TRANSCRIPT_MIN_WIDTH + DESKTOP_INSPECTOR_MIN_WIDTH;
+    await layOutRow(rowWidth);
+
+    expect(paneWidth()).toBe(DESKTOP_INSPECTOR_MIN_WIDTH);
+    expect(rowWidth - paneWidth()).toBe(DESKTOP_TRANSCRIPT_MIN_WIDTH);
   });
 });

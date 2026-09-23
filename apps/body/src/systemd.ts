@@ -106,11 +106,20 @@ export function systemdBrokerUnitPath(env: NodeJS.ProcessEnv = process.env): str
  * One host elector outside every agent sandbox: no PrivateTmp, shared socket.
  * Idempotent; enable --now keeps the daemon up for every façade.
  */
-export async function installTrustySquireBrokerService(options: {
-  env?: NodeJS.ProcessEnv;
-  run?: SystemdRunner;
-  invocationPath?: string;
-} = {}): Promise<void> {
+export async function installTrustySquireBrokerService(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    run?: SystemdRunner;
+    invocationPath?: string;
+    /**
+     * Restart the elector even when the unit content is unchanged. The managed
+     * self-update path passes this after activating a new bundle: the unit's
+     * ExecStart still names the launcher, but the running elector predates the
+     * activation and must be re-executed onto the new bundle.
+     */
+    restart?: boolean;
+  } = {},
+): Promise<void> {
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = env.HOME?.trim() || homedir();
@@ -118,13 +127,59 @@ export async function installTrustySquireBrokerService(options: {
   const path = systemdBrokerUnitPath(env);
   const content = trustySquireBrokerUnit();
   const existing = await readFile(path, 'utf8').catch(() => '');
-  if (existing !== content) {
+  const changed = existing !== content;
+  if (changed) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await writeFile(path, content, { mode: 0o600 });
   }
   const run = options.run ?? runSystemctl;
   await run(['daemon-reload']);
-  await run(['enable', '--now', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+  await run(['enable', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+  // A rewritten unit (or an explicit update) must be re-executed: the running
+  // elector keeps the old PATH until systemd restarts it. An unchanged,
+  // already-running elector is left alone.
+  if (changed || options.restart) {
+    await run(['restart', '--no-block', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+  } else {
+    await run(['start', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+  }
+}
+
+/**
+ * Install + restart the host elector from the managed self-update path.
+ *
+ * Activation swaps the bundle anchor from a process that is NOT the canonical
+ * `<prefix>/bin/beeline` launcher — `npx usebeeline update` runs from an npm
+ * cache, and the managed worker runs from the bundle it is replacing. Rather
+ * than refuse, the caller supplies the anchor it just activated, which is
+ * exactly what the launcher exports as BEELINE_LIB_DIR, so the canonicality
+ * refusal that protects a source checkout is unchanged. Best-effort: the
+ * update already succeeded, so a host without systemd user services logs and
+ * keeps its stale unit instead of failing the release.
+ */
+export async function convergeTrustySquireBrokerService(options: {
+  libDir: string;
+  env?: NodeJS.ProcessEnv;
+  run?: SystemdRunner;
+  log?: (line: string) => void;
+}): Promise<boolean> {
+  const env = options.env ?? process.env;
+  try {
+    await installTrustySquireBrokerService({
+      env: { ...env, BEELINE_LIB_DIR: options.libDir },
+      invocationPath: resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
+      restart: true,
+      ...(options.run ? { run: options.run } : {}),
+    });
+    return true;
+  } catch (error) {
+    options.log?.(
+      `[beeline] host Squire broker unit not converged: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
 }
 
 export interface SystemdRunner {

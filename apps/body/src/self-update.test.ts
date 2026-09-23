@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { existsSync, createReadStream } from 'node:fs';
@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   SelfUpdateManager,
   activateRelease,
@@ -47,6 +47,10 @@ async function tempDir(prefix: string): Promise<string> {
 afterAll(async () => {
   for (const dir of tempDirs)
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // ---------------------------------------------------------------------------
@@ -530,6 +534,68 @@ describe('self-update end to end against a local fixture manifest', () => {
     await manager.checkAndApply({ force: true });
     expect(await activeReleaseId(layout)).toBe(v2.commit);
   });
+
+  it('update-rewrites-unit: a successful update rewrites a stale host broker unit and restarts the elector', async () => {
+    const previousPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    try {
+      const home = await tempDir('update-broker-home-');
+      const configRoot = join(home, '.config');
+      const libDir = join(home, '.local', 'lib', 'beeline');
+      const binDir = join(home, '.local', 'bin');
+      await mkdir(join(libDir, 'lib', 'beeline'), { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      await writeFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
+      await writeFile(
+        join(libDir, 'bundle.json'),
+        `${JSON.stringify({ commit: 'c1alpha', version: '1.0.0' }, null, 2)}\n`,
+      );
+      await writeFile(join(binDir, 'beeline'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+      // The stale host state from before #1653: a unit with no PATH line, so
+      // the elector fell back to the system Node and Squire crashed.
+      const unitPath = join(configRoot, 'systemd', 'user', 'trusty-squire-broker.service');
+      await mkdir(dirname(unitPath), { recursive: true });
+      await writeFile(unitPath, '[Service]\nExecStart=%h/.local/bin/beeline --squire-broker\n');
+
+      // The updater finds the real `systemctl` on PATH; this shim records the
+      // control calls without touching the test host's user manager.
+      const fakeBin = await tempDir('update-broker-bin-');
+      const systemctlLog = join(fakeBin, 'systemctl.log');
+      await writeFile(
+        join(fakeBin, 'systemctl'),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"\n`,
+        { mode: 0o755 },
+      );
+      vi.stubEnv('PATH', `${fakeBin}:${process.env.PATH ?? ''}`);
+      vi.stubEnv('SYSTEMCTL_LOG', systemctlLog);
+
+      const v2 = await buildFixtureBundle('c2newer', '1.1.0');
+      const manifestUrl = serveManifest(v2);
+      const layout = beelineInstallLayout({ BEELINE_LIB_DIR: libDir, HOME: home })!;
+      const manager = new SelfUpdateManager({
+        layout,
+        env: {
+          HOME: home,
+          XDG_CONFIG_HOME: configRoot,
+          BEELINE_LIB_DIR: libDir,
+          BEELINE_SYSTEMD_USER: '',
+          BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
+        },
+        isIdle: () => true,
+        logger: () => undefined,
+      });
+      await manager.checkAndApply({ force: true });
+      expect(await activeReleaseId(layout)).toBe(v2.commit);
+
+      const rewritten = await readFile(unitPath, 'utf8');
+      expect(rewritten).toContain(`Environment=PATH=${dirname(process.execPath)}:`);
+      const control = await readFile(systemctlLog, 'utf8');
+      expect(control).toContain('restart --no-block trusty-squire-broker.service');
+    } finally {
+      if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
+    }
+  }, 60_000);
 });
 
 // The daemon no longer spawns a successor or separately monitors anchor drift.

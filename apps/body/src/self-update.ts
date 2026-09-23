@@ -85,6 +85,7 @@ import {
   type InstalledBundleIdentity,
   type PublishedBundle,
 } from './self-update-manifest.js';
+import { convergeTrustySquireBrokerService } from './systemd.js';
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -1175,6 +1176,20 @@ export class SelfUpdateManager {
     this.deferredBusyNotice = false;
 
     const { previousReleaseId } = await activateRelease(this.options.layout, releaseId);
+    // The managed self-update path converges the host elector onto the bundle
+    // it just activated: the unit installed by `beeline start`/pairing predates
+    // `trustySquireBrokerUnit()`'s Node pin (#1653), and neither the activating
+    // process nor the running elector is restarted by the swap itself. Pass the
+    // anchor as the launcher's BEELINE_LIB_DIR so the canonicality refusal that
+    // protects a source checkout still holds; best-effort on a host without
+    // systemd user services.
+    if (process.platform === 'linux' && this.options.env.BEELINE_SYSTEMD_USER !== '0') {
+      await convergeTrustySquireBrokerService({
+        libDir: this.options.layout.libDir,
+        env: this.options.env,
+        log: this.log,
+      });
+    }
     await writeUpdateAttempt(this.options.layout, {
       version: 1,
       from: installed ?? {},

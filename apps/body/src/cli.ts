@@ -82,6 +82,7 @@ import {
   UNKNOWN_AGENT_EXIT_STATUS,
   disableAgentService,
   extendSystemdStartTimeout,
+  installTrustySquireBrokerService,
   reconcileAgentServices,
 } from './systemd.js';
 import {
@@ -309,6 +310,25 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
       requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
     });
+    if (
+      pendingSuccessor &&
+      process.platform === 'linux' &&
+      process.env.BEELINE_SYSTEMD_USER !== '0'
+    ) {
+      // This daemon is the first process running a newly-activated bundle. The
+      // process that activated it may have been the PREVIOUS release (the
+      // managed worker runs from the bundle it replaces), so converge the host
+      // Squire elector here too: the swap does not rewrite or restart the unit
+      // installed by `beeline start`/pairing, and a pre-#1653 host would keep
+      // its PATH-less unit forever. Best-effort — the release is already live.
+      await installTrustySquireBrokerService().catch((error) => {
+        console.error(
+          `[beeline] host Squire broker unit not converged: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+    }
   }
 
   console.log(

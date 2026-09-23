@@ -10,6 +10,7 @@
 import { join, resolve } from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { isSquireMcpGrant } from '@beeline/api-contract/agent-grants';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import {
   classifyImportedMcpServer,
@@ -55,7 +56,8 @@ export function grantedHostRoutesFromList(result: unknown): string[] {
 }
 
 /** A Once host route belongs to one activation. Claim it before mounting it,
- * so a later session cannot inherit the same approval. */
+ * so a later session cannot inherit the same approval. Squire is the exception:
+ * its server gate consumes Once on the first call, after the route is mounted. */
 export async function claimGrantedHostRoutes(
   result: unknown,
   consumeOnce: (grantId: string) => Promise<unknown>,
@@ -69,11 +71,13 @@ export async function claimGrantedHostRoutes(
     const grant = entry as Record<string, unknown>;
     if (grant.kind !== 'mcp' || typeof grant.target !== 'string') continue;
     if (grant.status === 'once') {
-      if (typeof grant.grantId !== 'string' || !grant.grantId) continue;
-      try {
-        await consumeOnce(grant.grantId);
-      } catch {
-        continue;
+      if (!isSquireMcpGrant({ kind: grant.kind, target: grant.target })) {
+        if (typeof grant.grantId !== 'string' || !grant.grantId) continue;
+        try {
+          await consumeOnce(grant.grantId);
+        } catch {
+          continue;
+        }
       }
     } else if (grant.status !== 'approved') {
       continue;

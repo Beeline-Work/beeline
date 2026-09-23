@@ -292,6 +292,8 @@ describe('delivery-driven presence', () => {
   });
 
   it('coalesces a burst to one in-flight and one pending durable evidence refresh', async () => {
+    await presence.stop();
+    presence = new ConnectionPresence(database, new LiveHub(), 50, 0);
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     const original = database.query.bind(database);
     let release!: () => void;
@@ -310,6 +312,26 @@ describe('delivery-driven presence', () => {
     release();
     await Promise.all([first, ...burst]);
 
+    expect(evidenceStatements).toBe(2);
+    expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
+  });
+
+  it('rate-limits durable evidence refreshes while preserving one trailing refresh', async () => {
+    await presence.stop();
+    presence = new ConnectionPresence(database, new LiveHub(), 50, 20);
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await presence.evidence(ROOM, AGENT);
+    const original = database.query.bind(database);
+    let evidenceStatements = 0;
+    vi.spyOn(database, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+      if (sql.includes('WITH previous AS MATERIALIZED')) evidenceStatements += 1;
+      return original(sql, values);
+    }) as typeof database.query);
+
+    await Promise.all(Array.from({ length: 100 }, () => presence.evidence(ROOM, AGENT)));
+    expect(evidenceStatements).toBe(1);
+
+    await Promise.all(Array.from({ length: 100 }, () => presence.evidence(OTHER, AGENT)));
     expect(evidenceStatements).toBe(2);
     expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
   });

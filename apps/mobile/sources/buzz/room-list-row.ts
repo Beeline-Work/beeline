@@ -204,12 +204,19 @@ export type RoomRowName = {
   name: string;
 };
 
+function isTrustySquire(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): boolean {
+  return identity.name === 'Trusty Squire' && identity.handle?.replace(/^@/, '') === 'trusty-squire';
+}
+
 /**
  * The short form of an identity for an `@` prefix: the local part of a
  * `name@domain` handle, else the display name. Never carries a leading `@`,
  * because the sigil is drawn separately in brass.
  */
 export function previewHandle(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): string {
+  // Connector DMs use their display name as the sender and heading. Their
+  // machine handle is an address, not the name shown to the person.
+  if (isTrustySquire(identity)) return identity.name;
   const handle = identity.handle?.trim().replace(/^@+/, '');
   const local = handle?.split('@')[0]?.trim();
   return local || identity.name.trim();
@@ -239,7 +246,7 @@ export type RoomRowPreview =
   | { attribution: 'other'; handle: string; text: string };
 
 export function roomRowPreview(
-  item: Pick<ChatListItem, 'latestMessage'>,
+  item: Pick<ChatListItem, 'latestMessage'> & Partial<Pick<ChatListItem, 'directMessage'>>,
   viewerPubkey: string | undefined,
 ): RoomRowPreview {
   const latest = item.latestMessage;
@@ -249,7 +256,11 @@ export function roomRowPreview(
   if (!preview) return { attribution: 'none', text: NO_ACTIVITY_PREVIEW };
   if (viewerPubkey && latest.author.pubkey === viewerPubkey)
     return { attribution: 'self', text: preview };
-  return { attribution: 'other', handle: previewHandle(latest.author), text: preview };
+  // Older cached grant cards may still carry the asking agent as author.
+  // The connector DM itself is the authority for the sender shown in the list.
+  const peer = item.directMessage?.peer;
+  const author = peer && isTrustySquire(peer) ? peer : latest.author;
+  return { attribution: 'other', handle: previewHandle(author), text: preview };
 }
 
 export type DirectMessagePresence = {

@@ -10,6 +10,17 @@ import {
 const pubkey = 'a'.repeat(64);
 
 describe('direct-message member display', () => {
+  it('uses the cached Trusty Squire peer name for a grant DM header', () => {
+    expect(
+      directMessageHeaderName(
+        { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
+        undefined,
+        's'.repeat(64),
+        'none',
+        true,
+      ),
+    ).toBe('Trusty Squire');
+  });
   it('uses the indexed System name for an announcements-only DM header', () => {
     expect(
       directMessageHeaderName(

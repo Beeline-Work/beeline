@@ -2807,10 +2807,19 @@ export class DaemonService {
       const inserted = await database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity,agent_model)
          VALUES($1,$2,$3,'','activity',$4,$5::jsonb,
-           (SELECT selected_model FROM agents WHERE agent_id=$3))
+           CASE WHEN $6::boolean THEN $7::text
+             ELSE (SELECT selected_model FROM agents WHERE agent_id=$3) END)
          ON CONFLICT(id) DO NOTHING
          RETURNING id,created_at`,
-        [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
+        [
+          messageId,
+          input.roomId,
+          agentId,
+          input.requestId,
+          JSON.stringify(input.activity),
+          input.agentModel !== undefined,
+          input.agentModel ?? null,
+        ],
       );
       const row =
         inserted.rows[0] ??

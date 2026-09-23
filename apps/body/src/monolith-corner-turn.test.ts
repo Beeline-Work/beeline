@@ -1053,9 +1053,10 @@ describe('corner close-request polling cadence', () => {
 
   it('publishes a settled tool call before a still-running sibling call completes', async () => {
     let closeReads = 0;
+    let selectedModel = 'grok-4-fast';
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getAgentConfiguration') return { commands: [], model: selectedModel };
       if (name === 'getWorkspaceRoster') {
         return {
           members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
@@ -1104,6 +1105,8 @@ describe('corner close-request polling cadence', () => {
           status: 'in_progress' as const,
         };
         toolActivity?.([fast]);
+        // The saved setting changes while this ACP session still runs its old model.
+        selectedModel = 'newer-model';
         const settledFast = { ...fast, status: 'completed' as const };
         toolActivity?.([settledFast]);
         // Let the corner turn's async activity-publish chain settle before the
@@ -1140,6 +1143,16 @@ describe('corner close-request polling cadence', () => {
     expect(activityTitleAt()).toEqual(
       expect.arrayContaining(['Run fast check', 'Run slow test suite']),
     );
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ input: expect.objectContaining({ agentModel: 'grok-4-fast' }) }),
+      ]),
+    );
+    expect(
+      writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .every((write) => write.input.agentModel === 'grok-4-fast'),
+    ).toBe(true);
   });
 
   it('keeps a tool-only narration in the final reply once', async () => {

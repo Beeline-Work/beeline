@@ -532,6 +532,8 @@ export type PostAgentActivityInput = TurnOutputAuthority &
   AgentRoomInput & {
     readonly requestId: string;
     readonly cornerActivityKey?: string;
+    /** Model pinned to the producing session; null when the helper has no model selection. */
+    readonly agentModel?: string | null;
     readonly activity: readonly DaemonActivityItem[];
   };
 export type PostPermissionRequestInput = RoomPrincipalInput & {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -40,6 +40,8 @@ export function useRoomMessageRenderItem({
   cardMotionStore,
   firstNewMessageId,
   arrivalFlashMessageId = null,
+  catchUpOffered = false,
+  onOpenCatchUp,
 }: {
   render: RoomMessageRenderer;
   continuedIds: ReadonlySet<string>;
@@ -50,6 +52,9 @@ export function useRoomMessageRenderItem({
   firstNewMessageId?: string | null;
   /** The row a completed notification landing just put on screen, or null. */
   arrivalFlashMessageId?: string | null;
+  /** Whether the unread run is long enough to be worth a catch-up offer. */
+  catchUpOffered?: boolean;
+  onOpenCatchUp?: () => void;
 }) {
   const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
@@ -65,14 +70,21 @@ export function useRoomMessageRenderItem({
         cardArriving={arrivingCardIds.has(item.id)}
         cardMotionStore={resolvedCardMotionStore}
         arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+        // Resolved per row, so only the boundary row's prop ever changes when
+        // the offer comes and goes. A bare `catchUpOffered` here would be a
+        // new value on every row of the transcript and re-render all of them.
+        offersCatchUp={catchUpOffered && messageContainsBoundary(item, firstNewMessageId)}
+        onOpenCatchUp={onOpenCatchUp}
       />
     ),
     [
       arrivalFlashMessageId,
       arrivingCardIds,
+      catchUpOffered,
       continuedIds,
       firstNewMessageId,
       messageById,
+      onOpenCatchUp,
       precedingMessageById,
       render,
       resolvedCardMotionStore,
@@ -91,6 +103,8 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   cardArriving = false,
   cardMotionStore,
   arrivalFlashing = false,
+  offersCatchUp = false,
+  onOpenCatchUp,
 }: {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
@@ -101,6 +115,8 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   cardArriving?: boolean;
   cardMotionStore?: TranscriptCardMotionStore;
   arrivalFlashing?: boolean;
+  offersCatchUp?: boolean;
+  onOpenCatchUp?: () => void;
 }) {
   const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
   return (
@@ -111,7 +127,9 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
     >
       {withLedgerDayCaption(
         <ArrivalFlashGround flashing={arrivalFlashing}>
-          {startsNewMessages && <NewMessagesDivider />}
+          {startsNewMessages && (
+            <NewMessagesDivider offersCatchUp={offersCatchUp} onOpenCatchUp={onOpenCatchUp} />
+          )}
           {render(item, { continued, immediatelyPrecedingMessage, referencedMessage })}
         </ArrivalFlashGround>,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
@@ -175,7 +193,68 @@ function ArrivalFlashFill() {
   );
 }
 
-export function NewMessagesDivider() {
+/**
+ * A page with two lines on it, the mark for "there is a summary behind this".
+ * Drawn at 13 rather than the divider glyph's 12 because its detail is four
+ * strokes instead of one, and at 12 the fold closes up.
+ */
+function CatchUpDocumentGlyph({ color }: { color: string }) {
+  return (
+    <Svg width={13} height={13} viewBox="0 0 13 13" accessibilityElementsHidden>
+      <Path
+        d="M3.25 1.5 H7.5 L10 4 V11.5 H3.25 Z"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
+      <Path d="M7.5 1.5 V4 H10" fill="none" stroke={color} strokeWidth={1.2} strokeLinejoin="round" />
+      <Path d="M5.2 6.9 H8.2" stroke={color} strokeWidth={1.2} strokeLinecap="round" />
+      <Path d="M5.2 9.1 H7.2" stroke={color} strokeWidth={1.2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/**
+ * Where the reader's unread run begins, and — when there is enough behind it
+ * to be worth summarizing — the door to the catch-up sheet.
+ *
+ * The offer sits on the line rather than in floating chrome because the line
+ * already marks the exact range catch-up would cover. The strip this replaces
+ * rode over the top of the transcript in every Room the reader was behind in,
+ * which is the one place they are trying to read.
+ *
+ * Two shapes, because catch-up is thresholded: under six agent turns or
+ * fifteen messages there is nothing to offer, so the line is the bare mark it
+ * has always been, and pressing it does nothing because nothing is there.
+ */
+export function NewMessagesDivider({
+  offersCatchUp = false,
+  onOpenCatchUp,
+}: {
+  offersCatchUp?: boolean;
+  onOpenCatchUp?: () => void;
+}) {
+  if (offersCatchUp && onOpenCatchUp) {
+    return (
+      <View style={styles.newMessages} testID="new-messages-divider">
+        <View style={styles.newMessagesRule} />
+        <Pressable
+          accessibilityHint="Opens catch up for everything below this line"
+          accessibilityLabel="New messages begin here"
+          accessibilityRole="button"
+          hitSlop={styles.catchUpHitSlop}
+          onPress={onOpenCatchUp}
+          style={({ pressed }) => [styles.catchUpPill, pressed && styles.catchUpPillPressed]}
+          testID="new-messages-catch-up"
+        >
+          <Text style={styles.catchUpPillLabel}>NEW</Text>
+          <CatchUpDocumentGlyph color={styles.newMessagesGlyph.color} />
+        </Pressable>
+        <View style={styles.newMessagesRule} />
+      </View>
+    );
+  }
   return (
     <View
       accessibilityLabel="Unread messages begin here"
@@ -217,4 +296,28 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.border,
   },
   newMessagesGlyph: { color: theme.buzz.accent },
+  // The pill is 22 tall, which is half a touch target. The hit slop makes up
+  // the rest without pushing the transcript's rows apart: an in-flow 44pt row
+  // would put a band of empty space across the ledger wherever the offer is
+  // live, and the offer is live in exactly the Rooms a reader is trying to
+  // read through.
+  catchUpHitSlop: { top: 11, bottom: 11, left: 8, right: 8 },
+  catchUpPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.buzz.space.xs + 1,
+    height: 22,
+    paddingHorizontal: theme.buzz.space.sm + 2,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.buzz.border,
+    backgroundColor: theme.buzz.bgHighlight,
+  },
+  catchUpPillPressed: { opacity: 0.72 },
+  // The caps micro-label role, which is the one the retired NEW MESSAGES
+  // label used and already carries its own tracking and transform.
+  catchUpPillLabel: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.accent,
+  },
 }));

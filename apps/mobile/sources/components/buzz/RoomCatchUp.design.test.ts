@@ -49,18 +49,24 @@ describe('the catch-up sheet', () => {
     expect(sheet).not.toContain('filter(');
   });
 
-  it('CHEV-09: the disc carries the catch-up door, and no bar floats beside it', () => {
-    expect(controls).toContain('onLongPress={catchUpReachable ? onOpenCatchUp : undefined}');
-    expect(controls).toContain('const catchUpReachable = !corner && catchUpVisible;');
-    expect(controls).toContain("{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }");
-    expect(controls).toContain('onAccessibilityAction');
-    // The strip under the Room header, in every part it was made of. The
-    // prose above it may still say why it went; `styles.strip` may not exist.
+  it('CHEV-09: the unread line carries the catch-up door, and the disc carries none', () => {
+    const cell = readFileSync(path.join(__dirname, '../../buzz/room-message-cell.tsx'), 'utf8');
+    // A labelled button on the line, where the run it summarizes begins.
+    expect(cell).toContain('testID="new-messages-catch-up"');
+    expect(cell).toContain('accessibilityRole="button"');
+    expect(cell).toContain('onPress={onOpenCatchUp}');
+    expect(cell).toContain('hitSlop={styles.catchUpHitSlop}');
+    // The two shapes this control has held the door in, both gone: the strip
+    // that floated over the transcript, and the long press nothing announced.
+    expect(controls).not.toContain('onLongPress');
+    expect(controls).not.toContain('onAccessibilityAction');
+    expect(controls).not.toContain('catchUpVisible');
+    expect(controls).not.toContain('onOpenCatchUp');
     expect(controls).not.toContain('catch-up-summary-strip');
     expect(controls).not.toContain('catchUpSummary');
     expect(controls).not.toMatch(/styles\.strip|strip:|stripText/);
     expect(surface).not.toContain('catchUpSummary');
-    expect(surface).toContain('onOpenCatchUp={openCatchUpSheet}');
+    expect(surface).toContain('onOpenCatchUp: openCatchUpSheet');
     expect(surface).toContain('<RoomCatchUpSheet');
     // One seam feeds it, and it is handed the range explicitly.
     expect(surface).toContain('buildCatchUpReport({');
@@ -132,9 +138,10 @@ describe('the catch-up sheet', () => {
     expect(hook).toContain(
       'catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts)',
     );
-    // And an offer for a run the reader has read is no offer: reaching newest
-    // ends it with the glyph that marked the same run.
-    expect(hook).toContain('enabled && !boundaryRead && catchUpOfferEligible(');
+    // The offer rides the line, so it cannot outlive it: no line owed, no
+    // offer, and reaching newest ends both on the same landing.
+    expect(hook).toContain('lineOwed &&');
+    expect(hook).toContain('!boundaryRead &&');
     // The queue keeps a boundary and a count, and nothing that can be read out.
     expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');
   });

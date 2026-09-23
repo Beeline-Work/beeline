@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
 
 vi.mock('react-native', async () => {
@@ -29,6 +29,7 @@ vi.mock('@/components/buzz/Ledger', () => ({
 const { useRoomMessageRenderItem } = await import('./room-message-cell');
 const { useNewMessageControl } = await import('./use-new-message-control');
 const { RoomCatchUpControls } = await import('@/components/buzz/RoomCatchUpControls');
+const { resetUnreadLineTickets } = await import('./unread-line-ticket');
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -42,6 +43,9 @@ beforeAll(() => {
   });
 });
 afterAll(() => vi.restoreAllMocks());
+// The line ledger is module state that outlives a renderer on purpose: that
+// is what makes a remount a re-entry. Each test gets a clean one.
+beforeEach(resetUnreadLineTickets);
 
 const row = (id: string, index: number): ChatDisplayMessage => ({
   id,
@@ -99,6 +103,8 @@ function TranscriptHarness({
     precedingMessageById: React.useMemo(() => new Map<string, ChatDisplayMessage>(), []),
     messageById: React.useMemo(() => new Map<string, ChatDisplayMessage>(), []),
     firstNewMessageId: control.dividerMessageId,
+    catchUpOffered: control.catchUpVisible,
+    onOpenCatchUp: () => undefined,
   });
   return (
     <View>
@@ -112,11 +118,9 @@ function TranscriptHarness({
           only reaching the newest row clears the badge. */}
       <RoomCatchUpControls
         badgeCount={control.badgeCount}
-        catchUpVisible={control.catchUpVisible}
         corner={enabled === false}
         discVisible={control.discVisible}
         onJumpToNewest={() => undefined}
-        onOpenCatchUp={() => undefined}
       />
     </View>
   );
@@ -149,8 +153,14 @@ function report(visible: readonly ChatDisplayMessage[]): void {
   act(() => handles.report?.(visible));
 }
 
+/** The retired floating bar. Nothing may ever draw one again. */
 function strips(renderer: ReactTestRenderer) {
   return renderer.root.findAllByProps({ testID: 'catch-up-summary-strip' }, { deep: false });
+}
+
+/** The catch-up door, which is the unread line itself. */
+function catchUpDoors(renderer: ReactTestRenderer) {
+  return renderer.root.findAllByProps({ testID: 'new-messages-catch-up' }, { deep: false });
 }
 
 function discs(renderer: ReactTestRenderer) {
@@ -186,11 +196,12 @@ function dividerRowIds(renderer: ReactTestRenderer): string[] {
 function onScreen(renderer: ReactTestRenderer): string {
   const disc = discs(renderer);
   return [
-    `unread glyph: ${dividerRowIds(renderer)[0] ?? 'none'}`,
+    `unread line: ${dividerRowIds(renderer)[0] ?? 'none'}`,
     `catch-up bar: ${strips(renderer).length > 0 ? 'SHOWN' : 'none'}`,
     `jump disc: ${disc.length > 0 ? 'shown' : 'hidden'}`,
     `badge: ${badges(renderer)[0] ?? 'none'}`,
-    `catch-up door: ${typeof disc[0]?.props.onLongPress === 'function' ? 'open' : 'closed'}`,
+    `catch-up door: ${catchUpDoors(renderer).length > 0 ? 'on the line' : 'closed'}`,
+    `disc long-press: ${disc[0]?.props.onLongPress ? 'STILL THERE' : 'gone'}`,
   ].join(' · ');
 }
 
@@ -222,13 +233,77 @@ describe('the transcript new-message control', () => {
     report([SEED[1]!, SEED[2]!]);
     walk.push(`4 · paged back up into history → ${onScreen(renderer)}`);
 
+    // They leave and come straight back, still caught up. Reaching the tail
+    // issued a fresh ticket, but the server now reports nothing unread.
+    renderer.unmount();
+    const returned = mount({ ...open, messages: arrived, firstUnreadMessageId: null });
+    report([arrived[6]!]);
+    walk.push(`5 · left and came back, caught up → ${onScreen(returned)}`);
+
     console.log(`\n${walk.join('\n')}\n`);
     expect(walk).toEqual([
-      '1 · opened 15 behind, landed on the boundary → unread glyph: seed-2 · catch-up bar: none · jump disc: shown · badge: none · catch-up door: open',
-      '2 · two messages arrive below the fold → unread glyph: seed-2 · catch-up bar: none · jump disc: shown · badge: 2 · catch-up door: open',
-      '3 · scrolled down to the newest message → unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
-      '4 · paged back up into history → unread glyph: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed',
+      '1 · opened 15 behind, landed on the boundary → unread line: seed-2 · catch-up bar: none · jump disc: shown · badge: none · catch-up door: on the line · disc long-press: gone',
+      '2 · two messages arrive below the fold → unread line: seed-2 · catch-up bar: none · jump disc: shown · badge: 2 · catch-up door: on the line · disc long-press: gone',
+      '3 · scrolled down to the newest message → unread line: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed · disc long-press: gone',
+      '4 · paged back up into history → unread line: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed · disc long-press: gone',
+      '5 · left and came back, caught up → unread line: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed · disc long-press: gone',
     ]);
+  });
+
+  it('UDIV-07: the line is a one-time ticket — leaving half-read spends it', () => {
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-1',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+      pinnedToTail: false,
+    };
+    const first = mount(open);
+    report([SEED[0]!, SEED[1]!]);
+    expect(dividerRowIds(first)).toEqual(['seed-1']);
+
+    // They read two rows and leave without ever reaching the newest message.
+    report([SEED[1]!, SEED[2]!]);
+    first.unmount();
+
+    // Coming back, the server's mark has advanced to where they stopped. The
+    // old rule drew a second line there; the ticket is spent, so none is.
+    const second = mount({ ...open, firstUnreadMessageId: 'seed-2' });
+    report([SEED[1]!, SEED[2]!]);
+    expect(dividerRowIds(second)).toEqual([]);
+    expect(catchUpDoors(second)).toHaveLength(0);
+
+    // It stays spent however many times they come back, and whatever lands.
+    second.unmount();
+    const third = mount({
+      ...open,
+      messages: [...SEED, row('arrival-0', 5)],
+      firstUnreadMessageId: 'seed-2',
+    });
+    report([SEED[1]!, SEED[2]!]);
+    expect(dividerRowIds(third)).toEqual([]);
+  });
+
+  it('UDIV-07: reaching the tail earns the next run its own line', () => {
+    const open: HarnessProps = {
+      ...AT_TAIL,
+      firstUnreadMessageId: 'seed-1',
+      openingUnreadCounts: { messages: 15, agentTurns: 6 },
+      pinnedToTail: false,
+    };
+    const first = mount(open);
+    report([SEED[0]!, SEED[1]!]);
+    expect(dividerRowIds(first)).toEqual(['seed-1']);
+
+    // This time they read to the end, which is what issues the next ticket.
+    report([SEED[3]!, SEED[4]!]);
+    expect(dividerRowIds(first)).toEqual([]);
+    first.unmount();
+
+    // They fall behind again. A new run, so a new line.
+    const arrived = [...SEED, row('arrival-0', 5), row('arrival-1', 6)];
+    const second = mount({ ...open, messages: arrived, firstUnreadMessageId: 'arrival-0' });
+    report([SEED[3]!, SEED[4]!]);
+    expect(dividerRowIds(second)).toEqual(['arrival-0']);
   });
 
   it('UDIV-05: the reader reaching the newest row retires the opening glyph', () => {
@@ -270,9 +345,12 @@ describe('the transcript new-message control', () => {
     });
     report([SEED[1]!, SEED[2]!]);
     expect(strips(renderer)).toHaveLength(0);
-    // The offer is on the disc the reader already has, not on a bar over the
-    // transcript: a long press opens the sheet.
-    expect(typeof discs(renderer)[0]!.props.onLongPress).toBe('function');
+    // The offer is on the unread line, where the run it summarizes begins,
+    // and it is a plain labelled press — not an undiscoverable long press.
+    const door = catchUpDoors(renderer)[0]!;
+    expect(typeof door.props.onPress).toBe('function');
+    expect(door.props.accessibilityRole).toBe('button');
+    expect(discs(renderer)[0]!.props.onLongPress).toBeUndefined();
   });
 
   it('keeps only the tail chevron in corners, even with unread data and later arrivals', () => {
@@ -322,7 +400,7 @@ describe('the transcript new-message control', () => {
       arrivingIds: new Set(arrived.slice(5).map((message) => message.id)),
     });
     expect(onScreen(renderer)).toBe(
-      'unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
+      'unread line: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed · disc long-press: gone',
     );
 
     // Scrolling into history exposes only the bare jump control; returning
@@ -330,11 +408,11 @@ describe('the transcript new-message control', () => {
     update(renderer, { ...corner, messages: arrived, pinnedToTail: false });
     report([SEED[1]!, SEED[2]!]);
     expect(onScreen(renderer)).toBe(
-      'unread glyph: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed',
+      'unread line: none · catch-up bar: none · jump disc: shown · badge: none · catch-up door: closed · disc long-press: gone',
     );
     report([arrived.at(-1)!]);
     expect(onScreen(renderer)).toBe(
-      'unread glyph: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed',
+      'unread line: none · catch-up bar: none · jump disc: hidden · badge: none · catch-up door: closed · disc long-press: gone',
     );
   });
 
@@ -468,9 +546,9 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual([]);
   });
 
-  it('CHEV-15: the offer rides the disc, and catching up ends it with the glyph', () => {
-    // A Room that opened past the threshold. Nothing is drawn over the
-    // transcript to say so: the door is a long press on the disc.
+  it('CHEV-15: the offer rides the line, and catching up ends both together', () => {
+    // A Room that opened past the threshold. Nothing floats over the
+    // transcript to say so: the door is the line itself.
     const open: HarnessProps = {
       ...AT_TAIL,
       firstUnreadMessageId: 'seed-2',
@@ -480,7 +558,7 @@ describe('the transcript new-message control', () => {
     const renderer = mount(open);
     report([SEED[1]!, SEED[2]!]);
     expect(strips(renderer)).toHaveLength(0);
-    expect(typeof discs(renderer)[0]!.props.onLongPress).toBe('function');
+    expect(catchUpDoors(renderer)).toHaveLength(1);
 
     // Arrivals during the visit raise the badge and leave the line alone.
     const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
@@ -498,7 +576,7 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual([]);
     expect(dividerRowIds(renderer)).toEqual([]);
     report([SEED[1]!, SEED[2]!]);
-    expect(discs(renderer)[0]!.props.onLongPress).toBeUndefined();
+    expect(catchUpDoors(renderer)).toHaveLength(0);
   });
 
   it('UDIV-03: a live arrival never creates a divider in a Room that opened read', () => {

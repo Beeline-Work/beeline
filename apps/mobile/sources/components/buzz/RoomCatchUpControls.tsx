@@ -17,9 +17,6 @@ const DISC_SIZE = 44;
 const CHEVRON_SIZE = 20;
 const BADGE_SIZE = 18;
 
-/** The one way into the catch-up sheet for a reader on a screen reader. */
-const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
-
 /**
  * Everything a reader who is behind gets, drawn over the transcript by
  * `_chat-surface.tsx` from one hook (`buzz/use-new-message-control.ts`):
@@ -31,59 +28,42 @@ const CATCH_UP_ACCESSIBILITY_ACTION = 'catchUp';
  *   something had no way back down but their own thumb;
  * - the badge on that disc, a counter capped at `9+`, cleared by reaching the
  *   newest row rather than by a press. The disc outlives the badge;
- * - the catch-up door, a long-press on the disc, with the registered
- *   accessibility action below standing in for readers who cannot long-press.
- *   The `/catch-up` verb opens the same sheet from the composer.
+ * Catch-up is NOT here. It lives on the unread line itself
+ * (`buzz/room-message-cell.tsx`), where the run it would summarize begins,
+ * and the `/catch-up` verb opens the same sheet from the composer. Two doors,
+ * one of them visible and labelled.
  *
- * There is no bar. A strip under the Room header was the visible door here
- * for one round; it floated over the transcript in every Room the reader was
- * behind in, which is the one place a reader is trying to read.
+ * This control held that door twice, and both were wrong. A strip under the
+ * Room header floated over the transcript in every Room the reader was behind
+ * in, which is the one place a reader is trying to read. A long-press on the
+ * disc replaced it with an affordance nothing announces.
  *
- * The badge and that door are separate questions. Drawing the badge only when
- * catch-up was on offer hid this visit's arrival count in every Room under
- * the six-turn/fifteen-message threshold.
+ * The badge is the disc's own business. Drawing it only when catch-up was on
+ * offer hid this visit's arrival count in every Room under the six-turn/
+ * fifteen-message threshold.
  */
 export function RoomCatchUpControls({
   corner,
   badgeCount,
-  catchUpVisible,
   discVisible,
   onJumpToNewest,
-  onOpenCatchUp,
 }: {
   corner: boolean;
   badgeCount: number;
-  catchUpVisible: boolean;
   discVisible: boolean;
   onJumpToNewest: () => void;
-  onOpenCatchUp: () => void;
 }) {
-  const catchUpReachable = !corner && catchUpVisible;
   const badgeShown = !corner && badgeCount > 0;
   return (
     <>
       {discVisible && (
         <Pressable
-          accessibilityActions={
-            catchUpReachable
-              ? [{ name: CATCH_UP_ACCESSIBILITY_ACTION, label: 'Open catch up' }]
-              : undefined
-          }
           accessibilityLabel={
             badgeShown
               ? `${badgeCount} new ${badgeCount === 1 ? 'message' : 'messages'}. Jump to newest message`
               : 'Jump to newest message'
           }
           accessibilityRole="button"
-          onAccessibilityAction={
-            catchUpReachable
-              ? (event) => {
-                  if (event.nativeEvent.actionName === CATCH_UP_ACCESSIBILITY_ACTION)
-                    onOpenCatchUp();
-                }
-              : undefined
-          }
-          onLongPress={catchUpReachable ? onOpenCatchUp : undefined}
           onPress={onJumpToNewest}
           style={({ pressed }) => [styles.hitTarget, pressed && styles.pressed]}
           testID="newest-jump-disc"

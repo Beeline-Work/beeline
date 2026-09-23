@@ -22,6 +22,7 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
+import { issueUnreadLine } from '@/buzz/unread-line-ticket';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -334,6 +335,11 @@ export function useRoomSurfaceSession({
     // reading it again on the very next report, then move the server boundary.
     readCursorRef.current?.suspend();
     await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
+    // Naming a row is asking for the line back, so it gets a ticket even if
+    // this visit already spent one (`buzz/unread-line-ticket.ts`). Issued
+    // before the boundary moves, because the boundary is what the control
+    // re-reads the ledger on.
+    issueUnreadLine(channelIdRef.current);
     setFirstUnreadMessageId(messageId);
     setOpeningUnreadCounts(null);
   }, []);

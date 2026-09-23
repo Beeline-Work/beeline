@@ -4809,6 +4809,10 @@ export function BuzzChatSurface({
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
     arrivalFlashMessageId,
+    // The catch-up door rides the unread line, where the run it summarizes
+    // begins, rather than in chrome floating over the transcript.
+    catchUpOffered: catchUpOfferVisible,
+    onOpenCatchUp: openCatchUpSheet,
   });
 
   if (!roomSurface) {
@@ -5258,10 +5262,8 @@ export function BuzzChatSurface({
           <RoomCatchUpControls
             corner={isCorner}
             badgeCount={newMessageBadgeCount}
-            catchUpVisible={catchUpOfferVisible}
             discVisible={newestJumpDiscShown}
             onJumpToNewest={landAtNewestMessage}
-            onOpenCatchUp={openCatchUpSheet}
           />
           {!isCorner && (
             <RoomCatchUpSheet

@@ -10,22 +10,27 @@ import {
   queueIncomingMessages,
   type NewMessageQueue,
 } from './room-new-message-boundary';
+import { issueUnreadLine, spendUnreadLine, unreadLineSpent } from './unread-line-ticket';
 
 /**
  * The answers a transcript owes a reader about unread mail, kept apart the
  * way Slack keeps them apart:
  *
- * - the unread glyph marks where the reader's unread run began when they
+ * - the unread line marks where the reader's unread run began when they
  *   opened this Room. The opening cursor owns it, and a live arrival may
  *   never move it. Reaching the newest row retires it: the run it marks the
  *   start of has been read, and a landmark that outlives what it marks is the
- *   line readers found still sitting there after catching up;
+ *   line readers found still sitting there after catching up. It is drawn at
+ *   most once per unread run (`buzz/unread-line-ticket.ts`), so leaving a
+ *   Room half-read cannot draw a second one further down on re-entry;
  * - the jump disc says the newest message is off screen. It is a way back to
  *   newest and nothing else, so Rooms show it from viewport visibility;
  *   corners also hide it at the pinned tail when viewability is stale;
  * - the badge on that disc counts the unread run, and reaching the newest row
  *   clears it exactly as a tap on the disc would;
- * - catch-up eligibility, which the disc carries as a long-press door.
+ * - catch-up eligibility, which the line itself carries as its press target.
+ *   The offer belongs where the run it would summarize begins, and it dies
+ *   with the line.
  *
  * Divider and count used to be drawn from the live queue alone, which is what
  * put a fresh divider under the newest row and left the old pill sitting over
@@ -97,6 +102,26 @@ export function useNewMessageControl({
   // replaces it mid-visit; either way the new line starts its own life.
   useEffect(() => setBoundaryRead(false), [roomId, enabled, firstUnreadMessageId]);
 
+  // Is a line owed at all? Read once per boundary, BEFORE the spend below, so
+  // that spending the ticket cannot retire the line the spend paid for. The
+  // session captures the cursor once a visit, so the only thing that moves
+  // `firstUnreadMessageId` mid-visit is "Mark unread", which issues its own
+  // ticket first.
+  const [lineOwed, setLineOwed] = useState(false);
+  useEffect(() => {
+    setLineOwed(enabled && firstUnreadMessageId !== null && !unreadLineSpent(roomId));
+  }, [enabled, firstUnreadMessageId, roomId]);
+
+  useEffect(() => {
+    if (lineOwed) spendUnreadLine(roomId);
+  }, [lineOwed, roomId]);
+
+  // Reaching the newest row is being caught up, which is what earns the next
+  // run its line — whether or not one was drawn for this one.
+  useEffect(() => {
+    if (boundaryRead) issueUnreadLine(roomId);
+  }, [boundaryRead, roomId]);
+
   useLayoutEffect(() => {
     if (!enabled || arrivingIds.size === 0) return;
     setQueue((current) =>
@@ -160,7 +185,7 @@ export function useNewMessageControl({
   // The glyph marks where the reader's unread run began. Later read-mark
   // updates and live arrivals cannot move it; only reaching newest ends it.
   return {
-    dividerMessageId: enabled && !boundaryRead ? firstUnreadMessageId : null,
+    dividerMessageId: enabled && lineOwed && !boundaryRead ? firstUnreadMessageId : null,
     queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
     discVisible:
       newestJumpDiscVisible({
@@ -173,8 +198,13 @@ export function useNewMessageControl({
       // chevron; corners have no unread state to reconcile with that report.
       (enabled || !isPinnedToTailRef.current()),
     badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
+    // The offer rides the line, so it cannot outlive it: no line drawn, no
+    // offer, and reaching the tail takes both.
     catchUpVisible:
-      enabled && !boundaryRead && catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
+      enabled &&
+      lineOwed &&
+      !boundaryRead &&
+      catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
     observeVisibleMessages,
     settleQueueAtBoundary,
   };

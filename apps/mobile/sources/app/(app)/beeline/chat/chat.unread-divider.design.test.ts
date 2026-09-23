@@ -21,7 +21,7 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('catchUpVisible: catchUpEligible');
     expect(chatSource).toContain('<RoomCatchUpControls');
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
-    expect(chatSource).toContain('catchUpVisible={catchUpOfferVisible}');
+    expect(chatSource).toContain('catchUpOffered: catchUpOfferVisible');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
     // The coupling this change removed, in either of the shapes it had. The
     // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
@@ -53,12 +53,14 @@ describe('the chat surface unread-divider wiring', () => {
   });
 
   it('CHEV-14: both catch-up doors go through the one report', () => {
-    // The composer verb and the disc long-press open the same sheet over the
-    // same range. The verb used to scroll to the first unread row on its own,
+    // The composer verb and the unread line open the same sheet over the same
+    // range. The verb used to scroll to the first unread row on its own,
     // which is a third answer about a Room the other door was already
     // describing.
     expect(chatSource).toContain("case 'catch-up':\n          if (!isCorner) openCatchUpSheet();");
-    expect(chatSource).toContain('onOpenCatchUp={openCatchUpSheet}');
+    expect(chatSource).toContain('onOpenCatchUp: openCatchUpSheet');
+    // The disc holds no door at all now; it jumps and nothing else.
+    expect(chatSource).not.toContain('onOpenCatchUp={');
     const report = chatSource.slice(
       chatSource.indexOf('buildCatchUpReport({'),
       chatSource.indexOf('const openCatchUpSheet'),

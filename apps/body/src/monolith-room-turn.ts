@@ -305,7 +305,7 @@ export interface MonolithRoomTurnOptions {
   workspaceId: string;
   cwd: string;
   /** Refresh the server-bound checkout before each admitted Room turn. */
-  refreshCheckout?: () => Promise<{ branch: string; commit: string } | undefined>;
+  refreshCheckout?: () => Promise<{ cwd: string; branch?: string; commit?: string }>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -345,6 +345,9 @@ export class MonolithRoomTurnLoop {
   }
   private client?: AcpClient;
   private sessionId?: string;
+  private sessionCwd?: string;
+  private sessionCommit?: string;
+  private turnCheckout?: { branch?: string; commit?: string };
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
   /** Whether CodeGraph preparation succeeded for the live session. */
@@ -514,6 +517,8 @@ export class MonolithRoomTurnLoop {
     const client = this.client;
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionCwd = undefined;
+    this.sessionCommit = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
@@ -530,7 +535,29 @@ export class MonolithRoomTurnLoop {
    * in seconds.
    */
   private async sessionIsCurrent(): Promise<boolean> {
-    return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
+    await this.refreshTurnCheckout();
+    return (
+      this.sessionCwd === this.options.cwd &&
+      this.sessionCommit === this.turnCheckout?.commit &&
+      (await this.currentSessionFingerprint()) === this.sessionFingerprint
+    );
+  }
+
+  private async refreshTurnCheckout(): Promise<void> {
+    const checkout = await this.options.refreshCheckout?.();
+    if (!checkout) return;
+    this.turnCheckout = checkout;
+    if (checkout.cwd === this.options.cwd) return;
+    this.options.cwd = checkout.cwd;
+    this.options.grantRunner?.register(this.options.roomId, {
+      workspaceId: this.options.workspaceId,
+      cwd: checkout.cwd,
+      writePolicy: () => this.grantWritePolicy(),
+      turn: () => {
+        const turn = this.currentTurnForRunner();
+        return turn ? { ...turn, generationId: this.commandContext.generationId } : undefined;
+      },
+    });
   }
 
   private async currentSessionFingerprint(): Promise<string> {
@@ -583,6 +610,7 @@ export class MonolithRoomTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
+    await this.refreshTurnCheckout();
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
     trace?.noteActivation('cold');
     const [configuration, roster, repositoryState, grantedHostRoutes] = await Promise.all([
@@ -842,6 +870,8 @@ export class MonolithRoomTurnLoop {
         .join('\n\n'),
     });
     this.sessionId = opened.sessionId;
+    this.sessionCwd = this.options.cwd;
+    this.sessionCommit = this.turnCheckout?.commit;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
     if (selection) {
@@ -1014,6 +1044,7 @@ export class MonolithRoomTurnLoop {
           });
           trace.noteScheduler('queue', this.options.scheduler.snapshot());
           trace.start('queue-wait');
+          this.turnCheckout = undefined;
           await this.options.scheduler.run(
             this.options.roomId,
             this.lifecycle(trace),
@@ -1022,7 +1053,10 @@ export class MonolithRoomTurnLoop {
               // queue wait, and `end` on a closed phase is a no-op.
               trace.end('queue-wait');
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
-              const checkout = await this.options.refreshCheckout?.();
+              if (this.options.refreshCheckout && !this.turnCheckout) {
+                throw new Error('Room checkout refresh failed before this turn');
+              }
+              const checkout = this.turnCheckout;
               const [conversation, roster, delivered, corners] = await trace.measure(
                 'context-fetch',
                 () =>
@@ -1064,7 +1098,7 @@ export class MonolithRoomTurnLoop {
               const buildPrompt = (): string =>
                 [
                   this.turnInstructionPrefix,
-                  checkout
+                  checkout?.branch && checkout.commit
                     ? `Repository checkout: origin/${checkout.branch} at commit ${checkout.commit}. This checkout was refreshed for this turn.`
                     : '',
                   WarmTranscript.render(

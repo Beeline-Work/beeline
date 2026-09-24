@@ -850,7 +850,7 @@ export class RoomRuntimeCoordinator {
       roomId,
       workspaceId: this.runtime.communityId,
       cwd,
-      refreshCheckout: () => this.refreshRoomCheckout(roomId, cwd),
+      refreshCheckout: () => this.refreshRoomCheckout(roomId),
       grantRunner: this.grantRunner,
       ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
       ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
@@ -955,22 +955,14 @@ export class RoomRuntimeCoordinator {
 
   private async refreshRoomCheckout(
     roomId: string,
-    cwd: string,
-  ): Promise<{ branch: string; commit: string } | undefined> {
+  ): Promise<{ cwd: string; branch?: string; commit?: string }> {
     const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
-    if (repository.resolution !== 'repository' || !repository.remote) {
-      if (cwd !== this.roomRoot(roomId)) {
-        throw new Error('Room repository binding changed; restart the Room checkout before answering');
-      }
-      return undefined;
-    }
+    if (repository.resolution !== 'repository' || !repository.remote)
+      return { cwd: this.roomRoot(roomId) };
     const branch = repository.targetBranch || 'main';
-    const refreshed = await this.materializeRoomCheckout(roomId, repository);
-    if (refreshed !== cwd) {
-      throw new Error('Room repository binding changed; restart the Room checkout before answering');
-    }
+    const cwd = await this.materializeRoomCheckout(roomId, repository);
     const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
-    return { branch, commit: stdout.trim() };
+    return { cwd, branch, commit: stdout.trim() };
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {

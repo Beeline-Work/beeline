@@ -55,10 +55,10 @@ it('fetches a new target commit for each Room turn and reports the checked out S
     );
     const checkout = coordinator as unknown as {
       materializeRoomCheckout(roomId: string): Promise<string>;
-      refreshRoomCheckout(roomId: string, cwd: string): Promise<{ branch: string; commit: string }>;
+      refreshRoomCheckout(roomId: string): Promise<{ cwd: string; branch: string; commit: string }>;
     };
     const cwd = await checkout.materializeRoomCheckout('room-1');
-    const first = await checkout.refreshRoomCheckout('room-1', cwd);
+    const first = await checkout.refreshRoomCheckout('room-1');
     expect(await readFile(join(cwd, 'code.txt'), 'utf8')).toBe('first\n');
     expect(first.commit).toBe((await git('git', ['-C', seed, 'rev-parse', 'HEAD'])).stdout.trim());
 
@@ -67,8 +67,9 @@ it('fetches a new target commit for each Room turn and reports the checked out S
     const newHead = (await git('git', ['-C', seed, 'rev-parse', 'HEAD'])).stdout.trim();
     await git('git', ['--git-dir', remote, 'fetch', seed, 'main']);
     await git('git', ['--git-dir', remote, 'update-ref', 'refs/heads/main', newHead]);
-    const second = await checkout.refreshRoomCheckout('room-1', cwd);
+    const second = await checkout.refreshRoomCheckout('room-1');
     expect(second).toEqual({
+      cwd,
       branch: 'main',
       commit: newHead,
     });

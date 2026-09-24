@@ -227,8 +227,11 @@ describe('Room and corner actions sheets', () => {
     expect(row(messageSheet, 'message-select-action')).toContain('label="Select"');
     expect(row(messageSheet, 'message-reply-action')).toContain('label="Reply"');
     expect(row(messageSheet, 'message-forward-action')).toContain('label="Forward"');
-    expect(row(messageSheet, 'message-delete-action')).toContain('label="Delete message"');
+    expect(row(messageSheet, 'message-delete-action')).toContain('label="Delete"');
+    expect(row(messageSheet, 'message-delete-action')).not.toContain('label="Delete message"');
     expect(row(messageSheet, 'message-delete-action')).toContain('destructive');
+    expect(chat).toContain("confirmText: 'Delete'");
+    expect(chat).not.toContain("confirmText: 'Delete message'");
     // Copy, Select, Reply and Forward are plain actions — no fifth mark.
     for (const testID of [
       'message-copy-action',

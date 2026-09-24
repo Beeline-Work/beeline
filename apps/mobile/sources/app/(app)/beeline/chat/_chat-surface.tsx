@@ -3139,7 +3139,7 @@ export function BuzzChatSurface({
       const confirmed = await Modal.confirm(
         'Delete message?',
         'The message text and attachments will be removed. A deleted-message record will remain in this Room.',
-        { cancelText: 'Cancel', confirmText: 'Delete message', destructive: true },
+        { cancelText: 'Cancel', confirmText: 'Delete', destructive: true },
       );
       if (!confirmed) return;
       try {
@@ -6064,7 +6064,7 @@ export function BuzzChatSurface({
           <HullActionSheetRow
             accessibilityLabel="Delete message"
             destructive
-            label="Delete message"
+            label="Delete"
             onPress={() => {
               const target = messageActionsTarget;
               setMessageActionsTarget(null);

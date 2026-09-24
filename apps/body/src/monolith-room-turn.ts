@@ -841,7 +841,7 @@ export class MonolithRoomTurnLoop {
       SOUL_HOUSE_RULE,
       ...(!directMessage
         ? [
-            'Use inspect_corner to read a member corner’s status or recent transcript. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
+            'Use inspect_corner for a member corner’s compact status; set mode to transcript and follow next.after/next.offset to read bounded transcript pages. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
           ]
         : []),
     ].join('\n');

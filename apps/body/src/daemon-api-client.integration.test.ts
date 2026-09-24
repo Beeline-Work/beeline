@@ -650,7 +650,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             env: {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
-              BUZZ_DEV_MCP_BIN: '/home/lunchbox/.local/bin/buzz-dev-mcp',
+              BUZZ_DEV_MCP_BIN: '/bin/false',
               XDG_STATE_HOME: supervisorRoot,
             },
           });

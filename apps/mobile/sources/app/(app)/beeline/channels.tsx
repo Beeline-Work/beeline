@@ -34,6 +34,7 @@ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerS
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { MonoButton } from '@/components/buzz/MonoHull';
+import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { RoomCornerSummary } from '@/components/buzz/RoomCornerSummary';
 import {
@@ -949,23 +950,12 @@ export default function BuzzChannels() {
               filter === 'pinned' && !query.trim() ? (
                 <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
               ) : query || filter !== 'all' ? (
-                <View style={styles.empty}>
-                  <Text style={styles.emptyTitle}>
-                    {filter === 'pinned' && !query
-                      ? 'No pinned conversations'
-                      : 'No matching conversations'}
-                  </Text>
-                  {filter === 'pinned' && !query && (
-                    <Text style={styles.emptyCopy}>Long press a Room to pin it here.</Text>
-                  )}
-                  <MonoButton
-                    label="SHOW ALL"
-                    onPress={() => {
-                      setQuery('');
-                      setFilter('all');
-                    }}
-                  />
-                </View>
+                <NoMatchingConversationsEmpty
+                  onShowAll={() => {
+                    setQuery('');
+                    setFilter('all');
+                  }}
+                />
               ) : (
                 <EmptyRoomActions
                   canAddRoom={!viewerIsAgent && canManageWorkspace}

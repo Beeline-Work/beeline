@@ -101,6 +101,8 @@ describe('monolith Room turn context', () => {
             items: [ask('ask-2', '@greeter answer only the next integer after 30303')],
             cursor: 'ask-2',
           };
+        if (inboxReads === 4)
+          return { items: [ask('ask-3', 'third ask after target branch moved')], cursor: 'ask-3' };
         return { items: [], cursor: 'latest' };
       }
       if (name === 'listRoomCorners')
@@ -153,12 +155,14 @@ describe('monolith Room turn context', () => {
     } as unknown as DaemonApiClient;
     const prompts: string[] = [];
     const systemPrompts: string[] = [];
+    let sessionCount = 0;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockImplementation(async (input) => {
       systemPrompts.push(input.systemPrompt ?? '');
-      return { sessionId: 'room-session', raw: {} };
+      return { sessionId: `room-session-${++sessionCount}`, raw: {} };
     });
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
     vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
     vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
@@ -169,10 +173,17 @@ describe('monolith Room turn context', () => {
     );
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
+    const refreshCheckout = vi
+      .fn()
+      .mockResolvedValueOnce({ cwd: config.workspaceRoot, branch: 'main', commit: 'a'.repeat(40) })
+      .mockResolvedValueOnce({ cwd: config.workspaceRoot, branch: 'main', commit: 'a'.repeat(40) })
+      .mockResolvedValueOnce({ cwd: config.workspaceRoot, branch: 'main', commit: 'b'.repeat(40) })
+      .mockResolvedValueOnce({ cwd: config.workspaceRoot, branch: 'main', commit: 'b'.repeat(40) });
     const loop = new MonolithRoomTurnLoop({
       roomId: 'room-id',
       workspaceId: 'workspace',
       cwd: config.workspaceRoot,
+      refreshCheckout,
       runtime,
       config,
       api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
@@ -183,10 +194,15 @@ describe('monolith Room turn context', () => {
       createAcpClient: () => acp,
     });
     const running = loop.run();
-    await vi.waitFor(() => expect(prompts).toHaveLength(2), { timeout: 10_000 });
+    await vi.waitFor(() => expect(prompts).toHaveLength(3), { timeout: 10_000 });
     abort.abort();
     await running.catch(() => undefined);
     await scheduler.dispose();
+    expect(refreshCheckout).toHaveBeenCalledTimes(4);
+    expect(prompts[0]).toContain(`Repository checkout: origin/main at commit ${'a'.repeat(40)}`);
+    expect(prompts[1]).toContain(`Repository checkout: origin/main at commit ${'a'.repeat(40)}`);
+    expect(prompts[2]).toContain(`Repository checkout: origin/main at commit ${'b'.repeat(40)}`);
+    expect(sessionCount).toBe(2);
 
     expect(systemPrompts[0]).toContain(
       'For every ask, first reply on one line `Proposed corner: <name> — <objective>`',
@@ -234,12 +250,15 @@ describe('monolith Room turn context', () => {
     expect(prompts[1]!.lastIndexOf('after 30303')).toBeGreaterThan(
       prompts[1]!.lastIndexOf('after 10103'),
     );
+    expect(prompts[2]).toContain('Room conversation so far:');
+    expect(prompts[2]).toContain('Captain: row 171');
+    expect(prompts[2]).toContain('third ask after target branch moved');
     expect(prompts[1]!.trimEnd()).toMatch(
       /Current task selected by the server from Captain:\n\n\[message id: ask-2\]\n@greeter answer only the next integer after 30303$/,
     );
     const rendered = (prompt: string) => prompt.match(/Captain: row \d+/g)?.length ?? 0;
     expect(rendered(prompts[0]!)).toBe(79);
     expect(rendered(prompts[1]!)).toBe(WARM_TRANSCRIPT_OVERLAP - 1);
-    expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(2);
+    expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(3);
   }, 20_000);
 });

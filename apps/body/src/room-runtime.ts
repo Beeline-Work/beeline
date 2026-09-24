@@ -850,6 +850,7 @@ export class RoomRuntimeCoordinator {
       roomId,
       workspaceId: this.runtime.communityId,
       cwd,
+      refreshCheckout: () => this.refreshRoomCheckout(roomId),
       grantRunner: this.grantRunner,
       ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
       ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
@@ -903,14 +904,17 @@ export class RoomRuntimeCoordinator {
    * short-lived GitHub token itself; it is never included in the Room MCP or
    * harness environment.
    */
-  private async materializeRoomCheckout(roomId: string): Promise<string> {
-    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+  private async materializeRoomCheckout(
+    roomId: string,
+    repository?: RoomRepositoryStateResult,
+  ): Promise<string> {
+    repository ??= await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
     if (repository.resolution !== 'repository' || !repository.remote) return this.roomRoot(roomId);
 
     const remote = roomCheckoutRemote(repository.remote);
     const targetBranch = repository.targetBranch || 'main';
     const checkoutId = createHash('sha256')
-      .update(`${remote}\0${targetBranch}`)
+      .update(`${roomId}\0${remote}\0${targetBranch}`)
       .digest('hex')
       .slice(0, 24);
     const path = resolve(this.runtime.supervisorRoot, 'beeline', 'room-checkouts', checkoutId);
@@ -947,6 +951,18 @@ export class RoomRuntimeCoordinator {
       },
     );
     return path;
+  }
+
+  private async refreshRoomCheckout(
+    roomId: string,
+  ): Promise<{ cwd: string; branch?: string; commit?: string }> {
+    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    if (repository.resolution !== 'repository' || !repository.remote)
+      return { cwd: this.roomRoot(roomId) };
+    const branch = repository.targetBranch || 'main';
+    const cwd = await this.materializeRoomCheckout(roomId, repository);
+    const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
+    return { cwd, branch, commit: stdout.trim() };
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {

@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { beelineThemes } from '@/buzz/groknight';
 
 const source = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
+const profile = readFileSync(
+  new URL('../../../components/buzz/AgentProfileView.tsx', import.meta.url),
+  'utf8',
+);
 const memberRow = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',
@@ -66,7 +70,10 @@ describe('Members page layout contract', () => {
 
   it('opens an agent profile from the roster row instead of expanding settings inline', () => {
     const agentsStart = source.indexOf('testID="members-agents-section"');
-    const agents = source.slice(agentsStart, source.indexOf('</KeyboardAwareScrollView>', agentsStart));
+    const agents = source.slice(
+      agentsStart,
+      source.indexOf('</KeyboardAwareScrollView>', agentsStart),
+    );
     expect(agents).toContain('<ChevronGlyph');
     expect(agents).toContain('direction="right"');
     expect(agents).toContain("pathname: '/beeline/agent-profile'");
@@ -74,15 +81,13 @@ describe('Members page layout contract', () => {
     expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
   });
 
-  it('shows the assigned animal and handle on the manage heading and has no close icon', () => {
-    const headingStart = source.indexOf('<View style={styles.detailHeading}>');
-    const heading = source.slice(
-      headingStart,
-      source.indexOf('{ownsSelectedAgent && (', headingStart),
-    );
-    expect(heading).toContain('testID="agent-handle"');
-    expect(heading).toContain('memberRosterTitle(selectedAgent.agent.identity)');
-    expect(heading).toContain('face={selectedAgent.agent.identity.face}');
+  it('shows the assigned animal and handle in the inline profile editor', () => {
+    expect(profile).toContain('testID="agent-handle"');
+    expect(profile).toContain('face={identity.face}');
+    expect(profile).toContain('testID="edit-agent-soul"');
+    expect(profile).toContain('testID="save-agent-soul"');
+    expect(profile).toContain('testID="cancel-agent-edit"');
+    expect(profile).not.toContain('agent-tab-manage');
     expect(source).not.toContain('testID="close-agent-settings"');
     expect(source).not.toContain('accessibilityLabel="Close agent settings"');
   });
@@ -94,7 +99,7 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('Ban this agent from every Room');
     expect(source).toContain('testID="remove-agent"');
     expect(source).toContain('style={styles.removeAgentControl}');
-    expect(source).toContain('testID="agent-handle"');
+    expect(profile).toContain('testID="agent-handle"');
     expect(source).toContain('testID="agent-owner"');
   });
 

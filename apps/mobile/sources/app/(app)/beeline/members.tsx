@@ -1,14 +1,12 @@
-import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
 // so a screen beside its route is a second URL for the same screen.
-import { SoulPortraitControls } from '@/components/buzz/SoulPortraitControls';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_NAME_MAX_LENGTH,
@@ -270,6 +268,7 @@ export default function BuzzMembers({
     communityId?: string | string[];
     action?: string | string[];
   }>();
+  const navigation = useNavigation();
   const workspaceId = workspaceIdOverride ?? first(params.communityId);
   const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
@@ -304,6 +303,7 @@ export default function BuzzMembers({
   const [rosterLoading, setRosterLoading] = useState(false);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
+  const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
@@ -740,10 +740,52 @@ export default function BuzzMembers({
 
   const beginAgentSoulEdit = () => {
     if (!selectedAgent || !ownsSelectedAgent) return;
+    allowProfileNavigationRef.current = false;
     setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
     setAgentSoulDraft(agentSoulCopy(selectedAgent));
     setEditingAgentSoul(true);
   };
+
+  const agentEditDirty = Boolean(
+    editingAgentSoul &&
+    selectedAgent &&
+    (agentNameDraft !== (selectedAgent.soul?.name ?? selectedAgent.agent.identity.name) ||
+      agentSoulDraft !== agentSoulCopy(selectedAgent)),
+  );
+  const confirmDiscardAgentEdit = async (): Promise<boolean> =>
+    !agentEditDirty ||
+    Modal.confirm('Discard agent changes?', 'Your name and soul edits have not been saved.', {
+      cancelText: 'Keep editing',
+      confirmText: 'Discard',
+      destructive: true,
+    });
+  const closeAgentProfile = async () => {
+    if (!(await confirmDiscardAgentEdit())) return;
+    allowProfileNavigationRef.current = true;
+    setEditingAgentSoul(false);
+    (onClose ?? (() => router.back()))();
+  };
+  const messageSelectedAgent = async () => {
+    if (!(await confirmDiscardAgentEdit())) return;
+    allowProfileNavigationRef.current = true;
+    setEditingAgentSoul(false);
+    await messagePerson(profileAgentId!);
+    allowProfileNavigationRef.current = false;
+  };
+
+  useEffect(() => {
+    if (!profileAgentId || !agentEditDirty) return;
+    return navigation.addListener('beforeRemove', (event) => {
+      if (allowProfileNavigationRef.current) return;
+      event.preventDefault();
+      void confirmDiscardAgentEdit().then((confirmed) => {
+        if (!confirmed) return;
+        allowProfileNavigationRef.current = true;
+        setEditingAgentSoul(false);
+        navigation.dispatch(event.data.action);
+      });
+    });
+  }, [navigation, profileAgentId, agentEditDirty]);
 
   const saveAgentSoul = async () => {
     if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return;
@@ -761,7 +803,6 @@ export default function BuzzMembers({
     setError(null);
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
-      const fallback = defaultAgentPersona(pubkey);
       const client = await writeClient();
       await client.setAgentSoul(workspaceId, pubkey, {
         name,
@@ -1021,9 +1062,22 @@ export default function BuzzMembers({
           if (!identity || !relayUrl) setRetryGeneration((value) => value + 1);
           else setProfileRetryGeneration((value) => value + 1);
         }}
-        onClose={onClose ?? (() => router.back())}
-        onMessage={() => void messagePerson(profileAgentId)}
+        onClose={() => void closeAgentProfile()}
+        onMessage={() => void messageSelectedAgent()}
         canManage={Boolean(selectedAgent && canRemoveSelectedAgent)}
+        canEdit={ownsSelectedAgent}
+        avatarDisabled={busy}
+        onGenerateAvatar={requestSoulAvatar}
+        refreshAgent={() => readAgent(profileAgentId)}
+        editing={editingAgentSoul}
+        saving={working === 'save-agent-soul'}
+        nameDraft={agentNameDraft}
+        soulDraft={agentSoulDraft}
+        onNameChange={setAgentNameDraft}
+        onSoulChange={setAgentSoulDraft}
+        onEdit={beginAgentSoulEdit}
+        onSave={() => void saveAgentSoul()}
+        onCancel={() => setEditingAgentSoul(false)}
         soul={selectedAgent ? agentSoulCopy(selectedAgent) : ''}
         management={
           selectedAgent ? (
@@ -1031,111 +1085,15 @@ export default function BuzzMembers({
               style={styles.detailPanel}
               testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}
             >
-              <View style={styles.detailHeading}>
-                <View style={styles.rowCopy}>
-                  <Text style={styles.profileSettingLabel}>
-                    {ownsSelectedAgent ? 'Name & avatar' : 'Agent'}
-                  </Text>
-                  <View style={styles.agentTitleRow}>
-                    <IdentityMark
-                      kind="agent"
-                      seed={selectedAgent.agent.identity.pubkey}
-                      avatarUrl={selectedAgent.agent.identity.avatar}
-                      face={selectedAgent.agent.identity.face}
-                      name={selectedAgent.agent.identity.name}
-                      size={44}
-                    />
-                    <Text numberOfLines={1} style={styles.profileSettingCopy} testID="agent-handle">
-                      {memberRosterTitle(selectedAgent.agent.identity)}
-                    </Text>
-                    {ownsSelectedAgent && (
-                      <TouchableOpacity
-                        accessibilityLabel="Edit agent settings"
-                        disabled={busy}
-                        onPress={beginAgentSoulEdit}
-                        style={styles.glyphControl}
-                        testID="edit-agent-soul"
-                      >
-                        <Text style={styles.glyphControlText}>✎</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  {selectedAgentOwnerByline && (
-                    <Text style={styles.profileSettingCopy} testID="agent-owner">
-                      {selectedAgentOwnerByline}
-                    </Text>
-                  )}
-                </View>
-              </View>
+              {selectedAgentOwnerByline && (
+                <Text style={styles.profileSettingCopy} testID="agent-owner">
+                  {selectedAgentOwnerByline}
+                </Text>
+              )}
               {ownsSelectedAgent && (
-                <View style={styles.soulSection}>
-                  <Text style={styles.profileSettingLabel}>Soul</Text>
-                  {editingAgentSoul ? (
-                    <>
-                      <Text style={styles.fieldLabel}>Name</Text>
-                      <TextInput
-                        autoCapitalize="words"
-                        editable={!busy}
-                        maxLength={AGENT_NAME_MAX_LENGTH}
-                        onChangeText={setAgentNameDraft}
-                        placeholder="Agent name"
-                        placeholderTextColor={theme.buzz.textMuted}
-                        style={styles.textInput}
-                        testID="agent-soul-name"
-                        value={agentNameDraft}
-                      />
-                      <Text style={styles.fieldLabel}>Persona / instructions</Text>
-                      <TextInput
-                        editable={!busy}
-                        maxLength={1000}
-                        multiline
-                        onChangeText={setAgentSoulDraft}
-                        placeholder="How this agent should work"
-                        placeholderTextColor={theme.buzz.textMuted}
-                        style={styles.soulInput}
-                        testID="agent-soul-instructions"
-                        value={agentSoulDraft}
-                      />
-                      <SoulPortraitControls
-                        key={selectedAgent.agent.identity.pubkey}
-                        detail={selectedAgent}
-                        soul={agentSoulDraft}
-                        disabled={busy}
-                        generate={requestSoulAvatar}
-                        refresh={() => readAgent(selectedAgent.agent.identity.pubkey)}
-                      />
-                      <View style={styles.soulActions}>
-                        <MonoButton
-                          label="CANCEL"
-                          disabled={busy}
-                          onPress={() => setEditingAgentSoul(false)}
-                          variant="secondary"
-                        />
-                        <MonoButton
-                          label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
-                          loading={working === 'save-agent-soul'}
-                          disabled={busy}
-                          onPress={() => void saveAgentSoul()}
-                          testID="save-agent-soul"
-                        />
-                      </View>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.soulCopy} testID="agent-soul-copy">
-                        {agentSoulCopy(selectedAgent)}
-                      </Text>
-                      <SoulPortraitControls
-                        key={selectedAgent.agent.identity.pubkey}
-                        detail={selectedAgent}
-                        soul={agentSoulCopy(selectedAgent)}
-                        disabled={busy}
-                        generate={requestSoulAvatar}
-                        refresh={() => readAgent(selectedAgent.agent.identity.pubkey)}
-                      />
-                    </>
-                  )}
-                </View>
+                <Text style={styles.profileSettingCopy}>
+                  Model, access and Yolo changes apply immediately.
+                </Text>
               )}
               {ownsSelectedAgent && (
                 <View style={styles.modelSection}>
@@ -1687,7 +1645,6 @@ const styles = StyleSheet.create((theme) => {
     },
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
-    rowCopy: { flex: 1, minWidth: 0 },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
     choice: {
@@ -1713,45 +1670,13 @@ const styles = StyleSheet.create((theme) => {
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
-    profileSettingLabel: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
+    profileSettingLabel: {
+      ...Typography.default(),
+      ...hull.type.bodyStrong,
+      color: hull.textPrimary,
+    },
     profileSettingCopy: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
     detailPanel: { padding: hull.space.md, gap: hull.space.md },
-    detailHeading: { flexDirection: 'row', alignItems: 'center', gap: hull.space.md },
-    agentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
-    glyphControl: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    glyphControlText: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
-    soulSection: { gap: hull.space.sm },
-    soulCopy: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    fieldLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    textInput: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textPrimary,
-      minHeight: 44,
-      paddingHorizontal: hull.space.sm,
-      paddingVertical: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      backgroundColor: hull.bgTerminal,
-    },
-    soulInput: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textPrimary,
-      minHeight: 112,
-      paddingHorizontal: hull.space.sm,
-      paddingVertical: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      backgroundColor: hull.bgTerminal,
-      textAlignVertical: 'top',
-    },
-    soulActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
     modelSection: { gap: hull.space.sm },
     axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
     axisRow: {

@@ -1,6 +1,6 @@
 # Soul avatars
 
-Agent Manage places **Generate avatar from soul** directly beneath the soul input. It sends the current input (including unsaved edits) to that agent's DM as a `/draw-avatar` request, through the ordinary message transport and access policy. The model chooses and draws a subject from that soul; subjects need not be animals.
+Agent Profile places **Generate avatar from soul** directly beneath the soul, in read and edit states for the owner. It sends the current input (including unsaved edits) to that agent's DM as a `/draw-avatar` request, through the ordinary message transport and access policy. The model chooses and draws a subject from that soul; subjects need not be animals.
 
 The release-managed `draw-avatar` skill includes the actual Fox and Owl constructions from the shipped Speakeasy-derived `faces/animals.tsx`. It teaches the same filled geometry, bone/ink figure, brass plate, and small-size legibility. The agent generates bounded vector geometry; the server renders it to a 256px WebP. This uses the agent's existing model, without an external image-generation account.
 

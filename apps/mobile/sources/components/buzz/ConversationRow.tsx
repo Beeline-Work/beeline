@@ -49,7 +49,8 @@ export function ConversationRow({
         styles.row,
         desktop && styles.desktopRow,
         desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
-        item.unread && styles.unread,
+        !desktop && styles.cardRow,
+        desktop && item.unread && styles.unread,
         selected && styles.selected,
         pressed && styles.pressed,
       ]}
@@ -66,7 +67,10 @@ export function ConversationRow({
             size={28}
           />
         )}
-        <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+        <Text
+          numberOfLines={1}
+          style={[styles.name, !desktop && styles.cardName, item.unread && styles.unreadName]}
+        >
           {!peer && <Text style={styles.sigil}>#</Text>}
           {name.name}
         </Text>
@@ -81,36 +85,22 @@ export function ConversationRow({
         </Text>
         {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
       </View>
-      {!desktop &&
-        !peer &&
-        preview.text !== NO_ACTIVITY_PREVIEW &&
-        preview.attribution !== 'none' && (
-          <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
-            {preview.attribution === 'self'
-              ? 'you'
-              : preview.attribution === 'other'
-                ? preview.handle
-                : ''}
-          </Text>
-        )}
       <Text
         numberOfLines={2}
         style={[
           styles.preview,
+          !desktop && styles.cardPreview,
           desktop && styles.desktopPreview,
           item.unread && styles.unreadPreview,
         ]}
         testID={`${testID}-preview`}
       >
-        {desktop &&
-          !peer &&
-          preview.attribution !== 'none' &&
-          preview.text !== NO_ACTIVITY_PREVIEW && (
-            <Text style={preview.attribution === 'self' ? styles.quiet : styles.desktopAuthor}>
-              {preview.attribution === 'self' ? 'you' : preview.handle}
-              <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
-            </Text>
-          )}
+        {!peer && preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
+          <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
+            {preview.attribution === 'self' ? 'you' : preview.handle}
+            <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
+          </Text>
+        )}
         {preview.text}
       </Text>
     </Pressable>
@@ -125,18 +115,28 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopRow: { paddingTop: 18, paddingBottom: 18, minHeight: 98 },
   desktopRowWithCorners: { paddingBottom: theme.buzz.space.xs, minHeight: 94 },
+  // Mobile rows sit inside the Room list card, which owns the fill and border.
+  cardRow: { padding: theme.buzz.roomCard.padding, backgroundColor: 'transparent' },
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   name: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
+  cardName: {
+    fontFamily: theme.buzz.type.hero.fontFamily,
+    fontSize: theme.buzz.roomCard.nameSize,
+    lineHeight: theme.buzz.roomCard.nameLineHeight,
+  },
   unread: { backgroundColor: theme.buzz.bgUnread },
   unreadPreview: { color: theme.buzz.textPrimary },
   unreadName: { fontFamily: theme.buzz.type.bodyStrong.fontFamily },
   sigil: { color: theme.buzz.accent },
-  author: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: 12 },
-  desktopAuthor: { color: theme.buzz.accent },
+  author: { color: theme.buzz.accent },
   preview: {
     ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
     marginTop: theme.buzz.space.xs,
+  },
+  cardPreview: {
+    fontSize: theme.buzz.roomCard.previewSize,
+    lineHeight: theme.buzz.roomCard.previewLineHeight,
   },
   desktopPreview: {
     ...theme.buzz.type.meta,

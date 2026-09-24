@@ -68,8 +68,9 @@ const theme = vi.hoisted(() => ({
   },
   buzz: {
     accent: '#b08a4a',
+    roomCard: {},
     space: { xs: 4, sm: 8, md: 16, lg: 24 },
-    type: { body: {}, bodyStrong: {}, machine: {}, meta: {}, sectionHead: {} },
+    type: { body: {}, bodyStrong: {}, hero: {}, machine: {}, meta: {}, sectionHead: {} },
   },
 }));
 vi.mock('react-native-unistyles', () => ({

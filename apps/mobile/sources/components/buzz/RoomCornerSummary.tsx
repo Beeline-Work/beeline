@@ -43,7 +43,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 44,
     paddingHorizontal: theme.buzz.space.md,
     paddingBottom: theme.buzz.space.sm,
-    marginBottom: theme.buzz.space.md,
     gap: theme.buzz.space.sm,
   },
   desktopRow: { minHeight: 53, paddingBottom: theme.buzz.space.md, marginBottom: 0 },

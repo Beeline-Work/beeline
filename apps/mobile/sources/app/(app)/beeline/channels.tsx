@@ -1127,7 +1127,7 @@ const styles = StyleSheet.create((theme) => {
     },
     error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
     // Leave breathing room after the final conversation.
-    list: { paddingBottom: 24 },
+    list: { paddingTop: hull.roomCard.gap, paddingBottom: 24 },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',
@@ -1175,11 +1175,17 @@ const styles = StyleSheet.create((theme) => {
       fontSize: hull.type.body.fontSize - 1,
       lineHeight: hull.type.body.lineHeight,
     },
-    unreadSurface: { backgroundColor: hull.bgUnread },
-    rowSurface: { backgroundColor: hull.bgBase },
+    unreadSurface: { backgroundColor: hull.bgHighlight, borderColor: hull.brassWash },
+    rowSurface: {
+      backgroundColor: hull.bgRaised,
+      borderWidth: 1,
+      borderColor: hull.border,
+      borderRadius: hull.roomCard.cornerRadius,
+      overflow: 'hidden',
+    },
     roomCell: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
+      paddingHorizontal: hull.roomCard.inset,
+      paddingBottom: hull.roomCard.gap,
     },
     chatActions: {
       flexDirection: 'row',

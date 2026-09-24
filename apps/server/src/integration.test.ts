@@ -1740,6 +1740,38 @@ describe('monolith integration', () => {
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
 
+  it('lets an author or Room manager delete a message while retaining its transcript record', async () => {
+    const authorMessageId = 'd'.repeat(64);
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: authorMessageId, text: 'remove me' }, AGENT);
+    await phone.execute(
+      'setMessageBookmark',
+      { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
+      HUMAN,
+    );
+    await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
+
+    const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
+      (message) => message.id === authorMessageId,
+    );
+    expect(authorDeleted).toMatchObject({ text: 'Message deleted', deleted: true });
+    expect(authorDeleted?.attachments).toBeUndefined();
+    expect(authorDeleted?.reactions).toBeUndefined();
+    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks).toContainEqual(
+      expect.objectContaining({ messageId: authorMessageId, available: false }),
+    );
+
+    const managerMessageId = 'e'.repeat(64);
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' }, AGENT);
+    await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, HUMAN);
+    expect(
+      (await phone.readRoom(ROOM, HUMAN))!.messages.find((message) => message.id === managerMessageId),
+    ).toMatchObject({ text: 'Message deleted', deleted: true });
+
+    await expect(
+      phone.execute('reactToMessage', { roomId: ROOM, messageId: managerMessageId, emoji: '👍' }, HUMAN),
+    ).rejects.toThrow('message is not available for reaction');
+  });
+
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
     const messageId = '7'.repeat(64);
     expect(

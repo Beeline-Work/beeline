@@ -966,6 +966,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     createdAt: item.createdAt,
     author,
     presentation,
+    ...field('deleted', typeof item.deleted === 'boolean' ? item.deleted : undefined),
     ...field('createdAtMs', integer(item.createdAtMs) ? item.createdAtMs : undefined),
     ...field('bookmarked', typeof item.bookmarked === 'boolean' ? item.bookmarked : undefined),
     ...field('reference', projectedReference),

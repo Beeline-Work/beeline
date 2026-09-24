@@ -566,6 +566,8 @@ CREATE TABLE IF NOT EXISTS messages (
   legacy_event jsonb,
   agent_hop_count integer NOT NULL DEFAULT 0,
   system_event jsonb,
+  deleted_at timestamptz,
+  deleted_by text REFERENCES identities(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 -- Private message bookmarks deliberately keep their pointer after a source is
@@ -586,6 +588,8 @@ CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_idx
   ON message_bookmarks(workspace_id,identity_id,created_at DESC);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by text REFERENCES identities(id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column

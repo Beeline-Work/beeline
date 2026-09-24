@@ -584,12 +584,27 @@ describe('PhoneService machine grouping in readWorkbench', () => {
 
   it('two agents sharing a machine_id collapse to one machine in readWorkbench', async () => {
     await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
-    await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_B, 'Codex', MACHINE_X);
 
     const result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
     expect(result.helpers).toHaveLength(1);
     expect(result.helpers[0]!.id).toBe(MACHINE_X);
     expect(result.helpers[0]!.name).toBe('squire-box');
+
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`,
+      [ROOM, AGENT_B],
+    );
+
+    const paired = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+    const duringInstall = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(duringInstall.connectors.find((row) => row.connectorId === paired.connectorId)?.status.helperName)
+      .toBe('squire-box');
   });
 
   it('two agents on different machines show two rows in readWorkbench', async () => {

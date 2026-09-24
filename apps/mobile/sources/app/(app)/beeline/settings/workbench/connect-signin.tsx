@@ -33,6 +33,7 @@ export default function ConnectorSignInScreen() {
     viewerId?: string | string[];
     connectorId?: string | string[];
     connectorName?: string | string[];
+    machineName?: string | string[];
     url?: string | string[];
     method?: string | string[];
     offerId?: string | string[];
@@ -41,6 +42,7 @@ export default function ConnectorSignInScreen() {
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const connectorId = firstParam(params.connectorId) ?? 'trusty-squire';
   const connectorName = firstParam(params.connectorName) ?? 'Trusty Squire';
+  const machineName = firstParam(params.machineName);
   const url = firstParam(params.url) ?? '';
   const method = firstParam(params.method) ?? 'streamed';
   const roomId = firstParam(params.roomId);
@@ -102,6 +104,7 @@ export default function ConnectorSignInScreen() {
           <Text style={styles.title} testID="signin-title">
             Sign in to {connectorName}
           </Text>
+          {machineName ? <Text style={styles.subtitle} testID="signin-machine">{machineName}</Text> : null}
           {host ? <Text style={styles.subtitle}>{host}</Text> : null}
         </View>
       </View>

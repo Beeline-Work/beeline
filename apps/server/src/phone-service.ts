@@ -6153,7 +6153,10 @@ export class PhoneService {
         created_at: Date;
       }>(
         `SELECT c.id,c.connector_type,c.status,c.status_steps,c.status_error,
-                c.helper_agent_id,i.name helper_name,c.squire_version,
+                c.helper_agent_id,
+                COALESCE((SELECT MAX(sibling.machine_name) FROM agents sibling
+                          WHERE sibling.machine_id=c.machine_id),i.name) helper_name,
+                c.squire_version,
                 c.signed_in_as,c.sign_in,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
@@ -6200,7 +6203,7 @@ export class PhoneService {
         // same 90-second window readers use). Name is the machine_name if set,
         // falling back to the first agent's identity name.
         `SELECT COALESCE(a.machine_id,a.agent_id) id,
-                COALESCE(a.machine_name,i.name) name,
+                COALESCE(MAX(a.machine_name),MIN(i.name)) name,
                 bool_or(p.online) online
          FROM agents a
          JOIN identities i ON i.id=a.agent_id
@@ -6215,8 +6218,8 @@ export class PhoneService {
            ) online
          ) p ON true
          WHERE a.owner_id=$1
-         GROUP BY COALESCE(a.machine_id,a.agent_id),COALESCE(a.machine_name,i.name)
-         ORDER BY COALESCE(a.machine_name,i.name)`,
+         GROUP BY COALESCE(a.machine_id,a.agent_id)
+         ORDER BY name`,
         [viewerId],
       )
     ).rows;

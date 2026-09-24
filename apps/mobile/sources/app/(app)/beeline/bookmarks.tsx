@@ -265,7 +265,7 @@ export default function BookmarksScreen() {
           ]}
           testID={`bookmark-${bookmark.messageId}`}
         >
-          <View style={styles.originLine}>
+          <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
             <View style={styles.originSource}>
               {bookmark.roomKind === 'corner' ? (
                 <CornerGlyph
@@ -279,8 +279,8 @@ export default function BookmarksScreen() {
                 {sourceTitle(bookmark)}
               </Text>
             </View>
-            <Text style={styles.time}>
-              {compactRelativeTime(bookmark.messageCreatedAt, Date.now())}
+            <Text numberOfLines={1} style={styles.time}>
+              SAVED {compactRelativeTime(bookmark.bookmarkedAt, Date.now())}
             </Text>
           </View>
           <Text numberOfLines={1} style={styles.author}>
@@ -294,9 +294,6 @@ export default function BookmarksScreen() {
             <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
           )}
           <View style={styles.rowFooter}>
-            <Text style={styles.saved}>
-              SAVED {compactRelativeTime(bookmark.bookmarkedAt, Date.now()).toUpperCase()}
-            </Text>
             {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
             {desktop && bookmark.available ? (
               <Pressable
@@ -436,7 +433,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   originSigil: { ...theme.buzz.type.meta, color: brand.mark },
   origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
-  time: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  time: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.ledgerQuiet },
   author: {
     ...theme.buzz.type.meta,
     color: theme.buzz.accent,
@@ -453,7 +450,6 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 5,
   },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
-  saved: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerGhost },
   open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },

@@ -2435,6 +2435,43 @@ describe('monolith integration', () => {
     expect((await readChats()).unread).toBe(false);
   });
 
+  it('keeps attachment-only chat previews, timestamps, and unread state through the phone API', async () => {
+    const messageId = 'f'.repeat(64);
+    const attachment = {
+      url: 'https://media.test/photo.png',
+      name: 'photo.png',
+      mimeType: 'image/png',
+      size: 42,
+    };
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments,created_at)
+       VALUES($1,$2,$3,'',$4::jsonb,'2026-09-23T12:34:56Z')`,
+      [messageId, ROOM, AGENT, JSON.stringify([attachment])],
+    );
+    const readChats = async () => {
+      const response = await request(`/v1/phone/workspaces/${WORKSPACE}/chats`);
+      expect(response.status).toBe(200);
+      const view = (await response.json()) as {
+        chats: Array<{ room: { id: string }; unread: boolean; latestMessage?: unknown }>;
+      };
+      return view.chats.find((chat) => chat.room.id === ROOM);
+    };
+    expect(await readChats()).toMatchObject({
+      unread: true,
+      latestMessage: {
+        id: messageId,
+        text: '',
+        createdAt: Date.parse('2026-09-23T12:34:56Z') / 1000,
+        attachments: [attachment],
+      },
+    });
+    expect((await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId })).status).toBe(204);
+    expect(await readChats()).toMatchObject({
+      unread: false,
+      latestMessage: { id: messageId, attachments: [attachment] },
+    });
+  });
+
   it('carries the resolved all-offline Room footer state on the deck item', async () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)

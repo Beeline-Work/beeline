@@ -1030,6 +1030,7 @@ export class PhoneService {
         corner_count: string;
         latest_id: string | null;
         latest_text: string | null;
+        latest_attachments: MessageRow['attachments'] | null;
         latest_created_at: Date | null;
         latest_author_id: string | null;
         latest_author_kind: 'human' | 'agent' | null;
@@ -1057,7 +1058,7 @@ export class PhoneService {
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id AND c.archived_at IS NULL) corner_count,
-        lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
+        lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
@@ -1205,6 +1206,24 @@ export class PhoneService {
                 id: row.latest_id,
                 text: row.latest_text ?? '',
                 createdAt: unix(row.latest_created_at),
+                ...(row.latest_attachments?.length
+                  ? {
+                      attachments: (row.latest_attachments as NonNullable<RoomViewMessage['attachments']>).map(
+                        (attachment) => ({
+                          ...attachment,
+                          url: attachment.url.startsWith('/')
+                            ? `${this.publicOrigin}${attachment.url}`
+                            : attachment.url,
+                          ...(attachment.previewUrl?.startsWith('/')
+                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                            : {}),
+                          ...(attachment.thumbnailUrl?.startsWith('/')
+                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                            : {}),
+                        }),
+                      ),
+                    }
+                  : {}),
                 author: identity(
                   {
                     id: row.latest_author_id,

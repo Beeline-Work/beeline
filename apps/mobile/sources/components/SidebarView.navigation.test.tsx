@@ -20,6 +20,8 @@ const saveDesktopRoomCornersExpanded = vi.hoisted(() =>
     roomCornersExpanded.set(roomId, expanded);
   }),
 );
+const openCornerState = vi.hoisted(() => ({ current: 'working' as 'working' | 'waiting' }));
+const corners = vi.hoisted(() => vi.fn());
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -27,7 +29,13 @@ const chats = vi.hoisted(() =>
     chats:
       workspaceId === 'workspace-a'
         ? [
-            { room: { id: 'room-a', workspaceId, name: 'Alpha' }, cornerCount: 1 },
+            {
+              room: { id: 'room-a', workspaceId, name: 'Alpha' },
+              cornerCount: 1,
+              openCorners: [
+                { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current },
+              ],
+            },
             {
               room: { id: 'dm-a', workspaceId, name: 'Direct' },
               directMessage: { peer: { name: 'Mina' } },
@@ -68,6 +76,7 @@ const theme = vi.hoisted(() => ({
   },
   buzz: {
     accent: '#b08a4a',
+    ledgerQuiet: '#777',
     roomCard: {},
     space: { xs: 4, sm: 8, md: 16, lg: 24 },
     type: { body: {}, bodyStrong: {}, hero: {}, machine: {}, meta: {}, sectionHead: {} },
@@ -111,15 +120,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
       viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
     }));
     chats = chats;
-    corners = vi.fn(async () => ({
-      corners: [
-        {
-          corner: { id: 'corner-a', name: 'Fix fixture' },
-          state: 'working',
-          lifecycle: { lifecycle: 'open', checks: 'unknown' },
-        },
-      ],
-    }));
+    corners = corners;
   },
 }));
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
@@ -188,6 +189,13 @@ vi.mock('@/components/buzz/DesktopWorkspaceRail', async () => {
   const ReactModule = await import('react');
   return {
     DesktopWorkspaceRail: (props: any) => ReactModule.createElement('DesktopWorkspaceRail', props),
+  };
+});
+vi.mock('@/components/buzz/CornerGlyph', async () => {
+  const ReactModule = await import('react');
+  return {
+    CORNER_META_SIZE: 13,
+    CornerGlyph: (props: any) => ReactModule.createElement('CornerGlyph', props),
   };
 });
 vi.mock('@/components/buzz/IdentityMark', () => ({
@@ -259,6 +267,7 @@ describe('desktop Workspace navigation', () => {
     route.communityId = undefined;
     route.parent = undefined;
     route.pathname = '/beeline/channels';
+    openCornerState.current = 'working';
     viewport.width = 1280;
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
@@ -580,6 +589,39 @@ describe('desktop Workspace navigation', () => {
       { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
       { dangerouslySingular: true },
     );
+  });
+
+  it('lists open corners from the chat list with no per-Room corners read', async () => {
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="room-corners-payload" />);
+    });
+    await settle();
+
+    const glyph = control('desktop-corner-glyph-corner-a');
+    expect(glyph.type).toBe('CornerGlyph');
+    expect(glyph.props.color).toBe('#777');
+    const row = control('desktop-corner-corner-a');
+    expect(row.props.accessibilityLabel).toBe('Open corner Fix fixture, working');
+    expect(tree.root.findAllByProps({ children: 'working' }).length).toBeGreaterThan(0);
+    expect(corners).not.toHaveBeenCalled();
+  });
+
+  it('spends brass on a ready corner glyph and state label', async () => {
+    openCornerState.current = 'waiting';
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="room-corners-ready" />);
+    });
+    await settle();
+
+    const glyph = control('desktop-corner-glyph-corner-a');
+    expect(glyph.props.color).toBe('#b08a4a');
+    const label = tree.root.find(
+      (node: any) => node.type === 'Text' && node.props.children === 'waiting',
+    );
+    expect(label.props.style).toContainEqual({ color: '#b08a4a' });
+    expect(corners).not.toHaveBeenCalled();
   });
 
   it('restores a saved collapsed Room corner list', async () => {

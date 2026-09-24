@@ -1,35 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { ChatListItem, CornerListItem } from '@beeline/buzz-client';
-import type { RoomViewClient } from '@/sync/transport/room-view-client';
+import type { ChatListItem } from '@beeline/buzz-client';
 import {
   loadDesktopRoomCornersExpanded,
   saveDesktopRoomCornersExpanded,
 } from '@/buzz/desktop-workbench-state';
-import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
+import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { RoomCornerSummary } from './RoomCornerSummary';
 
 export function DesktopRoomCorners({
   item,
-  client,
-  refreshKey,
   onOpen,
   renderDrag,
   active = false,
 }: {
   item: ChatListItem;
-  client: RoomViewClient | null;
-  refreshKey: string;
   active?: boolean;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [corners, setCorners] = useState<readonly CornerListItem[] | null>(null);
-  const [error, setError] = useState(false);
-  const [retry, setRetry] = useState(0);
   const touched = React.useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -44,42 +36,16 @@ export function DesktopRoomCorners({
       cancelled = true;
     };
   }, [item.room.id, active]);
-  useEffect(() => {
-    if (!expanded || !client) return;
-    let cancelled = false;
-    setError(false);
-    void client
-      .corners(item.room.id)
-      .then((view) => {
-        if (!cancelled)
-          setCorners(
-            cornerDisplayItems(view.corners)
-              .map(({ item }) => item)
-              .filter((corner) => corner.state !== 'archived')
-              .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting')),
-          );
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    expanded,
-    client,
-    item.room.id,
-    item.cornerCount,
-    item.waitingCornerCount,
-    refreshKey,
-    retry,
-  ]);
+  // The chat list carries each Room's open corners; no per-Room corners read.
+  const corners = [...(item.openCorners ?? [])].sort(
+    (a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'),
+  );
   return (
     <View>
       <RoomCornerSummary
-        count={item.cornerCount ?? corners?.length ?? 0}
+        count={item.cornerCount ?? corners.length}
         waiting={
-          item.waitingCornerCount ?? corners?.filter((corner) => corner.state === 'waiting').length
+          item.waitingCornerCount ?? corners.filter((corner) => corner.state === 'waiting').length
         }
         expanded={expanded}
         onPress={() => {
@@ -91,42 +57,31 @@ export function DesktopRoomCorners({
       />
       {expanded && (
         <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
-          {error ? (
-            <Pressable
-              onPress={() => setRetry((value) => value + 1)}
-              accessibilityRole="button"
-              style={styles.corner}
-            >
-              <Text style={styles.name}>Could not load corners. Retry</Text>
-            </Pressable>
-          ) : corners === null ? (
-            <Text style={styles.notice}>Loading corners…</Text>
-          ) : corners.length === 0 ? (
+          {corners.length === 0 ? (
             <Text style={styles.notice}>No open corners.</Text>
           ) : (
             corners.map((corner) => {
-              const state = cornerDisplayState(corner);
+              const ready = corner.state === 'waiting';
               return (
-                <React.Fragment key={corner.corner.id}>
+                <React.Fragment key={corner.id}>
                   {renderDrag(
-                    corner.corner.id,
+                    corner.id,
                     <Pressable
-                      onPress={() => onOpen(corner.corner.id)}
+                      onPress={() => onOpen(corner.id)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Open corner ${corner.corner.name}, ${state.word.toLowerCase()}`}
+                      accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
                       style={styles.corner}
-                      testID={`desktop-corner-${corner.corner.id}`}
+                      testID={`desktop-corner-${corner.id}`}
                     >
+                      <CornerGlyph
+                        color={ready ? styles.waiting.color : styles.state.color}
+                        size={CORNER_META_SIZE}
+                        testID={`desktop-corner-glyph-${corner.id}`}
+                      />
                       <Text numberOfLines={2} style={styles.name}>
-                        {displayGroupedCornerTitle(
-                          item.room.name,
-                          corner.corner.name,
-                          corner.corner.id,
-                        )}
+                        {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
                       </Text>
-                      <Text style={[styles.state, corner.state === 'waiting' && styles.waiting]}>
-                        {state.word}
-                      </Text>
+                      <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
                     </Pressable>,
                   )}
                 </React.Fragment>

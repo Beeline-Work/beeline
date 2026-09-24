@@ -5,6 +5,8 @@ const row = (
   lifecycle: Partial<CornerLifecycleView> = {},
   latest_turn_status: string | null = null,
 ) => ({
+  id: 'corner',
+  name: 'Corner',
   parent_id: 'room',
   archived_at: null,
   lifecycle: { lifecycle: 'open', checks: 'unknown', ...lifecycle } as CornerLifecycleView,
@@ -18,7 +20,13 @@ describe('chat corner counts', () => {
       row({}, 'working'),
       row({ pr: { url: 'https://github.com/example/repo/pull/1', number: 1 } } as any),
     ]);
-    expect(result.get('room')).toEqual({ cornerCount: 4, waitingCornerCount: 2 });
+    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
+    expect(result.get('room')?.openCorners.map((corner) => corner.state)).toEqual([
+      'waiting',
+      'waiting',
+      'working',
+      'review',
+    ]);
   });
   it('excludes terminal lifecycle even before archived_at is projected', () => {
     expect(
@@ -28,6 +36,17 @@ describe('chat corner counts', () => {
         { ...row(), archived_at: new Date() },
         { ...row(), parent_id: 'another' },
       ]),
-    ).toEqual(new Map([['another', { cornerCount: 1, waitingCornerCount: 1 }]]));
+    ).toEqual(
+      new Map([
+        [
+          'another',
+          {
+            cornerCount: 1,
+            waitingCornerCount: 1,
+            openCorners: [{ id: 'corner', name: 'Corner', state: 'waiting' }],
+          },
+        ],
+      ]),
+    );
   });
 });

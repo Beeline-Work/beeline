@@ -25,7 +25,7 @@ import { issueUnreadLine, spendUnreadLine, unreadLineSpent } from './unread-line
  *   Room half-read cannot draw a second one further down on re-entry;
  * - the jump disc says the newest message is off screen. It is a way back to
  *   newest and nothing else, so Rooms show it from viewport visibility;
- *   corners also hide it at the pinned tail when viewability is stale;
+ *   the pinned tail also hides it when viewability is stale after a resize;
  * - the badge on that disc counts the unread run, and reaching the newest row
  *   clears it exactly as a tap on the disc would;
  * - catch-up eligibility, which the line itself carries as its press target.
@@ -53,7 +53,7 @@ export function useNewMessageControl({
   newestMessageId: string | null;
   firstUnreadMessageId: string | null;
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
-  /** Tail distance, which decides auto-follow and nothing this control shows. */
+  /** Tail distance, also used to suppress a stale jump disc at the visible end. */
   isPinnedToTail: () => boolean;
   /** Room unread state is disabled in corners; only the tail chevron remains. */
   enabled?: boolean;
@@ -67,7 +67,7 @@ export function useNewMessageControl({
   badgeCount: number;
   catchUpVisible: boolean;
   observeVisibleMessages: (visible: readonly ChatDisplayMessage[]) => void;
-  /** The list's scroll handler reports tail distance; only corners render it. */
+  /** The list's scroll handler reports tail distance. */
   observeTailPinned: (pinned: boolean) => void;
   settleQueueAtBoundary: (boundaryId: string) => void;
 } {
@@ -78,8 +78,8 @@ export function useNewMessageControl({
   // unanswered viewport would flash one over every Room at open.
   const [newestMessageVisible, setNewestMessageVisible] = useState(false);
   const [hasObservedVisibility, setHasObservedVisibility] = useState(false);
-  // A corner's chevron also yields to tail position, as state so a scroll that
-  // leaves the viewable set unchanged still redraws it. Rooms never set it.
+  // Tail position is state so a scroll or Android keyboard resize that leaves
+  // the viewable set unchanged still redraws the chevron.
   const [tailPinned, setTailPinned] = useState(true);
   // The glyph's own end. Set when a viewability pass AFTER the opening one
   // reports the newest row on screen — the reader's own scroll down, or their
@@ -180,9 +180,9 @@ export function useNewMessageControl({
 
   const observeTailPinned = useCallback(
     (pinned: boolean) => {
-      if (!enabled) setTailPinned(pinned);
+      setTailPinned(pinned);
     },
-    [enabled],
+    [],
   );
 
   const settleQueueAtBoundary = useCallback(
@@ -206,10 +206,10 @@ export function useNewMessageControl({
         newestMessageVisible,
         hasObservedVisibility,
       }) &&
-      // An inverted corner list can retain an older viewability report while
-      // opening at offset zero. Tail position is decisive for its bare
-      // chevron; corners have no unread state to reconcile with that report.
-      (enabled || !tailPinned),
+      // An inverted list can retain an older viewability report after the
+      // keyboard resizes it back to offset zero. The newest row is visible at
+      // that position, so neither Room nor corner needs a jump control.
+      !tailPinned,
     badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
     // The offer rides the line, so it cannot outlive it: no line drawn, no
     // offer, and reaching the tail takes both.

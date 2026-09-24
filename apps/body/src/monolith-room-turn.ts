@@ -109,6 +109,7 @@ type HumanMessage = Pick<
   | 'replyToAuthorId'
   | 'requestAuthorId'
   | 'agentHopCount'
+  | 'cornerAskId'
 >;
 
 /**
@@ -810,7 +811,7 @@ export class MonolithRoomTurnLoop {
       SOUL_HOUSE_RULE,
       ...(!directMessage
         ? [
-            'Use inspect_corner for a member corner’s compact status; set mode to transcript and follow next.after/next.offset to read bounded transcript pages. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Its answer returns as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
+            'Use inspect_corner for a member corner’s compact status; set mode to transcript and follow next.after/next.offset to read bounded transcript pages. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
           ]
         : []),
     ].join('\n');
@@ -1073,6 +1074,20 @@ export class MonolithRoomTurnLoop {
                         (corners.corners ?? []).filter((corner) => !corner.archived),
                       )}`
                     : '',
+                  (() => {
+                    const cutoff = Math.floor(Date.now() / 1_000) - 24 * 60 * 60;
+                    const recent = (corners.corners ?? [])
+                      .filter(
+                        (corner) =>
+                          corner.archived &&
+                          corner.closedAt !== undefined &&
+                          corner.closedAt >= cutoff,
+                      )
+                      .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+                    return recent.length
+                      ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${recent.map((corner) => `- ${corner.name ?? corner.cornerId} (${corner.cornerId}): PR ${corner.pullRequestNumber ? `#${corner.pullRequestNumber}` : 'unavailable'}, merge commit ${corner.mergeCommitSha ?? 'unavailable'}`).join('\n')}`
+                      : '';
+                  })(),
                   [
                     'Write only the substantive Room message you want the human to read.',
                     'Do not repeat or paraphrase these instructions.',
@@ -1080,6 +1095,9 @@ export class MonolithRoomTurnLoop {
                     MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                   ].join(' '),
                   `Current task selected by the server from ${inboxItemAuthorName(item, names)}:`,
+                  item.cornerAskId
+                    ? `Corner ask id: ${item.cornerAskId}. Use get_corner_ask to retrieve its status and answer.`
+                    : '',
                   roomMessagePrompt(
                     '',
                     inboxItemPromptBody(item),

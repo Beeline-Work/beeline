@@ -251,7 +251,9 @@ export function parseTaggedAgentLifecycleCommand(
   handle: string | null,
 ): TaggedAgentLifecycleCommand | undefined {
   if (!handle) return undefined;
-  const match = text.trim().match(/^@([^\s]+)\s+(?:\/(restart)|(restart|status|stop|retry|debug|help))$/i);
+  const match = text
+    .trim()
+    .match(/^@([^\s]+)\s+(?:\/(restart)|(restart|status|stop|retry|debug|help))$/i);
   if (!match || match[1]!.toLocaleLowerCase() !== handle.toLocaleLowerCase()) return undefined;
   return (match[2] ?? match[3])!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
 }
@@ -892,12 +894,13 @@ export async function readAgentCommands(
       attachments: RoomInboxResult['items'][number]['attachments'];
       system_event: RoomInboxResult['items'][number]['systemEvent'];
       presentation: string;
+      corner_ask_id: string | null;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
@@ -944,6 +947,7 @@ export async function readAgentCommands(
         attachments: r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,
+        ...(r.corner_ask_id ? { cornerAskId: r.corner_ask_id } : {}),
         systemEvent: r.system_event,
         ...(r.reply_to_message_id ? { replyToMessageId: r.reply_to_message_id } : {}),
         ...(r.reply_to_author_id ? { replyToAuthorId: r.reply_to_author_id } : {}),

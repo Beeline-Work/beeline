@@ -98,9 +98,7 @@ export function shouldPostInitialCornerWorkingState(
  * merged pull request (whose server-side merge handler already deleted the
  * branch) or the absence of any pull request makes the branch safe to remove.
  */
-export function cornerBranchIsSafeToDelete(
-  lifecycle?: CornerRestoreResult['lifecycle'],
-): boolean {
+export function cornerBranchIsSafeToDelete(lifecycle?: CornerRestoreResult['lifecycle']): boolean {
   const pr = lifecycle?.pr;
   return !pr || Boolean(pr.mergedAt);
 }
@@ -500,9 +498,9 @@ export class RoomRuntimeCoordinator {
     // this. Optional like the wake above: a stub API without the listener
     // still reconciles, and the per-turn currency check remains the net.
     this.options.daemonApi.setConfigChangedListener?.(() => {
-      void this.scheduler.suspendIdle().catch((error) =>
-        console.error('[body] config-change session restart failed', error),
-      );
+      void this.scheduler
+        .suspendIdle()
+        .catch((error) => console.error('[body] config-change session restart failed', error));
       void Promise.resolve(this.options.onConfigChanged?.()).catch((error) =>
         console.error('[body] config-change catalog refresh failed', error),
       );
@@ -1042,6 +1040,7 @@ export class RoomRuntimeCoordinator {
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         worktreePath: workspacePath,
+        lane: restore.lane,
         ...(restore.requesterHandle ? { requesterHandle: restore.requesterHandle } : {}),
         ...(worktree
           ? {
@@ -1365,7 +1364,13 @@ function githubGitEnv(token: string): NodeJS.ProcessEnv {
 
 async function gitRefExists(gitCommonDir: string, ref: string): Promise<boolean> {
   try {
-    await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'show-ref', '--verify', '--quiet', ref]);
+    await execFileAsync('git', [
+      `--git-dir=${gitCommonDir}`,
+      'show-ref',
+      '--verify',
+      '--quiet',
+      ref,
+    ]);
     return true;
   } catch (error) {
     if ((error as { code?: number }).code === 1) return false;
@@ -1407,10 +1412,14 @@ async function deleteExactRemoteBranch(
 ): Promise<void> {
   const authEnv = githubGitEnv(token);
   const listRemote = () =>
-    execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'ls-remote', '--heads', 'origin', remoteRef], {
-      env: authEnv,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    execFileAsync(
+      'git',
+      [`--git-dir=${gitCommonDir}`, 'ls-remote', '--heads', 'origin', remoteRef],
+      {
+        env: authEnv,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
   if (options.requireAbsent) {
     const remote = await listRemote();
     if (remote.stdout.trim()) {
@@ -1425,10 +1434,14 @@ async function deleteExactRemoteBranch(
     try {
       const remote = await listRemote();
       if (remote.stdout.trim()) {
-        await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'push', 'origin', `:${remoteRef}`], {
-          env: authEnv,
-          maxBuffer: 4 * 1024 * 1024,
-        });
+        await execFileAsync(
+          'git',
+          [`--git-dir=${gitCommonDir}`, 'push', 'origin', `:${remoteRef}`],
+          {
+            env: authEnv,
+            maxBuffer: 4 * 1024 * 1024,
+          },
+        );
       }
       return;
     } catch (error) {

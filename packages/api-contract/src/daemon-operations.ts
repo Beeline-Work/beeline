@@ -662,11 +662,12 @@ export type CreateCornerInput = TurnOutputAuthority &
      * `no_code` skips the worktree, the commit, the pull request and the merge:
      * the work comes back as artifacts and a reply tagging the requester. A
      * corner with no repository is `no_code` whatever this says.
+     * `research` keeps a writable worktree under a durable delivery and merge hold.
      */
     readonly lane?: CornerLane;
   };
 export type CornerResult = { readonly cornerId: string };
-export type CornerLane = 'code' | 'no_code';
+export type CornerLane = 'code' | 'no_code' | 'research';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

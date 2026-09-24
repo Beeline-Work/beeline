@@ -20,7 +20,9 @@ const saveDesktopRoomCornersExpanded = vi.hoisted(() =>
     roomCornersExpanded.set(roomId, expanded);
   }),
 );
-const openCornerState = vi.hoisted(() => ({ current: 'working' as 'working' | 'waiting' }));
+const openCornerState = vi.hoisted(() => ({
+  current: 'working' as 'working' | 'waiting' | 'review',
+}));
 const corners = vi.hoisted(() => vi.fn());
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
@@ -600,14 +602,29 @@ describe('desktop Workspace navigation', () => {
 
     const glyph = control('desktop-corner-glyph-corner-a');
     expect(glyph.type).toBe('CornerGlyph');
-    expect(glyph.props.color).toBe('#777');
+    expect(glyph.props.color).toBeUndefined();
     const row = control('desktop-corner-corner-a');
     expect(row.props.accessibilityLabel).toBe('Open corner Fix fixture, working');
     expect(tree.root.findAllByProps({ children: 'working' }).length).toBeGreaterThan(0);
     expect(corners).not.toHaveBeenCalled();
   });
 
-  it('spends brass on a ready corner glyph and state label', async () => {
+  it.each(['working', 'review'] as const)('keeps a %s state label quiet', async (state) => {
+    openCornerState.current = state;
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key={`room-corners-${state}`} />);
+    });
+    await settle();
+
+    const label = tree.root.find(
+      (node: any) => node.type === 'Text' && node.props.children === state,
+    );
+    expect(label.props.style).toContainEqual(expect.objectContaining({ color: '#777' }));
+    expect(label.props.style).not.toContainEqual({ color: '#b08a4a' });
+  });
+
+  it('spends brass only on a ready corner state label, never restaining the glyph', async () => {
     openCornerState.current = 'waiting';
     route.pathname = '/beeline/chat/room-a';
     await act(async () => {
@@ -615,8 +632,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    const glyph = control('desktop-corner-glyph-corner-a');
-    expect(glyph.props.color).toBe('#b08a4a');
+    expect(control('desktop-corner-glyph-corner-a').props.color).toBeUndefined();
     const label = tree.root.find(
       (node: any) => node.type === 'Text' && node.props.children === 'waiting',
     );

@@ -74,7 +74,6 @@ export function DesktopRoomCorners({
                       testID={`desktop-corner-${corner.id}`}
                     >
                       <CornerGlyph
-                        color={ready ? styles.waiting.color : styles.state.color}
                         size={CORNER_META_SIZE}
                         testID={`desktop-corner-glyph-${corner.id}`}
                       />

@@ -109,6 +109,7 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
+  await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
   await db.query(
     `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
   );
@@ -501,22 +502,45 @@ it('gives old helpers only projected commands and refuses unsolicited old output
 it('wakes the opener for failed checks even after a reviewer turn and retries a lost command', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   const reviewerSource = await send('Review this', C);
-  await db.transaction((tx) => routeSystemCommand(tx, {
-    roomId: C, sourceMessageId: reviewerSource.messageId, targets: [A], kind: 'joined',
-  }));
+  await db.transaction((tx) =>
+    routeSystemCommand(tx, {
+      roomId: C,
+      sourceMessageId: reviewerSource.messageId,
+      targets: [A],
+      kind: 'joined',
+    }),
+  );
   const [review] = await commands(A, C);
   await claim(review!);
   await result(review!, 'Review complete');
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   const headSha = 'e'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`, [C,
-    JSON.stringify({ checks: 'failing', pr: { number: 31, headSha, title: 'Fix checks', url: 'https://github.com/acme/repo/pull/31' } }),
-  ]);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'failing',
+        pr: {
+          number: 31,
+          headSha,
+          title: 'Fix checks',
+          url: 'https://github.com/acme/repo/pull/31',
+        },
+      }),
+    ],
+  );
   const note = await systemLine(db, {
-    roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
-    verb: 'failed a check', kind: 'check-failed', object: { text: 'typecheck', headSha },
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'failed a check',
+    kind: 'check-failed',
+    object: { text: 'typecheck', headSha },
   });
-  expect(await commands(B, C)).toEqual([expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id })]);
+  expect(await commands(B, C)).toEqual([
+    expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
+  ]);
   expect(await commands(A, C)).toHaveLength(0);
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
@@ -526,11 +550,23 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
 
 it('recovers a dirty PR lifecycle once per head and retries an undelivered conflict', async () => {
   const headSha = 'f'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
-    JSON.stringify({ checks: 'passing', pr: { number: 32, headSha, title: 'Resolve conflict', url: 'https://github.com/acme/repo/pull/32', mergeability: 'dirty' } }),
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      checks: 'passing',
+      pr: {
+        number: 32,
+        headSha,
+        title: 'Resolve conflict',
+        url: 'https://github.com/acme/repo/pull/32',
+        mergeability: 'dirty',
+      },
+    }),
   ]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
-  expect(await commands(B, C)).toEqual([expect.objectContaining({ reason: 'corner_merge_conflict' })]);
+  expect(await commands(B, C)).toEqual([
+    expect.objectContaining({ reason: 'corner_merge_conflict' }),
+  ]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
@@ -547,18 +583,45 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
 
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
   const headSha = '9'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`, [C,
-    JSON.stringify({ checks: 'failing', pr: { number: 33, headSha, title: 'Repair CI', url: 'https://github.com/acme/repo/pull/33' } }),
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'failing',
+        pr: {
+          number: 33,
+          headSha,
+          title: 'Repair CI',
+          url: 'https://github.com/acme/repo/pull/33',
+        },
+      }),
+    ],
+  );
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    C,
+    B,
   ]);
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [C, B]);
   await systemLine(db, {
-    roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
-    verb: 'failed a check', kind: 'check-failed', object: { text: 'typecheck', headSha },
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'failed a check',
+    kind: 'check-failed',
+    object: { text: 'typecheck', headSha },
   });
-  expect((await db.query<{ command_check_state: string | null }>(
-    `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`, [C],
-  )).rows[0]?.command_check_state).toBeNull();
-  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [C, B]);
+  expect(
+    (
+      await db.query<{ command_check_state: string | null }>(
+        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
+        [C],
+      )
+    ).rows[0]?.command_check_state,
+  ).toBeNull();
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [
+    C,
+    B,
+  ]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
 });
@@ -1118,7 +1181,7 @@ it('settles a failed command instead of redelivering it after its lease expires'
       requestId: c!.turnRequestId,
       generationId: 'g1',
       status: 'failed',
-      reason: 'provider failed',
+      reason: 'authentication required',
     },
     A,
   );
@@ -1489,18 +1552,40 @@ describe('Room/corner relays', () => {
     });
     const cornerCommand = (await commands(B, C))[0]!;
     expect(cornerCommand.reason).toBe('relay_question');
+    expect(
+      await daemon.execute('getCornerAsk', { roomId: R, askId: question.id }, A),
+    ).toMatchObject({
+      askId: question.id,
+      status: 'pending',
+      question: 'What remains?',
+    });
+    await expect(
+      daemon.execute('getCornerAsk', { roomId: R, askId: question.id }, B),
+    ).rejects.toThrow('corner ask not found');
     await claim(cornerCommand);
     const answer = await result(cornerCommand, 'The tests remain.');
     const reports = await db.query<{
       id: string;
-      card: { anchorMessageId: string; direction: string };
+      card: { anchorMessageId: string; direction: string; askId: string };
     }>(
       `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='relay'
        AND card->>'direction'='up' AND text='The tests remain.'`,
       [R],
     );
     expect(reports.rows).toHaveLength(1);
-    expect(reports.rows[0]!.card).toMatchObject({ anchorMessageId: anchor, direction: 'up' });
+    expect(reports.rows[0]!.card).toMatchObject({
+      anchorMessageId: anchor,
+      direction: 'up',
+      askId: question.id,
+    });
+    expect(
+      await daemon.execute('getCornerAsk', { roomId: R, askId: question.id }, A),
+    ).toMatchObject({
+      status: 'answered',
+      answer: 'The tests remain.',
+    });
+    const wake = (await commands(A)).find((item) => item.reason === 'relay_answer');
+    expect(wake?.source).toMatchObject({ cornerAskId: question.id, body: 'The tests remain.' });
     expect(
       (await phone.readRoom(R, H))!.messages.find((message) => message.id === reports.rows[0]!.id)
         ?.relay,
@@ -1519,6 +1604,33 @@ describe('Room/corner relays', () => {
       ).rowCount,
     ).toBe(1);
     await result(roomCommand, 'Asked the corner.');
+  });
+
+  it('reports an unanswered ask once when its corner closes', async () => {
+    await send('@hoots ask the corner');
+    const roomCommand = (await commands(A))[0]!;
+    await claim(roomCommand);
+    const question = await result(roomCommand, 'What remains?', 'g1', {
+      relay: { fromRoomId: R, toRoomId: C, direction: 'down', reply: 'once' },
+    });
+    await daemon.execute('archiveCorner', { cornerId: C }, B);
+    expect(
+      await daemon.execute('getCornerAsk', { roomId: R, askId: question.id }, A),
+    ).toMatchObject({
+      status: 'unanswered',
+      question: 'What remains?',
+    });
+    const wake = (await commands(A)).find((item) => item.reason === 'relay_unanswered');
+    expect(wake?.source).toMatchObject({ cornerAskId: question.id });
+    await daemon.execute('archiveCorner', { cornerId: C }, B);
+    expect(
+      (
+        await db.query(
+          `SELECT id FROM messages WHERE room_id=$1 AND card_type='relay' AND card->>'unanswered'='true' AND card->>'askId'=$2`,
+          [R, question.id],
+        )
+      ).rowCount,
+    ).toBe(1);
   });
 
   it.each([A, B])(

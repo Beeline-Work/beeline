@@ -113,12 +113,14 @@ describe('open_corner arguments', () => {
 it('advertises deliberate corner reads, steers, and questions only in Rooms', () => {
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('steer_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('ask_corner');
+  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('get_corner_ask');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('inspect_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).not.toContain('report_to_room');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('report_to_room');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('steer_corner');
   expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('steer_corner');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('ask_corner');
+  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('get_corner_ask');
   expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('inspect_corner');
   expect(readFileSync(new URL('./monolith-room-turn.ts', import.meta.url), 'utf8')).toContain(
     'For a specific question that needs one answer, use ask_corner.',

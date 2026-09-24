@@ -15,6 +15,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
@@ -1499,6 +1500,12 @@ export class GitHubOperations {
           },
         },
       });
+      await reportUnansweredCornerAsks(
+        database,
+        target.corner_id,
+        target.parent_id,
+        target.corner_name,
+      );
     });
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);

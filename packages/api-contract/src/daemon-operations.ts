@@ -111,6 +111,16 @@ export type DaemonOperationMap = {
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
+  getCornerAsk: Operation<
+    RoomInput & { readonly askId: string },
+    {
+      readonly askId: string;
+      readonly cornerId: string;
+      readonly question: string;
+      readonly status: 'pending' | 'answered' | 'unanswered';
+      readonly answer?: string;
+    }
+  >;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
@@ -338,6 +348,8 @@ export type RoomInboxResult = {
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
+    /** Present on a corner answer or unanswered-close report. */
+    readonly cornerAskId?: string;
     readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */

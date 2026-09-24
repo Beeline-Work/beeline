@@ -147,11 +147,14 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Share: { share },
+    Platform: { OS: 'ios' },
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
+    Pressable: host('Pressable'),
+    Linking: { openURL: vi.fn(async () => undefined) },
     View: host('View'),
   };
 });
@@ -164,6 +167,7 @@ const unistylesTheme = vi.hoisted(() => ({
       sectionHead: { fontSize: 10 },
       machine: { fontSize: 13 },
     },
+    agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     layout: { row: 64, sectionGap: 24 },
     radius: 3,
@@ -294,6 +298,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 
 import MembersScreen from './members';
+import { router } from 'expo-router';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /**
@@ -413,6 +418,17 @@ async function press(renderer: ReactTestRenderer, testID: string): Promise<void>
   await act(async () => {
     await renderer.root.findByProps({ testID }).props.onPress();
   });
+}
+
+async function openAgentProfile(renderer: ReactTestRenderer): Promise<void> {
+  await act(async () => {
+    renderer.update(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
+  });
+}
+
+async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
+  await openAgentProfile(renderer);
+  await press(renderer, 'agent-tab-manage');
 }
 
 beforeEach(() => {
@@ -580,7 +596,7 @@ describe('Members workspace management', () => {
 
   it('shows the connected owner on the agent profile', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
   });
 
@@ -599,7 +615,7 @@ describe('Members workspace management', () => {
     ]);
     expect(chevronDirections(agentRow)).toEqual(['right']);
 
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
@@ -676,9 +692,15 @@ describe('Members workspace management', () => {
     await press(renderer, `member-${MEMBER}-identity`);
     await press(renderer, `message-person-${MEMBER}`);
     expect(renderer.root.findByProps({ testID: 'member-actions' }).props.visible).toBe(false);
-    expect(renderer.root.findAllByType('Text' as any).some((node: any) =>
-      String(node.props.children).includes('Could not open message: Error: network unavailable'),
-    )).toBe(true);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node: any) =>
+          String(node.props.children).includes(
+            'Could not open message: Error: network unavailable',
+          ),
+        ),
+    ).toBe(true);
   });
 
   it('keeps the member when removal confirmation is canceled', async () => {
@@ -738,7 +760,7 @@ describe('Members workspace management', () => {
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(
@@ -792,7 +814,7 @@ describe('Members workspace management', () => {
       selected: { model: 'sonnet', effort: 'low' },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'model-axis-model');
     await press(renderer, 'model-option-model-opus');
 
@@ -809,7 +831,7 @@ describe('Members workspace management', () => {
       selected: { model: 'openrouter/z-ai/glm-5.3-flash' },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     expect(renderer.root.findAllByProps({ testID: 'model-catalog-missing' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(
@@ -830,7 +852,7 @@ describe('Members workspace management', () => {
   it('refreshes missing effort choices from the live catalog', async () => {
     state.agent = { ...baseAgent(), catalog: [], selected: undefined };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'model-axis-effort');
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
     expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
@@ -841,7 +863,7 @@ describe('Members workspace management', () => {
     state.agent = { ...baseAgent(), catalog: [], selected: { model: 'sonnet' } };
     client.refreshAgentModelCatalog.mockRejectedValueOnce(new Error('agent offline'));
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'model-axis-effort');
 
     expect(renderer.root.findByProps({ testID: 'model-axis-error-effort' }).props.children).toBe(
@@ -852,7 +874,7 @@ describe('Members workspace management', () => {
   it('marks a persisted model that failed live startup validation', async () => {
     state.agent = { ...baseAgent(), modelUnavailable: 'model' };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     expect(renderer.root.findByProps({ testID: 'model-unavailable-model' }).props.children).toBe(
       '!',
     );
@@ -860,7 +882,7 @@ describe('Members workspace management', () => {
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'edit-agent-soul');
     await act(async () => {
       renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
@@ -879,7 +901,7 @@ describe('Members workspace management', () => {
 
   it('opens the soul editor on the running soul with no seeded restore control', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'edit-agent-soul');
     // The editor opens on what the agent is actually running under.
     expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
@@ -891,7 +913,7 @@ describe('Members workspace management', () => {
 
   it('writes the seeded soul back when the owner pastes it in', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'edit-agent-soul');
     await act(async () => {
       renderer.root
@@ -908,14 +930,14 @@ describe('Members workspace management', () => {
 
   it('keeps the soul input on the theme text token with a themed placeholder', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     await press(renderer, 'edit-agent-soul');
     const input = renderer.root.findByProps({ testID: 'agent-soul-instructions' });
     expect(input.props.style.color).toBe(unistylesTheme.buzz.textPrimary);
     expect(input.props.placeholderTextColor).toBe(unistylesTheme.buzz.textMuted);
   });
 
-  it('leaves agent rows inert for a member who is neither admin nor owner', async () => {
+  it('lets ordinary members open profiles without expanding roster rows', async () => {
     state.workspace = {
       ...baseWorkspace(),
       viewer: {
@@ -926,54 +948,103 @@ describe('Members workspace management', () => {
     };
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
-    expect(row.props.disabled).toBe(true);
-    expect(row.props.onPress).toBeUndefined();
+    expect(row.props.disabled).toBe(false);
+    expect(typeof row.props.onPress).toBe('function');
+    expect(chevronDirections(row)).toEqual(['right']);
+    await press(renderer, `agent-${AGENT}-identity`);
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-    expect(
-      chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
-    ).toEqual([]);
-  });
-
-  it('keeps agent rows clickable with their chevron for admin and owner viewers', async () => {
-    for (const role of ['admin', 'owner'] as const) {
-      state.workspace = baseWorkspace(role);
-      const renderer = await render();
-      const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
-      expect(row.props.disabled).toBe(false);
-      expect(typeof row.props.onPress).toBe('function');
-      await press(renderer, `agent-${AGENT}-identity`);
-      expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeTruthy();
-      expect(
-        chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
-      ).toEqual(['down']);
-    }
   });
 
   it('shows the seeded soul when its owner has not written one', async () => {
     state.agent = { ...baseAgent(), soul: undefined };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
     expect(renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children).toBe(
       state.agent.seededSoul,
     );
   });
 
-  it('uses a pencil control and collapses the detail from the open row', async () => {
+  it('shows ordinary members the profile and Message action without management', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    state.agent = {
+      ...baseAgent(),
+      access: { policy: 'everyone', canChange: false, owner: { id: OWNER, name: 'Captain' } },
+    };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentProfile(renderer);
+    expect(renderer.root.findAllByProps({ testID: 'agent-tab-manage' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
+      state.agent.soul.instructions,
+    );
+    expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
+    await press(renderer, 'agent-profile-message');
+    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
+  });
 
-    expect(
-      renderer.root.findByProps({ testID: 'edit-agent-soul' }).findByType('Text').props.children,
-    ).toBe('✎');
-    expect(renderer.root.findAllByProps({ testID: 'close-agent-settings' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'rename-agent' })).toHaveLength(0);
-    await press(renderer, `agent-${AGENT}-identity`);
+  it('keeps a profile read failure and Retry after a successful workspace refresh', async () => {
+    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    expect(renderer.root.findAllByProps({ label: 'Retry' })).not.toHaveLength(0);
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    const refresh = subscriptions.at(-1)![1];
+    const readsBeforeRefresh = roomView.workspace.mock.calls.length;
+    await act(async () => refresh());
+    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
+    const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
+    expect(retry).toBeDefined();
+    await act(async () => retry.props.onPress());
+    expect(roomView.agent).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+  });
+
+  it('retries a failed profile read without collapsing the profile', async () => {
+    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
+    await act(async () => retry.props.onPress());
+    expect(roomView.agent).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+  });
+
+  it('opens the profile route from a roster identity without inline settings', async () => {
+    const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/beeline/agent-profile',
+      params: { communityId: WORKSPACE, agentId: AGENT },
+    });
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeDefined();
+  });
+
+  it('separates profile reading from management', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: 'edit-agent-soul' })).toBeDefined();
+    await press(renderer, 'agent-tab-profile');
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
+      state.agent.soul.instructions,
+    );
+    expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
   });
 
   it('lets the owner open the agent to everyone, and names who to ask until they do', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
     expect(toggle.props.disabled).toBe(false);
@@ -1041,7 +1112,7 @@ describe('Members workspace management', () => {
       yolo: { enabled: false, canChange: false },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
@@ -1055,7 +1126,7 @@ describe('Members workspace management', () => {
 
   it('lets the owner flip yolo and shows who set it', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     const toggle = renderer.root.findByProps({ testID: 'agent-yolo-switch' });
     expect(toggle.props.disabled).toBe(false);
@@ -1089,7 +1160,7 @@ describe('Members workspace management', () => {
       yolo: { enabled: false, forcedOff: true, canChange: true },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props).toMatchObject({
       disabled: true,
@@ -1127,7 +1198,7 @@ describe('Members workspace management', () => {
 
   it('flips yolo optimistically and rolls back with the server message when refused', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     let settle!: () => void;
     const pending = new Promise<void>((resolve) => (settle = resolve));
@@ -1157,9 +1228,9 @@ describe('Members workspace management', () => {
 
   it('warns about and invokes the full removeAgent host teardown path', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
-    // The control sits beside the agent's handle and its owner byline.
+    // Management names the agent and owner before offering removal.
     expect(renderer.root.findByProps({ testID: 'agent-handle' }).props.children).toBe('@clara');
     expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
@@ -1180,14 +1251,12 @@ describe('Members workspace management', () => {
 
   it('draws a removed agent nowhere: no row, no count, no open detail', async () => {
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
-    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
-      'Agents ',
-      1,
-    ]);
-
+    await openAgentManagement(renderer);
     await press(renderer, 'remove-agent');
 
+    await act(async () => {
+      renderer.update(React.createElement(MembersScreen, { key: 'roster-return' }));
+    });
     // The server stops naming it, so the screen stops drawing it — the row,
     // the count, and the detail the removal was performed from.
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
@@ -1222,7 +1291,7 @@ describe('Members workspace management', () => {
       ],
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    await openAgentManagement(renderer);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-grants' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);

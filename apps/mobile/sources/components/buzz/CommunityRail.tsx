@@ -51,10 +51,8 @@ type CommunityRailProps = {
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
   onSettings: () => void;
-  onWorkspaceSettings?: (communityId: string) => void;
   /** Long-press a Workspace tile to arm its exit affordance; confirm from there. */
   onLeaveWorkspace?: (communityId: string) => void;
-  canManageActiveCommunity?: boolean;
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
   viewerFace?: string;
@@ -102,7 +100,11 @@ function RailButton({
         testID={testID}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={[styles.railButton, active && styles.railButtonCurrent, column && styles.columnButton]}
+        style={[
+          styles.railButton,
+          active && styles.railButtonCurrent,
+          column && styles.columnButton,
+        ]}
       >
         {children}
       </TouchableOpacity>
@@ -166,9 +168,7 @@ export function CommunityRail({
   onSelect,
   onAdd,
   onSettings,
-  onWorkspaceSettings,
   onLeaveWorkspace,
-  canManageActiveCommunity = false,
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
@@ -178,11 +178,6 @@ export function CommunityRail({
   const column = presentation === 'column';
   // Long-press arms ONE tile's exit affordance; any other tap dismisses it.
   const [exitArmedId, setExitArmedId] = useState<string | null>(null);
-  const activeCommunity =
-    communities.find((community) => community.communityId === activeCommunityId) ?? null;
-  const showsWorkspaceSettings = Boolean(
-    activeCommunity && canManageActiveCommunity && onWorkspaceSettings,
-  );
   return (
     // No surface of its own: the rail is the same obsidian as the screen it
     // slides over, held apart by one hairline edge.
@@ -268,29 +263,16 @@ export function CommunityRail({
             </RailButton>
           );
         })}
-      </ScrollView>
-
-      {/* Commands, not identities: one zone, separated by a hairline rather
-          than by a box around each control. */}
-      <View style={styles.railDivider} />
-      <RailCommand
-        accessibilityLabel={`Create or join a ${WORKSPACE_LABEL}`}
-        glyph="＋"
-        label={column ? `ADD ${WORKSPACE_LABEL.toUpperCase()}` : 'ADD'}
-        onPress={onAdd}
-        testID="community-rail-add"
-        presentation={presentation}
-      />
-      {showsWorkspaceSettings && activeCommunity && (
         <RailCommand
-          accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL}`}
-          glyph="⚙"
-          label="WORKSPACE"
-          onPress={() => onWorkspaceSettings?.(activeCommunity.communityId)}
-          testID={`workspace-settings-${activeCommunity.communityId}`}
+          accessibilityLabel={`Create or join a ${WORKSPACE_LABEL}`}
+          glyph="＋"
+          label={column ? `ADD ${WORKSPACE_LABEL.toUpperCase()}` : 'ADD'}
+          onPress={onAdd}
+          testID="community-rail-add"
           presentation={presentation}
         />
-      )}
+      </ScrollView>
+
       <View style={styles.railDivider} />
       <RailCommand
         accessibilityLabel="Settings"
@@ -422,9 +404,7 @@ export function BuzzCommunityShell({
   onSelect,
   onAdd,
   onSettings,
-  onWorkspaceSettings,
   onLeaveWorkspace,
-  canManageActiveCommunity,
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
@@ -486,14 +466,6 @@ export function BuzzCommunityShell({
     onSettings();
   }, [closeDrawer, onSettings]);
 
-  const workspaceSettingsAndClose = useCallback(
-    (communityId: string) => {
-      closeDrawer();
-      onWorkspaceSettings?.(communityId);
-    },
-    [closeDrawer, onWorkspaceSettings],
-  );
-
   const drawerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: drawerX.value }],
   }));
@@ -521,9 +493,7 @@ export function BuzzCommunityShell({
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
                 onSettings={settingsAndClose}
-                onWorkspaceSettings={workspaceSettingsAndClose}
                 onLeaveWorkspace={onLeaveWorkspace}
-                canManageActiveCommunity={canManageActiveCommunity}
                 viewerPubkey={viewerPubkey}
                 viewerAvatarUrl={viewerAvatarUrl}
                 viewerFace={viewerFace}

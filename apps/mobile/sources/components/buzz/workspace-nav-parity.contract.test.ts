@@ -51,11 +51,11 @@ describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
     );
   });
 
-  it('keeps the named ADD, WORKSPACE and SETTINGS foot commands (never bare glyphs)', () => {
+  it('keeps named ADD and SETTINGS rail commands and no Workspace Settings command', () => {
     expect(rail).toContain("'ADD'");
     expect(rail).toContain('`ADD ${WORKSPACE_LABEL.toUpperCase()}`');
-    expect(rail).toContain("label=\"WORKSPACE\"");
-    expect(rail).toContain("label=\"SETTINGS\"");
+    expect(rail).toContain('label="SETTINGS"');
+    expect(rail).not.toContain('label="WORKSPACE"');
   });
 
   it('keeps the desktop rail as the reference tile (48px, 14px radius, 2px bezel, left pill)', () => {

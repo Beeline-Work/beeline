@@ -293,7 +293,9 @@ describe('phone surface readers', () => {
   for (const entry of cases) {
     describe(entry.name, () => {
       it('keeps the view when an unknown field arrives', () => {
-        expect(entry.read({ ...entry.base, unexpectedServerField: { nested: true } })).not.toBeNull();
+        expect(
+          entry.read({ ...entry.base, unexpectedServerField: { nested: true } }),
+        ).not.toBeNull();
       });
 
       for (const optional of entry.optionals) {
@@ -312,7 +314,11 @@ describe('phone surface readers', () => {
   it('drops an unreadable list entry instead of blanking the Room', () => {
     const view = readRoomView({
       ...currentRoom,
-      messages: [message, { id: 'not-a-message' }, { ...message, id: 'd'.repeat(64), text: 'kept' }],
+      messages: [
+        message,
+        { id: 'not-a-message' },
+        { ...message, id: 'd'.repeat(64), text: 'kept' },
+      ],
     });
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
@@ -347,7 +353,10 @@ describe('phone surface readers', () => {
       ...currentRoom,
       messages: [{ ...message, grantRequest }],
     });
-    expect(view?.messages[0]?.grantRequest).toMatchObject({ sourceRoomId: roomId, sourceMessageId });
+    expect(view?.messages[0]?.grantRequest).toMatchObject({
+      sourceRoomId: roomId,
+      sourceMessageId,
+    });
 
     const invalid = readRoomViewMessage({
       ...message,
@@ -575,5 +584,28 @@ describe('Room payload compatibility in both directions', () => {
   it('renders the older server shape after this bundle and the newer shape before a later server change', () => {
     expect(readRoomView(legacyServerRoom)?.messages).toEqual([]);
     expect(readRoomView(futureServerRoom)?.messages[0]?.text).toBe('Change course');
+  });
+});
+
+describe('agent profile recent work', () => {
+  const profile = {
+    workspaceId,
+    agent: { identity: agent, role: 'member' },
+    catalog: [],
+    watchFilters: [],
+  };
+  it('reads old servers without work and rejects unsafe links without dropping the profile', () => {
+    expect(readAgentDetailView(profile)?.recentWork).toEqual([]);
+    const work = { title: 'Visible merged work', url: 'https://github.com/acme/repo/pull/12' };
+    expect(
+      readAgentDetailView({
+        ...profile,
+        recentWork: [
+          work,
+          { title: 'Unsafe', url: 'javascript:alert(1)' },
+          { title: 'Other host', url: 'https://evil.example/acme/repo/pull/1' },
+        ],
+      })?.recentWork,
+    ).toEqual([work]);
   });
 });

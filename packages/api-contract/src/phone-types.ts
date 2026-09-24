@@ -674,6 +674,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  /** Merged PRs opened by this agent in corners the viewer may read. */
+  readonly recentWork?: readonly { readonly title: string; readonly url: string }[];
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
   /** The person who connected and owns this agent's configuration. */

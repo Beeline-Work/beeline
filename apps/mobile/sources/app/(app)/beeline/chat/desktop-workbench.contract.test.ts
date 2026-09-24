@@ -70,8 +70,8 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain('const desktopWorkHandleMounted =');
     expect(room).toContain("workPaneMode === 'dismissed'");
     expect(room).toContain('hasLiveDesktopCorners');
-    expect(room).toContain('{desktopWorkPaneMounted && (');
-    expect(room).toContain('{desktopWorkHandleMounted && (');
+    expect(room).toContain('{!profileAgentId && desktopWorkPaneMounted && (');
+    expect(room).toContain('{!profileAgentId && desktopWorkHandleMounted && (');
     // Pane events are no-ops there, so the person's persisted preference is
     // never overwritten by a channel that has nothing to show.
     expect(room).toContain('desktopWorkPaneEventApplies(event, isDirectMessage)');

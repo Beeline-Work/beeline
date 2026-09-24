@@ -3,10 +3,6 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./workspace.tsx', import.meta.url), 'utf8');
-const railSource = readFileSync(
-  new URL('../../../../components/buzz/CommunityRail.tsx', import.meta.url),
-  'utf8',
-);
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);
@@ -23,14 +19,9 @@ function styleBlock(text: string, name: string): string {
 }
 
 describe('Workspace naming', () => {
-  it('uses Workspace for the page and its rail destination', () => {
+  it('uses Workspace for the page', () => {
     expect(source).toContain('<Text style={styles.title}>{WORKSPACE_LABEL}</Text>');
     expect(source).not.toContain('{WORKSPACE_LABEL} Settings');
-    expect(railSource).toContain('label="WORKSPACE"');
-    expect(railSource).toContain(
-      'accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL}`}',
-    );
-    expect(railSource).not.toContain('${WORKSPACE_LABEL} settings');
   });
 
   it('centres a 2px brass-bezelled workspace tile and drops the WORKSPACE grouping', () => {

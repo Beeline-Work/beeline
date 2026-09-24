@@ -49,6 +49,7 @@ export function ConversationRow({
         styles.row,
         desktop && styles.desktopRow,
         desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
+        item.unread && styles.unread,
         selected && styles.selected,
         pressed && styles.pressed,
       ]}
@@ -94,7 +95,11 @@ export function ConversationRow({
         )}
       <Text
         numberOfLines={2}
-        style={[styles.preview, desktop && styles.desktopPreview]}
+        style={[
+          styles.preview,
+          desktop && styles.desktopPreview,
+          item.unread && styles.unreadPreview,
+        ]}
         testID={`${testID}-preview`}
       >
         {desktop &&
@@ -122,6 +127,8 @@ const styles = StyleSheet.create((theme) => ({
   desktopRowWithCorners: { paddingBottom: theme.buzz.space.xs, minHeight: 94 },
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   name: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
+  unread: { backgroundColor: theme.buzz.bgUnread },
+  unreadPreview: { color: theme.buzz.textPrimary },
   unreadName: { fontFamily: theme.buzz.type.bodyStrong.fontFamily },
   sigil: { color: theme.buzz.accent },
   author: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: 12 },

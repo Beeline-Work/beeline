@@ -73,6 +73,7 @@ export type LedgerBylineMark = {
 
 /** The author byline; human continuations may omit it. */
 export type LedgerByline = {
+  onOpenProfile?: () => void;
   /** The voice's display name. */
   name?: string;
   /** Quiet agent metadata, e.g. `claude-opus-4-1` (or the `AGENT` fallback). */
@@ -322,8 +323,18 @@ function Byline({ byline }: { byline: LedgerByline }) {
   // and keeps the plain bright tone.
   const nameHue =
     mark && !byline.isViewer ? { color: identityPalette(mark.seed, mark.kind).mid } : undefined;
+  const Container = byline.onOpenProfile ? Pressable : View;
   return (
-    <View style={styles.byline}>
+    <Container
+      style={styles.byline}
+      onPress={byline.onOpenProfile}
+      hitSlop={byline.onOpenProfile ? { top: 9, bottom: 9 } : undefined}
+      accessibilityRole={byline.onOpenProfile ? 'button' : undefined}
+      accessibilityLabel={
+        byline.onOpenProfile ? `Open ${byline.name ?? 'agent'} profile` : undefined
+      }
+      testID={byline.onOpenProfile ? 'chat-byline-profile' : undefined}
+    >
       {mark ? (
         mark.kind === 'agent' ? (
           <IdentityMark
@@ -392,7 +403,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
           </Text>
         </View>
       </View>
-    </View>
+    </Container>
   );
 }
 

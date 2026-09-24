@@ -1,3 +1,4 @@
+import BuzzMembers from '../members';
 /** Room and corner conversation surface. */
 import React, {
   useEffect,
@@ -483,6 +484,8 @@ export function BuzzChatSurface({
   // desktop shell and a narrowed desktop window as a 3-column wide layout.
   // A packaged Tauri window keeps the desktop experience at every width.
   const desktopExperience = isDesktop || isDesktopShell();
+  const [profileAgentId, setProfileAgentId] = useState<string | null>(null);
+  useEffect(() => { setProfileAgentId(null); }, [decodedId]);
   const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
@@ -1073,6 +1076,11 @@ export function BuzzChatSurface({
     },
     [decodedId, openDesktopCorner, roomClient],
   );
+  const handleOpenProfile = useCallback((agentId: string) => {
+    if (!activeCommunityId) return;
+    if (desktopExperience) setProfileAgentId(agentId);
+    else router.push({ pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId } } as Href);
+  }, [activeCommunityId, desktopExperience]);
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
     async (participantId: string) => {
@@ -4365,6 +4373,9 @@ export function BuzzChatSurface({
       ) {
         event.preventDefault();
         focusComposer();
+      } else if (event.key === 'Escape' && profileAgentId) {
+        event.preventDefault();
+        setProfileAgentId(null);
       } else if (event.key === 'Escape' && workPaneMode === 'present') {
         event.preventDefault();
         closeDesktopWorkPane();
@@ -4372,7 +4383,7 @@ export function BuzzChatSurface({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [closeDesktopWorkPane, desktopExperience, focusComposer, toggleDesktopWorkPane, workPaneMode]);
+  }, [closeDesktopWorkPane, desktopExperience, focusComposer, toggleDesktopWorkPane, workPaneMode, profileAgentId]);
 
   const handleDesktopDrop = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
@@ -4831,6 +4842,7 @@ export function BuzzChatSurface({
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
           onMention={handleOpenMention}
+          onOpenProfile={handleOpenProfile}
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
@@ -4898,6 +4910,7 @@ export function BuzzChatSurface({
       dismissComposerKeyboard,
       handleOpenChannelReference,
       handleOpenMention,
+      handleOpenProfile,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
       openMessageActions,
@@ -4982,13 +4995,6 @@ export function BuzzChatSurface({
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({
-          pathname: '/beeline/settings/workspace',
-          params: { communityId },
-        } as unknown as Href)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
@@ -5767,7 +5773,12 @@ export function BuzzChatSurface({
           )}
           </KeyboardAvoidingView>
         </View>
-        {desktopWorkPaneMounted && (
+        {profileAgentId && desktopExperience && activeCommunityId && (
+          <View style={styles.agentProfilePane} testID="desktop-agent-profile-pane">
+            <BuzzMembers key={profileAgentId} profileAgentId={profileAgentId} workspaceIdOverride={activeCommunityId} onClose={() => setProfileAgentId(null)} />
+          </View>
+        )}
+        {!profileAgentId && desktopWorkPaneMounted && (
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
             client={roomClient}
@@ -5784,7 +5795,7 @@ export function BuzzChatSurface({
             onNewCorner={focusComposer}
           />
         )}
-        {desktopWorkHandleMounted && (
+        {!profileAgentId && desktopWorkHandleMounted && (
           <DesktopWorkPaneHandle
             ref={workPaneHandleRef}
             roomId={desktopWorkRoomId}
@@ -6280,6 +6291,7 @@ const styles = StyleSheet.create((theme) => {
     keyboardBody: {
       flex: 1,
     },
+    agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
     desktopConversationFrame: {
       flex: 1,
       minWidth: 0,

@@ -1,3 +1,4 @@
+import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
@@ -14,7 +15,12 @@ import {
 } from '@/buzz/community-storage';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
+import {
+  filterConversations,
+  roomListCounts,
+  useRoomPins,
+  useRoomListFilter,
+} from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -218,11 +224,18 @@ export default function BuzzChannels() {
     identity?.publicKey,
     activeCommunityId,
   );
-  const counts = useMemo(() => roomListCounts(chatList?.chats ?? [], pinned), [chatList?.chats, pinned]);
+  const counts = useMemo(
+    () => roomListCounts(chatList?.chats ?? [], pinned),
+    [chatList?.chats, pinned],
+  );
   const [filter, setFilter] = useRoomListFilter(
     activeCommunityId,
     pinsLoaded && Boolean(chatList),
-    Boolean(chatList?.chats.some((item) => !item.closed && !item.directMessage && pinned.includes(item.room.id))),
+    Boolean(
+      chatList?.chats.some(
+        (item) => !item.closed && !item.directMessage && pinned.includes(item.room.id),
+      ),
+    ),
   );
   const chatSections = useMemo(
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
@@ -649,7 +662,14 @@ export default function BuzzChannels() {
 
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!validRoomSlug(name) || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
+    if (
+      !validRoomSlug(name) ||
+      !transport ||
+      !activeCommunityId ||
+      creatingRoom ||
+      !canManageWorkspace
+    )
+      return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;
@@ -685,7 +705,15 @@ export default function BuzzChannels() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeCommunityId, canManageWorkspace, creatingRoom, inviteOnly, pendingRepo, roomName, transport]);
+  }, [
+    activeCommunityId,
+    canManageWorkspace,
+    creatingRoom,
+    inviteOnly,
+    pendingRepo,
+    roomName,
+    transport,
+  ]);
 
   const connectAgent = useCallback(async () => {
     if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
@@ -768,10 +796,6 @@ export default function BuzzChannels() {
       onSelect={selectWorkspace}
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={chatList.viewer.avatar}
       viewerFace={chatList.viewer.face}
@@ -922,7 +946,9 @@ export default function BuzzChannels() {
               section.title ? <RoomListSectionHeader title={section.title} /> : null
             }
             ListEmptyComponent={
-              query || filter !== 'all' ? (
+              filter === 'pinned' && !query.trim() ? (
+                <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
+              ) : query || filter !== 'all' ? (
                 <View style={styles.empty}>
                   <Text style={styles.emptyTitle}>
                     {filter === 'pinned' && !query
@@ -953,7 +979,7 @@ export default function BuzzChannels() {
               const heading = roomRowName(item);
               const title = `${heading.sigil}${heading.name}`;
               const row = (
-                <View style={styles.rowSurface}>
+                <View style={[styles.rowSurface, item.unread && styles.unreadSurface]}>
                   <ConversationRow
                     item={item}
                     viewer={chatList.viewer.pubkey}
@@ -1149,6 +1175,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: hull.type.body.fontSize - 1,
       lineHeight: hull.type.body.lineHeight,
     },
+    unreadSurface: { backgroundColor: hull.bgUnread },
     rowSurface: { backgroundColor: hull.bgBase },
     roomCell: {
       borderBottomWidth: StyleSheet.hairlineWidth,

@@ -2040,8 +2040,22 @@ export class PhoneService {
         [agentId, workspaceId, viewerId],
       )
     ).rows[0];
+    const recentWork = await this.database.query<{ title: string; url: string }>(
+      `SELECT DISTINCT f.lifecycle->'pr'->>'title' title, f.lifecycle->'pr'->>'url' url,
+              f.lifecycle->'pr'->>'mergedAt' merged_at
+       FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
+       WHERE r.workspace_id=$1 AND f.owner_agent_id=$2
+         AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
+         AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
+         AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
+         AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
+           AND m.identity_id=$3 AND m.removed_at IS NULL)
+       ORDER BY merged_at DESC LIMIT 20`,
+      [workspaceId, agentId, viewerId],
+    );
     return {
       workspaceId,
+      recentWork: recentWork.rows.map(({ title, url }) => ({ title, url })),
       agent: member,
       ...(config?.soul
         ? {

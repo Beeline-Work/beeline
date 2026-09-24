@@ -95,6 +95,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
+        <Stack.Screen name="beeline/agent-profile" options={{ headerShown: false }} />
         <Stack.Screen
           name="beeline/members"
           options={{

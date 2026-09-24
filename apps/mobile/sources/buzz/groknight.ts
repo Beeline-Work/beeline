@@ -40,6 +40,7 @@ const shared = {
     actionGap: 22,
     actionSize: 15,
   },
+  agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
   agentOfflineHintTypography: {
     title: {
       fontSize: 10,

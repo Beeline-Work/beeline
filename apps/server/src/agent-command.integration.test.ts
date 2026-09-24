@@ -535,6 +535,14 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,baseSha}',to_jsonb($2::text))
+     WHERE corner_id=$1`,
+    [C, 'a'.repeat(40)],
+  );
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  expect(await commands(B, C)).toHaveLength(2);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
 });
 
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {

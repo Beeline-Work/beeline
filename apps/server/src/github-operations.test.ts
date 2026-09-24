@@ -531,6 +531,101 @@ describe('GitHub phone operations', () => {
     const readsAfterRecovery = readPullRequest.mock.calls.length;
     await operations.processWebhook('push', basePush);
     expect(readPullRequest).toHaveBeenCalledTimes(readsAfterRecovery);
+
+    const raceHead = '9'.repeat(40);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: raceHead },
+        base: { ref: 'main', sha: newBaseSha },
+        mergeable_state: 'clean',
+      },
+    });
+    const readBranchHead = app.readBranchHead as ReturnType<typeof vi.fn>;
+    const selectedBase = '7'.repeat(40);
+    const advancedBase = '8'.repeat(40);
+    readBranchHead.mockResolvedValueOnce(selectedBase).mockResolvedValueOnce(advancedBase);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: advancedBase,
+      mergeability: 'dirty',
+    });
+    await operations.processWebhook('push', { ...basePush, after: selectedBase });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: advancedBase, mergeability: 'dirty' });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(4);
+
+    let releaseOlderRead!: () => void;
+    let olderReadStarted!: () => void;
+    const olderRead = new Promise<void>((resolve) => {
+      olderReadStarted = resolve;
+    });
+    const releaseOlder = new Promise<void>((resolve) => {
+      releaseOlderRead = resolve;
+    });
+    const olderCandidate = 'a'.repeat(40);
+    const newerCandidate = 'b'.repeat(40);
+    readBranchHead
+      .mockImplementationOnce(async () => {
+        olderReadStarted();
+        await releaseOlder;
+        return olderCandidate;
+      })
+      .mockResolvedValueOnce(newerCandidate);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'unknown',
+    });
+    const firstPush = operations.processWebhook('push', { ...basePush, after: olderCandidate });
+    await olderRead;
+    await operations.processWebhook('push', { ...basePush, after: newerCandidate });
+    releaseOlderRead();
+    await firstPush;
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newerCandidate, mergeability: 'unknown' });
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'dirty',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(5);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

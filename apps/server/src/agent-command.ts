@@ -823,10 +823,7 @@ export async function authorizeCommandOutput(
   // later heartbeat was refused too. `agent_turns.created_at` then stayed
   // stale and ConnectionPresence declared a genuinely working turn stalled and
   // restarted the helper. One transient gap became permanent.
-  if (
-    !row ||
-    (row.state !== 'claimed' && !(allowCompleted && row.state === 'complete'))
-  ) {
+  if (!row || (row.state !== 'claimed' && !(allowCompleted && row.state === 'complete'))) {
     console.error('command output rejected', {
       command: row?.id,
       agent: agentId,
@@ -1073,7 +1070,11 @@ export async function routeSystemCommand(
              AND (source.system_event->'object'->>'headSha' IS NULL
                   OR source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
            LIMIT 1`,
-          [input.roomId, input.kind === 'check-failed' ? 'corner_check' : 'subscribed_event', input.kind],
+          [
+            input.roomId,
+            input.kind === 'check-failed' ? 'corner_check' : 'subscribed_event',
+            input.kind,
+          ],
         );
         if (delivered.rowCount) return;
       }
@@ -1143,11 +1144,7 @@ export async function routeSystemCommand(
   }
   for (const agentId of new Set(input.targets)) {
     const action =
-      input.kind === 'turn-cancelled'
-        ? 'stop'
-        : isResumeKind(input.kind)
-          ? 'resume'
-          : 'input';
+      input.kind === 'turn-cancelled' ? 'stop' : isResumeKind(input.kind) ? 'resume' : 'input';
     let parent: CommandRow | undefined;
     if (action !== 'input') {
       parent = (
@@ -1234,6 +1231,7 @@ export async function reconcileCornerMergeBlockers(
     checks: string;
     mergeability: string;
     head_sha: string;
+    base_sha: string | null;
     number: number;
     title: string;
     url: string;
@@ -1242,6 +1240,7 @@ export async function reconcileCornerMergeBlockers(
             fact.lifecycle->>'checks' checks,
             fact.lifecycle->'pr'->>'mergeability' mergeability,
             fact.lifecycle->'pr'->>'headSha' head_sha,
+            fact.lifecycle->'pr'->>'baseSha' base_sha,
             (fact.lifecycle->'pr'->>'number')::integer number,
             fact.lifecycle->'pr'->>'title' title,
             fact.lifecycle->'pr'->>'url' url
@@ -1267,16 +1266,24 @@ export async function reconcileCornerMergeBlockers(
       );
       if (!existing.rowCount) {
         const source = await systemLine(db, {
-          id: createHash('sha256').update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`).digest('hex'),
+          id: createHash('sha256')
+            .update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`)
+            .digest('hex'),
           roomId: row.corner_id,
           authorId: row.owner_agent_id,
           subject: GITHUB_SUBJECT,
           verb: 'found failing checks on',
           kind: 'check-failed',
-          object: { text: row.title ?? `pull request #${row.number}`, url: row.url, headSha: row.head_sha },
+          object: {
+            text: row.title ?? `pull request #${row.number}`,
+            url: row.url,
+            headSha: row.head_sha,
+          },
         });
         if (!source.inserted) {
-          await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [row.corner_id]);
+          await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [
+            row.corner_id,
+          ]);
           await routeSystemCommand(db, {
             roomId: row.corner_id,
             sourceMessageId: source.id,
@@ -1292,8 +1299,14 @@ export async function reconcileCornerMergeBlockers(
       }
     }
     if (row.mergeability === 'dirty') {
-      const id = createHash('sha256').update(`beeline:${row.corner_id}:github:merge-conflict:${row.number}:${row.head_sha}`).digest('hex');
-      const exists = await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`, [row.corner_id, id, row.owner_agent_id]);
+      const generation = `${row.number}:${row.head_sha}${row.base_sha ? `:${row.base_sha}` : ''}`;
+      const id = createHash('sha256')
+        .update(`beeline:${row.corner_id}:github:merge-conflict:${generation}`)
+        .digest('hex');
+      const exists = await db.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+        [row.corner_id, id, row.owner_agent_id],
+      );
       if (exists.rowCount) continue;
       const note = await systemLine(db, {
         id,
@@ -1301,7 +1314,11 @@ export async function reconcileCornerMergeBlockers(
         authorId: row.owner_agent_id,
         subject: GITHUB_SUBJECT,
         verb: 'found merge conflicts in',
-        object: { text: row.title ?? `pull request #${row.number}`, url: row.url, headSha: row.head_sha },
+        object: {
+          text: row.title ?? `pull request #${row.number}`,
+          url: row.url,
+          headSha: row.head_sha,
+        },
       });
       if (await queueCornerMergeConflict(db, row.corner_id, note.id)) commands += 1;
     }

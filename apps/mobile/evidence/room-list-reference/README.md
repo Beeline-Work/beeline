@@ -12,7 +12,8 @@ mock uses an 18px top inset and puts author and preview on the same line, in a
 compact two-line block. Its section heading has 20px above and 4px below.
 
 The current app keeps search visible at rest, following later review feedback.
-The top bar uses All, Unread, and the mock's pin glyph; Messages remains a
+The top bar uses All, Unread, and Pinned in text by later direction; pinned
+rows show the pin glyph. Messages remains a
 section below the Rooms. At the app's 280px default desktop sidebar width,
 all filters and actions fit above the visible search field. Wide desktop now
 shows a 76px Workspace rail beside a 380px default Room sidebar. The existing

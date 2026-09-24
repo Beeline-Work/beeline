@@ -8,7 +8,8 @@ API reads, not production user data or a connected device.
 
 The Chromium walk covered a 1440×900 desktop window and a 390×900 phone window.
 It confirmed the search field is visible at rest, the Bookmarks mark uses the
-brass accent, the pin glyph has an accessible Pinned label, and DM rows show the peer name once.
+brass accent, the Pinned filter is text, pinned rows show the pin glyph, and DM
+rows show the peer name once.
 The Messages heading and first DM row now sit closer together. At the default
 280px desktop sidebar width, all three filters remain visible above search.
 Desktop Room rows put the author and excerpt in a compact two-line block, as in
@@ -28,7 +29,8 @@ page errors, console errors, or horizontal document overflow at either width.
 - `desktop-rail-dot.png` and `phone-rail-dot.png` show the brass unread mark,
   waiting-only corner summary, and (on wide desktop) the 76px Workspace rail,
   380px Room sidebar, and Rooms count beside its create action.
-- `phone-pin-menu.png` and `desktop-pin-menu.png` show the long-press action.
+- `mobile-list.png` and `desktop-list.png` show the list before pinning; a long
+  press immediately toggles the Room pin without a menu.
 - `phone-pinned.png` and `desktop-pinned.png` show the saved pin after reload,
   with Pinned selected by default.
 - `phone-no-pins.png` and `desktop-no-pins.png` show the empty Pinned view after

@@ -3,7 +3,6 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { BookmarksGlyph } from './BookmarksGlyph';
-import { PinGlyph } from './PinGlyph';
 import type { RoomListFilter } from '@/buzz/room-list-preferences';
 
 export function RoomListToolbar({
@@ -73,13 +72,7 @@ export function RoomListToolbar({
               testID={`room-filter-${value}`}
             >
               <Text style={[styles.label, value === filter && styles.selected]}>
-                {value === 'pinned' ? (
-                  <PinGlyph color={value === filter ? styles.selected.color : styles.label.color} />
-                ) : value === 'all' ? (
-                  'All'
-                ) : (
-                  'Unread'
-                )}
+                {value === 'pinned' ? 'Pinned' : value === 'all' ? 'All' : 'Unread'}
                 {counts && (value !== 'all' || !desktop) ? (
                   <Text style={styles.count}> {counts[value]}</Text>
                 ) : null}

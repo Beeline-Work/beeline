@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { roomRowName, roomRowPreview, NO_ACTIVITY_PREVIEW } from '@/buzz/room-list-row';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { IdentityMark } from './IdentityMark';
-import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from './HullActionSheet';
+import { PinGlyph } from './PinGlyph';
 
 export function ConversationRow({
   item,
@@ -30,94 +30,85 @@ export function ConversationRow({
 }) {
   const name = roomRowName(item);
   const preview = roomRowPreview(item, viewer);
-  const [menu, setMenu] = useState(false);
   const peer = item.directMessage?.peer;
   return (
-    <>
-      <Pressable
-        onPress={onPress}
-        onLongPress={() => setMenu(true)}
-        accessibilityRole="button"
-        accessibilityHint="Long press to pin or unpin this conversation"
-        accessibilityLabel={`${name.sigil}${name.name}${item.unread ? ', unread messages' : ''}${pinned ? ', pinned' : ''}`}
-        accessibilityState={selected ? { selected: true } : undefined}
-        accessibilityActions={[
-          { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
-        ]}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === 'pin') onPin();
-        }}
-        style={({ pressed }) => [
-          styles.row,
-          desktop && styles.desktopRow,
-          desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
-          selected && styles.selected,
-          pressed && styles.pressed,
-        ]}
-        testID={testID}
+    <Pressable
+      onPress={onPress}
+      onLongPress={onPin}
+      accessibilityRole="button"
+      accessibilityHint="Long press to toggle this conversation's pin"
+      accessibilityLabel={`${name.sigil}${name.name}${item.unread ? ', unread messages' : ''}${pinned ? ', pinned' : ''}`}
+      accessibilityState={selected ? { selected: true } : undefined}
+      accessibilityActions={[
+        { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
+      ]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'pin') onPin();
+      }}
+      style={({ pressed }) => [
+        styles.row,
+        desktop && styles.desktopRow,
+        desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
+        selected && styles.selected,
+        pressed && styles.pressed,
+      ]}
+      testID={testID}
+    >
+      <View style={styles.heading}>
+        {peer && (
+          <IdentityMark
+            seed={peer.pubkey}
+            name={peer.name}
+            face={peer.face}
+            avatarUrl={peer.avatar}
+            kind={peer.kind === 'agent' ? 'agent' : 'human'}
+            size={28}
+          />
+        )}
+        <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+          {!peer && <Text style={styles.sigil}>#</Text>}
+          {name.name}
+        </Text>
+        {pinned && (
+          <View testID={`${testID}-pinned`}>
+            <PinGlyph color={styles.sigil.color} size={18} />
+          </View>
+        )}
+        {selected && <Text style={styles.open}>Open</Text>}
+        <Text style={styles.age}>
+          {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
+        </Text>
+        {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
+      </View>
+      {!desktop &&
+        !peer &&
+        preview.text !== NO_ACTIVITY_PREVIEW &&
+        preview.attribution !== 'none' && (
+          <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
+            {preview.attribution === 'self'
+              ? 'you'
+              : preview.attribution === 'other'
+                ? preview.handle
+                : ''}
+          </Text>
+        )}
+      <Text
+        numberOfLines={2}
+        style={[styles.preview, desktop && styles.desktopPreview]}
+        testID={`${testID}-preview`}
       >
-        <View style={styles.heading}>
-          {peer && (
-            <IdentityMark
-              seed={peer.pubkey}
-              name={peer.name}
-              face={peer.face}
-              avatarUrl={peer.avatar}
-              kind={peer.kind === 'agent' ? 'agent' : 'human'}
-              size={28}
-            />
-          )}
-          <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
-            {!peer && <Text style={styles.sigil}>#</Text>}
-            {name.name}
-          </Text>
-          {pinned && <Text style={styles.pinned}>Pinned</Text>}
-          {selected && <Text style={styles.open}>Open</Text>}
-          <Text style={styles.age}>
-            {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
-          </Text>
-          {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
-        </View>
-        {!desktop &&
+        {desktop &&
           !peer &&
-          preview.text !== NO_ACTIVITY_PREVIEW &&
-          preview.attribution !== 'none' && (
-            <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
-              {preview.attribution === 'self'
-                ? 'you'
-                : preview.attribution === 'other'
-                  ? preview.handle
-                  : ''}
+          preview.attribution !== 'none' &&
+          preview.text !== NO_ACTIVITY_PREVIEW && (
+            <Text style={preview.attribution === 'self' ? styles.quiet : styles.desktopAuthor}>
+              {preview.attribution === 'self' ? 'you' : preview.handle}
+              <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
             </Text>
           )}
-        <Text
-          numberOfLines={2}
-          style={[styles.preview, desktop && styles.desktopPreview]}
-          testID={`${testID}-preview`}
-        >
-          {desktop &&
-            !peer &&
-            preview.attribution !== 'none' &&
-            preview.text !== NO_ACTIVITY_PREVIEW && (
-              <Text style={preview.attribution === 'self' ? styles.quiet : styles.desktopAuthor}>
-                {preview.attribution === 'self' ? 'you' : preview.handle}
-                <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
-              </Text>
-            )}
-          {preview.text}
-        </Text>
-      </Pressable>
-      <HullActionSheetModal visible={menu} title={name.name} onClose={() => setMenu(false)}>
-        <HullActionSheetRow
-          label={pinned ? 'Unpin conversation' : 'Pin conversation'}
-          onPress={() => {
-            setMenu(false);
-            onPin();
-          }}
-        />
-        <HullActionSheetCancel onPress={() => setMenu(false)} />
-      </HullActionSheetModal>
-    </>
+        {preview.text}
+      </Text>
+    </Pressable>
   );
 }
 const styles = StyleSheet.create((theme) => ({
@@ -148,7 +139,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   open: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  pinned: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   dot: {
     width: 8,
     height: 8,

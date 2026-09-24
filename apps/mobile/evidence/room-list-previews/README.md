@@ -11,6 +11,6 @@ The wide desktop proofs include the persistent 76px Workspace rail and the
 The desktop proof uses an illustrative transcript area; it verifies the list
 layout rather than navigation or live data behavior.
 
-The `phone-*` and `desktop-*` pin captures show the long-press menu, a pinned
-Room, and the empty Pinned view using the shared components. The authenticated
+The `phone-*` and `desktop-*` pin captures show a pinned Room and the empty
+Pinned view after another long press, using the shared components. The authenticated
 versions are in `../room-list-live-web/`.

@@ -366,7 +366,7 @@ workspace name and existing bezel avatar head the list; the workspace menu
 (Members and authorized Workspace settings) sits beside that identity, with
 compose in the same header. The search field stays visible below the conversation
 toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
-a separate brass action beside Search. All, Unread, and the pin glyph filter
+a separate brass action beside Search. All, Unread, and Pinned text filters
 the list without removing access to quiet Rooms. The Messages section remains
 in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
 on All.
@@ -383,9 +383,9 @@ and contrast. Rows grow with content; the old fixed 64px height is not a cap.
 
 Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
 Mobile has no selected Room state: pressing a conversation navigates away.
-Long press opens pin/unpin; pins are device-local and scoped to viewer and
+Long press immediately toggles pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
-The Pinned filter uses the pin glyph and retains an accessible label. At the
+The Pinned filter uses text, while pinned rows show the pin glyph. At the
 default desktop sidebar width, all filters and both actions fit on the first
 toolbar row; the visible search field stays below it. An empty Pinned view
 explains the long-press action and links back to All.

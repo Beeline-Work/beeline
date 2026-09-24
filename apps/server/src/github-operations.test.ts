@@ -21,6 +21,42 @@ describe('GitHub phone operations', () => {
     vi.unstubAllGlobals();
     await database.close();
   });
+  it('mints a token only for the exact active repository bound to a top-level Room', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main'),(102,77,'owner/other','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_resolution,github_installation_id)
+       VALUES($1,$2,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,
+      [room, workspace],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({
+        token: 'scoped-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    await expect(operations.roomToken(room)).resolves.toMatchObject({ token: 'scoped-token' });
+    expect(app.installationToken).toHaveBeenCalledWith(77, { repositoryIds: [101] });
+    await database.query(
+      `UPDATE rooms SET repository_remote='https://github.com/owner/missing.git' WHERE id=$1`,
+      [room],
+    );
+    await expect(operations.roomToken(room)).rejects.toThrow(
+      'GitHub repository installation not found',
+    );
+    expect(app.installationToken).toHaveBeenCalledTimes(1);
+  });
   it('uses the Room exact-repository token to list and dispatch on the stored default branch', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

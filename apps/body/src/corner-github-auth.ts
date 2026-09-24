@@ -177,12 +177,14 @@ function resolvePushBranch(source) {
 const refusal = cornerGitHubCommandRefusal(config.launcher, process.argv.slice(2), config.featureBranch, config.targetBranch, resolvePushBranch);
 if (refusal) { process.stderr.write(refusal + '\\n'); process.exit(1); }
 function token() {
-  const result = spawnSync(config.node, [config.cli, 'corner-read-token', '--config', config.config, '--room', config.room], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    process.stderr.write(result.stderr || 'Beeline could not refresh the repository credential.\\n');
-    process.exit(result.status || 1);
+  let result;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    result = spawnSync(config.node, [config.cli, 'corner-read-token', '--config', config.config, '--room', config.room], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+    if (attempt < 2) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * (attempt + 1));
   }
-  return result.stdout.trim();
+  process.stderr.write(result.stderr || 'Beeline could not refresh the repository credential.\\n');
+  process.exit(result.status || 1);
 }
 function run(value) {
   const env = { ...process.env, GH_TOKEN: value, GITHUB_TOKEN: value, GIT_TERMINAL_PROMPT: '0' };

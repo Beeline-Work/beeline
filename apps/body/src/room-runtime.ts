@@ -5,7 +5,11 @@ import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient, RoomMembershipChange } from './daemon-api-client.js';
+import {
+  DaemonApiError,
+  type DaemonApiClient,
+  type RoomMembershipChange,
+} from './daemon-api-client.js';
 import {
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
@@ -38,6 +42,12 @@ export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 10 * 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
+
+class CornerCredentialLookupError extends Error {
+  constructor(cause: unknown) {
+    super('corner repository credential lookup failed', { cause });
+  }
+}
 
 /**
  * The #1369 discovery latch, counted instead of flagged.
@@ -185,7 +195,10 @@ export async function materializeCornerWorktree(input: {
     { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
   ).then(
     () => true,
-    () => false,
+    (error) => {
+      if (isRemoteRefMissing(error)) return false;
+      throw error;
+    },
   );
   if (!existsSync(resolve(path, '.git'))) {
     await rm(path, { recursive: true, force: true });
@@ -988,9 +1001,7 @@ export class RoomRuntimeCoordinator {
           `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`)
         : undefined;
       const granted = repositoryBacked
-        ? await this.options.daemonApi.execute('getRoomGitHubToken', {
-            roomId: corner.parentRoomId,
-          })
+        ? await this.cornerRepositoryToken(corner.parentRoomId)
         : undefined;
       const worktree = repositoryBacked
         ? await this.materializeCornerWorktree({
@@ -1103,12 +1114,26 @@ export class RoomRuntimeCoordinator {
       );
     } catch (error) {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
+      // Keep the pending command available for the next reconciliation. A
+      // temporary token lookup must not turn into a human repair request.
+      if (error instanceof CornerCredentialLookupError) return;
       const reported = await this.reportCornerStartFailure(corner.cornerId, error);
       if (reported && isStandingCornerStartFault(error) && configKey) {
         this.standingCornerStartFaults.set(corner.cornerId, configKey);
       }
     } finally {
       this.startingCorners.delete(corner.cornerId);
+    }
+  }
+
+  private async cornerRepositoryToken(
+    roomId: string,
+  ): Promise<{ token: string; expiresAt: number }> {
+    try {
+      return await this.options.daemonApi.execute('getRoomGitHubToken', { roomId });
+    } catch (error) {
+      if (error instanceof DaemonApiError && !error.retryable) throw error;
+      throw new CornerCredentialLookupError(error);
     }
   }
 
@@ -1378,7 +1403,7 @@ function gitStderr(error: unknown): string {
 }
 
 function isRemoteRefMissing(error: unknown): boolean {
-  return /remote ref does not exist|remote reference does not exist/i.test(
+  return /remote ref does not exist|remote reference does not exist|couldn't find remote ref/i.test(
     `${error instanceof Error ? error.message : String(error)}\n${gitStderr(error)}`,
   );
 }

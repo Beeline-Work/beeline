@@ -1698,10 +1698,21 @@ export class MonolithCornerTurnLoop {
   private async syncBranch(): Promise<void> {
     const repository = this.options.repository;
     if (!repository) return;
-    const token = await this.options.api
-      .execute('getRoomGitHubToken', { roomId: this.options.parentRoomId })
-      .then((granted) => granted.token)
-      .catch(() => repository.githubToken);
+    let token: string | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        token = (
+          await this.options.api.execute('getRoomGitHubToken', {
+            roomId: this.options.parentRoomId,
+          })
+        ).token;
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+    if (!token) throw new Error('corner repository credential lookup returned no token');
     await syncCornerBranch({
       worktreePath: this.options.worktreePath,
       featureBranch: repository.featureBranch,

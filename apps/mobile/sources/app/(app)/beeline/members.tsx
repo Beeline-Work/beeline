@@ -5,7 +5,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { Swipeable } from 'react-native-gesture-handler';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -32,6 +31,12 @@ import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
+import {
+  HullActionSheetCancel,
+  HullActionSheetModal,
+  HullActionSheetRow,
+} from '@/components/buzz/HullActionSheet';
+import { navigateToRoom } from '@/buzz/corner-navigation';
 import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -59,6 +64,7 @@ type MembersAction =
   | 'pair-agent'
   | 'person-role'
   | 'remove-person'
+  | 'message-person'
   | 'save-agent-soul'
   | 'remove-agent'
   | 'model-config'
@@ -639,6 +645,7 @@ export default function BuzzMembers() {
       setOpenPersonPubkey(null);
     } catch (reason) {
       setError(`Could not change person role: ${String(reason)}`);
+      setOpenPersonPubkey(null);
     } finally {
       setWorking(null);
     }
@@ -678,6 +685,23 @@ export default function BuzzMembers() {
       setOpenPersonPubkey(null);
     } catch (reason) {
       setError(`Could not remove ${name}: ${String(reason)}`);
+      setOpenPersonPubkey(null);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const messagePerson = async (pubkey: string) => {
+    if (!identity || !workspaceId || pubkey === identity.publicKey) return;
+    setWorking('message-person');
+    setError(null);
+    try {
+      const room = await new BuzzRigTransport(identity).resolveDirectMessage(workspaceId, pubkey);
+      setOpenPersonPubkey(null);
+      navigateToRoom(router, room.channelId);
+    } catch (reason) {
+      setError(`Could not open message: ${String(reason)}`);
+      setOpenPersonPubkey(null);
     } finally {
       setWorking(null);
     }
@@ -981,98 +1005,55 @@ export default function BuzzMembers() {
       member.identity.pubkey,
       member.role,
     );
-    const removable =
-      canManage &&
-      canRemovePerson(
-        surface.viewer.role,
-        surface.viewer.identity.pubkey,
-        member.identity.pubkey,
-        member.role,
-      );
-    const hasDetail = canManage && editable;
-    const open = openPersonPubkey === member.identity.pubkey;
-    const row = (
-      <MemberRosterRow
-        avatarUrl={member.identity.avatar}
-        disabled={!hasDetail || busy}
-        divider="bottom"
-        face={member.identity.face}
-        handle={member.identity.handle}
-        kind="human"
-        name={member.identity.name}
-        onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
-        pubkey={member.identity.pubkey}
-        role={member.role}
-        testID={`member-${member.identity.pubkey}-identity`}
-        trailing={
-          hasDetail ? (
-            <ChevronGlyph
-              color={styles.chevron.color}
-              direction={open ? 'down' : 'right'}
-              size={CHEVRON_ROW_SIZE}
-            />
-          ) : undefined
-        }
-      />
-    );
+    const hasActions =
+      member.identity.pubkey !== surface.viewer.identity.pubkey || (canManage && editable);
     return (
       <View key={member.identity.pubkey}>
-        {removable ? (
-          <Swipeable
-            enabled={!busy}
-            overshootRight={false}
-            renderRightActions={() => (
-              <TouchableOpacity
-                accessibilityLabel={`Remove ${member.identity.name} from ${WORKSPACE_LABEL}`}
-                accessibilityRole="button"
-                disabled={busy}
-                onPress={() => void removePerson(member.identity.pubkey)}
-                style={styles.removeControl}
-                testID={`remove-person-${member.identity.pubkey}`}
-              >
-                <Text style={styles.removeText}>Remove</Text>
-              </TouchableOpacity>
-            )}
-            testID={`member-${member.identity.pubkey}-swipe`}
-          >
-            {row}
-          </Swipeable>
-        ) : (
-          row
-        )}
-        {open && editable && canManage && (
-          <View style={styles.personDetail} testID={`member-${member.identity.pubkey}-detail`}>
-            <View style={styles.rolePicker} testID={`member-${member.identity.pubkey}-roles`}>
-              {(['member', 'admin', 'owner'] as const).map((role) => {
-                const allowed = canAssignRole(surface.viewer.role, role);
-                return (
-                  <TouchableOpacity
-                    accessibilityRole="radio"
-                    accessibilityState={{
-                      selected: member.role === role,
-                      disabled: !allowed || member.role === role || busy,
-                    }}
-                    key={role}
-                    disabled={!allowed || member.role === role || busy}
-                    onPress={() => void setPersonRole(member.identity.pubkey, role)}
-                    style={[
-                      styles.choice,
-                      styles.roleChoice,
-                      member.role === role && styles.choiceActive,
-                      !allowed && styles.choiceDisabled,
-                    ]}
-                    testID={`member-${member.identity.pubkey}-${role}`}
-                  >
-                    <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
+        <MemberRosterRow
+          avatarUrl={member.identity.avatar}
+          disabled={!hasActions || busy}
+          divider="bottom"
+          face={member.identity.face}
+          handle={member.identity.handle}
+          kind="human"
+          name={member.identity.name}
+          onPress={() => setOpenPersonPubkey(member.identity.pubkey)}
+          pubkey={member.identity.pubkey}
+          role={member.role}
+          testID={`member-${member.identity.pubkey}-identity`}
+          trailing={
+            hasActions ? (
+              <ChevronGlyph
+                color={styles.chevron.color}
+                direction="right"
+                size={CHEVRON_ROW_SIZE}
+              />
+            ) : undefined
+          }
+        />
       </View>
     );
   };
+
+  const selectedPerson = people.find((member) => member.identity.pubkey === openPersonPubkey);
+  const selectedPersonEditable =
+    selectedPerson &&
+    canManage &&
+    canChangeRole(
+      surface.viewer.role,
+      surface.viewer.identity.pubkey,
+      selectedPerson.identity.pubkey,
+      selectedPerson.role,
+    );
+  const selectedPersonRemovable =
+    selectedPerson &&
+    canManage &&
+    canRemovePerson(
+      surface.viewer.role,
+      surface.viewer.identity.pubkey,
+      selectedPerson.identity.pubkey,
+      selectedPerson.role,
+    );
 
   return (
     <BuzzCommunityShell
@@ -1092,6 +1073,53 @@ export default function BuzzMembers() {
       viewerAvatarUrl={surface.viewer.identity.avatar}
       viewerFace={surface.viewer.identity.face}
     >
+      <HullActionSheetModal
+        accessibilityLabel="Close member actions"
+        onClose={() => setOpenPersonPubkey(null)}
+        testID="member-actions"
+        title={selectedPerson ? memberRosterTitle(selectedPerson.identity) : 'Member'}
+        subtitle={selectedPerson ? ROLE_LABELS[selectedPerson.role] : undefined}
+        visible={Boolean(selectedPerson)}
+      >
+        {selectedPerson && selectedPerson.identity.pubkey !== surface.viewer.identity.pubkey && (
+          <HullActionSheetRow
+            disabled={busy}
+            label="Message"
+            onPress={() => void messagePerson(selectedPerson.identity.pubkey)}
+            testID={`message-person-${selectedPerson.identity.pubkey}`}
+          />
+        )}
+        {selectedPersonEditable && (
+          <View testID={`member-${selectedPerson.identity.pubkey}-roles`}>
+            {(['member', 'admin', 'owner'] as const).map((role) => (
+              <HullActionSheetRow
+                disabled={
+                  !canAssignRole(surface.viewer.role, role) || selectedPerson.role === role || busy
+                }
+                key={role}
+                label={ROLE_LABELS[role]}
+                onPress={() => void setPersonRole(selectedPerson.identity.pubkey, role)}
+                selected={selectedPerson.role === role}
+                testID={`member-${selectedPerson.identity.pubkey}-${role}`}
+              />
+            ))}
+          </View>
+        )}
+        {selectedPersonRemovable && (
+          <HullActionSheetRow
+            accessibilityLabel={`Remove ${selectedPerson.identity.name} from ${WORKSPACE_LABEL}`}
+            destructive
+            disabled={busy}
+            label="Remove"
+            onPress={() => void removePerson(selectedPerson.identity.pubkey)}
+            testID={`remove-person-${selectedPerson.identity.pubkey}`}
+          />
+        )}
+        <HullActionSheetCancel
+          onPress={() => setOpenPersonPubkey(null)}
+          testID="member-actions-close"
+        />
+      </HullActionSheetModal>
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID="workspace-members-surface"
@@ -1580,16 +1608,6 @@ const styles = StyleSheet.create((theme) => {
     rowCopy: { flex: 1, minWidth: 0 },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
-    personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
-    rolePicker: { flexDirection: 'row', gap: hull.space.sm },
-    removeControl: {
-      minHeight: hull.layout.row,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingHorizontal: hull.space.md,
-      backgroundColor: hull.bgRaised,
-    },
-    removeText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
     choice: {
       minHeight: 44,
       minWidth: 0,
@@ -1610,7 +1628,6 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.border,
       color: hull.textPrimary,
     },
-    roleChoice: { flex: 1 },
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },

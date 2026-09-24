@@ -17,19 +17,17 @@ export function RoomCornerSummary({
   testID: string;
 }) {
   const corners = `${count} ${count === 1 ? 'corner' : 'corners'}`;
+  const label = waiting ? `${waiting} waiting` : corners;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${expanded === undefined ? 'Open' : expanded ? 'Hide' : 'Show'} ${corners}${waiting ? `, ${waiting} waiting` : ''}`}
+      accessibilityLabel={`${expanded === undefined ? 'Open' : expanded ? 'Hide' : 'Show'} ${label}`}
       accessibilityState={expanded === undefined ? undefined : { expanded }}
       style={[styles.row, expanded !== undefined && styles.desktopRow]}
       testID={testID}
     >
-      <Text style={styles.text}>
-        {Boolean(waiting) && <Text style={styles.waiting}>{waiting} waiting · </Text>}
-        {corners}
-      </Text>
+      <Text style={[styles.text, Boolean(waiting) && styles.waiting]}>{label}</Text>
       <ChevronGlyph
         size={16}
         color={styles.text.color}

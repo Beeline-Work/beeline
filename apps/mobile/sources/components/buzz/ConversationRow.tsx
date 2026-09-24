@@ -149,7 +149,14 @@ const styles = StyleSheet.create((theme) => ({
   age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   open: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   pinned: { ...theme.buzz.type.meta, color: theme.buzz.accent },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.buzz.textPrimary },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: theme.buzz.bgBase,
+    backgroundColor: theme.buzz.accent,
+  },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,
     borderLeftWidth: 1,

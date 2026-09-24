@@ -372,8 +372,8 @@ in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
 on All.
 
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
-`bodyStrong` for unread messages; a trailing `textPrimary` dot means unread
-messages only. Room names retain their brass `#`; DMs use the peer's identity.
+`bodyStrong` for unread messages; a trailing brass dot means the Room has new
+messages, independent of corner state. Room names retain their brass `#`; DMs use the peer's identity.
 On phone, the byline sits above a two-line `body` preview in `textSecondary`;
 on desktop, author and preview share a two-line `meta` block. DMs omit the
 byline because the peer is already named in the heading. Rows have generous
@@ -392,8 +392,11 @@ explains the long-press action and links back to All.
 Desktop section headings use 20px above and `space.xs` below; the following
 row starts after 18px, without a second large section gap. Phone corner
 summaries retain a `space.md` bottom margin before the next conversation.
+Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
+sidebar; narrower windows retain the existing Workspace switcher overlay.
 
-Corner summaries read “2 waiting · 5 corners”, with brass only on waiting.
+Corner summaries read “2 waiting” in brass when any corner waits; otherwise
+they read “5 corners” in quiet ink.
 The API batches canonical state derivation for visible corners; archived work
 is excluded. On mobile the label opens the existing Room Corners page. On
 desktop it toggles an inline list, waiting first, with each corner independently

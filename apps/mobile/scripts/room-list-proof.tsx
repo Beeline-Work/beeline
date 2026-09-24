@@ -11,6 +11,7 @@ import { ConversationRow } from '../sources/components/buzz/ConversationRow';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
 import { RoomListSectionHeader } from '../sources/components/buzz/RoomListSectionHeader';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
+import { DesktopWorkspaceStrip } from '../sources/components/buzz/DesktopWorkspaceStrip';
 import { filterConversations, type RoomListFilter } from '../sources/buzz/room-list-preferences';
 import type { ChatListItem } from '@beeline/buzz-client';
 
@@ -103,10 +104,21 @@ function Proof() {
   };
   return (
     <View style={{ minHeight: '100vh' as any, backgroundColor: t.bgBase, flexDirection: 'row' }}>
+      {desktop && innerWidth >= 1360 && (
+        <DesktopWorkspaceStrip
+          workspaces={[{ id: 'tubing', name: 'Tubing crew' }] as any}
+          activeWorkspaceId="tubing"
+          viewerName="Lou"
+          viewerPubkey="viewer"
+          onSelect={() => action('workspaces')}
+          onAdd={() => action('new-workspace')}
+          onAccount={() => action('settings')}
+        />
+      )}
       <View
         style={{
           width: desktop
-            ? Number(new URLSearchParams(location.search).get('navWidth') ?? 360)
+            ? Number(new URLSearchParams(location.search).get('navWidth') ?? 380)
             : '100%',
           borderRightWidth: 1,
           borderRightColor: t.border,
@@ -148,7 +160,10 @@ function Proof() {
           onBookmarks={() => action('bookmarks')}
         />
         {desktop && visibleRooms.some((item) => !item.directMessage) && (
-          <RoomListSectionHeader title="Rooms" />
+          <RoomListSectionHeader
+            title="Rooms"
+            count={visibleRooms.filter((item) => !item.directMessage).length}
+          />
         )}
         {visibleRooms.map((item) => (
           <View key={item.room.id} style={{ borderBottomWidth: 1, borderBottomColor: t.border }}>

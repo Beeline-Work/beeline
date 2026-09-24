@@ -37,6 +37,7 @@ const chats = vi.hoisted(() =>
   })),
 );
 const windowListeners = new Map<string, (event: any) => void>();
+const viewport = vi.hoisted(() => ({ width: 1280 }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -50,6 +51,7 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TextInput: host('TextInput'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: viewport.width, height: 900 }),
   };
 });
 
@@ -256,6 +258,7 @@ describe('desktop Workspace navigation', () => {
     route.communityId = undefined;
     route.parent = undefined;
     route.pathname = '/beeline/channels';
+    viewport.width = 1280;
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
     roomCornersExpanded.clear();
@@ -280,6 +283,22 @@ describe('desktop Workspace navigation', () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
+  });
+
+  it('shows the permanent Workspace strip on wide desktop without removing its actions', async () => {
+    viewport.width = 1440;
+    await act(async () => tree.update(<SidebarView key="wide" />));
+    await settle();
+    expect(control('desktop-workspace-strip')).toBeTruthy();
+    expect(tree.root.findAllByProps({ testID: 'profile-settings-navigation' })).toHaveLength(0);
+    act(() => control('desktop-strip-add-workspace').props.onPress());
+    expect(routerPush).toHaveBeenCalledWith('/beeline/community');
+    act(() => control('desktop-strip-account').props.onPress());
+    expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
+    await act(async () => control('desktop-strip-workspace-workspace-empty').props.onPress());
+    expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
+      'Empty Workspace',
+    );
   });
 
   it('switches header, list, URL, and closes the switcher for an empty Workspace', async () => {
@@ -552,7 +571,10 @@ describe('desktop Workspace navigation', () => {
     await settle();
     act(() => control('desktop-corner-corner-a').props.onPress());
 
-    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({ roomId: 'room-a', cornerId: 'corner-a' });
+    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
+      roomId: 'room-a',
+      cornerId: 'corner-a',
+    });
     expect(routerNavigate).toHaveBeenCalledWith(
       { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
       { dangerouslySingular: true },

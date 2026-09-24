@@ -14,5 +14,6 @@ compact two-line block. Its section heading has 20px above and 4px below.
 The current app keeps search visible at rest, following later review feedback.
 The top bar uses All, Unread, and the mock's pin glyph; Messages remains a
 section below the Rooms. At the app's 280px default desktop sidebar width,
-all filters and actions fit above the visible search field. The mock shows a wider navigation column and a
-workspace rail, while the current app retains its existing navigation layout.
+all filters and actions fit above the visible search field. Wide desktop now
+shows a 76px Workspace rail beside a 380px default Room sidebar. The existing
+Workspace switcher remains available on narrower windows.

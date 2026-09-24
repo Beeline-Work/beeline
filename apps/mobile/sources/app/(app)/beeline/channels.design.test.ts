@@ -26,7 +26,7 @@ describe('Approved Room list layout', () => {
     expect(row).toContain('...theme.buzz.type.body');
     expect(row).toContain('theme.buzz.type.bodyStrong.fontFamily');
     expect(row).toContain('item.unread &&');
-    expect(row).toContain('backgroundColor: theme.buzz.textPrimary');
+    expect(row).toContain('backgroundColor: theme.buzz.accent');
     expect(row).not.toContain('roomRowNeedsAttention');
     expect(row).not.toContain('presenceDot');
   });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,7 +24,7 @@ export function RoomListToolbar({
   desktop?: boolean;
   bookmarksSelected?: boolean;
 }) {
-  const [searching, setSearching] = useState(desktop);
+  const localSearchRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
   return (
     <View>
@@ -44,32 +44,22 @@ export function RoomListToolbar({
               style={styles.filter}
               testID={`room-filter-${value}`}
             >
-              {value === 'pinned' ? (
-                <Ionicons
-                  name="pin-outline"
-                  size={17}
-                  color={value === filter ? styles.selected.color : styles.label.color}
-                />
-              ) : (
-                <Text style={[styles.label, value === filter && styles.selected]}>
-                  {value === 'all' ? 'All' : value === 'unread' ? 'Unread' : 'Messages'}
-                </Text>
-              )}
+              <Text style={[styles.label, value === filter && styles.selected]}>
+                {value === 'all'
+                  ? 'All'
+                  : value === 'unread'
+                    ? 'Unread'
+                    : value === 'messages'
+                      ? 'Messages'
+                      : 'Pinned'}
+              </Text>
             </Pressable>
           ))}
         </ScrollView>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Search conversations"
-          accessibilityState={{ expanded: searching }}
-          onPress={() => {
-            if (desktop) {
-              searchRef?.current?.focus();
-              return;
-            }
-            setSearching((value) => !value);
-            if (searching) onQuery('');
-          }}
+          onPress={() => (searchRef ?? localSearchRef).current?.focus()}
           style={styles.action}
           testID="room-search-toggle"
         >
@@ -84,27 +74,22 @@ export function RoomListToolbar({
             style={styles.action}
             testID={desktop ? 'desktop-bookmarks' : 'workspace-bookmarks'}
           >
-            <BookmarksGlyph
-              size={21}
-              color={bookmarksSelected ? styles.selected.color : styles.label.color}
-            />
+            <BookmarksGlyph size={21} color={styles.bookmark.color} filled={bookmarksSelected} />
           </Pressable>
         )}
       </View>
-      {(searching || query.length > 0) && (
-        <TextInput
-          ref={searchRef}
-          value={query}
-          onChangeText={onQuery}
-          accessibilityLabel="Search Rooms and direct messages"
-          placeholder="Search conversations"
-          placeholderTextColor={styles.label.color}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={[styles.search, focused && styles.searchFocused]}
-          testID={desktop ? 'desktop-room-search' : 'room-search'}
-        />
-      )}
+      <TextInput
+        ref={searchRef ?? localSearchRef}
+        value={query}
+        onChangeText={onQuery}
+        accessibilityLabel="Search Rooms and direct messages"
+        placeholder="Search conversations"
+        placeholderTextColor={styles.label.color}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[styles.search, focused && styles.searchFocused]}
+        testID={desktop ? 'desktop-room-search' : 'room-search'}
+      />
     </View>
   );
 }
@@ -121,6 +106,7 @@ const styles = StyleSheet.create((theme) => ({
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   label: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   selected: { color: theme.buzz.textPrimary },
+  bookmark: { color: theme.buzz.accent },
   searchFocused: { borderBottomColor: theme.buzz.accent },
   search: {
     ...theme.buzz.type.body,

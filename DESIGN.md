@@ -364,14 +364,16 @@ placeholder.
 The Room list uses the approved Previews layout in Obsidian and Bone. The
 workspace name and existing bezel avatar head the list; the workspace menu
 (Members and authorized Workspace settings) sits beside that identity, with
-compose in the same header. Bookmarks remains a separate action beside Search
-in the conversation toolbar. All, Unread, Messages and Pinned filter the list
+compose in the same header. The search field stays visible below the conversation
+toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
+a separate brass action beside Search. All, Unread, Messages and Pinned filter the list
 without removing access to quiet Rooms.
 
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
 `bodyStrong` for unread messages; a trailing `textPrimary` dot means unread
 messages only. Room names retain their brass `#`; DMs use the peer's identity.
-The byline sits above a two-line `body` preview in `textSecondary`, with generous
+The byline sits above a two-line `body` preview in `textSecondary` for Rooms;
+DMs omit it because the peer is already named in the heading. Rows have generous
 vertical space and a hairline between conversations. Self attribution is quiet;
 other authors use brass. The app's Space Grotesk roles and theme tokens own type
 and contrast. Rows grow with content; the old fixed 64px height is not a cap.
@@ -380,6 +382,9 @@ Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
 Mobile has no selected Room state: pressing a conversation navigates away.
 Long press opens pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
+The Pinned filter uses a word label so it cannot be mistaken for another glyph.
+Section headings use one `space.md` above and `space.xs` below; the following
+row starts after `space.md`, without a second large section gap.
 
 Corner summaries read “2 waiting · 5 corners”, with brass only on waiting.
 The API batches canonical state derivation for visible corners; archived work

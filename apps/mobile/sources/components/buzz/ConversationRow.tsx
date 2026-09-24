@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { roomRowName, roomRowPreview, NO_ACTIVITY_PREVIEW } from '@/buzz/room-list-row';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -68,14 +67,14 @@ export function ConversationRow({
             {!peer && <Text style={styles.sigil}>#</Text>}
             {name.name}
           </Text>
-          {pinned && <Ionicons name="pin-outline" size={14} color={styles.quiet.color} />}
+          {pinned && <Text style={styles.pinned}>Pinned</Text>}
           {selected && <Text style={styles.open}>Open</Text>}
           <Text style={styles.age}>
             {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
           </Text>
           {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
         </View>
-        {preview.text !== NO_ACTIVITY_PREVIEW && preview.attribution !== 'none' && (
+        {!peer && preview.text !== NO_ACTIVITY_PREVIEW && preview.attribution !== 'none' && (
           <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
             {preview.attribution === 'self'
               ? 'you'
@@ -104,7 +103,7 @@ export function ConversationRow({
 const styles = StyleSheet.create((theme) => ({
   row: {
     paddingHorizontal: theme.buzz.space.md,
-    paddingTop: theme.buzz.space.lg,
+    paddingTop: theme.buzz.space.md,
     paddingBottom: theme.buzz.space.md,
     backgroundColor: theme.buzz.bgBase,
   },
@@ -120,6 +119,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   open: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  pinned: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.buzz.textPrimary },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,

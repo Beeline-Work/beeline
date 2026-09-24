@@ -297,9 +297,10 @@ describe('Reproduction settings-identity-read-failure', () => {
       ),
     );
     expect(renderer.root.findByProps({ testID: 'identity-face-setting' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props.seed).toBe(
-      'a'.repeat(64),
-    );
+    expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
+    ).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'identity-managed-handle' })).toBeDefined();
   });
 
@@ -312,9 +313,10 @@ describe('Reproduction settings-identity-read-failure', () => {
         0,
       ),
     );
-    expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props.name).toBe(
-      'Person aaaa',
-    );
+    expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
+    ).toBeDefined();
   });
 
   it('still reports the failure next to the tile', async () => {
@@ -328,13 +330,48 @@ describe('Reproduction settings-identity-read-failure', () => {
     );
   });
 
-  it('shows the real profile name once the read succeeds', async () => {
-    const renderer = await renderScreen();
-    await vi.waitFor(() =>
-      expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props.name).toBe(
-        'Captain',
-      ),
+  it('shows the logo until the saved face arrives, then shows that face', async () => {
+    runtime.monolithEnabled = true;
+    let resolveFace!: (value: unknown) => void;
+    phoneOperation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFace = resolve;
+        }),
     );
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {}));
+    expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
+    ).toBeDefined();
+    await act(async () => {
+      resolveFace({ face: 'fox', pushLevel: 'mine', handle: null, name: 'Captain' });
+    });
+    expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props).toMatchObject({
+      seed: 'a'.repeat(64),
+      face: 'fox',
+      name: 'Captain',
+    });
+    expect(
+      renderer.root.findByProps({ testID: 'identity-face-setting' }).findAllByType('BeelineMark'),
+    ).toHaveLength(0);
+  });
+
+  it('keeps the logo when the hosted identity has no face', async () => {
+    runtime.monolithEnabled = true;
+    phoneOperation.mockResolvedValue({
+      face: null,
+      pushLevel: 'mine',
+      handle: null,
+      name: 'Captain',
+    });
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {}));
+    expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
+    ).toBeDefined();
   });
 });
 

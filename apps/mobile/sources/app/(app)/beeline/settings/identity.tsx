@@ -52,7 +52,6 @@ import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { IDENTITY_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
-import { defaultFaceForSeed } from '@/buzz/faces';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
 import { t } from '@/text';
@@ -380,18 +379,22 @@ export default function BuzzIdentitySettings() {
     void openExternalUrl(`https://github.com/${githubLogin}`).catch(() => undefined);
   }, [githubLogin]);
 
-  const faceMark = profilePubkey ? (
+  const faceMark = (
     <View style={styles.pictureSeat}>
-      <IdentityMark
-        kind="human"
-        seed={profilePubkey}
-        face={face ?? defaultFaceForSeed(profilePubkey)}
-        name={profileName || 'You'}
-        size={PICTURE_SEAT.pictureSize}
-        testID="identity-face-mark"
-      />
+      {face && profilePubkey ? (
+        <IdentityMark
+          kind="human"
+          seed={profilePubkey}
+          face={face}
+          name={profileName || 'You'}
+          size={PICTURE_SEAT.pictureSize}
+          testID="identity-face-mark"
+        />
+      ) : (
+        <BeelineMark size={PICTURE_SEAT.pictureSize} />
+      )}
     </View>
-  ) : null;
+  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -413,38 +416,36 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {profilePubkey && (
-          <View style={styles.ident} testID="identity-settings">
-            {monolithEnabled ? (
-              <TouchableOpacity
-                accessibilityLabel="Change face"
-                accessibilityRole="button"
-                onPress={() => setFacePickerOpen(true)}
-                style={styles.tile}
-                testID="identity-face-setting"
-              >
-                {faceMark}
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.tile} testID="identity-face-setting">
-                {faceMark}
-              </View>
-            )}
-            {managedHandle ? (
-              <TouchableOpacity
-                accessibilityLabel={`@${managedHandle}`}
-                accessibilityRole="link"
-                onPress={openGitHubProfile}
-                testID="identity-managed-handle"
-              >
-                <Text style={styles.handle}>
-                  <Text style={styles.handleAt}>@</Text>
-                  <Text style={styles.handle}>{managedHandle}</Text>
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        )}
+        <View style={styles.ident} testID="identity-settings">
+          {monolithEnabled && profilePubkey ? (
+            <TouchableOpacity
+              accessibilityLabel="Change face"
+              accessibilityRole="button"
+              onPress={() => setFacePickerOpen(true)}
+              style={styles.tile}
+              testID="identity-face-setting"
+            >
+              {faceMark}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.tile} testID="identity-face-setting">
+              {faceMark}
+            </View>
+          )}
+          {managedHandle ? (
+            <TouchableOpacity
+              accessibilityLabel={`@${managedHandle}`}
+              accessibilityRole="link"
+              onPress={openGitHubProfile}
+              testID="identity-managed-handle"
+            >
+              <Text style={styles.handle}>
+                <Text style={styles.handleAt}>@</Text>
+                <Text style={styles.handle}>{managedHandle}</Text>
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
 
         {monolithEnabled && (
           <View style={styles.section} testID="workbench-section">

@@ -2,17 +2,17 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { defaultFaceForSeed, type FaceId } from '@/buzz/faces';
+import { type FaceId } from '@/buzz/faces';
 import { FaceGrid } from './FaceGrid';
 import { HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
 
 type FacePickerSheetProps = {
   visible: boolean;
   seed: string;
-  /** The face on record; absent shows the seed's default as selected. */
+  /** The face on record; absent leaves every tile unselected. */
   face?: string | null;
   /** Optimistic: fires with the new face before the save, and again with the old one on failure. */
-  onFaceChange: (face: string) => void;
+  onFaceChange: (face: string | null) => void;
   onSave: (face: FaceId) => Promise<void>;
   onClose: () => void;
 };
@@ -32,11 +32,11 @@ export function FacePickerSheet({
 }: FacePickerSheetProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const selected = face ?? defaultFaceForSeed(seed);
+  const selected = face ?? null;
 
   const choose = async (next: FaceId) => {
-    if (saving || next === selected) return;
-    const previous = selected;
+    if (saving || next === face) return;
+    const previous = face ?? null;
     setSaving(true);
     setError(null);
     onFaceChange(next);

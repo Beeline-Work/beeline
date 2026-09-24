@@ -1372,6 +1372,7 @@ function SwipeToReply({
   onReact,
   onForward,
   onBookmark = () => undefined,
+  onSwipeCorner,
   bookmarked = false,
   isDesktop,
   replyOnly = false,
@@ -1387,6 +1388,8 @@ function SwipeToReply({
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
   onBookmark?(): void;
+  /** Mobile swipe right — forward the message into a new corner. */
+  onSwipeCorner?(): void;
   bookmarked?: boolean;
   isDesktop: boolean;
   replyOnly?: boolean;
@@ -1558,11 +1561,28 @@ function SwipeToReply({
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableOpen={(direction) => {
-        if (direction !== 'right') return;
         swipeableRef.current?.close();
-        onReply();
+        // Swipeable names the side whose actions opened: a swipe left reveals
+        // the right-side reply action, a swipe right the left-side corner one.
+        if (direction === 'right') onReply();
+        else onSwipeCorner?.();
       }}
+      overshootLeft={false}
       overshootRight={false}
+      renderLeftActions={
+        onSwipeCorner
+          ? () => (
+              <View
+                accessibilityLabel={`Forward message to a new ${CORNER_LABEL}`}
+                style={styles.cornerSwipeAction}
+                testID={`corner-swipe-action-${messageId}`}
+              >
+                <Text style={styles.replySwipeGlyph}>◇</Text>
+                <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
+              </View>
+            )
+          : undefined
+      }
       renderRightActions={() => (
         <View
           accessibilityLabel="Reply to message"
@@ -1685,6 +1705,8 @@ export interface OrdinaryLedgerMessageProps {
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
   onBookmark?(message: ChatDisplayMessage): void;
+  /** Mobile swipe right — forward the message into a new human-owned corner. */
+  onForwardToNewCorner?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
   cornerProposalAction?: 'open' | 'cancel' | null;
   onRetry(eventId: string): void;
@@ -1786,6 +1808,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onReact = () => undefined,
   onForward = () => undefined,
   onBookmark = () => undefined,
+  onForwardToNewCorner,
   onCornerProposalDecision,
   cornerProposalAction = null,
   onRetry,
@@ -2166,6 +2189,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
       onBookmark={() => onBookmark(message)}
+      {...(onForwardToNewCorner && !message.isAgentDraft
+        ? { onSwipeCorner: () => onForwardToNewCorner(message) }
+        : {})}
       bookmarked={message.bookmarked}
       isDesktop={desktopLayout}
     >
@@ -2311,6 +2337,15 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     borderLeftWidth: 1,
     borderLeftColor: theme.buzz.borderStrong,
+    backgroundColor: theme.buzz.bgHighlight,
+  },
+  cornerSwipeAction: {
+    width: 78,
+    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: theme.buzz.borderStrong,
     backgroundColor: theme.buzz.bgHighlight,
   },
   replySwipeGlyph: {

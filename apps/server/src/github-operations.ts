@@ -5,6 +5,7 @@ import {
   GitHubOAuthClient,
   GitHubHttpError,
   GitHubCredentialRejectedError,
+  githubMergeability,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -14,7 +15,11 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
-import { routeSystemCommand } from './agent-command.js';
+import {
+  queueCornerMergeConflict,
+  reconcileCornerMergeBlockers,
+  routeSystemCommand,
+} from './agent-command.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -144,6 +149,9 @@ interface CornerWebhookTarget {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+function mergeConflictKey(number: number, headSha: string, baseSha?: string): string {
+  return `merge-conflict:${number}:${headSha}${baseSha ? `:${baseSha}` : ''}`;
 }
 function challenge(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
@@ -769,6 +777,7 @@ export class GitHubOperations {
     ) {
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
+      if (event === 'push') await this.processBaseBranchPush(body, install.id);
       return;
     }
     if (event === 'installation' && body.action === 'deleted') {
@@ -827,6 +836,178 @@ export class GitHubOperations {
       }
     }
     await this.syncInstallation(owner, install.id);
+  }
+
+  /** Retry GitHub's asynchronous mergeability calculation for open corner PRs. */
+  async refreshUnknownMergeability(cornerId?: string): Promise<void> {
+    const rows = await this.database.query<{
+      corner_id: string;
+      repository: string;
+      repository_id: string;
+      installation_id: string;
+      number: number;
+      head_sha: string;
+      author_id: string;
+      title: string;
+      url: string;
+      base_sha: string | null;
+      target_branch: string;
+    }>(
+      `SELECT fact.corner_id,github.full_name repository,github.repository_id,
+              github.installation_id,(fact.lifecycle->'pr'->>'number')::integer number,
+              fact.lifecycle->'pr'->>'headSha' head_sha,
+              COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+              fact.lifecycle->'pr'->>'title' title,fact.lifecycle->'pr'->>'url' url,
+              fact.lifecycle->'pr'->>'baseSha' base_sha,
+              fact.lifecycle->'pr'->>'targetBranch' target_branch
+       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+         AND fact.lifecycle->'pr'->>'mergeability'='unknown'
+         AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
+         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+         AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
+      [cornerId ?? null],
+    );
+    for (const row of rows.rows) {
+      try {
+        const token = await this.app.installationToken(Number(row.installation_id), {
+          repositoryIds: [Number(row.repository_id)],
+        });
+        const pr = await this.app.readPullRequest(token.token, row.repository, row.number);
+        if (pr.mergeability === 'unknown') continue;
+        if (row.base_sha && row.base_sha !== pr.baseSha) {
+          if (
+            !pr.baseSha ||
+            (await this.app.readBranchHead(token.token, row.repository, row.target_branch)) !==
+              pr.baseSha
+          )
+            continue;
+        }
+        await this.database.transaction(async (tx) => {
+          const current = (
+            await tx.query<{ lifecycle: CornerLifecycleView }>(
+              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+              [row.corner_id],
+            )
+          ).rows[0]?.lifecycle;
+          if (
+            !current?.pr ||
+            current.pr.number !== row.number ||
+            current.pr.headSha !== pr.headSha ||
+            (current.pr.baseSha ?? null) !== row.base_sha ||
+            current.pr.mergeability !== 'unknown'
+          )
+            return;
+          await this.updateLifecycle(
+            row.corner_id,
+            {
+              pr: {
+                ...current.pr,
+                mergeability: pr.mergeability,
+                ...(pr.baseSha ? { baseSha: pr.baseSha } : {}),
+              },
+            },
+            tx,
+          );
+          if (pr.mergeability !== 'dirty') return;
+          const conflictKey = mergeConflictKey(row.number, pr.headSha, pr.baseSha);
+          const note = await systemLine(tx, {
+            id: hash(`beeline:${row.corner_id}:github:${conflictKey}`),
+            roomId: row.corner_id,
+            authorId: row.author_id,
+            subject: GITHUB_SUBJECT,
+            verb: 'found merge conflicts in',
+            object: {
+              text: row.title ?? `pull request #${row.number}`,
+              url: row.url,
+              headSha: pr.headSha,
+            },
+            cardType: 'github-corner-note',
+            card: { source: 'github', dedupe: conflictKey },
+          });
+          await queueCornerMergeConflict(tx, row.corner_id, note.id);
+          if (note.inserted) this.onRoomChanged?.(row.corner_id);
+        });
+      } catch (error) {
+        console.error(`[server] mergeability refresh failed for corner ${row.corner_id}:`, error);
+      }
+    }
+  }
+
+  private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {
+    const repository = repositoryName(body);
+    const branch = branchForEvent('push', body);
+    const deliveredSha = text(body.after);
+    if (
+      !repository ||
+      !branch ||
+      !deliveredSha ||
+      !/^[a-f0-9]{40,64}$/i.test(deliveredSha) ||
+      /^0+$/.test(deliveredSha)
+    )
+      return;
+    const affected = await this.database.query<{
+      corner_id: string;
+      repository_id: string;
+      base_sha: string | null;
+      head_sha: string;
+    }>(
+      `SELECT fact.corner_id,github.repository_id,
+              fact.lifecycle->'pr'->>'baseSha' base_sha,
+              fact.lifecycle->'pr'->>'headSha' head_sha
+       FROM corner_facts fact
+       JOIN rooms corner ON corner.id=fact.corner_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN github_repositories github ON github.installation_id=$1
+         AND lower(github.full_name)=lower($2) AND github.active
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND parent.github_events_enabled AND parent.github_installation_id=$1
+         AND lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)
+         AND fact.lifecycle->'pr'->>'targetBranch'=$3
+         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL`,
+      [installationId, repository, branch],
+    );
+    if (!affected.rows.length) return;
+    const token = await this.app.installationToken(installationId, {
+      repositoryIds: [Number(affected.rows[0]!.repository_id)],
+    });
+    const baseSha = await this.app.readBranchHead(token.token, repository, branch);
+    for (const row of affected.rows) {
+      let changed = false;
+      await this.database.transaction(async (tx) => {
+        const lifecycle = (
+          await tx.query<{ lifecycle: CornerLifecycleView }>(
+            `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            [row.corner_id],
+          )
+        ).rows[0]?.lifecycle;
+        if (
+          !lifecycle?.pr ||
+          lifecycle.pr.targetBranch !== branch ||
+          lifecycle.pr.headSha !== row.head_sha ||
+          (lifecycle.pr.baseSha ?? null) !== row.base_sha ||
+          lifecycle.pr.baseSha === baseSha
+        )
+          return;
+        await this.updateLifecycle(
+          row.corner_id,
+          {
+            pr: { ...lifecycle.pr, baseSha, mergeability: 'unknown' },
+          },
+          tx,
+        );
+        changed = true;
+      });
+      if (changed) await this.refreshUnknownMergeability(row.corner_id);
+    }
   }
 
   /**
@@ -944,31 +1125,68 @@ export class GitHubOperations {
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
         const targetBranch = text(record(pullRequest?.base)?.ref);
+        const webhookBaseSha = text(record(pullRequest?.base)?.sha);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
-        const mergeability =
-          mergeabilityValue === 'clean'
-            ? 'clean'
-            : mergeabilityValue === 'dirty'
-              ? 'dirty'
-              : 'unknown';
+        let mergeability = githubMergeability(mergeabilityValue);
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
-          await this.updateLifecycle(
-            target.corner_id,
-            {
-              lifecycle: 'in-review',
-              branch,
-              pr: {
-                number,
-                url,
-                title,
-                targetBranch,
-                headSha,
-                mergeability,
+          await database.transaction(async (tx) => {
+            const previous = (
+              await tx.query<{ lifecycle: CornerLifecycleView }>(
+                `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+                [target.corner_id],
+              )
+            ).rows[0]?.lifecycle;
+            const sameHead = previous?.pr?.headSha === headSha;
+            const staleBase = Boolean(
+              sameHead && previous?.pr?.baseSha && previous.pr.baseSha !== webhookBaseSha,
+            );
+            if (staleBase) mergeability = previous!.pr!.mergeability ?? 'unknown';
+            if (
+              !staleBase &&
+              mergeability === 'unknown' &&
+              sameHead &&
+              previous.pr.mergeability &&
+              previous.pr.mergeability !== 'unknown'
+            )
+              mergeability = previous.pr.mergeability;
+            const baseSha = staleBase
+              ? previous!.pr!.baseSha
+              : (webhookBaseSha ?? (sameHead ? previous?.pr?.baseSha : undefined));
+            await this.updateLifecycle(
+              target.corner_id,
+              {
+                lifecycle: 'in-review',
+                branch,
+                pr: {
+                  number,
+                  url,
+                  title,
+                  targetBranch,
+                  headSha,
+                  mergeability,
+                  ...(baseSha ? { baseSha } : {}),
+                },
               },
-            },
-            database,
-          );
+              tx,
+            );
+            if (mergeability === 'dirty') {
+              const conflictKey = mergeConflictKey(number, headSha, baseSha);
+              const note = await systemLine(tx, {
+                id: hash(`beeline:${target.corner_id}:github:${conflictKey}`),
+                roomId: target.corner_id,
+                authorId: target.author_id,
+                subject: GITHUB_SUBJECT,
+                verb: 'found merge conflicts in',
+                object: { text: title, url, headSha },
+                cardType: 'github-corner-note',
+                card: { source: 'github', dedupe: conflictKey },
+              });
+              await queueCornerMergeConflict(tx, target.corner_id, note.id);
+              if (note.inserted) this.onRoomChanged?.(target.corner_id);
+            }
+          });
+          if (mergeability === 'unknown') await this.refreshUnknownMergeability(target.corner_id);
         }
         if (merged && url) {
           await this.mergeCorner(
@@ -1118,7 +1336,10 @@ export class GitHubOperations {
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
             database,
           );
+          if (summary.status === 'failing' && !becameFailing)
+            await reconcileCornerMergeBlockers(database, target.corner_id);
         });
+        await this.refreshUnknownMergeability(target.corner_id);
       }
     }
   }
@@ -1169,11 +1390,11 @@ export class GitHubOperations {
     if (note.inserted) this.onRoomChanged?.(roomId);
     // A previously written green fact can outlive a lost dispatch. Its note
     // remains idempotent, but the command routing must be retried.
-    if (!note.inserted && phrase.kind === 'check-passed')
+    if (!note.inserted && (phrase.kind === 'check-passed' || phrase.kind === 'check-failed'))
       await routeSystemCommand(database, {
         roomId,
         sourceMessageId: note.id,
-        kind: 'check-passed',
+        kind: phrase.kind,
         targets: [],
       });
   }

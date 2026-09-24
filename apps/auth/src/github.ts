@@ -5,6 +5,13 @@ const GITHUB_ISSUER = 'https://github.com';
 export const GITHUB_IDENTITY_AUDIENCE = 'github';
 const DEFAULT_API = 'https://api.github.com';
 
+/** Only GitHub's unresolved answer should be retried as mergeability unknown. */
+export function githubMergeability(value: unknown): 'clean' | 'dirty' | 'unknown' | 'other' {
+  if (value === 'clean' || value === 'dirty') return value;
+  if (typeof value === 'string' && value !== 'unknown') return 'other';
+  return 'unknown';
+}
+
 function githubHeaders(token?: string): Record<string, string> {
   return {
     accept: 'application/vnd.github+json',
@@ -521,9 +528,32 @@ export class GitHubAppClient {
   async readPullRequest(accessToken: string, fullName: string, number: number) {
     const body = await this.readRepositoryJson(accessToken, fullName, `pulls/${number}`);
     const head = body.head as { sha?: unknown } | undefined;
+    const base = body.base as { sha?: unknown } | undefined;
     if (typeof head?.sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(head.sha))
       throw new Error('GitHub pull request has no valid head');
-    return { number, url: `https://github.com/${fullName}/pull/${number}`, headSha: head.sha };
+    const mergeableState = body.mergeable_state;
+    return {
+      number,
+      url: `https://github.com/${fullName}/pull/${number}`,
+      headSha: head.sha,
+      ...(typeof base?.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(base.sha)
+        ? { baseSha: base.sha }
+        : {}),
+      mergeability: githubMergeability(mergeableState),
+    };
+  }
+
+  /** Resolve a branch at GitHub now; push deliveries can arrive out of order. */
+  async readBranchHead(accessToken: string, fullName: string, branch: string): Promise<string> {
+    const body = await this.readRepositoryJson(
+      accessToken,
+      fullName,
+      `branches/${encodeURIComponent(branch)}`,
+    );
+    const sha = (body.commit as { sha?: unknown } | undefined)?.sha;
+    if (typeof sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(sha))
+      throw new Error('GitHub branch has no valid head');
+    return sha;
   }
 
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */

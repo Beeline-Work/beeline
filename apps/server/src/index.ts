@@ -136,6 +136,16 @@ async function main() {
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
       )
     : undefined;
+  const githubJobs = githubClients
+    ? new GitHubOperations(
+        jobsDatabase,
+        githubClients.oauth,
+        githubClients.app,
+        process.env.GITHUB_CLIENT_SECRET!,
+        mountedAuth.sealedGitHubUserToken,
+        (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+      )
+    : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
@@ -158,12 +168,18 @@ async function main() {
     publicOrigin,
     mediaExpiryMediaMaximumBytes,
   );
-  const googleOAuth = process.env.BEELINE_GOOGLE_CLIENT_ID &&
-    process.env.BEELINE_GOOGLE_CLIENT_SECRET && process.env.BEELINE_GOOGLE_TOKEN_KEY
-    ? new GoogleOAuth(database, process.env.BEELINE_GOOGLE_CLIENT_ID,
-        process.env.BEELINE_GOOGLE_CLIENT_SECRET, publicOrigin,
-        process.env.BEELINE_GOOGLE_TOKEN_KEY)
-    : undefined;
+  const googleOAuth =
+    process.env.BEELINE_GOOGLE_CLIENT_ID &&
+    process.env.BEELINE_GOOGLE_CLIENT_SECRET &&
+    process.env.BEELINE_GOOGLE_TOKEN_KEY
+      ? new GoogleOAuth(
+          database,
+          process.env.BEELINE_GOOGLE_CLIENT_ID,
+          process.env.BEELINE_GOOGLE_CLIENT_SECRET,
+          publicOrigin,
+          process.env.BEELINE_GOOGLE_TOKEN_KEY,
+        )
+      : undefined;
   const mediaExpiry = objectStorage
     ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
         storage: objectStorage,
@@ -253,6 +269,13 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
+        if (githubJobs) {
+          try {
+            await githubJobs.refreshUnknownMergeability();
+          } catch (error) {
+            console.error('[server] mergeability refresh failed:', error);
+          }
+        }
       }
       const nextDue = await schedules.nextDueAt();
       return Math.min(

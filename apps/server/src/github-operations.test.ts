@@ -153,6 +153,13 @@ describe('GitHub phone operations', () => {
         expiresAt: '2030-01-01T00:00:00Z',
       })),
       readCommitCheckRollup,
+      readPullRequest: vi.fn(async () => ({
+        number: 1,
+        url: 'https://github.com/owner/widgets/pull/1',
+        headSha,
+        mergeability: 'unknown' as const,
+      })),
+      readBranchHead: vi.fn(async () => '4'.repeat(40)),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
     const payload = (name: string, status: 'in_progress' | 'completed') => ({
@@ -223,6 +230,402 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ agent_id: REVIEWER }]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
+      corner,
+      REVIEWER,
+    ]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    const dirty = {
+      action: 'synchronize',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1,
+        title: 'Fix checks',
+        html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks', sha: headSha },
+        base: { ref: 'main' },
+        mergeable_state: 'dirty',
+        merged: false,
+      },
+    };
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (
+        await database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_merge_conflict' }]);
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
+    ).toBe(1);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
+    ).toBe(1);
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'failed',
+      total: 1,
+      failing: ['lint'],
+      checks: [{ name: 'lint', status: 'failed' }],
+    });
+    const failed = payload('lint', 'completed');
+    failed.check_run.conclusion = 'failure';
+    await operations.processWebhook('check_run', failed);
+    expect(
+      (
+        await database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_check' }]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [
+      corner,
+    ]);
+    await operations.processWebhook('check_run', failed);
+    expect(
+      (
+        await database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_check' }]);
+    const nextHead = '2'.repeat(40);
+    const unknown = {
+      ...dirty,
+      pull_request: {
+        ...dirty.pull_request,
+        head: { ...dirty.pull_request.head, sha: nextHead },
+        mergeable_state: 'unknown',
+      },
+    };
+    const readPullRequest = app.readPullRequest as ReturnType<typeof vi.fn>;
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'unknown',
+    });
+    await operations.processWebhook('pull_request', unknown);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'
+      AND source_message_id<>$2`,
+          [
+            corner,
+            (
+              await database.query<{ source_message_id: string }>(
+                `SELECT source_message_id FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict' LIMIT 1`,
+                [corner],
+              )
+            ).rows[0]?.source_message_id,
+          ],
+        )
+      ).rowCount,
+    ).toBe(0);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'dirty',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_merge_conflict' }, { reason: 'corner_merge_conflict' }]);
+    await operations.processWebhook('pull_request', unknown);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(2);
+    const newestHead = '3'.repeat(40);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'dirty',
+    });
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+      },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { headSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ headSha: newestHead, mergeability: 'unknown' });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(2);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      mergeability: 'other',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    const readsAfterSettlement = readPullRequest.mock.calls.length;
+    await operations.refreshUnknownMergeability(corner);
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+        mergeable_state: 'behind',
+      },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    const newBaseSha = '4'.repeat(40);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'unknown',
+    });
+    const basePush = {
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/main',
+      after: newBaseSha,
+    };
+    await operations.processWebhook('push', basePush);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    const readsBeforeLatePush = readPullRequest.mock.calls.length;
+    const delayedOldBaseSha = '6'.repeat(40);
+    await operations.processWebhook('push', { ...basePush, after: delayedOldBaseSha });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    expect(readPullRequest).toHaveBeenCalledTimes(readsBeforeLatePush);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'unknown',
+    });
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+        mergeable_state: 'clean',
+      },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: '5'.repeat(40),
+      mergeability: 'dirty',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'dirty',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('dirty');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(3);
+    const readsAfterRecovery = readPullRequest.mock.calls.length;
+    await operations.processWebhook('push', basePush);
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterRecovery);
+
+    const raceHead = '9'.repeat(40);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: raceHead },
+        base: { ref: 'main', sha: newBaseSha },
+        mergeable_state: 'clean',
+      },
+    });
+    const readBranchHead = app.readBranchHead as ReturnType<typeof vi.fn>;
+    const selectedBase = '7'.repeat(40);
+    const advancedBase = '8'.repeat(40);
+    readBranchHead.mockResolvedValueOnce(selectedBase).mockResolvedValueOnce(advancedBase);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: advancedBase,
+      mergeability: 'dirty',
+    });
+    await operations.processWebhook('push', { ...basePush, after: selectedBase });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: advancedBase, mergeability: 'dirty' });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(4);
+
+    let releaseOlderRead!: () => void;
+    let olderReadStarted!: () => void;
+    const olderRead = new Promise<void>((resolve) => {
+      olderReadStarted = resolve;
+    });
+    const releaseOlder = new Promise<void>((resolve) => {
+      releaseOlderRead = resolve;
+    });
+    const olderCandidate = 'a'.repeat(40);
+    const newerCandidate = 'b'.repeat(40);
+    readBranchHead
+      .mockImplementationOnce(async () => {
+        olderReadStarted();
+        await releaseOlder;
+        return olderCandidate;
+      })
+      .mockResolvedValueOnce(newerCandidate);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'unknown',
+    });
+    const firstPush = operations.processWebhook('push', { ...basePush, after: olderCandidate });
+    await olderRead;
+    await operations.processWebhook('push', { ...basePush, after: newerCandidate });
+    releaseOlderRead();
+    await firstPush;
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newerCandidate, mergeability: 'unknown' });
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'dirty',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(5);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

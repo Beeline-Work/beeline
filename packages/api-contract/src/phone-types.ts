@@ -57,7 +57,7 @@ export type CornerLifecycleView = {
     readonly title: string;
     readonly targetBranch: string;
     readonly headSha: string;
-    readonly mergeability?: 'clean' | 'dirty' | 'unknown';
+    readonly mergeability?: 'clean' | 'dirty' | 'unknown' | 'other';
     readonly baseSha?: string;
     readonly mergedAt?: string;
     readonly mergedBy?: string;

@@ -1,8 +1,32 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from './github.js';
+import {
+  GitHubAppClient,
+  GitHubHttpError,
+  GitHubOAuthClient,
+  githubMergeability,
+} from './github.js';
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('reads the current target branch SHA, including branch names with slashes', async () => {
+  const sha = 'a'.repeat(40);
+  const fetchMock = vi.fn(
+    async () => new Response(JSON.stringify({ commit: { sha } }), { status: 200 }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readBranchHead('room-token', 'acme/beeline', 'release/next')).resolves.toBe(sha);
+  expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+    'https://api.github.com/repos/acme/beeline/branches/release%2Fnext',
+  );
+});
+
+it('retries only unresolved GitHub mergeability answers', () => {
+  expect(
+    [null, 'unknown', 'clean', 'dirty', 'behind', 'unstable', 'blocked'].map(githubMergeability),
+  ).toEqual(['unknown', 'unknown', 'clean', 'dirty', 'other', 'other', 'other']);
+});
 
 describe('GitHub-only account and repository access', () => {
   it('exchanges GitHub OAuth for a stable account identity used by the npub bind flow', async () => {
@@ -302,7 +326,9 @@ describe('GitHub-only account and repository access', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }),
+      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -349,7 +375,9 @@ describe('GitHub-only account and repository access', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }),
+      )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }),
       );
@@ -398,7 +426,9 @@ describe('GitHub-only account and repository access', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }),
+      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({

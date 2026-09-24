@@ -25,9 +25,9 @@ describe('desktop sidebar workspace synchronization', () => {
   });
 
   it('spends brass only on waiting nested corner state', () => {
-    expect(corners).toContain("corner.state === 'waiting'");
-    expect(corners).toContain('cornerDisplayState(corner)');
-    expect(corners).toContain('corner.state === \'waiting\' && styles.waiting');
+    expect(corners).toContain("const ready = corner.state === 'waiting';");
+    expect(corners).not.toMatch(/<CornerGlyph[^>]*color=/);
+    expect(corners).toContain('ready && styles.waiting');
     expect(corners).toContain('waiting: { color: theme.buzz.accent }');
     expect(corners).toContain('state: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet }');
   });

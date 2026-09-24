@@ -36,12 +36,13 @@ describe('Approved Room list layout', () => {
     expect(source).toContain('params: { roomId: item.room.id }');
     expect(source).not.toContain('<DesktopRoomCorners');
   });
-  it('keeps desktop corners independently selectable, waiting first, and excludes archived work', () => {
+  it('keeps desktop corners independently selectable, waiting first, from the chat list alone', () => {
     const corners = component('DesktopRoomCorners');
-    expect(corners).toContain("corner.state !== 'archived'");
+    expect(corners).toContain('item.openCorners ?? []');
+    expect(corners).not.toContain('.corners(');
     expect(corners).toContain("Number(b.state === 'waiting') - Number(a.state === 'waiting')");
-    expect(corners).toContain('onOpen(corner.corner.id)');
-    expect(corners).toContain('cornerDisplayState(corner)');
+    expect(corners).toContain('onOpen(corner.id)');
+    expect(corners).toContain('<CornerGlyph');
     expect(corners).toContain('renderDrag(');
   });
   it('retains authorized empty-state actions and a filter recovery action', () => {

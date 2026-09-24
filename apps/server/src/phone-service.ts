@@ -1165,13 +1165,22 @@ export class PhoneService {
       this.optionalEnrichment(
         'chat-corner-counts',
         this.enrichmentDatabase.query<{
+          id: string;
+          name: string;
           parent_id: string;
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
           latest_turn_status: string | null;
+          commissioned_by_viewer: boolean | null;
+          latest_tags_viewer: boolean | null;
         }>(
-          `SELECT c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
+           initiator.id=$2 commissioned_by_viewer,
+           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+         LEFT JOIN identities initiator
+           ON initiator.id=f.commissioned_by AND initiator.kind='human'
+         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
@@ -1179,7 +1188,8 @@ export class PhoneService {
          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
-         )`,
+         )
+         ORDER BY c.created_at DESC,c.id`,
           [roomIds, viewerId],
         ),
       ),

@@ -527,8 +527,8 @@ export class GitHubAppClient {
   /** Resolve the current head in the Room's repository, including fork-authored PRs. */
   async readPullRequest(accessToken: string, fullName: string, number: number) {
     const body = await this.readRepositoryJson(accessToken, fullName, `pulls/${number}`);
-    const head = body.head as { sha?: unknown } | undefined;
-    const base = body.base as { sha?: unknown } | undefined;
+    const head = body.head as { sha?: unknown; ref?: unknown } | undefined;
+    const base = body.base as { sha?: unknown; ref?: unknown } | undefined;
     if (typeof head?.sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(head.sha))
       throw new Error('GitHub pull request has no valid head');
     const mergeableState = body.mergeable_state;
@@ -536,6 +536,17 @@ export class GitHubAppClient {
       number,
       url: `https://github.com/${fullName}/pull/${number}`,
       headSha: head.sha,
+      ...(typeof head.ref === 'string' ? { headRef: head.ref } : {}),
+      ...(typeof base?.ref === 'string' ? { baseRef: base.ref } : {}),
+      merged: body.merged === true,
+      ...(typeof body.title === 'string' ? { title: body.title } : {}),
+      ...(typeof body.merged_at === 'string' ? { mergedAt: body.merged_at } : {}),
+      ...(typeof body.merge_commit_sha === 'string'
+        ? { mergeCommitSha: body.merge_commit_sha }
+        : {}),
+      ...(typeof (body.merged_by as { login?: unknown } | undefined)?.login === 'string'
+        ? { mergedBy: (body.merged_by as { login: string }).login }
+        : {}),
       ...(typeof base?.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(base.sha)
         ? { baseSha: base.sha }
         : {}),

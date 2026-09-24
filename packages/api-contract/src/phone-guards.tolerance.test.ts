@@ -408,6 +408,29 @@ describe('phone surface readers', () => {
     expect(view?.chats[0]?.unread).toBe(false);
   });
 
+  it('reads open corners and drops rows it cannot render', () => {
+    const cornerId = '44444444-4444-4444-8444-444444444444';
+    const view = readChatListView({
+      workspace,
+      chats: [
+        {
+          room: header,
+          openCorners: [
+            { id: cornerId, name: 'Open corner', state: 'waiting' },
+            { id: cornerId, name: 'Closed corner', state: 'archived' },
+            { id: 'not-a-uuid', name: 'Bad id', state: 'working' },
+          ],
+        },
+      ],
+      viewer: identity,
+      truncated: false,
+      watchFilters: [],
+    });
+    expect(view?.chats[0]?.openCorners).toEqual([
+      { id: cornerId, name: 'Open corner', state: 'waiting' },
+    ]);
+  });
+
   it('preserves valid waiting counts without inventing them for older servers', () => {
     for (const count of [undefined, -1, '2', 2, 0]) {
       const view = readChatListView({

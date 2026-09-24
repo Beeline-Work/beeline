@@ -275,6 +275,11 @@ async function main() {
           } catch (error) {
             console.error('[server] mergeability refresh failed:', error);
           }
+          try {
+            await githubJobs.reconcileMergedCorners();
+          } catch (error) {
+            console.error('[server] merged corner reconciliation failed:', error);
+          }
         }
       }
       const nextDue = await schedules.nextDueAt();

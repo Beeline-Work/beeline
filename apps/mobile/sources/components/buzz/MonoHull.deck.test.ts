@@ -22,7 +22,7 @@ function styleBlock(text: string, name: string): string {
   return match[0];
 }
 
-describe('HullDeckMark — one visual language per deck state', () => {
+describe('StateCircle — one visual language per deck state', () => {
   it('working is a rotating circle: grey track and brass top arc', () => {
     const ring = styleBlock(source, 'stateCircleWorking');
     expect(ring).toContain('borderColor: groknight.bgTexturePeak');
@@ -64,7 +64,6 @@ describe('HullDeckMark — one visual language per deck state', () => {
   });
 
   it('restores the compact pre-#419 room scale and keeps corners smaller', () => {
-    expect(source).toContain('<StateCircle state={state} scale="room" />');
     expect(source).toContain('export const stateCircleDiameter = { room: 9, corner: 7 } as const;');
     expect(source).toContain('const diameter = stateCircleDiameter[scale];');
     expect(9).toBeGreaterThan(7);

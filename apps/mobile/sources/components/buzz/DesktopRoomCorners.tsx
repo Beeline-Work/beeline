@@ -9,23 +9,23 @@ import {
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { RoomCornerSummary } from './RoomCornerSummary';
-import { MineCornersToggle } from './MineCornersToggle';
-import { useMineCorners } from '@/buzz/mine-corners';
 
 export function DesktopRoomCorners({
   item,
+  mine,
   onOpen,
   renderDrag,
   active = false,
 }: {
   item: ChatListItem;
+  /** The sidebar's one device-wide Mine setting. */
+  mine: boolean;
   active?: boolean;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const touched = React.useRef(false);
-  const [mine, setMine] = useMineCorners();
   useEffect(() => {
     let cancelled = false;
     void loadDesktopRoomCornersExpanded(item.room.id, active)
@@ -48,33 +48,22 @@ export function DesktopRoomCorners({
   const visible = mine ? corners.filter((corner) => corner.mine) : corners;
   return (
     <View>
-      <View style={styles.summary}>
-        <View style={styles.summaryToggle}>
-          <RoomCornerSummary
-            count={filtered ? visible.length : (item.cornerCount ?? corners.length)}
-            waiting={
-              filtered
-                ? visible.filter((corner) => corner.state === 'waiting').length
-                : (item.waitingCornerCount ??
-                  corners.filter((corner) => corner.state === 'waiting').length)
-            }
-            expanded={expanded}
-            onPress={() => {
-              touched.current = true;
-              setExpanded(!expanded);
-              void saveDesktopRoomCornersExpanded(item.room.id, !expanded).catch(() => undefined);
-            }}
-            testID={`desktop-room-corners-toggle-${item.room.id}`}
-          />
-        </View>
-        {expanded && (
-          <MineCornersToggle
-            mine={mine}
-            onChange={setMine}
-            testID={`desktop-room-corners-mine-${item.room.id}`}
-          />
-        )}
-      </View>
+      <RoomCornerSummary
+        count={filtered ? visible.length : (item.cornerCount ?? corners.length)}
+        waiting={
+          filtered
+            ? visible.filter((corner) => corner.state === 'waiting').length
+            : (item.waitingCornerCount ??
+              corners.filter((corner) => corner.state === 'waiting').length)
+        }
+        expanded={expanded}
+        onPress={() => {
+          touched.current = true;
+          setExpanded(!expanded);
+          void saveDesktopRoomCornersExpanded(item.room.id, !expanded).catch(() => undefined);
+        }}
+        testID={`desktop-room-corners-toggle-${item.room.id}`}
+      />
       {expanded && (
         <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
           {visible.length === 0 ? (
@@ -115,8 +104,6 @@ export function DesktopRoomCorners({
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  summary: { flexDirection: 'row', alignItems: 'center', paddingRight: theme.buzz.space.md },
-  summaryToggle: { flex: 1 },
   list: {
     paddingLeft: theme.buzz.space.lg,
     paddingRight: theme.buzz.space.md,

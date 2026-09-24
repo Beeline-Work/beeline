@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { chmod, link, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -168,7 +178,10 @@ describe('per-room harness state isolation', () => {
       'CODEX_HOME',
       'GROK_HOME',
       'CURSOR_HOME',
+      'OPENCODE_CONFIG_DIR',
       'PI_CODING_AGENT_DIR',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
       'XDG_STATE_HOME',
       'XDG_CACHE_HOME',
       'TMPDIR',
@@ -192,11 +205,16 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
     await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
     await mkdir(resolve(operatorHome, '.config/cursor'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.local/share/opencode'), { recursive: true });
     await writeFile(resolve(operatorHome, '.claude/.credentials.json'), '{"token":"claude"}');
     await writeFile(resolve(operatorHome, '.codex/auth.json'), '{"token":"codex"}');
     await writeFile(resolve(operatorHome, '.grok/auth.json'), '{"token":"grok"}');
     await writeFile(resolve(operatorHome, '.pi/agent/auth.json'), '{"token":"pi"}');
     await writeFile(resolve(operatorHome, '.config/cursor/auth.json'), '{"token":"cursor"}');
+    await writeFile(
+      resolve(operatorHome, '.local/share/opencode/auth.json'),
+      '{"token":"opencode"}',
+    );
 
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
@@ -204,6 +222,9 @@ describe('per-room harness state isolation', () => {
     await prepareRoomAgentHome({ root: roomB, operatorHome });
 
     for (const root of [roomA, roomB]) {
+      expect(await readFile(resolve(root, 'user/.local/share/opencode/auth.json'), 'utf8')).toBe(
+        '{"token":"opencode"}',
+      );
       const claude = resolve(root, 'claude/.credentials.json');
       const codex = resolve(root, 'codex/auth.json');
       const grok = resolve(root, 'grok/auth.json');
@@ -373,7 +394,10 @@ describe('per-room harness state isolation', () => {
       GOOSE_PATH_ROOT: '/rooms/room-a/agent-home/goose',
       GROK_HOME: '/rooms/room-a/agent-home/grok',
       CURSOR_HOME: '/rooms/room-a/agent-home/cursor',
+      OPENCODE_CONFIG_DIR: '/rooms/room-a/agent-home/opencode',
       PI_CODING_AGENT_DIR: '/rooms/room-a/agent-home/pi',
+      XDG_CONFIG_HOME: '/rooms/room-a/agent-home/user/.config',
+      XDG_DATA_HOME: '/rooms/room-a/agent-home/user/.local/share',
       XDG_STATE_HOME: '/rooms/room-a/agent-home/state',
       XDG_CACHE_HOME: '/rooms/room-a/agent-home/cache',
       TMPDIR: '/rooms/room-a/agent-home/tmp',
@@ -1020,9 +1044,9 @@ describe('mounted imported MCP server names', () => {
       'browser',
       'squire',
     ]);
-    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv })).toEqual(
-      ['files'],
-    );
+    expect(
+      mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv }),
+    ).toEqual(['files']);
   });
 
   it('keeps an operator-marked host server out of the isolated config', async () => {
@@ -1054,9 +1078,9 @@ describe('mounted imported MCP server names', () => {
     expect(isolatedText).not.toContain('browser-mcp');
     expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['browser']);
     expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['files']);
-    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv })).toEqual(
-      ['files'],
-    );
+    expect(
+      mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv }),
+    ).toEqual(['files']);
   });
 
   it('reads only the selected harness inventory after preparation', async () => {
@@ -1163,9 +1187,9 @@ describe('mounted imported MCP server names', () => {
     const input = { operatorHome, agentKind: 'pi' as const };
     expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
     expect(hostImportedMcpServerNames(input)).toEqual(['trusty-squire']);
-    expect(expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] })).toEqual(
-      ['files', 'squire'],
-    );
+    expect(
+      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] }),
+    ).toEqual(['files', 'squire']);
 
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,

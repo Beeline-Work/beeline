@@ -202,6 +202,10 @@ export const HARNESS_HOME_STATE_DIRS: Array<{ match: RegExp; dirs: string[] }> =
     match: CURSOR_HARNESS_COMMAND,
     dirs: ['.cursor'],
   },
+  {
+    match: /(^|[/\\])opencode(\.[a-z]+)?$/i,
+    dirs: ['.local/share/opencode', '.config/opencode'],
+  },
 ];
 
 /**

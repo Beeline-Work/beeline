@@ -123,6 +123,12 @@ const SHARED_CREDENTIALS: Array<{
   // hand fails with "Authentication required".
   { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
   { dir: 'user', source: '.config/cursor/auth.json', target: '.config/cursor/auth.json' },
+  // OpenCode stores provider logins under XDG data, which follows isolated HOME.
+  {
+    dir: 'user',
+    source: '.local/share/opencode/auth.json',
+    target: '.local/share/opencode/auth.json',
+  },
 ];
 
 /**
@@ -176,7 +182,7 @@ const OPERATOR_SKILL_SOURCE_DIRS = [
  * through the same function so a session can never be pointed at a tree that
  * was not provisioned.
  */
-export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi', 'cursor'] as const;
+export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi', 'cursor', 'opencode'] as const;
 export type AgentSkillDir = (typeof AGENT_SKILL_DIRS)[number];
 
 /** The skills tree the selected harness reads. Anything else lands on codex's. */
@@ -264,12 +270,15 @@ const CODEX_ROOM_WEB_SEARCH_TOML = '[features]\nstandalone_web_search = true\n';
  */
 export const HOME_SUBDIRS = [
   'user',
+  'user/.config',
+  'user/.local/share',
   'claude',
   'codex',
   'goose',
   'grok',
   'pi',
   'cursor',
+  'opencode',
   'state',
   'cache',
   'tmp',
@@ -1432,7 +1441,10 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
     GOOSE_PATH_ROOT: resolve(resolved, 'goose'),
     GROK_HOME: resolve(resolved, 'grok'),
     CURSOR_HOME: resolve(resolved, 'cursor'),
+    OPENCODE_CONFIG_DIR: resolve(resolved, 'opencode'),
     PI_CODING_AGENT_DIR: resolve(resolved, 'pi'),
+    XDG_CONFIG_HOME: resolve(resolved, 'user/.config'),
+    XDG_DATA_HOME: resolve(resolved, 'user/.local/share'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
     XDG_CACHE_HOME: resolve(resolved, 'cache'),
     TMPDIR: resolve(resolved, 'tmp'),
@@ -1453,7 +1465,10 @@ export const HARNESS_STATE_ENV_VARS = [
   'GOOSE_PATH_ROOT',
   'GROK_HOME',
   'CURSOR_HOME',
+  'OPENCODE_CONFIG_DIR',
   'PI_CODING_AGENT_DIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
   'XDG_STATE_HOME',
   'XDG_CACHE_HOME',
   AGENT_PRIVATE_STATE_ENV,

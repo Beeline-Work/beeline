@@ -150,10 +150,12 @@ describe('ACP streaming lane classifier', () => {
         'pi-acp',
       ),
     ).toEqual([expected]);
-    expect(finalAgentMessageText(
-      deltas.map((text) => update('agent_message_chunk', { content: { type: 'text', text } })),
-      'pi-acp',
-    )).toBe(expected);
+    expect(
+      finalAgentMessageText(
+        deltas.map((text) => update('agent_message_chunk', { content: { type: 'text', text } })),
+        'pi-acp',
+      ),
+    ).toBe(expected);
   });
 
   it('keeps a lone pi-acp newline delta alive so a Markdown bullet does not glue onto the previous line', () => {
@@ -522,6 +524,39 @@ lines.on('line', (line) => {
   } else if (message.method === 'shutdown') {
     process.exit(0);
   }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+async function fakeOpenCodeAgent(advertisePlan = true): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-opencode-acp-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'opencode');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+const { createInterface } = require('node:readline');
+let mode = 'build';
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  const reply = (result) => send({ jsonrpc: '2.0', id: message.id, result });
+  if (message.method === 'initialize') reply({ protocolVersion: 1 });
+  else if (message.method === 'session/new') reply({ sessionId: 'opencode-session',
+    configOptions: [{ id: 'mode', category: 'mode', currentValue: mode,
+      options: [{ value: 'build' }, ${advertisePlan ? "{ value: 'plan' }" : ''}].filter(Boolean) }] });
+  else if (message.method === 'session/set_config_option') {
+    if (message.params.configId !== 'mode') process.exit(72);
+    mode = message.params.value;
+    reply({ configOptions: [{ id: 'mode', currentValue: mode }] });
+  } else if (message.method === 'session/prompt') {
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'opencode-session',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: mode } } } });
+    reply({ stopReason: 'end_turn' });
+  } else if (message.method === 'shutdown') process.exit(0);
 });
 `,
   );
@@ -1486,6 +1521,37 @@ describe('AcpClient live steering', () => {
       await client.stop();
     },
   );
+
+  it.each([
+    ['readonly', 'plan'],
+    ['edit', 'build'],
+  ] as const)('runs an OpenCode %s turn in %s mode', async (sessionMode, expected) => {
+    const client = new AcpClient({
+      agentCommand: await fakeOpenCodeAgent(),
+      agentArgs: ['acp'],
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const session = await client.sessionNew({ cwd: process.cwd(), mode: sessionMode });
+      const result = await client.sessionPrompt(session.sessionId, 'hello');
+      expect(result.agentText).toBe(expected);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('refuses an unsandboxed OpenCode Room without plan mode', async () => {
+    const client = new AcpClient({ agentCommand: await fakeOpenCodeAgent(false), agentEnv: {} });
+    await client.start();
+    try {
+      await expect(client.sessionNew({ cwd: process.cwd(), mode: 'readonly' })).rejects.toThrow(
+        'did not advertise plan mode',
+      );
+    } finally {
+      await client.stop();
+    }
+  });
 
   it.each([
     [true, 'agent-full-access'],

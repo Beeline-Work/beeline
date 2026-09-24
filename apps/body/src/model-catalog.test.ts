@@ -75,11 +75,9 @@ describe('agent model catalog filtering', () => {
 
   it('keeps Goose provider-routed model ids while still dropping the mode axis', () => {
     expect(
-      filterAgentModelCatalog(
-        { kind: 'goose', command: 'goose', args: ['acp'] },
-        raw,
-        { OPENROUTER_API_KEY: 'secret' },
-      ),
+      filterAgentModelCatalog({ kind: 'goose', command: 'goose', args: ['acp'] }, raw, {
+        OPENROUTER_API_KEY: 'secret',
+      }),
     ).toEqual([
       {
         id: 'model',
@@ -96,12 +94,20 @@ describe('agent model catalog filtering', () => {
 
   it('keeps credential-prefix filtering for Pi catalogs', () => {
     expect(
-      filterAgentModelCatalog(
-        { kind: 'pi', command: 'pi-acp', args: [] },
-        raw,
-        { OPENROUTER_API_KEY: 'secret' },
-      )[0]?.options.map((option) => option.id),
+      filterAgentModelCatalog({ kind: 'pi', command: 'pi-acp', args: [] }, raw, {
+        OPENROUTER_API_KEY: 'secret',
+      })[0]?.options.map((option) => option.id),
     ).toEqual(['openrouter/native-model']);
+  });
+
+  it('keeps OpenCode models whose credentials live in its own auth store', () => {
+    expect(
+      filterAgentModelCatalog(
+        { kind: 'opencode', command: 'opencode', args: ['acp'] },
+        raw,
+        {},
+      )[0]?.options.map((option) => option.id),
+    ).toEqual(['z-ai/glm-5.3-flash', 'anthropic/claude-sonnet-4.5', 'openrouter/native-model']);
   });
 
   it('offers only model choices the live account accepts', async () => {

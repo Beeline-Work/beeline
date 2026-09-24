@@ -82,7 +82,10 @@ export const fileConnectKeyStore: ConnectKeyStore = {
   save: (provider: ProviderKeyProvider, key: string) => saveProviderKey(provider, key),
 };
 
-const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok' | 'cursor', string> = {
+const DEFAULT_MODELS: Record<
+  ConnectProvider | 'codex' | 'claude' | 'grok' | 'cursor' | 'opencode',
+  string
+> = {
   openrouter: 'z-ai/glm-5.3-flash',
   openai: 'gpt-5.4',
   anthropic: 'claude-opus-4-1',
@@ -94,6 +97,7 @@ const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok' | 'cu
   // cursor-agent's own default; always served, and the only model safe to
   // assume before `cursor-agent models` has been read.
   cursor: 'auto',
+  opencode: 'opencode/big-pickle',
 };
 
 /**
@@ -143,7 +147,7 @@ export function defaultConnectModel(
 ): string {
   return provider
     ? DEFAULT_MODELS[provider]
-    : (DEFAULT_MODELS[harness as 'codex' | 'claude' | 'grok' | 'cursor'] ?? 'default');
+    : (DEFAULT_MODELS[harness as 'codex' | 'claude' | 'grok' | 'cursor' | 'opencode'] ?? 'default');
 }
 
 function brassEnabled(
@@ -429,7 +433,11 @@ export function soleInstalledConnectHarness(
 }
 
 export function connectHarnessLabel(harness: (typeof CONNECT_HARNESSES)[number]): string {
-  return harness === 'pi' ? 'Pi' : harness[0]!.toUpperCase() + harness.slice(1);
+  return harness === 'pi'
+    ? 'Pi'
+    : harness === 'opencode'
+      ? 'OpenCode'
+      : harness[0]!.toUpperCase() + harness.slice(1);
 }
 
 /**

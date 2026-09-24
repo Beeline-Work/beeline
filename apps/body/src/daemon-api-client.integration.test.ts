@@ -651,6 +651,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
               BUZZ_DEV_MCP_BIN: '/home/lunchbox/.local/bin/buzz-dev-mcp',
+              BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(new URL('../dist/read-only-mcp.js', import.meta.url)),
               XDG_STATE_HOME: supervisorRoot,
             },
           });

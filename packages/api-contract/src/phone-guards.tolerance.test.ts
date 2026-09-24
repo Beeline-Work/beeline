@@ -417,6 +417,8 @@ describe('phone surface readers', () => {
           room: header,
           openCorners: [
             { id: cornerId, name: 'Open corner', state: 'waiting' },
+            { id: cornerId, name: 'Mine', state: 'review', mine: true },
+            { id: cornerId, name: 'Not a flag', state: 'working', mine: 'yes' },
             { id: cornerId, name: 'Closed corner', state: 'archived' },
             { id: 'not-a-uuid', name: 'Bad id', state: 'working' },
           ],
@@ -428,6 +430,8 @@ describe('phone surface readers', () => {
     });
     expect(view?.chats[0]?.openCorners).toEqual([
       { id: cornerId, name: 'Open corner', state: 'waiting' },
+      { id: cornerId, name: 'Mine', state: 'review', mine: true },
+      { id: cornerId, name: 'Not a flag', state: 'working' },
     ]);
   });
 

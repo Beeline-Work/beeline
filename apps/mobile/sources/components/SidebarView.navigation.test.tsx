@@ -18,8 +18,6 @@ const openCornerState = vi.hoisted(() => ({
   current: 'working' as 'working' | 'waiting' | 'review',
 }));
 const corners = vi.hoisted(() => vi.fn());
-// Adds corners that are not the viewer's, and a second Room with corners.
-const othersCorners = vi.hoisted(() => ({ current: false }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -29,27 +27,12 @@ const chats = vi.hoisted(() =>
         ? [
             {
               room: { id: 'room-a', workspaceId, name: 'Alpha' },
-              cornerCount: othersCorners.current ? 2 : 1,
+              cornerCount: 2,
               openCorners: [
                 { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current, mine: true },
-                ...(othersCorners.current
-                  ? [{ id: 'corner-theirs', name: 'Their fix', state: 'waiting' }]
-                  : []),
+                { id: 'corner-theirs', name: 'Their fix', state: 'waiting' },
               ],
             },
-            ...(othersCorners.current
-              ? [
-                  {
-                    room: { id: 'room-b', workspaceId, name: 'Beta' },
-                    cornerCount: 2,
-                    waitingCornerCount: 2,
-                    openCorners: [
-                      { id: 'corner-b-mine', name: 'My ask', state: 'waiting', mine: true },
-                      { id: 'corner-b-theirs', name: 'Their ask', state: 'waiting' },
-                    ],
-                  },
-                ]
-              : []),
             {
               room: { id: 'dm-a', workspaceId, name: 'Direct' },
               directMessage: { peer: { name: 'Mina' } },
@@ -168,13 +151,12 @@ vi.mock('@/buzz/desktop-work-pane', () => ({
 vi.mock('@/components/buzz/RoomListSectionHeader', async () => {
   const ReactModule = await import('react');
   return {
-    // Render the header type with its accessory and its action as a real
-    // Pressable so tests can reach the section-head controls by testID.
+    // Render the header type with its action as a real Pressable so tests can
+    // reach the section-head creation controls by testID.
     RoomListSectionHeader: (props: any) =>
       ReactModule.createElement(
         'RoomListSectionHeader',
         props,
-        props.accessory,
         props.onAction
           ? ReactModule.createElement('Pressable', {
               testID: props.actionTestID,
@@ -276,7 +258,6 @@ describe('desktop Workspace navigation', () => {
     route.parent = undefined;
     route.pathname = '/beeline/channels';
     openCornerState.current = 'working';
-    othersCorners.current = false;
     viewport.width = 1280;
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
@@ -560,15 +541,21 @@ describe('desktop Workspace navigation', () => {
     expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
   });
 
-  it('lists every Room corner with no per-Room toggle, even for a Room that is not open', async () => {
-    const toggles = () =>
+  it("lists only the viewer's corners, with no toggle, switch, or count", async () => {
+    const hosts = (match: (id: string) => boolean) =>
       tree.root.findAll(
         (node: any) =>
+          typeof node.type === 'string' &&
           typeof node.props.testID === 'string' &&
-          node.props.testID.startsWith('desktop-room-corners-toggle-'),
+          match(node.props.testID),
       );
-    expect(toggles()).toHaveLength(0);
-    expect(control('desktop-corner-corner-a')).toBeDefined();
+    expect(
+      hosts((id) => id.startsWith('desktop-corner-corner-')).map((node: any) => node.props.testID),
+    ).toEqual(['desktop-corner-corner-a']);
+    expect(hosts((id) => id.includes('corners-toggle') || id.includes('mine'))).toHaveLength(0);
+    expect(
+      tree.root.findAll((node: any) => /\bcorners?\b/.test(String(node.props.children ?? ''))),
+    ).toHaveLength(0);
   });
 
   it('opens a Room before showing its corner from the empty deck', async () => {
@@ -598,38 +585,6 @@ describe('desktop Workspace navigation', () => {
     expect(row.props.accessibilityLabel).toBe('Open corner Fix fixture, working');
     expect(tree.root.findAllByProps({ children: 'working' }).length).toBeGreaterThan(0);
     expect(corners).not.toHaveBeenCalled();
-  });
-
-  it('filters every Room corner list from one sidebar Mine switch, on by default', async () => {
-    othersCorners.current = true;
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="room-corners-mine" />);
-    });
-    await settle();
-
-    const hosts = (match: (id: string) => boolean) =>
-      tree.root.findAll(
-        (node: any) =>
-          typeof node.type === 'string' &&
-          typeof node.props.testID === 'string' &&
-          match(node.props.testID),
-      );
-    const rows = () =>
-      hosts((id) => id.startsWith('desktop-corner-corner-'))
-        .map((node: any) => node.props.testID.slice('desktop-corner-'.length))
-        .sort();
-    const switches = () => hosts((id) => id.includes('corners-mine'));
-    expect(switches().map((node: any) => node.props.testID)).toEqual(['desktop-corners-mine']);
-    expect(switches()[0].props['aria-checked']).toBe(true);
-    expect(rows()).toEqual(['corner-a', 'corner-b-mine']);
-
-    act(() => switches()[0].props.onPress());
-    expect(switches()[0].props['aria-checked']).toBe(false);
-    expect(rows()).toEqual(['corner-a', 'corner-b-mine', 'corner-b-theirs', 'corner-theirs']);
-    // The setting is device-wide; put it back for the tests that follow.
-    act(() => switches()[0].props.onPress());
-    expect(rows()).toEqual(['corner-a', 'corner-b-mine']);
   });
 
   it.each(['working', 'review'] as const)('keeps a %s state label quiet', async (state) => {

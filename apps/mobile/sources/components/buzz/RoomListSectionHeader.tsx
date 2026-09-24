@@ -9,15 +9,12 @@ import { Pressable } from 'react-native';
 export function RoomListSectionHeader({
   title,
   count,
-  accessory,
   actionAccessibilityLabel,
   actionTestID,
   onAction,
 }: {
   title: string;
   count?: number;
-  /** A control that belongs to the whole section, placed before the action. */
-  accessory?: React.ReactNode;
   actionAccessibilityLabel?: string;
   actionTestID?: string;
   onAction?: () => void;
@@ -28,7 +25,6 @@ export function RoomListSectionHeader({
         {title.toUpperCase()}
       </Text>
       {count !== undefined && <Text style={styles.sectionCount}>{count}</Text>}
-      {accessory ? <View style={styles.sectionAccessory}>{accessory}</View> : null}
       {onAction ? (
         <Pressable
           accessibilityLabel={actionAccessibilityLabel}
@@ -68,7 +64,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     sectionHeaderActionGlyph: { color: hull.accent },
-    sectionAccessory: { marginRight: hull.space.sm },
     sectionCount: { ...hull.type.meta, color: hull.ledgerQuiet, marginRight: hull.space.sm },
   };
 });

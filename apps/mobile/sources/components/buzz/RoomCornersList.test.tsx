@@ -473,20 +473,13 @@ describe('RoomCornersList archived footer', () => {
 });
 
 describe('RoomCornersHeader', () => {
-  it.each([true, false])('renders the slab header with Mine %s in place of a count', (mine) => {
-    const onMine = vi.fn();
+  it.each([0, 1, 2])('renders the slab header and accessible count for %s corners', (count) => {
     const onBack = vi.fn();
     const onAdd = vi.fn();
     let tree!: ReactTestRenderer;
     act(() => {
       tree = create(
-        <RoomCornersHeader
-          title="#alpha"
-          mine={mine}
-          onMine={onMine}
-          onBack={onBack}
-          onAdd={onAdd}
-        />,
+        <RoomCornersHeader title="#alpha" count={count} onBack={onBack} onAdd={onAdd} />,
       );
     });
     const hull = beelineThemes.obsidian;
@@ -498,21 +491,17 @@ describe('RoomCornersHeader', () => {
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
-    // Two written parts plus the Mine switch, and no corner count. The back
-    // mark is drawn, so it is not one of them.
+    // Three written parts. The back mark is drawn, so it is not one of them.
     const texts = tree.root.findAllByType('Text' as any);
-    expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners', 'Mine']);
+    expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners', count]);
     expect(tree.root.findAllByType('Polyline' as any)).toHaveLength(1);
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.hero);
     expect(texts[1].props.accessibilityRole).toBe('header');
-    const toggle = tree.root.find(
-      (node: any) =>
-        node.props.testID === 'room-corners-mine' && node.props.accessibilityRole === 'switch',
+    expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.meta);
+    expect(texts[2].props.accessibilityLabel).toBe(
+      `${count} ${count === 1 ? 'corner' : 'corners'}`,
     );
-    expect(toggle.props).toMatchObject({ accessibilityRole: 'switch', 'aria-checked': mine });
-    act(() => toggle.props.onPress());
-    expect(onMine).toHaveBeenCalledWith(!mine);
     const [back, add] = tree.root.findAllByType('TouchableOpacity' as any);
     expect(back.props).toMatchObject({ accessibilityRole: 'button', accessibilityLabel: 'Back' });
     expect(resolvedStyle(back.props.style)).toMatchObject({ width: 44, height: 44 });

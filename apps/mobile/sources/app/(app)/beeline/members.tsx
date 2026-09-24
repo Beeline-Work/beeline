@@ -286,6 +286,7 @@ export default function BuzzMembers({
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [working, setWorking] = useState<MembersAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [yoloError, setYoloError] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
@@ -433,21 +434,21 @@ export default function BuzzMembers({
         fetch: () => http.workspace(workspaceId),
         apply: (value) => {
           setSurface(value);
-          setError(null);
+          setWorkspaceError(null);
           void mobileSurfaceCache.write(address, value, isWorkspaceView);
           // The bootstrap subscription cannot name an agent paired after the
           // screen opened. The indexed Workspace response is authoritative for
           // the Room-scoped presence filters that can refresh its roster.
-          void listen(value.watchFilters).catch((reason) => setError(String(reason)));
+          void listen(value.watchFilters).catch((reason) => setWorkspaceError(String(reason)));
         },
-        onError: (reason) => setError(String(reason)),
+        onError: (reason) => setWorkspaceError(String(reason)),
       });
       schedulerRef.current = scheduler;
       await listen(cached?.watchFilters ?? bootstrapFilters);
       if (cancelled) return;
       await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
-      if (!cancelled) setError(String(reason));
+      if (!cancelled) setWorkspaceError(String(reason));
     });
     return () => {
       cancelled = true;
@@ -986,15 +987,18 @@ export default function BuzzMembers({
     };
   }, [selectedAgent]);
 
+  const displayedError = error ?? workspaceError;
   const busy = working !== null;
   if (profileAgentId) {
     return (
       <AgentProfileView
         detail={selectedAgent}
-        loading={!selectedAgent && !error}
-        error={error}
+        loading={!selectedAgent && !displayedError}
+        error={displayedError}
         onRetry={() => {
           setError(null);
+          if (workspaceError) schedulerRef.current?.force();
+          setWorkspaceError(null);
           if (!identity || !relayUrl) setRetryGeneration((value) => value + 1);
           else setProfileRetryGeneration((value) => value + 1);
         }}
@@ -1280,7 +1284,7 @@ export default function BuzzMembers({
     );
   }
 
-  if (!surface && !error) {
+  if (!surface && !displayedError) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <SurfaceGlyphLoader testID="members-loader" />
@@ -1291,7 +1295,7 @@ export default function BuzzMembers({
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.error}>{error}</Text>
+        <Text style={styles.error}>{displayedError}</Text>
         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
@@ -1440,9 +1444,15 @@ export default function BuzzMembers({
             </Text>
           </View>
         </View>
-        {!!error && (
-          <TouchableOpacity onPress={() => schedulerRef.current?.force()} style={styles.errorPanel}>
-            <Text style={styles.error}>! {error}</Text>
+        {!!displayedError && (
+          <TouchableOpacity
+            onPress={() => {
+              setError(null);
+              schedulerRef.current?.force();
+            }}
+            style={styles.errorPanel}
+          >
+            <Text style={styles.error}>! {displayedError}</Text>
           </TouchableOpacity>
         )}
         <KeyboardAwareScrollView

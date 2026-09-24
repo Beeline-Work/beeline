@@ -987,6 +987,25 @@ describe('Members workspace management', () => {
     expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
 
+  it('keeps a profile read failure and Retry after a successful workspace refresh', async () => {
+    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    expect(renderer.root.findAllByProps({ label: 'Retry' })).not.toHaveLength(0);
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    const refresh = subscriptions.at(-1)![1];
+    const readsBeforeRefresh = roomView.workspace.mock.calls.length;
+    await act(async () => refresh());
+    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
+    const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
+    expect(retry).toBeDefined();
+    await act(async () => retry.props.onPress());
+    expect(roomView.agent).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+  });
+
   it('retries a failed profile read without collapsing the profile', async () => {
     roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
     const renderer = await render();

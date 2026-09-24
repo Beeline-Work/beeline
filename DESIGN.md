@@ -433,16 +433,20 @@ no plus: it is the Workspace name and nothing louder, with `MembersGlyph`
 as the Members door. See [Identity](#identity) for the shared glyph and
 accessible-name contract.
 
-The Workspace rail is the same slab with one hairline edge. Selection reads
-three redundant ways and none of them is a box or a fill: an edge bar (never a
-floating bracket), the mark's own heavier frame, and tone — the Workspaces you
-are _not_ in recede a step rather than the one you are in lighting up. Every
-rail command is _named_ by a mono micro-label rather than framed in a box — the
-affordance is named, not outlined — and its glyph sits on the chrome's quiet
-tier, because the label already carries the meaning. Add scrolls with the
-Workspace tiles; personal settings stays pinned at the bottom. The rail carries
-no Workspace settings command — that lives only in the Room-list header menu.
-The persistent desktop strip uses the drawer's framed picture geometry.
+The Workspace rail is the same slab with one hairline edge. In the drawer,
+selection reads three redundant ways: an edge bar (never a floating bracket),
+the mark's own heavier frame, and tone — the Workspaces you are _not_ in recede
+a step rather than the one you are in lighting up. Drawer commands have mono
+micro-labels; their glyphs sit on the chrome's quiet tier.
+
+The persistent desktop strip follows the approved original rail reference:
+framed workspace avatars, an icon-only Add control near the top, and the
+personal account avatar pinned at the bottom. Its selected workspace uses the
+accent frame; it does not inherit the drawer's edge bar or visible command
+labels. Each control still has an accessible name. Both rail forms share the
+framed workspace picture geometry. Add scrolls with the Workspace tiles;
+neither form carries Workspace Settings, which lives in the Room-list header
+menu.
 
 **Settings is one entry, not two.** The rail's `YOU` command opens the account
 hub (`buzz/settings/`), which is itself an index in this same vocabulary —

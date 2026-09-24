@@ -9,3 +9,9 @@ Reproduce with `node apps/mobile/scripts/render-consolidated-board-proof.mjs`; s
 Visual review was performed in-thread because no independent visual reviewer tool was available. The final correction pass resolved the rail fixture sizing, destructive-action placement, switch coloring and low-contrast management labels. Existing assigned-animal identities and permission restrictions are intentional adaptations of the illustrative mock.
 
 Native Android/iOS rendering and Back/scroll restoration are **not verified**: no emulator or device is available in this environment. Responsive browser captures must not be presented as native-device evidence.
+
+## Original desktop rail comparison
+
+The follow-up audit compared the original `rooms-desktop-dark-v12.html` and canonical `complete-room-agent-review.html` directly. Both desktop rail fragments contain an Add link with an SVG plus and `aria-label="Add workspace"`, followed by a bottom account tile with `aria-label="Account and settings"`. Neither fragment has visible Add/Settings labels or an edge selection bar. The original uses 48px frames, 36px images, and an accent border for the active workspace; `DesktopWorkspaceStrip` uses the shared 48px/36px frame geometry and accessible button names.
+
+The independent audit correctly identified that DESIGN.md previously described drawer labels and selection marks as universal rail requirements. The documentation now scopes those rules to the drawer and records the approved persistent desktop treatment separately. No desktop control labels or selection bars were added, because the original and consolidated references do not specify them. This reference comparison is source/capture evidence, not additional native-device verification.

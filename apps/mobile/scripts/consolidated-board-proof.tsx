@@ -134,6 +134,17 @@ function App() {
       onClose={() => setProfile(false)}
       onMessage={() => setProfile(false)}
       canManage={false}
+      canEdit={false}
+      avatarSeed={agent.soul?.avatarSeed ?? agent.agent.identity.pubkey}
+      editing={false}
+      saving={false}
+      nameDraft=""
+      soulDraft=""
+      onNameChange={() => undefined}
+      onSoulChange={() => undefined}
+      onEdit={() => undefined}
+      onSave={() => undefined}
+      onCancel={() => undefined}
       soul="A minor god from a faraway star, born when Heimdal’s sword smote spacetime. Kind, proactive, and drawn to the birth and decay of distant worlds."
       management={null}
     />

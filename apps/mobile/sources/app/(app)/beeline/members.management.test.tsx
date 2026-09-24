@@ -20,6 +20,10 @@ const modal = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
   prompt: vi.fn(async () => null as string | null),
 }));
+const navigation = vi.hoisted(() => ({
+  beforeRemove: null as null | ((event: any) => void),
+  dispatch: vi.fn(),
+}));
 const client = vi.hoisted(() => ({
   resolveDirectMessage: vi.fn(async () => ({ channelId: 'dm-room' })),
   surfaceSubscribe: vi.fn(async () => vi.fn()),
@@ -125,6 +129,15 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn(), navigate: vi.fn() },
   useLocalSearchParams: () => ({ communityId: WORKSPACE }),
+  useNavigation: () => ({
+    addListener: (_event: string, callback: (event: any) => void) => {
+      navigation.beforeRemove = callback;
+      return () => {
+        navigation.beforeRemove = null;
+      };
+    },
+    dispatch: navigation.dispatch,
+  }),
 }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('react-native-keyboard-controller', async () => {
@@ -428,11 +441,12 @@ async function openAgentProfile(renderer: ReactTestRenderer): Promise<void> {
 
 async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
   await openAgentProfile(renderer);
-  await press(renderer, 'agent-tab-manage');
+  if (state.agent.access?.owner?.id === VIEWER) await press(renderer, 'edit-agent-soul');
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
   state.agent = baseAgent();
   roomView.workspace.mockImplementation(async () => state.workspace);
@@ -883,7 +897,6 @@ describe('Members workspace management', () => {
   it('edits the human-authored soul fields through setAgentSoul', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    await press(renderer, 'edit-agent-soul');
     await act(async () => {
       renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
       renderer.root
@@ -895,14 +908,31 @@ describe('Members workspace management', () => {
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Scout',
       soul: 'Look for regressions before shipping.',
-      avatarSeed: AGENT,
+      avatarSeed: expect.stringMatching(/^soul:/),
     });
+  });
+
+  it('previews a soul-derived animal mark while editing', async () => {
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    const original = renderer.root.findByType('IdentityMark' as any);
+    expect(original.props.seed).toBe(AGENT);
+    await press(renderer, 'edit-agent-soul');
+    await act(async () => {
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText('Work calmly.');
+    });
+    const preview = renderer.root.findByType('IdentityMark' as any);
+    expect(preview.props.seed).toMatch(/^soul:/);
+    expect(preview.props.face).toBe(original.props.face);
+    await press(renderer, 'cancel-agent-edit');
+    expect(renderer.root.findByType('IdentityMark' as any).props.seed).toBe(AGENT);
   });
 
   it('opens the soul editor on the running soul with no seeded restore control', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    await press(renderer, 'edit-agent-soul');
     // The editor opens on what the agent is actually running under.
     expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
       'Keep the tests green.',
@@ -914,7 +944,6 @@ describe('Members workspace management', () => {
   it('writes the seeded soul back when the owner pastes it in', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    await press(renderer, 'edit-agent-soul');
     await act(async () => {
       renderer.root
         .findByProps({ testID: 'agent-soul-instructions' })
@@ -924,14 +953,13 @@ describe('Members workspace management', () => {
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Clara',
       soul: state.agent.seededSoul,
-      avatarSeed: AGENT,
+      avatarSeed: expect.stringMatching(/^soul:/),
     });
   });
 
   it('keeps the soul input on the theme text token with a themed placeholder', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    await press(renderer, 'edit-agent-soul');
     const input = renderer.root.findByProps({ testID: 'agent-soul-instructions' });
     expect(input.props.style.color).toBe(unistylesTheme.buzz.textPrimary);
     expect(input.props.placeholderTextColor).toBe(unistylesTheme.buzz.textMuted);
@@ -958,8 +986,8 @@ describe('Members workspace management', () => {
   it('shows the seeded soul when its owner has not written one', async () => {
     state.agent = { ...baseAgent(), soul: undefined };
     const renderer = await render();
-    await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children).toBe(
+    await openAgentProfile(renderer);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.seededSoul,
     );
   });
@@ -979,7 +1007,7 @@ describe('Members workspace management', () => {
     };
     const renderer = await render();
     await openAgentProfile(renderer);
-    expect(renderer.root.findAllByProps({ testID: 'agent-tab-manage' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.soul.instructions,
     );
@@ -1030,16 +1058,59 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeDefined();
   });
 
-  it('separates profile reading from management', async () => {
+  it('edits in the profile and returns to reading on Cancel', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'edit-agent-soul' })).toBeDefined();
-    await press(renderer, 'agent-tab-profile');
+    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' })).toBeDefined();
+    await press(renderer, 'cancel-agent-edit');
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.soul.instructions,
     );
     expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'edit-agent-soul' })).toBeDefined();
+  });
+
+  it('keeps unsaved name and soul edits when Close is declined', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
+    });
+    modal.confirm.mockResolvedValueOnce(false);
+    await press(renderer, 'close-agent-profile');
+    expect(modal.confirm).toHaveBeenCalledWith(
+      'Discard agent changes?',
+      'Your name and soul edits have not been saved.',
+      { cancelText: 'Keep editing', confirmText: 'Discard', destructive: true },
+    );
+    expect(renderer.root.findByProps({ testID: 'agent-soul-name' }).props.value).toBe('Scout');
+    expect(router.back).not.toHaveBeenCalled();
+    await press(renderer, 'save-agent-soul');
+    expect(client.setAgentSoul).toHaveBeenCalledOnce();
+    await press(renderer, 'close-agent-profile');
+    expect(router.back).toHaveBeenCalledOnce();
+  });
+
+  it('guards a native back navigation while the soul draft is dirty', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    await act(async () => {
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText('New soul');
+    });
+    const action = { type: 'GO_BACK' };
+    const preventDefault = vi.fn();
+    modal.confirm.mockResolvedValueOnce(false);
+    await act(async () => navigation.beforeRemove?.({ preventDefault, data: { action } }));
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(navigation.dispatch).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
+      'New soul',
+    );
+    await act(async () => navigation.beforeRemove?.({ preventDefault, data: { action } }));
+    expect(navigation.dispatch).toHaveBeenCalledWith(action);
   });
 
   it('lets the owner open the agent to everyone, and names who to ask until they do', async () => {

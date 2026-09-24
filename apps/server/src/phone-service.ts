@@ -6922,11 +6922,12 @@ export class PhoneService {
       agent_id: string;
       selected_model: string | null;
       model_catalog: AgentDetailView['catalog'];
+      soul: { avatarSeed?: string } | null;
       owner_id: string;
       owner_name: string;
       owner_handle: string | null;
     }>(
-      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
+      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,agent.soul,
               owner.id owner_id,owner.name owner_name,owner.handle owner_handle
        FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
        WHERE agent.agent_id=ANY($1::text[])`,
@@ -6941,6 +6942,7 @@ export class PhoneService {
       return {
         ...member,
         ...(model ? { model } : {}),
+        avatarSeed: config?.soul?.avatarSeed || member.identity.pubkey,
         ...(config
           ? {
               owner: {

@@ -232,6 +232,7 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   return {
     ...member,
     ...field('model', typeof item.model === 'string' ? item.model : undefined),
+    ...field('avatarSeed', typeof item.avatarSeed === 'string' ? item.avatarSeed : undefined),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
   };
 }

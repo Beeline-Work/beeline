@@ -5241,6 +5241,11 @@ describe('monolith integration', () => {
         selected: { model: 'gpt-5.6-codex' },
       }),
     );
+    const workspaceAfterSoul = await request(`/v1/phone/workspaces/${WORKSPACE}`);
+    expect(workspaceAfterSoul.status).toBe(200);
+    expect((await workspaceAfterSoul.json()).agents).toContainEqual(
+      expect.objectContaining({ avatarSeed: 'honeybee-seed' }),
+    );
 
     const token = 'device-token-production-shaped-1234567890';
     const registered = await request('/v1/phone/operations/registerPushDevice', 'POST', {
@@ -7629,6 +7634,7 @@ describe('monolith integration', () => {
     expect(workspace?.agents).toEqual([
       expect.objectContaining({
         model: 'gpt-5.6',
+        avatarSeed: AGENT,
         owner: { pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' },
       }),
     ]);

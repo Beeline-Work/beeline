@@ -138,6 +138,8 @@ export type RoomViewMember = {
 export type WorkspaceAgentView = RoomViewMember & {
   /** Selected model label, resolved from the latest catalog when available. */
   readonly model?: string;
+  /** Seed for the generated animal mark, derived from the agent's current soul. */
+  readonly avatarSeed?: string;
   /** The person who connected and owns this agent's configuration. */
   readonly owner?: RoomViewIdentity;
 };

@@ -213,6 +213,18 @@ function readLinuxStartTime(pid: number): string | undefined {
   }
 }
 
+function readLinuxProcessGroup(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const close = stat.lastIndexOf(')');
+    if (close < 0) return undefined;
+    const group = Number(stat.slice(close + 2).split(' ')[2]);
+    return Number.isSafeInteger(group) && group > 0 ? group : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function lockOwnerIsAlive(owner: SquireProfileLockOwner): boolean {
   if (!isProcessAlive(owner.pid)) return false;
   if (owner.startTime === null || owner.startTime === 'unknown') return true;
@@ -247,10 +259,10 @@ function removeProfileLock(lockPath: string): void {
 /**
  * Reclaim Squire's on-disk browser claim so a fresh connect is not blocked
  * by a phantom lock. Dead owners (process gone, or pid reused with a
- * different start_time) are cleared. A pid this helper already aborted is
- * cleared. A live owner that is not ours is left untouched — killing
- * another Squire server (or another agent system on this machine) is not
- * safe; the caller surfaces `action` instead.
+ * different start_time) are cleared. A pid this helper already aborted, or a
+ * child in its detached process group, is cleared. A live owner that is not
+ * ours is left untouched — killing another Squire server (or another agent
+ * system on this machine) is not safe; the caller surfaces `action` instead.
  */
 export function reclaimSquireProfileClaim(options?: {
   readonly profileDir?: string;
@@ -265,7 +277,11 @@ export function reclaimSquireProfileClaim(options?: {
   if (!owner) {
     return { kind: 'free' };
   }
-  const ours = (options?.ourPids ?? []).includes(owner.pid);
+  const ourPids = options?.ourPids ?? [];
+  const ours = owner.host === hostname() && (
+    ourPids.includes(owner.pid) ||
+    (ourPids.length > 0 && ourPids.includes(readLinuxProcessGroup(owner.pid) ?? -1))
+  );
   if (ours) {
     removeProfileLock(lockPath);
     options?.log?.(

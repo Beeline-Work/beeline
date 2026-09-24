@@ -484,6 +484,7 @@ describe('the transcript new-message control', () => {
 
     // The reader pages back into history. The newest row is off screen, so the
     // disc comes up with no badge — nothing new has arrived to count.
+    scroll(false);
     report([SEED[1]!, SEED[2]!]);
     expect(discs(renderer)).toHaveLength(1);
     expect(badges(renderer)).toEqual([]);
@@ -537,6 +538,22 @@ describe('the transcript new-message control', () => {
     report([SEED[4]!, arrived[5]!]);
     expect(discs(renderer)).toHaveLength(0);
     expect(badges(renderer)).toEqual([]);
+  });
+
+  it('ROOM-CHEV-KEYBOARD-1: hides a stale jump chevron at the tail after keyboard resize', () => {
+    const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
+    report([SEED[1]!, SEED[2]!]);
+    expect(discs(renderer)).toHaveLength(1);
+
+    // Android can clamp the inverted list back to offset zero when the
+    // keyboard changes its viewport without refreshing the viewable set.
+    scroll(true);
+    expect(discs(renderer)).toHaveLength(0);
+
+    // Moving back into history still needs the jump control even if the
+    // previous viewability report has not changed.
+    scroll(false);
+    expect(discs(renderer)).toHaveLength(1);
   });
 
   it('raises the control even though the last report said the newest row was on screen', () => {

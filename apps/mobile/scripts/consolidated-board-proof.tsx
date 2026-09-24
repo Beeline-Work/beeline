@@ -135,7 +135,9 @@ function App() {
       onMessage={() => setProfile(false)}
       canManage={false}
       canEdit={false}
-      avatarSeed={agent.soul?.avatarSeed ?? agent.agent.identity.pubkey}
+      avatarDisabled={false}
+      onGenerateAvatar={async () => undefined}
+      refreshAgent={async () => agent}
       editing={false}
       saving={false}
       nameDraft=""

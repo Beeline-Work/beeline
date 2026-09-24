@@ -1,3 +1,4 @@
+import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
   authorizeFailedTurnOutput,
@@ -198,6 +199,7 @@ export class DaemonService {
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
+      'postAgentAvatar',
       'postRoomMessage',
       'postAgentAttachment',
       'postAgentDraft',
@@ -688,6 +690,21 @@ export class DaemonService {
       case 'postAgentToolMandate':
         return (await this.postMandate(
           input as Input<'postAgentToolMandate'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'getAgentAvatar': {
+        const row = (
+          await this.database.query<{ drawing: unknown; soul: unknown }>(
+            `SELECT portrait.drawing,agent.soul FROM agents agent
+           LEFT JOIN agent_avatars portrait ON portrait.agent_id=agent.agent_id WHERE agent.agent_id=$1`,
+            [authenticatedAgentId],
+          )
+        ).rows[0];
+        return { drawing: row?.drawing ?? null, soul: row?.soul ?? null } as Output<Name>;
+      }
+      case 'postAgentAvatar':
+        return (await this.agentAvatar(
+          input as Input<'postAgentAvatar'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentCommands':
@@ -3377,6 +3394,31 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  private async agentAvatar(input: Input<'postAgentAvatar'>, agentId: string) {
+    const command = this.authorizedCommand;
+    if (!this.commandTransaction || !command) throw new Error('avatar requires an active command');
+    // Soul edits lock the agent before its identity; use the same order.
+    await this.database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR UPDATE', [agentId]);
+    const bytes = await renderAgentAvatar(input.drawing);
+    const id = randomUUID();
+    const avatar = `/v1/agent-avatars/${id}`;
+    await this.database.query(
+      `INSERT INTO agent_avatars(id,agent_id,bytes,request_id,drawing) VALUES($1,$2,$3,$4,$5::jsonb)
+       ON CONFLICT(agent_id) DO UPDATE SET id=EXCLUDED.id,bytes=EXCLUDED.bytes,
+         request_id=EXCLUDED.request_id,drawing=EXCLUDED.drawing,generated_at=now()`,
+      [id, agentId, bytes, command.turn_request_id, JSON.stringify(input.drawing)],
+    );
+    await this.database.query('UPDATE identities SET avatar=$2,updated_at=now() WHERE id=$1', [
+      agentId,
+      avatar,
+    ]);
+    await this.database.query(
+      `UPDATE agents SET soul=CASE WHEN soul IS NULL THEN NULL ELSE soul - 'avatar' END,updated_at=now() WHERE agent_id=$1`,
+      [agentId],
+    );
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
+    return { id, createdAt: Math.floor(Date.now() / 1000) };
+  }
   private async commands(input: Input<'postAgentCommands'>, agentId: string) {
     await this.database.query(
       `UPDATE agents SET commands=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
@@ -4770,6 +4812,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postWorkScheduleReceipt: true,
   postAgentToolScheduleIndex: true,
   postAgentToolMandate: true,
+  getAgentAvatar: true,
+  postAgentAvatar: true,
   postAgentCommands: true,
   postAgentModelCatalog: true,
   postAgentMachineReport: true,

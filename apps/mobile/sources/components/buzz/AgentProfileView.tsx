@@ -8,6 +8,7 @@ import { IdentityMark } from './IdentityMark';
 import { ChevronGlyph } from './ChevronGlyph';
 import { MonoButton } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
+import { SoulPortraitControls } from './SoulPortraitControls';
 
 export function AgentProfileView({
   detail,
@@ -18,7 +19,9 @@ export function AgentProfileView({
   onMessage,
   canManage,
   canEdit,
-  avatarSeed,
+  avatarDisabled,
+  onGenerateAvatar,
+  refreshAgent,
   editing,
   saving,
   nameDraft,
@@ -39,7 +42,9 @@ export function AgentProfileView({
   onMessage: () => void;
   canManage: boolean;
   canEdit: boolean;
-  avatarSeed: string;
+  avatarDisabled: boolean;
+  onGenerateAvatar: (soul: string) => Promise<void>;
+  refreshAgent: () => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;
   nameDraft: string;
@@ -123,13 +128,12 @@ export function AgentProfileView({
             <View style={styles.identity}>
               <IdentityMark
                 kind="agent"
-                seed={avatarSeed || identity.pubkey}
+                seed={identity.pubkey}
                 name={identity.name}
                 face={identity.face}
                 avatarUrl={identity.avatar}
                 size={72}
               />
-              {editing && <Text style={styles.meta}>Avatar preview · from soul</Text>}
               {editing ? (
                 <TextInput
                   accessibilityLabel="Agent name"
@@ -198,6 +202,16 @@ export function AgentProfileView({
                 >
                   <Text style={styles.accent}>{expanded ? 'Show less' : 'Read full soul'}</Text>
                 </Pressable>
+              )}
+              {canEdit && detail && (
+                <SoulPortraitControls
+                  key={identity.pubkey}
+                  detail={detail}
+                  soul={editing ? soulDraft : soul}
+                  disabled={avatarDisabled}
+                  generate={onGenerateAvatar}
+                  refresh={refreshAgent}
+                />
               )}
             </View>
             {canManage && (editing || !canEdit) && management}

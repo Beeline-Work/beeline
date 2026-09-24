@@ -1170,9 +1170,16 @@ export class PhoneService {
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
           latest_turn_status: string | null;
+          commissioned_by_viewer: boolean | null;
+          latest_tags_viewer: boolean | null;
         }>(
-          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
+           initiator.id=$2 commissioned_by_viewer,
+           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+         LEFT JOIN identities initiator
+           ON initiator.id=f.commissioned_by AND initiator.kind='human'
+         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
@@ -2017,6 +2024,7 @@ export class PhoneService {
         yolo_forced_off: boolean;
         yolo_set_by_name: string | null;
         yolo_set_at: Date | null;
+        avatar_generation_id: string | null;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
         access_policy: unknown;
@@ -2025,6 +2033,7 @@ export class PhoneService {
         owner_handle: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
+                (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
@@ -2060,6 +2069,7 @@ export class PhoneService {
     );
     return {
       workspaceId,
+      ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       recentWork: recentWork.rows.map(({ title, url }) => ({ title, url })),
       agent: member,
       ...(config?.soul
@@ -4835,7 +4845,7 @@ export class PhoneService {
         }),
       ]);
       await database.query(
-        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE($4,avatar),updated_at=now() WHERE id=$1`,
+        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE((SELECT '/v1/agent-avatars/'||id::text FROM agent_avatars WHERE agent_id=$1),$4,avatar),updated_at=now() WHERE id=$1`,
         [input.agentId, name, handle, input.avatar ?? null],
       );
     });
@@ -6922,12 +6932,11 @@ export class PhoneService {
       agent_id: string;
       selected_model: string | null;
       model_catalog: AgentDetailView['catalog'];
-      soul: { avatarSeed?: string } | null;
       owner_id: string;
       owner_name: string;
       owner_handle: string | null;
     }>(
-      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,agent.soul,
+      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
               owner.id owner_id,owner.name owner_name,owner.handle owner_handle
        FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
        WHERE agent.agent_id=ANY($1::text[])`,
@@ -6942,7 +6951,6 @@ export class PhoneService {
       return {
         ...member,
         ...(model ? { model } : {}),
-        avatarSeed: config?.soul?.avatarSeed || member.identity.pubkey,
         ...(config
           ? {
               owner: {

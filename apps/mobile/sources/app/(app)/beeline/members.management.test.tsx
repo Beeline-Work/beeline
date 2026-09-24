@@ -25,6 +25,12 @@ const navigation = vi.hoisted(() => ({
   dispatch: vi.fn(),
 }));
 const client = vi.hoisted(() => ({
+  composeMessage: vi.fn(async (input: any, options: any) => ({
+    ...input,
+    options,
+    id: 'avatar-request',
+  })),
+  publishPreparedMessage: vi.fn(async (_message: any) => undefined),
   resolveDirectMessage: vi.fn(async () => ({ channelId: 'dm-room' })),
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
@@ -267,6 +273,8 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
     resolveDirectMessage = client.resolveDirectMessage;
+    composeMessage = client.composeMessage;
+    publishPreparedMessage = client.publishPreparedMessage;
   },
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -896,6 +904,8 @@ describe('Members workspace management', () => {
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {
     const renderer = await render();
+    await openAgentProfile(renderer);
+    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' })).toBeDefined();
     await openAgentManagement(renderer);
     await act(async () => {
       renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
@@ -908,26 +918,8 @@ describe('Members workspace management', () => {
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Scout',
       soul: 'Look for regressions before shipping.',
-      avatarSeed: expect.stringMatching(/^soul:/),
+      avatarSeed: AGENT,
     });
-  });
-
-  it('previews a soul-derived animal mark while editing', async () => {
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    const original = renderer.root.findByType('IdentityMark' as any);
-    expect(original.props.seed).toBe(AGENT);
-    await press(renderer, 'edit-agent-soul');
-    await act(async () => {
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText('Work calmly.');
-    });
-    const preview = renderer.root.findByType('IdentityMark' as any);
-    expect(preview.props.seed).toMatch(/^soul:/);
-    expect(preview.props.face).toBe(original.props.face);
-    await press(renderer, 'cancel-agent-edit');
-    expect(renderer.root.findByType('IdentityMark' as any).props.seed).toBe(AGENT);
   });
 
   it('opens the soul editor on the running soul with no seeded restore control', async () => {
@@ -953,7 +945,7 @@ describe('Members workspace management', () => {
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Clara',
       soul: state.agent.seededSoul,
-      avatarSeed: expect.stringMatching(/^soul:/),
+      avatarSeed: AGENT,
     });
   });
 
@@ -983,6 +975,34 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
   });
 
+  it('sends the edited soul through the target agent DM and keeps retry local on failure', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    await act(async () =>
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText('A deity of faraway stars'),
+    );
+    client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
+    await press(renderer, 'generate-avatar-from-soul');
+    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
+    expect(client.composeMessage).toHaveBeenCalledWith(
+      {
+        sessionId: 'dm-room',
+        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"',
+      },
+      { mentionAgent: AGENT },
+    );
+    expect(client.publishPreparedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'avatar-request' }),
+    );
+    expect(client.setAgentSoul).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'avatar-refinement-hint' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.label).toBe(
+      'Retry avatar generation',
+    );
+  });
+
   it('shows the seeded soul when its owner has not written one', async () => {
     state.agent = { ...baseAgent(), soul: undefined };
     const renderer = await render();
@@ -1008,6 +1028,7 @@ describe('Members workspace management', () => {
     const renderer = await render();
     await openAgentProfile(renderer);
     expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'generate-avatar-from-soul' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.soul.instructions,
     );

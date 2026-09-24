@@ -65,6 +65,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
 import type { AgentKind } from './agent-command.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
@@ -155,6 +156,7 @@ const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
 export const BEELINE_DEFAULT_SKILL_NAMES = [
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
+  DRAW_AVATAR_SKILL_NAME,
   USING_BEELINE_SKILL_NAME,
 ] as const;
 
@@ -415,6 +417,7 @@ async function provisionAgentSkillsAndMcp(
   agentKind: AgentKind | undefined,
 ): Promise<void> {
   const managedSkills = [
+    { name: DRAW_AVATAR_SKILL_NAME, content: drawAvatarSkillMarkdown(skillReleaseId) },
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
     { name: BEELINE_TRIAGE_SKILL_NAME, content: beelineTriageSkillMarkdown(skillReleaseId) },
     ...(isReviewer

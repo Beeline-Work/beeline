@@ -232,7 +232,6 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   return {
     ...member,
     ...field('model', typeof item.model === 'string' ? item.model : undefined),
-    ...field('avatarSeed', typeof item.avatarSeed === 'string' ? item.avatarSeed : undefined),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
   };
 }
@@ -1080,7 +1079,12 @@ function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
   const state = oneOf(item?.state, ['working', 'waiting', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
-  return { id: item.id, name: item.name, state };
+  return {
+    id: item.id,
+    name: item.name,
+    state,
+    ...field('mine', item.mine === true ? (true as const) : undefined),
+  };
 }
 
 function readChat(value: unknown): ChatListItem | null {
@@ -1594,6 +1598,10 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     watchFilters: readWatchFilters(item.watchFilters),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
     ...field('soul', projectedSoul),
+    ...field(
+      'avatarGenerationId',
+      nonempty(item.avatarGenerationId) ? item.avatarGenerationId : undefined,
+    ),
     ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),
     ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
     ...field('selected', readModelSelection(item.selected)),

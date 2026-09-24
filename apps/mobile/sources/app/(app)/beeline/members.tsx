@@ -29,7 +29,6 @@ import {
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
-import { agentAvatarSeed } from '@/buzz/agent-avatar-seed';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
@@ -327,11 +326,13 @@ export default function BuzzMembers({
   };
 
   const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
+    const generation = agentRequestGenerationRef.current;
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
       workspaceId,
       agentPubkey,
     );
+    if (generation !== agentRequestGenerationRef.current) return value;
     setSelectedAgent(value);
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
       workspaceId,
@@ -721,6 +722,22 @@ export default function BuzzMembers({
     }
   };
 
+  const requestSoulAvatar = async (soul: string) => {
+    if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
+      throw new Error('Agent settings are unavailable.');
+    const client = new BuzzRigTransport(identity);
+    const agent = selectedAgent.agent.identity;
+    const room = await client.resolveDirectMessage(workspaceId, agent.pubkey);
+    const message = await client.composeMessage(
+      {
+        sessionId: room.channelId,
+        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}`,
+      },
+      { mentionAgent: agent.pubkey },
+    );
+    await client.publishPreparedMessage(message);
+  };
+
   const beginAgentSoulEdit = () => {
     if (!selectedAgent || !ownsSelectedAgent) return;
     allowProfileNavigationRef.current = false;
@@ -735,11 +752,6 @@ export default function BuzzMembers({
     (agentNameDraft !== (selectedAgent.soul?.name ?? selectedAgent.agent.identity.name) ||
       agentSoulDraft !== agentSoulCopy(selectedAgent)),
   );
-  const selectedAvatarSeed = selectedAgent
-    ? editingAgentSoul && agentSoulDraft.trim() !== agentSoulCopy(selectedAgent).trim()
-      ? agentAvatarSeed(selectedAgent.agent.identity.pubkey, agentSoulDraft)
-      : (selectedAgent.soul?.avatarSeed ?? selectedAgent.agent.identity.pubkey)
-    : '';
   const confirmDiscardAgentEdit = async (): Promise<boolean> =>
     !agentEditDirty ||
     Modal.confirm('Discard agent changes?', 'Your name and soul edits have not been saved.', {
@@ -795,10 +807,7 @@ export default function BuzzMembers({
       await client.setAgentSoul(workspaceId, pubkey, {
         name,
         soul,
-        avatarSeed:
-          soul === agentSoulCopy(selectedAgent).trim()
-            ? (selectedAgent.soul?.avatarSeed ?? pubkey)
-            : agentAvatarSeed(pubkey, soul),
+        avatarSeed: selectedAgent.soul?.avatarSeed ?? pubkey,
         ...(selectedAgent.soul?.avatar ? { avatar: selectedAgent.soul.avatar } : {}),
       });
       await Promise.all([
@@ -1057,7 +1066,9 @@ export default function BuzzMembers({
         onMessage={() => void messageSelectedAgent()}
         canManage={Boolean(selectedAgent && canRemoveSelectedAgent)}
         canEdit={ownsSelectedAgent}
-        avatarSeed={selectedAvatarSeed}
+        avatarDisabled={busy}
+        onGenerateAvatar={requestSoulAvatar}
+        refreshAgent={() => readAgent(profileAgentId)}
         editing={editingAgentSoul}
         saving={working === 'save-agent-soul'}
         nameDraft={agentNameDraft}
@@ -1527,7 +1538,6 @@ export default function BuzzMembers({
                     }
                     ownerHandle={member.owner?.handle}
                     pubkey={member.identity.pubkey}
-                    seed={member.avatarSeed}
                     testID={`agent-${member.identity.pubkey}-identity`}
                     trailing={
                       <ChevronGlyph

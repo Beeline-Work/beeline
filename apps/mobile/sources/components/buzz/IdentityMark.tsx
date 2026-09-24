@@ -209,6 +209,13 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
     kind === 'human' && isConnectorLogoUrl(avatarUrl) && failedAvatar !== avatarUrl;
   // Workspace pictures are the sole photo exception. Human and agent relay
   // photos stay inert even when an untyped/stale caller supplies avatarUrl.
+  const showGeneratedAvatar =
+    kind === 'agent' &&
+    Boolean(
+      avatarUrl &&
+      /\/v1\/agent-avatars\/[0-9a-f-]{36}$/.test(avatarUrl) &&
+      failedAvatar !== avatarUrl,
+    );
   const showRelayAvatar =
     WORKSPACE_PICTURES_ENABLED &&
     kind === 'workspace' &&
@@ -275,9 +282,19 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         style={[styles.plate, { width: size, height: size, backgroundColor: plate }]}
         testID="identity-face-plate"
       >
-        <Svg width={size} height={size} viewBox="0 0 100 100">
-          {kind === 'agent' ? agentFaceLayers(face) : personFaceLayers(face, palette.mid, mode)}
-        </Svg>
+        {showGeneratedAvatar ? (
+          <Image
+            source={{ uri: avatarUrl! }}
+            resizeMode="cover"
+            style={styles.image}
+            onError={() => setFailedAvatar(avatarUrl ?? null)}
+            testID="generated-agent-avatar"
+          />
+        ) : (
+          <Svg width={size} height={size} viewBox="0 0 100 100">
+            {kind === 'agent' ? agentFaceLayers(face) : personFaceLayers(face, palette.mid, mode)}
+          </Svg>
+        )}
       </View>
 
       {/*

@@ -138,8 +138,6 @@ export type RoomViewMember = {
 export type WorkspaceAgentView = RoomViewMember & {
   /** Selected model label, resolved from the latest catalog when available. */
   readonly model?: string;
-  /** Seed for the generated animal mark, derived from the agent's current soul. */
-  readonly avatarSeed?: string;
   /** The person who connected and owns this agent's configuration. */
   readonly owner?: RoomViewIdentity;
 };
@@ -534,6 +532,9 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
+  /** Present when the viewer commissioned this corner or it awaits them, the
+   * same rule as the corners page's "Mine" filter. */
+  readonly mine?: true;
 };
 
 export type ChatListItem = {
@@ -693,6 +694,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  /** Present only after a generated portrait has committed successfully. */
+  readonly avatarGenerationId?: string;
   /** Merged PRs opened by this agent in corners the viewer may read. */
   readonly recentWork?: readonly { readonly title: string; readonly url: string }[];
   readonly workspaceId: string;

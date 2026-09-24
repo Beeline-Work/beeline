@@ -262,6 +262,8 @@ export function isMountedMcpToolPermissionRequest(
 }
 
 const AGENT_SURFACE_TOOL_NAMES = [
+  'get_avatar',
+  'set_avatar',
   'open_corner',
   'pr_checks_status',
   'post_artifact',

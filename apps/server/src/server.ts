@@ -961,12 +961,20 @@ async function route(
     response.end(logo);
     return;
   }
-  if (method === 'GET' && url.pathname.startsWith('/v1/avatars/')) {
-    const id = url.pathname.slice('/v1/avatars/'.length);
+  if (
+    method === 'GET' &&
+    (url.pathname.startsWith('/v1/avatars/') || url.pathname.startsWith('/v1/agent-avatars/'))
+  ) {
+    const agentAvatar = url.pathname.startsWith('/v1/agent-avatars/');
+    const id = url.pathname.slice(
+      agentAvatar ? '/v1/agent-avatars/'.length : '/v1/avatars/'.length,
+    );
     const avatar = isMediaId(id)
       ? (
           await options.database.query<{ bytes: Uint8Array }>(
-            'SELECT bytes FROM avatars WHERE id=$1',
+            agentAvatar
+              ? 'SELECT bytes FROM agent_avatars WHERE id=$1'
+              : 'SELECT bytes FROM avatars WHERE id=$1',
             [id],
           )
         ).rows[0]

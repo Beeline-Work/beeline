@@ -277,6 +277,58 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
+    name: 'get_avatar',
+    description:
+      'Read your current generated avatar drawing and saved soul for /draw-avatar. The daemon token selects you; no other agent can be targeted.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'set_avatar',
+    description:
+      'Render and persist your /draw-avatar drawing directly as your current avatar. Follow the draw-avatar skill and its shipped Speakeasy references. Requires an active authorized turn; failure preserves the current face.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        drawing: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 128,
+          items: {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['path', 'polygon', 'circle', 'ellipse', 'rect', 'line'],
+              },
+              fill: { type: 'string', enum: ['bone', 'ink', 'brass', 'none'] },
+              stroke: { type: 'string', enum: ['bone', 'ink', 'brass', 'none'] },
+              strokeWidth: { type: 'number' },
+              d: { type: 'string' },
+              points: { type: 'string' },
+              x: { type: 'number' },
+              y: { type: 'number' },
+              width: { type: 'number' },
+              height: { type: 'number' },
+              cx: { type: 'number' },
+              cy: { type: 'number' },
+              r: { type: 'number' },
+              rx: { type: 'number' },
+              ry: { type: 'number' },
+              x1: { type: 'number' },
+              y1: { type: 'number' },
+              x2: { type: 'number' },
+              y2: { type: 'number' },
+            },
+            required: ['type'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['drawing'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'wallet_address',
     description:
       "Show your connected owner's wallet: the EVM address (and the Solana address when there is one) and whether a wallet is linked at all. Call this before wallet_pay when you need an address to receive funds.",
@@ -2957,6 +3009,17 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return approveMerge(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
+    case 'get_avatar':
+      return JSON.stringify(
+        await daemonExecute('getAgentAvatar', { roomId: agentScheduleRoomId() }),
+      );
+    case 'set_avatar':
+      return JSON.stringify(
+        await daemonExecute('postAgentAvatar', {
+          roomId: agentScheduleRoomId(),
+          drawing: args.drawing,
+        }),
+      );
     case 'fetch_image':
       return fetchImage(args);
     case 'post_artifact':

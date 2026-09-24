@@ -878,6 +878,16 @@ CREATE TABLE IF NOT EXISTS avatars (
   bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072)
 );
 
+-- One current generated portrait per agent; independent of attachment expiry.
+CREATE TABLE IF NOT EXISTS agent_avatars (
+  id uuid PRIMARY KEY,
+  agent_id text NOT NULL UNIQUE REFERENCES agents(agent_id) ON DELETE CASCADE,
+  bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072),
+  request_id text NOT NULL,
+  drawing jsonb NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Object-storage rows (object-storage.ts): person file shares and agent
 -- artifacts. Bytes live in S3-compatible storage. The key is kind/owner/sha256;
 -- owner+sha256 dedupes. The retired bytea media store is dropped below.

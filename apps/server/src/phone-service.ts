@@ -2017,6 +2017,7 @@ export class PhoneService {
         yolo_forced_off: boolean;
         yolo_set_by_name: string | null;
         yolo_set_at: Date | null;
+        avatar_generation_id: string | null;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
         access_policy: unknown;
@@ -2025,6 +2026,7 @@ export class PhoneService {
         owner_handle: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
+                (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
@@ -2060,6 +2062,7 @@ export class PhoneService {
     );
     return {
       workspaceId,
+      ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       recentWork: recentWork.rows.map(({ title, url }) => ({ title, url })),
       agent: member,
       ...(config?.soul
@@ -4835,7 +4838,7 @@ export class PhoneService {
         }),
       ]);
       await database.query(
-        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE($4,avatar),updated_at=now() WHERE id=$1`,
+        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE((SELECT '/v1/agent-avatars/'||id::text FROM agent_avatars WHERE agent_id=$1),$4,avatar),updated_at=now() WHERE id=$1`,
         [input.agentId, name, handle, input.avatar ?? null],
       );
     });

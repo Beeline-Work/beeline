@@ -1,3 +1,4 @@
+import { DRAW_AVATAR_COMMAND } from './draw-avatar-skill.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { AcpAvailableCommand } from './acp.js';
 
@@ -17,7 +18,12 @@ export function agentCommandCatalogPublisher(input: {
       .execute('postAgentCommands', {
         agentId: input.agentId,
         workspaceId: input.workspaceId,
-        commands,
+        commands: [
+          ...commands.filter(
+            (command) => command.name.replace(/^\//, '') !== DRAW_AVATAR_COMMAND.name,
+          ),
+          DRAW_AVATAR_COMMAND,
+        ],
       })
       .catch(
         input.report ??

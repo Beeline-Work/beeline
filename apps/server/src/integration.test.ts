@@ -1772,6 +1772,39 @@ describe('monolith integration', () => {
     ).rejects.toThrow('message is not available for reaction');
   });
 
+  it('does not let a Workspace manager delete a message in a Room they cannot access', async () => {
+    const firstMember = '1'.repeat(64);
+    const secondMember = '2'.repeat(64);
+    const directRoomId = '33333333-3333-4333-8333-333333333333';
+    const messageId = '3'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','First','first'),($2,'human','Second','second')`,
+      [firstMember, secondMember],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,direct_participants)
+       VALUES($1,$2,'private',jsonb_build_array($3::text,$4::text))`,
+      [directRoomId, WORKSPACE, firstMember, secondMember],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+        ($1,NULL,$2,'member'),($1,NULL,$3,'member'),
+        ($1,$4,$2,'member'),($1,$4,$3,'member')`,
+      [WORKSPACE, firstMember, secondMember, directRoomId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'private message')`,
+      [messageId, directRoomId, firstMember],
+    );
+
+    expect(await phone.readRoom(directRoomId, HUMAN)).toBeNull();
+    await expect(
+      phone.execute('deleteRoomMessage', { roomId: directRoomId, messageId }, HUMAN),
+    ).rejects.toThrow('message is not available for deletion');
+    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe('private message');
+  });
+
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
     const messageId = '7'.repeat(64);
     expect(

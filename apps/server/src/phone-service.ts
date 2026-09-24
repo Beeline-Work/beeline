@@ -3373,18 +3373,16 @@ export class PhoneService {
            deleted_by=COALESCE(message.deleted_by,$3),text='',attachments='[]'::jsonb,reactions='{}'::jsonb
          FROM rooms room
          WHERE message.id=$1 AND message.room_id=$2 AND message.room_id=room.id
-           AND message.presentation='message' AND (
-             (message.author_id=$3 AND EXISTS(
+           AND message.presentation='message' AND EXISTS(
                SELECT 1 FROM memberships member
                WHERE member.room_id=message.room_id AND member.identity_id=$3
                  AND member.removed_at IS NULL
-             )) OR EXISTS(
+             ) AND (message.author_id=$3 OR EXISTS(
                SELECT 1 FROM memberships manager
                WHERE manager.workspace_id=room.workspace_id AND manager.room_id IS NULL
                  AND manager.identity_id=$3 AND manager.role IN ('owner','admin')
                  AND manager.removed_at IS NULL
-             )
-           )
+             ))
          RETURNING message.id`,
         [input.messageId, input.roomId, viewerId],
       );

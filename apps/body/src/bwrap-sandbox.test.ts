@@ -16,7 +16,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
@@ -204,7 +212,6 @@ describe('sandbox mount plan', () => {
     });
     expect(plan.writable).toEqual(['/a', '/b', '/w', '/w/.git']);
   });
-
 });
 
 describe('restoring session paths the /tmp tmpfs would hide', () => {
@@ -322,7 +329,6 @@ describe('bwrap argv construction', () => {
     expect(args.indexOf('--tmpfs')).toBeLessThan(args.indexOf('--bind-try'));
   });
 
-
   it("names only the configured harness's own $HOME state root", () => {
     expect(harnessHomeStateDirs('/usr/local/bin/pi-acp', '/home/op')).toEqual(['/home/op/.pi']);
     expect(harnessHomeStateDirs('codex-acp', '/home/op')).toEqual(['/home/op/.codex']);
@@ -336,6 +342,10 @@ describe('bwrap argv construction', () => {
       '/home/op/.cursor',
     ]);
     expect(harnessHomeStateDirs('cursor-acp-bridge', '/home/op')).toEqual(['/home/op/.cursor']);
+    expect(harnessHomeStateDirs('opencode', '/home/op')).toEqual([
+      '/home/op/.local/share/opencode',
+      '/home/op/.config/opencode',
+    ]);
     // An unrecognised harness gets none, rather than four empty directories
     // created in the operator's home for harnesses this host does not run.
     expect(harnessHomeStateDirs('some-unknown-acp', '/home/op')).toEqual([]);
@@ -478,16 +488,16 @@ describe('credential masks — readable is usable, so known stores are absent', 
 
   it('leaves MCP session directories off the known mask so they stay reachable', () => {
     const session = '/home/op/.config/trusty-squire';
-    const masks = credentialMaskPaths(
-      undefined,
-      '/home/op',
-      (path) => {
-        if (path === '/home/op/.netrc' || path === '/home/op/.git-credentials' || path === '/home/op/.secrets.env') {
-          return { isDirectory: false };
-        }
-        return { isDirectory: true };
-      },
-    );
+    const masks = credentialMaskPaths(undefined, '/home/op', (path) => {
+      if (
+        path === '/home/op/.netrc' ||
+        path === '/home/op/.git-credentials' ||
+        path === '/home/op/.secrets.env'
+      ) {
+        return { isDirectory: false };
+      }
+      return { isDirectory: true };
+    });
     expect(masks.map((mask) => mask.path)).not.toContain(session);
     expect(masks.map((mask) => mask.path)).toEqual(
       expect.arrayContaining(['/home/op/.config/gh', '/home/op/.ssh']),

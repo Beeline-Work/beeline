@@ -1,6 +1,6 @@
 import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { ScrollView, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
@@ -23,6 +23,7 @@ const NEW_ROOM_FORM_LAYOUT = {
   hintLineHeight: 19,
   repoRowHeight: 44,
   repoRowMarginTop: 10,
+  visibilityRowHeight: 44,
 } as const;
 const NEW_ROOM_FORM_CONTENT_HEIGHT =
   NEW_ROOM_FORM_LAYOUT.contentPaddingTop +
@@ -34,7 +35,9 @@ const NEW_ROOM_FORM_CONTENT_HEIGHT =
   NEW_ROOM_FORM_LAYOUT.hintLineHeight +
   NEW_ROOM_FORM_LAYOUT.controlsGap +
   NEW_ROOM_FORM_LAYOUT.repoRowMarginTop +
-  NEW_ROOM_FORM_LAYOUT.repoRowHeight;
+  NEW_ROOM_FORM_LAYOUT.repoRowHeight +
+  NEW_ROOM_FORM_LAYOUT.controlsGap +
+  NEW_ROOM_FORM_LAYOUT.visibilityRowHeight;
 const FORM_DIALOG_MIN_HEIGHT = hullDialogMinimumHeight(NEW_ROOM_FORM_CONTENT_HEIGHT, true);
 
 type Props = {
@@ -42,6 +45,8 @@ type Props = {
   workspaceName: string;
   roomName: string;
   setRoomName: (name: string) => void;
+  inviteOnly: boolean;
+  setInviteOnly: (value: boolean) => void;
   creatingRoom: boolean;
   createRoom: () => void;
   onClose: () => void;
@@ -66,6 +71,8 @@ export function NewRoomDialog({
   workspaceName,
   roomName,
   setRoomName,
+  inviteOnly,
+  setInviteOnly,
   creatingRoom,
   createRoom,
   onClose,
@@ -81,6 +88,7 @@ export function NewRoomDialog({
   handleAddGitHubAccount,
   handleManageGitHubInstallation,
 }: Props) {
+  const { theme } = useUnistyles();
   const { height } = useWindowDimensions();
   const availableDialogHeight = Math.max(0, height - DIALOG_VIEWPORT_GUTTER);
   const dialogMinHeight = Math.min(
@@ -126,6 +134,18 @@ export function NewRoomDialog({
           size={CHEVRON_ROW_SIZE}
         />
       </TouchableOpacity>
+      <View style={styles.visibilityRow}>
+        <Text style={styles.visibilityLabel}>Invite-only</Text>
+        <Switch
+          accessibilityLabel="Invite-only Room"
+          disabled={creatingRoom}
+          onValueChange={setInviteOnly}
+          testID="create-room-invite-only"
+          thumbColor={theme.buzz.textPrimary}
+          trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+          value={inviteOnly}
+        />
+      </View>
     </View>
   );
   return (
@@ -209,6 +229,13 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textSecondary,
     },
     repoRowChevron: { color: hull.chrome },
+    visibilityRow: {
+      minHeight: NEW_ROOM_FORM_LAYOUT.visibilityRowHeight,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    visibilityLabel: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     noRepoRow: {
       minHeight: 44,
       justifyContent: 'center',

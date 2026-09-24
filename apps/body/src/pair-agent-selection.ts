@@ -24,6 +24,7 @@ Install one of these supported agents:
   pi     npm install -g @mariozechner/pi-coding-agent@latest pi-acp@latest
   grok   curl -fsSL https://x.ai/cli/install.sh | bash
   cursor Install Cursor Agent CLI from https://cursor.com/docs/cli
+  opencode npm install -g opencode-ai@latest
 Then retry, or explicitly use \`--agent reference\` with an LLM key.
 For another ACP server, use \`--agent custom --agent-command "<cmd> [args...]"\`.`;
 

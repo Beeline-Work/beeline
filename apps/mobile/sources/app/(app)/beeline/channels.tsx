@@ -180,6 +180,7 @@ export default function BuzzChannels() {
   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [roomName, setRoomName] = useState('');
+  const [inviteOnly, setInviteOnly] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [showRepoPicker, setShowRepoPicker] = useState(false);
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
@@ -654,10 +655,12 @@ export default function BuzzChannels() {
     try {
       await transport.createRoom(name, {
         communityId: activeCommunityId,
+        visibility: inviteOnly ? 'invite-only' : 'public',
         repository: pendingRepo ?? undefined,
         onPublished: () => {
           publishAcknowledged = true;
           setRoomName('');
+          setInviteOnly(false);
           setPendingRepo(null);
           setShowRepoPicker(false);
           setShowCreateRoom(false);
@@ -666,6 +669,7 @@ export default function BuzzChannels() {
       });
       if (!publishAcknowledged) {
         setRoomName('');
+        setInviteOnly(false);
         setPendingRepo(null);
         setShowRepoPicker(false);
         setShowCreateRoom(false);
@@ -680,7 +684,7 @@ export default function BuzzChannels() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeCommunityId, canManageWorkspace, creatingRoom, pendingRepo, roomName, transport]);
+  }, [activeCommunityId, canManageWorkspace, creatingRoom, inviteOnly, pendingRepo, roomName, transport]);
 
   const connectAgent = useCallback(async () => {
     if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
@@ -834,6 +838,8 @@ export default function BuzzChannels() {
           workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}
           roomName={roomName}
           setRoomName={setRoomName}
+          inviteOnly={inviteOnly}
+          setInviteOnly={setInviteOnly}
           creatingRoom={creatingRoom}
           createRoom={createRoom}
           onClose={() => setShowCreateRoom(false)}

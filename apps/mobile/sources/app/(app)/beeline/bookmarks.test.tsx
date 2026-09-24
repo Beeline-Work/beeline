@@ -31,7 +31,11 @@ vi.mock('react-native', async () => {
           ),
         ),
       ),
-    Platform: { get OS() { return layout.os; } },
+    Platform: {
+      get OS() {
+        return layout.os;
+      },
+    },
     Pressable: host('Pressable'),
     Text: host('Text'),
     View: host('View'),
@@ -78,13 +82,13 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     room = roomRead;
+    workspace = vi.fn(async () => ({ workspace: { id: 'ws', name: 'Clover Workspace' } }));
   },
 }));
 vi.mock('@/components/DesktopRoomInspector', async () => {
   const ReactModule = await import('react');
   return {
-    DesktopRoomInspector: (props: any) =>
-      ReactModule.createElement('DesktopRoomInspector', props),
+    DesktopRoomInspector: (props: any) => ReactModule.createElement('DesktopRoomInspector', props),
   };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
@@ -103,7 +107,14 @@ const person = {
   handle: 'avery',
 };
 const parentRoom = {
-  room: { id: 'room-1', workspaceId: 'ws', name: 'Clover', archived: false, createdAt: 1, updatedAt: 2 },
+  room: {
+    id: 'room-1',
+    workspaceId: 'ws',
+    name: 'Clover',
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
   parent: undefined,
   members: [],
   messages: [],
@@ -113,7 +124,15 @@ const parentRoom = {
   watchFilters: [],
 };
 const parentCorner = {
-  corner: { id: 'corner-1', workspaceId: 'ws', name: 'Fix fixture', about: 'Repair it.', archived: false, createdAt: 1, updatedAt: 2 },
+  corner: {
+    id: 'corner-1',
+    workspaceId: 'ws',
+    name: 'Fix fixture',
+    about: 'Repair it.',
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
   state: 'working',
   stateAt: 2,
 };
@@ -122,7 +141,13 @@ const cornerRoom = {
   room: parentCorner.corner,
   parent: parentRoom.room,
   messages: [
-    { id: 'msg-1', text: 'The bookmarked line.', createdAt: 5, author: person, presentation: 'message' },
+    {
+      id: 'msg-1',
+      text: 'The bookmarked line.',
+      createdAt: 5,
+      author: person,
+      presentation: 'message',
+    },
   ],
 };
 
@@ -181,6 +206,12 @@ async function renderBookmarks(): Promise<ReactTestRenderer> {
 }
 
 describe('Bookmarks desktop second pane', () => {
+  it('shows the workspace above Bookmarks and the saved count at the right', async () => {
+    const tree = await renderBookmarks();
+    const header = tree.root.findByProps({ testID: 'bookmarks-header' });
+    const words = header.findAllByType('Text' as any).map((node: any) => node.props.children);
+    expect(words).toEqual(['Clover Workspace', 'Bookmarks', '1 SAVED']);
+  });
   it('opens a clicked corner bookmark in DesktopRoomInspector at that message', async () => {
     phoneOperation.mockResolvedValue({
       bookmarks: [

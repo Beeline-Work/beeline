@@ -62,7 +62,8 @@ describe('private bookmark surfaces', () => {
   });
 
   it('names the header count without a PRIVATE label', () => {
-    expect(bookmarks).toContain('meta={`${bookmarks.length} SAVED`}');
+    expect(bookmarks).toContain('trailing={`${bookmarks.length} SAVED`}');
+    expect(bookmarks).toContain('eyebrow={workspaceName');
     expect(bookmarks).not.toContain('PRIVATE');
   });
 
@@ -71,6 +72,7 @@ describe('private bookmark surfaces', () => {
     expect(bookmarks).toContain('size={CORNER_META_SIZE}');
     expect(bookmarks).toContain('gap: 8');
     expect(bookmarks).toContain('styles.originSigil');
+    expect(bookmarks).toContain('originSigil: { ...theme.buzz.type.meta, color: brand.mark }');
     expect(bookmarks).not.toContain('originDiamond');
     expect(bookmarks).not.toContain("'◇'");
   });

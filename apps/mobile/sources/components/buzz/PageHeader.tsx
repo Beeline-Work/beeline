@@ -8,6 +8,10 @@ export interface PageHeaderProps {
   title: string;
   /** Optional second line under the title. */
   meta?: string;
+  /** Workspace context above the section title. */
+  eyebrow?: string;
+  /** Count aligned with the title block's trailing edge. */
+  trailing?: string;
   /** Renders the back control when provided. */
   onBack?: () => void;
   backAccessibilityLabel?: string;
@@ -23,12 +27,14 @@ export interface PageHeaderProps {
 export function PageHeader({
   title,
   meta,
+  eyebrow,
+  trailing,
   onBack,
   backAccessibilityLabel = 'Back',
   testID,
 }: PageHeaderProps) {
   return (
-    <View style={styles.header} testID={testID}>
+    <View style={[styles.header, eyebrow && styles.headerWithEyebrow]} testID={testID}>
       {onBack ? (
         <Pressable
           accessibilityLabel={backAccessibilityLabel}
@@ -40,9 +46,15 @@ export function PageHeader({
         </Pressable>
       ) : null}
       <View style={styles.headerCopy}>
-        <Text style={styles.headerTitle}>{title}</Text>
+        {eyebrow ? (
+          <Text numberOfLines={1} style={styles.headerEyebrow}>
+            {eyebrow}
+          </Text>
+        ) : null}
+        <Text style={[styles.headerTitle, eyebrow && styles.headerHero]}>{title}</Text>
         {meta ? <Text style={styles.headerMeta}>{meta}</Text> : null}
       </View>
+      {trailing ? <Text style={styles.headerTrailing}>{trailing}</Text> : null}
     </View>
   );
 }
@@ -56,8 +68,12 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
     paddingHorizontal: 12,
   },
+  headerWithEyebrow: { minHeight: 66 },
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerCopy: { flex: 1, minWidth: 0 },
+  headerEyebrow: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  headerHero: { ...theme.buzz.type.hero },
   headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
+  headerTrailing: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginLeft: 12 },
 }));

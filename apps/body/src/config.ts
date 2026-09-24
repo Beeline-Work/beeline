@@ -365,6 +365,7 @@ export const AGENT_ENV_PASSTHROUGH_NAMES = [
   'REQUESTS_CA_BUNDLE',
   'NODE_EXTRA_CA_CERTS',
   'NODE_OPTIONS',
+  'OPENCODE_API_KEY',
   'http_proxy',
   'https_proxy',
   'no_proxy',

@@ -87,11 +87,7 @@ function texts(renderer: ReactTestRenderer): string[] {
   renderer.root
     .findAll(() => true)
     .forEach((node) => {
-      if (
-        node.props.testID === undefined &&
-        typeof node.type === 'string' &&
-        node.type === 'Text'
-      ) {
+      if (typeof node.type === 'string' && node.type === 'Text') {
         walk(node);
       }
     });

@@ -21,6 +21,7 @@ const modal = vi.hoisted(() => ({
   prompt: vi.fn(async () => null as string | null),
 }));
 const client = vi.hoisted(() => ({
+  resolveDirectMessage: vi.fn(async () => ({ channelId: 'dm-room' })),
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
   createAgentPairingCode: vi.fn(async () => ({
@@ -78,7 +79,9 @@ const client = vi.hoisted(() => ({
     };
   }),
   removeAgent: vi.fn(async (_workspaceId: string, pubkey: string) => {
-    const agents = state.workspace.agents.filter((member: any) => member.identity.pubkey !== pubkey);
+    const agents = state.workspace.agents.filter(
+      (member: any) => member.identity.pubkey !== pubkey,
+    );
     state.workspace = {
       ...state.workspace,
       agents,
@@ -120,7 +123,7 @@ const phoneOperation = vi.hoisted(() =>
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 
 vi.mock('expo-router', () => ({
-  router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+  router: { back: vi.fn(), push: vi.fn(), replace: vi.fn(), navigate: vi.fn() },
   useLocalSearchParams: () => ({ communityId: WORKSPACE }),
 }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
@@ -229,10 +232,24 @@ vi.mock('@/components/buzz/MemberPickerSheet', async () => {
     MemberPickerSheet: (props: any) => ReactModule.createElement('MemberPickerSheet', props),
   };
 });
+vi.mock('@/components/buzz/HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    HullActionSheetModal: (props: any) =>
+      props.visible
+        ? ReactModule.createElement('HullActionSheetModal', props, props.children)
+        : null,
+    HullActionSheetRow: host('HullActionSheetRow'),
+    HullActionSheetCancel: host('HullActionSheetCancel'),
+  };
+});
 vi.mock('@/modal/ModalManager', () => ({ Modal: modal }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
+    resolveDirectMessage = client.resolveDirectMessage;
   },
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -586,11 +603,11 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
-  it('opens role settings on tap and confirms Workspace removal from a left swipe', async () => {
+  it('opens member actions in a sheet and confirms Workspace removal', async () => {
     const renderer = await render();
-    const swipe = renderer.root.findByProps({ testID: `member-${MEMBER}-swipe` });
-    expect(swipe.props.renderRightActions).toBeTypeOf('function');
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
     await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: 'member-actions' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-roles` })).toBeDefined();
     expect(
       renderer.root.findByProps({ testID: `remove-person-${MEMBER}` }).props.accessibilityLabel,
@@ -616,18 +633,16 @@ describe('Members workspace management', () => {
       ],
     };
     const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: `member-${OWNER}-swipe` })).toHaveLength(0);
+    await press(renderer, `member-${OWNER}-identity`);
     expect(renderer.root.findAllByProps({ testID: `remove-person-${OWNER}` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` }).props.disabled).toBe(
-      true,
-    );
+    await press(renderer, `member-${MEMBER}-identity`);
     expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-swipe` })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: `remove-person-${MEMBER}` })).toBeDefined();
     await press(renderer, `remove-person-${MEMBER}`);
     expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
   });
 
-  it('hides role and removal controls from a non-manager', async () => {
+  it('offers messaging but hides role and removal controls from a non-manager', async () => {
     state.workspace = {
       ...baseWorkspace(),
       viewer: {
@@ -637,17 +652,39 @@ describe('Members workspace management', () => {
       },
     };
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` }).props.disabled).toBe(
-      true,
-    );
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-swipe` })).toHaveLength(0);
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: `message-person-${MEMBER}` })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+  });
+
+  it('opens a direct message from member actions', async () => {
+    const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
+    await press(renderer, `message-person-${MEMBER}`);
+    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, MEMBER);
+    const { router } = await import('expo-router');
+    expect(router.navigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'dm-room' } },
+      { dangerouslySingular: true },
+    );
+  });
+
+  it('shows a direct message error after dismissing the sheet', async () => {
+    client.resolveDirectMessage.mockRejectedValueOnce(new Error('network unavailable'));
+    const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
+    await press(renderer, `message-person-${MEMBER}`);
+    expect(renderer.root.findByProps({ testID: 'member-actions' }).props.visible).toBe(false);
+    expect(renderer.root.findAllByType('Text' as any).some((node: any) =>
+      String(node.props.children).includes('Could not open message: Error: network unavailable'),
+    )).toBe(true);
   });
 
   it('keeps the member when removal confirmation is canceled', async () => {
     modal.confirm.mockResolvedValue(false);
     const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
     await press(renderer, `remove-person-${MEMBER}`);
     expect(modal.confirm).toHaveBeenCalledOnce();
     expect(client.removeMember).not.toHaveBeenCalled();
@@ -658,18 +695,15 @@ describe('Members workspace management', () => {
     state.workspace = baseWorkspace('admin');
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: `member-${OWNER}-identity` }).props.disabled).toBe(
+    await press(renderer, `member-${OWNER}-identity`);
+    expect(renderer.root.findAllByProps({ testID: `member-${OWNER}-roles` })).toHaveLength(0);
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-member` }).props.selected).toBe(
       true,
     );
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(
-      renderer.root.findByProps({ testID: `member-${MEMBER}-member` }).props.accessibilityState
-        .selected,
-    ).toBe(true);
-    expect(
-      renderer.root.findByProps({ testID: `member-${MEMBER}-admin` }).props.accessibilityState
-        .selected,
-    ).toBe(false);
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-admin` }).props.selected).toBe(
+      false,
+    );
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
       true,
     );
@@ -699,7 +733,7 @@ describe('Members workspace management', () => {
         .findAllByType('Text' as any)
         .map((node: any) => node.props.children),
     ).toEqual(['@builder', 'owner']);
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-swipe` })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
   });
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
@@ -894,9 +928,7 @@ describe('Members workspace management', () => {
     const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     expect(row.props.disabled).toBe(true);
     expect(row.props.onPress).toBeUndefined();
-    expect(
-      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
     expect(
       chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
     ).toEqual([]);
@@ -910,9 +942,7 @@ describe('Members workspace management', () => {
       expect(row.props.disabled).toBe(false);
       expect(typeof row.props.onPress).toBe('function');
       await press(renderer, `agent-${AGENT}-identity`);
-      expect(
-        renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` }),
-      ).toBeTruthy();
+      expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeTruthy();
       expect(
         chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
       ).toEqual(['down']);
@@ -991,9 +1021,7 @@ describe('Members workspace management', () => {
     };
     const renderer = await render();
     // A plain member cannot open the detail panel at all: the row is inert.
-    expect(
-      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
@@ -1092,9 +1120,7 @@ describe('Members workspace management', () => {
     };
     const renderer = await render();
     // A plain member cannot open the detail panel at all: the row is inert.
-    expect(
-      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
   });
@@ -1206,7 +1232,11 @@ describe('Members workspace management', () => {
 
   it('keeps the true People total, pages the first screen, searches past it, and load-more appends', async () => {
     const extras = Array.from({ length: 21 }, (_, index) =>
-      member(`e${String(index).padStart(63, '0')}`, `Zebra ${String(index).padStart(2, '0')}`, 'member'),
+      member(
+        `e${String(index).padStart(63, '0')}`,
+        `Zebra ${String(index).padStart(2, '0')}`,
+        'member',
+      ),
     );
     const allPeople = [
       member(VIEWER, 'Viewer', 'owner'),
@@ -1252,15 +1282,18 @@ describe('Members workspace management', () => {
       'People ',
       allPeople.length,
     ]);
-    expect(renderer.root.findAllByProps({ testID: `member-${firstPage[0]!.identity.pubkey}-identity` }).length).toBeGreaterThan(
-      0,
-    );
-    expect(renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` })).toHaveLength(
-      0,
-    );
+    expect(
+      renderer.root.findAllByProps({ testID: `member-${firstPage[0]!.identity.pubkey}-identity` })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }),
+    ).toHaveLength(0);
 
     await act(async () => {
-      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText(offPage.identity.name);
+      renderer.root
+        .findByProps({ testID: 'members-search' })
+        .props.onChangeText(offPage.identity.name);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1268,9 +1301,9 @@ describe('Members workspace management', () => {
       WORKSPACE,
       expect.objectContaining({ q: offPage.identity.name }),
     );
-    expect(renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length,
+    ).toBeGreaterThan(0);
     expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
       'People ',
       1,

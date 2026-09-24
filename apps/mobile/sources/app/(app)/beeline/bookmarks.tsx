@@ -23,6 +23,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
+import brand from '@/buzz/brand.json';
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -49,6 +50,7 @@ export default function BookmarksScreen() {
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
   const [client, setClient] = useState<RoomViewClient | null>(null);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
   const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
@@ -84,7 +86,6 @@ export default function BookmarksScreen() {
   }, [removed]);
 
   useEffect(() => {
-    if (!desktop) return;
     let cancelled = false;
     void (async () => {
       const identity = await loadBuzzIdentity();
@@ -93,12 +94,19 @@ export default function BookmarksScreen() {
         baseUrl: await getEffectiveRelayUrl(),
         identity,
       });
-      if (!cancelled) setClient(http);
+      if (cancelled) return;
+      if (desktop) setClient(http);
+      try {
+        const workspace = await http.workspace(workspaceId);
+        if (!cancelled) setWorkspaceName(workspace.workspace.name);
+      } catch {
+        if (!cancelled) setWorkspaceName(null);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [desktop]);
+  }, [desktop, workspaceId]);
 
   const selected = useMemo(
     () => bookmarks.find((bookmark) => bookmark.messageId === selectedId) ?? null,
@@ -364,10 +372,11 @@ export default function BookmarksScreen() {
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Rooms"
-        meta={`${bookmarks.length} SAVED`}
+        eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()}
         testID="bookmarks-header"
         title="Bookmarks"
+        trailing={`${bookmarks.length} SAVED`}
       />
       {error ? (
         <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.error}>
@@ -422,7 +431,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: 8,
   },
-  originSigil: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
+  originSigil: { ...theme.buzz.type.meta, color: brand.mark },
   origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
   time: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   author: {

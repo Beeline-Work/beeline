@@ -77,7 +77,10 @@ describe('agent command selection', () => {
     const adapter = await executable('codex-acp');
     const selected = resolveAgentCommand({
       kind: 'codex',
-      env: { HOME: await hermeticHome(), PATH: [codex.directory, adapter.directory].join(delimiter) },
+      env: {
+        HOME: await hermeticHome(),
+        PATH: [codex.directory, adapter.directory].join(delimiter),
+      },
     });
 
     expect(selected).toEqual({ kind: 'codex', command: adapter.path, args: [] });
@@ -95,17 +98,51 @@ describe('agent command selection', () => {
   it("uses Goose's native ACP subcommand", async () => {
     const goose = await executable('goose');
 
-    expect(resolveAgentCommand({ kind: 'goose', env: { HOME: await hermeticHome(), PATH: goose.directory } })).toEqual({
+    expect(
+      resolveAgentCommand({
+        kind: 'goose',
+        env: { HOME: await hermeticHome(), PATH: goose.directory },
+      }),
+    ).toEqual({
       kind: 'goose',
       command: goose.path,
       args: ['acp'],
     });
   });
 
+  it('detects and resolves OpenCode as a native ACP agent', async () => {
+    const opencode = await executable('opencode');
+    const env = {
+      HOME: await hermeticHome(),
+      PATH: opencode.directory,
+      BEELINE_HARNESS_PATH_AUGMENT: '0',
+    };
+    expect(resolveAgentCommand({ kind: 'opencode', env })).toEqual({
+      kind: 'opencode',
+      command: opencode.path,
+      args: ['acp'],
+    });
+    expect(detectInstalledAgentCommands({ env })).toEqual([
+      {
+        kind: 'opencode',
+        status: 'ready',
+        agent: { kind: 'opencode', command: opencode.path, args: ['acp'] },
+      },
+    ]);
+    expect(() => resolveAgentCommand({ kind: 'opencode', env: { ...env, PATH: '' } })).toThrow(
+      'npm install -g opencode-ai@latest',
+    );
+  });
+
   it('uses the Grok CLI native ACP server with no adapter binary', async () => {
     const grok = await executable('grok');
 
-    expect(resolveAgentCommand({ kind: 'grok', env: { HOME: await hermeticHome(), PATH: grok.directory } })).toEqual({
+    expect(
+      resolveAgentCommand({
+        kind: 'grok',
+        env: { HOME: await hermeticHome(), PATH: grok.directory },
+      }),
+    ).toEqual({
       kind: 'grok',
       command: grok.path,
       args: ['agent', 'stdio'],
@@ -131,7 +168,7 @@ describe('agent command selection', () => {
     });
   });
 
-  it('resolves a Cursor Agent CLI install through Beeline\'s owned ACP bridge', async () => {
+  it("resolves a Cursor Agent CLI install through Beeline's owned ACP bridge", async () => {
     const cursorAgent = await executable('cursor-agent');
     const selected = resolveAgentCommand({
       kind: 'cursor',
@@ -148,9 +185,9 @@ describe('agent command selection', () => {
 
   it('gives an actionable install error when the Cursor Agent CLI is missing', async () => {
     const home = await hermeticHome();
-    expect(() =>
-      resolveAgentCommand({ kind: 'cursor', env: { HOME: home, PATH: '' } }),
-    ).toThrow('Cursor Agent CLI not found');
+    expect(() => resolveAgentCommand({ kind: 'cursor', env: { HOME: home, PATH: '' } })).toThrow(
+      'Cursor Agent CLI not found',
+    );
   });
 
   it('detects a cursor-agent install as ready with no adapter step', async () => {
@@ -167,9 +204,11 @@ describe('agent command selection', () => {
         command: process.execPath,
       }),
     });
-    expect(detected.some((candidate) => candidate.status === 'missing-adapter' && candidate.kind === 'cursor')).toBe(
-      false,
-    );
+    expect(
+      detected.some(
+        (candidate) => candidate.status === 'missing-adapter' && candidate.kind === 'cursor',
+      ),
+    ).toBe(false);
   });
 
   it('re-resolves a stored cursor-agent-acp runtime onto the owned bridge', async () => {
@@ -243,14 +282,8 @@ describe('augmented harness lookup', () => {
   it('finds a harness under a synthetic fnm layout when PATH lacks it, preferring the newest node version', async () => {
     const home = await mkdtemp(resolve(tmpdir(), 'beeline-fnm-lookup-'));
     cleanup.push(home);
-    const oldBin = resolve(
-      home,
-      '.local/share/fnm/node-versions/v20.19.6/installation/bin',
-    );
-    const newBin = resolve(
-      home,
-      '.local/share/fnm/node-versions/v24.16.0/installation/bin',
-    );
+    const oldBin = resolve(home, '.local/share/fnm/node-versions/v20.19.6/installation/bin');
+    const newBin = resolve(home, '.local/share/fnm/node-versions/v24.16.0/installation/bin');
     const { mkdir } = await import('node:fs/promises');
     await mkdir(oldBin, { recursive: true });
     await mkdir(newBin, { recursive: true });

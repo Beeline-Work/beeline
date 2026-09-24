@@ -136,6 +136,17 @@ vi.mock('@/components/buzz/MemberPickerSheet', async () => {
     MemberPickerSheet: (props: any) => ReactModule.createElement('MemberPickerSheet', props),
   };
 });
+vi.mock('@/components/buzz/HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    HullActionSheetModal: (props: any) =>
+      props.visible ? ReactModule.createElement('HullActionSheetModal', props, props.children) : null,
+    HullActionSheetRow: host('HullActionSheetRow'),
+    HullActionSheetCancel: host('HullActionSheetCancel'),
+  };
+});
 vi.mock('@/modal/ModalManager', () => ({
   Modal: { confirm: vi.fn(async () => true), prompt: vi.fn(async () => null) },
 }));

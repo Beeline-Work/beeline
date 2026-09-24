@@ -29,6 +29,8 @@ page errors, console errors, or horizontal document overflow at either width.
 - `desktop-rail-dot.png` and `phone-rail-dot.png` show the brass unread mark,
   waiting-only corner summary, and (on wide desktop) the 76px Workspace rail,
   380px Room sidebar, and Rooms count beside its create action.
+- `desktop-narrow-rail.png` shows the 76px rail, Room list, and live Room
+  transcript together at 1024px, without horizontal overflow.
 - `mobile-list.png` and `desktop-list.png` show the list before pinning; a long
   press immediately toggles the Room pin without a menu.
 - `phone-pinned.png` and `desktop-pinned.png` show the saved pin after reload,

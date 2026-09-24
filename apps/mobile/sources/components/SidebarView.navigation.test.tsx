@@ -285,9 +285,9 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
   });
 
-  it('shows the permanent Workspace strip on wide desktop without removing its actions', async () => {
-    viewport.width = 1440;
-    await act(async () => tree.update(<SidebarView key="wide" />));
+  it('shows the permanent Workspace strip on narrow desktop without removing its actions', async () => {
+    viewport.width = 1024;
+    await act(async () => tree.update(<SidebarView key="narrow-desktop" />));
     await settle();
     expect(control('desktop-workspace-strip')).toBeTruthy();
     expect(tree.root.findAllByProps({ testID: 'profile-settings-navigation' })).toHaveLength(0);
@@ -348,19 +348,13 @@ describe('desktop Workspace navigation', () => {
   });
 
   it("keeps profile settings reachable from the persistent desktop navigation as the viewer's own face", () => {
-    const profileSettings = control('profile-settings-navigation');
+    const profileSettings = control('desktop-strip-account');
 
     expect(profileSettings.props.accessibilityLabel).toBe('Ada Lovelace — Settings');
     expect(profileSettings.findByType('IdentityMark').props).toMatchObject({
       seed: 'viewer',
       kind: 'human',
     });
-    expect(
-      profileSettings
-        .findAllByType('Text')
-        .map((node: { props: { children?: unknown } }) => node.props.children),
-    ).toEqual(['Ada Lovelace']);
-
     act(() => profileSettings.props.onPress());
 
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
@@ -437,7 +431,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
+    expect(control('desktop-strip-account').props.accessibilityState).toEqual({
       selected: false,
     });
     openMenu();
@@ -495,7 +489,7 @@ describe('desktop Workspace navigation', () => {
     expect(control('desktop-new-direct-message')).toBeDefined();
     expect(control('desktop-bookmarks')).toBeDefined();
     expect(control('workspace-menu-members')).toBeDefined();
-    expect(control('profile-settings-navigation')).toBeDefined();
+    expect(control('desktop-strip-account')).toBeDefined();
   });
 
   it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
@@ -518,7 +512,7 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(control('desktop-bookmarks').props.accessibilityState).toEqual({ selected: true });
-    expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
+    expect(control('desktop-strip-account').props.accessibilityState).toEqual({
       selected: false,
     });
   });

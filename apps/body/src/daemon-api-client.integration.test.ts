@@ -522,6 +522,9 @@ describe('daemon API client against the local monolith', () => {
 
   it('takes an app grant through finish, durable daemon auth, and a visible first heartbeat', async () => {
     const fakeAgent = join(supervisorRoot, 'deterministic-acp.mjs');
+    const fakeNpm = join(supervisorRoot, 'npm');
+    await writeFile(fakeNpm, '#!/bin/sh\nexit 0\n');
+    await chmod(fakeNpm, 0o700);
     await writeFile(
       fakeAgent,
       `#!/usr/bin/env node
@@ -650,7 +653,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             env: {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
-              BUZZ_DEV_MCP_BIN: '/home/lunchbox/.local/bin/buzz-dev-mcp',
+              PATH: `${supervisorRoot}:${process.env.PATH ?? ''}`,
+              BUZZ_DEV_MCP_BIN: fakeAgent,
               BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(new URL('../dist/read-only-mcp.js', import.meta.url)),
               XDG_STATE_HOME: supervisorRoot,
             },

@@ -33,6 +33,7 @@ vi.mock('react-native-svg', async () => {
     Path: host('Path'),
     Polygon: host('Polygon'),
     Rect: host('Rect'),
+    SvgUri: host('SvgUri'),
   };
 });
 
@@ -446,12 +447,12 @@ describe('one mark, everywhere', () => {
         name: 'Wallet',
       }),
     );
-    expect(renderer.root.findByProps({ testID: 'identity-connector-logo' }).props.source).toEqual({
-      uri: 'https://api.example.test/v1/connectors/logo/wallet.svg',
-    });
+    expect(renderer.root.findByProps({ testID: 'identity-connector-logo' }).props.uri).toBe(
+      'https://api.example.test/v1/connectors/logo/wallet.svg',
+    );
 
-    act(() => renderer.root.findByType('Image').props.onError());
-    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    act(() => renderer.root.findByType('SvgUri').props.onError());
+    expect(renderer.root.findAllByType('SvgUri')).toHaveLength(0);
     expect(hosts(renderer, 'face-figure')).toHaveLength(1);
   });
 

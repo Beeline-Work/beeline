@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
-import Svg, { G, Rect } from 'react-native-svg';
+import Svg, { G, Rect, SvgUri } from 'react-native-svg';
 import {
   ALIVE_RING_PAD,
   CYPHER_MIN_SIZE,
@@ -66,6 +66,10 @@ export type IdentityMarkProps = AgentIdentityMarkProps | NonAgentIdentityMarkPro
 
 /** The one box radius in the product (`groknight.radius`). */
 const FACE_PLATE_RADIUS = 3;
+
+export function isConnectorLogoUrl(url: string | undefined): boolean {
+  return Boolean(url && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(url));
+}
 // The alive ring sits `ALIVE_RING_PAD` (`buzz/identity-mark.ts`) outside the
 // plate: the mark's layout box stays `size` so tiles of both classes share one
 // column edge, and the ring is the one thing that paints past it.
@@ -202,12 +206,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   // into profile photos. Their logo URL is the identity mark itself, so this
   // narrow lane does not weaken the product-wide no-photo rule for humans.
   const showConnectorLogo =
-    kind === 'human' &&
-    Boolean(
-      avatarUrl &&
-      /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(avatarUrl) &&
-      failedAvatar !== avatarUrl,
-    );
+    kind === 'human' && isConnectorLogoUrl(avatarUrl) && failedAvatar !== avatarUrl;
   // Workspace pictures are the sole photo exception. Human and agent relay
   // photos stay inert even when an untyped/stale caller supplies avatarUrl.
   const showRelayAvatar =
@@ -247,11 +246,11 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         style={[styles.frame, styles.plate, { width: size, height: size }]}
         testID={testID}
       >
-        <Image
+        <SvgUri
           onError={() => setFailedAvatar(avatarUrl ?? null)}
-          resizeMode="cover"
-          source={{ uri: avatarUrl! }}
-          style={styles.image}
+          uri={avatarUrl!}
+          width={size}
+          height={size}
           testID="identity-connector-logo"
         />
       </View>

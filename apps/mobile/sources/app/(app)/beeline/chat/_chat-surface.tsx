@@ -353,7 +353,7 @@ import {
   LedgerRoomUpdate,
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { IdentityMark, isConnectorLogoUrl } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
@@ -5044,20 +5044,28 @@ export function BuzzChatSurface({
                 />
               </HeaderIdentitySlot>
             )}
-            {isDirectMessage && !isReadOnlyDirectMessage && dmPeerPubkey && (
-              <HeaderIdentitySlot testID="direct-message-header-identity">
-                <IdentityMark
-                  kind={dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'}
-                  seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}
-                  avatarUrl={
-                    dmPeerAgentDisplay?.avatarUrl ?? dmPeerIdentity?.avatar ?? dmPeerProfile?.avatar
-                  }
-                  face={dmPeerAgentDisplay?.face ?? dmPeerIdentity?.face ?? dmPeerProfile?.face}
-                  name={displayRoomName}
-                  size={26}
-                />
-              </HeaderIdentitySlot>
-            )}
+            {isDirectMessage &&
+              (!isReadOnlyDirectMessage ||
+                isConnectorLogoUrl(
+                  dmPeerIdentity?.avatar ?? directMessageListItem?.directMessage?.peer.avatar,
+                )) &&
+              dmPeerPubkey && (
+                <HeaderIdentitySlot testID="direct-message-header-identity">
+                  <IdentityMark
+                    kind={dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'}
+                    seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}
+                    avatarUrl={
+                      dmPeerAgentDisplay?.avatarUrl ??
+                      dmPeerIdentity?.avatar ??
+                      directMessageListItem?.directMessage?.peer.avatar ??
+                      dmPeerProfile?.avatar
+                    }
+                    face={dmPeerAgentDisplay?.face ?? dmPeerIdentity?.face ?? dmPeerProfile?.face}
+                    name={displayRoomName}
+                    size={26}
+                  />
+                </HeaderIdentitySlot>
+              )}
             <View style={styles.headerCenter}>
               {displayHeaderTitle === null ? (
                 // The channel's own name has not landed yet. Neither "Room" nor

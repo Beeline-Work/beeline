@@ -182,7 +182,6 @@ function Proof() {
                 <DesktopRoomCorners
                   active={item.room.id === 'product'}
                   item={item}
-                  mine={false}
                   onOpen={(id) => action(`corner/${id}`)}
                   renderDrag={(_, children) => children}
                 />

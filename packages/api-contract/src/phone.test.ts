@@ -59,13 +59,12 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
-    expect(
-      readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages,
-    ).toEqual([{ ...message, presentation: 'card', relay }]);
+    expect(readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages).toEqual([
+      { ...message, presentation: 'card', relay },
+    ]);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
     expect(
-      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]
-        ?.bookmarked,
+      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]?.bookmarked,
     ).toBeUndefined();
     const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
     expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
@@ -101,9 +100,9 @@ describe('phone contract', () => {
       readRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } })
         ?.viewer.identity.face,
     ).toBeUndefined();
-    expect(
-      readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns,
-    ).toEqual([]);
+    expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
+      [],
+    );
 
     const agent = { pubkey: 'c'.repeat(64), kind: 'agent' as const, name: 'Bee' };
     const choice = {
@@ -170,9 +169,9 @@ describe('phone contract', () => {
     expect(isWorkspaceView(workspace)).toBe(true);
     expect(isWorkspaceView({ ...workspace, peopleTotal: undefined })).toBe(true);
     expect(isWorkspaceView({ ...workspace, agentTotal: undefined })).toBe(true);
-    expect(isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined })).toBe(
-      true,
-    );
+    expect(
+      isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined }),
+    ).toBe(true);
     expect(readWorkspaceView({ ...workspace, peopleTotal: '21' })?.peopleTotal).toBeUndefined();
     expect(
       isWorkspaceMemberListView({

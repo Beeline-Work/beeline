@@ -176,6 +176,21 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
+/** Archived corners come ten at a time, newest closure first. */
+const ARCHIVED_CORNER_PAGE = 10;
+
+/** Where the next archived page starts: the last row's exact closure time and id. */
+export type ArchivedCornerCursor = { readonly micros: string; readonly id: string };
+
+/** Reads a `nextArchived` cursor (`<archived_at µs>,<corner id>`); anything else is not one. */
+export function parseArchivedCornerCursor(
+  raw: string | null | undefined,
+): ArchivedCornerCursor | undefined {
+  const parsed = raw?.match(
+    /^(\d{1,19}),([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/,
+  );
+  return parsed ? { micros: parsed[1]!, id: parsed[2]! } : undefined;
+}
 export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
 const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
@@ -316,6 +331,8 @@ interface CornerRow extends RoomRow {
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
   latest_tags_viewer: boolean | null;
+  /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
+  archived_us: string | null;
   agent_id: string | null;
   agent_name: string | null;
   agent_handle: string | null;
@@ -1171,16 +1188,9 @@ export class PhoneService {
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
           latest_turn_status: string | null;
-          commissioned_by_viewer: boolean | null;
-          latest_tags_viewer: boolean | null;
         }>(
-          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
-           initiator.id=$2 commissioned_by_viewer,
-           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-         LEFT JOIN identities initiator
-           ON initiator.id=f.commissioned_by AND initiator.kind='human'
-         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
@@ -1232,20 +1242,20 @@ export class PhoneService {
                 createdAt: unix(row.latest_created_at),
                 ...(row.latest_attachments?.length
                   ? {
-                      attachments: (
-                        row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
-                      ).map((attachment) => ({
-                        ...attachment,
-                        url: attachment.url.startsWith('/')
-                          ? `${this.publicOrigin}${attachment.url}`
-                          : attachment.url,
-                        ...(attachment.previewUrl?.startsWith('/')
-                          ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                          : {}),
-                        ...(attachment.thumbnailUrl?.startsWith('/')
-                          ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                          : {}),
-                      })),
+                      attachments: (row.latest_attachments as NonNullable<RoomViewMessage['attachments']>).map(
+                        (attachment) => ({
+                          ...attachment,
+                          url: attachment.url.startsWith('/')
+                            ? `${this.publicOrigin}${attachment.url}`
+                            : attachment.url,
+                          ...(attachment.previewUrl?.startsWith('/')
+                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                            : {}),
+                          ...(attachment.thumbnailUrl?.startsWith('/')
+                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                            : {}),
+                        }),
+                      ),
                     }
                   : {}),
                 author: identity(
@@ -1623,13 +1633,16 @@ export class PhoneService {
    * The Room's corner list. `archived` swaps the live set for the closed one:
    * the phone's corners screen reads the live list on open and asks for the
    * closed list only when a reader taps the archived footer, so a Room with
-   * years of finished work never pays for it on the default read.
+   * years of finished work never pays for it on the default read. The closed
+   * list comes a page at a time, newest closure first; `archivedBefore` is the
+   * `nextArchived` cursor of the page before.
    */
   async readCorners(
     roomId: string,
     viewerId: string,
     roomViewFamilyOrder = false,
     archived = false,
+    archivedBefore?: ArchivedCornerCursor,
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
       RoomRow & {
@@ -1647,8 +1660,8 @@ export class PhoneService {
     );
     const room = parent.rows[0];
     if (!room) return null;
-    const [rows, viewerIdentity, appRows] = await Promise.all([
-      this.cornerRows(roomId, viewerId, roomViewFamilyOrder, archived),
+    const [fetched, viewerIdentity, appRows] = await Promise.all([
+      this.cornerRows(roomId, viewerId, roomViewFamilyOrder, archived, archivedBefore),
       this.requireIdentity(viewerId),
       this.database.query<{ id: string; manifest: unknown }>(
         `SELECT id,manifest FROM corner_app_installations
@@ -1656,9 +1669,15 @@ export class PhoneService {
         [room.workspace_id],
       ),
     ]);
+    // The archived read asks for one row past the page; its presence is what
+    // says another page exists.
+    const more = archived && fetched.length > ARCHIVED_CORNER_PAGE;
+    const rows = more ? fetched.slice(0, ARCHIVED_CORNER_PAGE) : fetched;
+    const last = rows.at(-1);
     return {
       room: roomHeader(room, this.publicOrigin),
       corners: this.projectCorners(rows),
+      ...(more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
       apps: appRows.rows.flatMap((row) => {
         const manifest = readCornerAppManifest(row.manifest);
         return manifest ? [{ id: row.id, manifest }] : [];
@@ -1865,6 +1884,7 @@ export class PhoneService {
     viewerId: string,
     roomViewFamilyOrder = false,
     archived = false,
+    archivedBefore?: ArchivedCornerCursor,
   ): Promise<CornerRow[]> {
     // The archived list is ordered by when work CLOSED, not when it opened: a
     // corner opened first can close last, and a reader looking for what just
@@ -1874,6 +1894,12 @@ export class PhoneService {
       : roomViewFamilyOrder
         ? ''
         : 'ORDER BY c.created_at DESC,c.id DESC';
+    // Keyset paging on the same (archived_at, id) order, compared in exact
+    // microseconds, so no row is skipped or repeated between pages.
+    const archivedMicros = '(extract(epoch FROM c.archived_at)*1000000)::bigint';
+    const keyset =
+      archived && archivedBefore ? `AND (${archivedMicros},c.id) < ($3::bigint,$4::uuid)` : '';
+    const limit = archived ? `LIMIT ${ARCHIVED_CORNER_PAGE + 1}` : '';
     return (
       await this.database.query<CornerRow>(
         `
@@ -1886,7 +1912,8 @@ export class PhoneService {
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
         turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
-        app_binding.instance_id app_instance_id,app_installation.manifest app_manifest
+        app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
+        ${archivedMicros}::text archived_us
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
         ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1910,8 +1937,10 @@ export class PhoneService {
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-      ) ${order}`,
-        [roomId, viewerId],
+      ) ${keyset} ${order} ${limit}`,
+        keyset
+          ? [roomId, viewerId, archivedBefore!.micros, archivedBefore!.id]
+          : [roomId, viewerId],
       )
     ).rows;
   }
@@ -6474,10 +6503,10 @@ export class PhoneService {
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
       ? (
           await database.query<{ status: string }>(
-            `SELECT status FROM workspace_connectors
+          `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-            [ws.workspace_id, viewerId, input.connectorType, machineId],
+          [ws.workspace_id, viewerId, input.connectorType, machineId],
           )
         ).rows[0]?.status
       : undefined;

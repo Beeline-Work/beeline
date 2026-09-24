@@ -10,8 +10,6 @@ export function chatCornerCounts(
     archived_at: Date | null;
     lifecycle: CornerLifecycleView | null;
     latest_turn_status: string | null;
-    commissioned_by_viewer?: boolean | null;
-    latest_tags_viewer?: boolean | null;
   }[],
 ): Map<string, { cornerCount: number; waitingCornerCount: number; openCorners: ChatListCorner[] }> {
   const counts = new Map<
@@ -32,12 +30,7 @@ export function chatCornerCounts(
     };
     count.cornerCount += 1;
     if (state === 'waiting') count.waitingCornerCount += 1;
-    // Mine: the viewer commissioned it, or it is parked on a person and its
-    // latest message tags the viewer.
-    const mine =
-      row.commissioned_by_viewer ||
-      (row.latest_tags_viewer && (state === 'waiting' || state === 'review'));
-    count.openCorners.push({ id: row.id, name: row.name, state, ...(mine ? { mine: true } : {}) });
+    count.openCorners.push({ id: row.id, name: row.name, state });
     counts.set(row.parent_id, count);
   }
   return counts;

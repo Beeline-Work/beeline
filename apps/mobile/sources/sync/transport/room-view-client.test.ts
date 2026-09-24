@@ -117,7 +117,7 @@ describe('mobile transport cutover switch', () => {
     controls.enabled = true;
     const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
     const { monolithSession } = await import('@/auth/monolith-session');
-    vi.mocked(monolithSession.fetch).mockResolvedValueOnce(
+    vi.mocked(monolithSession.fetch).mockImplementation(async () =>
       Response.json({
         room: {
           id: roomId,
@@ -144,6 +144,14 @@ describe('mobile transport cutover switch', () => {
 
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
       `https://server.example/v1/phone/rooms/${roomId}/corners?archived=1`,
+      expect.objectContaining({ method: 'GET' }),
+      { timeoutMs: 15_000 },
+    );
+
+    await client.corners(roomId, { archived: true, before: `1790000000000001,${roomId}` });
+
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
+      `https://server.example/v1/phone/rooms/${roomId}/corners?archived=1&before=1790000000000001%2C${roomId}`,
       expect.objectContaining({ method: 'GET' }),
       { timeoutMs: 15_000 },
     );

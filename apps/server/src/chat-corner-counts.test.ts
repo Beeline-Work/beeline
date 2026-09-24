@@ -28,20 +28,6 @@ describe('chat corner counts', () => {
       'review',
     ]);
   });
-  it('marks corners the viewer commissioned or that await them', () => {
-    const result = chatCornerCounts([
-      { ...row(), commissioned_by_viewer: true },
-      { ...row({ reason: 'question' }), latest_tags_viewer: true },
-      { ...row({}, 'working'), latest_tags_viewer: true },
-      row({ reason: 'question' }),
-    ]);
-    expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([
-      true,
-      true,
-      undefined,
-      undefined,
-    ]);
-  });
   it('excludes terminal lifecycle even before archived_at is projected', () => {
     expect(
       chatCornerCounts([

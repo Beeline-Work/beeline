@@ -1079,12 +1079,7 @@ function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
   const state = oneOf(item?.state, ['working', 'waiting', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
-  return {
-    id: item.id,
-    name: item.name,
-    state,
-    ...field('mine', item.mine === true ? (true as const) : undefined),
-  };
+  return { id: item.id, name: item.name, state };
 }
 
 function readChat(value: unknown): ChatListItem | null {
@@ -1550,6 +1545,12 @@ export function readCornerListView(value: unknown): CornerListView | null {
   return {
     room,
     corners,
+    ...field(
+      'nextArchived',
+      typeof item.nextArchived === 'string' && item.nextArchived.length <= 128
+        ? item.nextArchived
+        : undefined,
+    ),
     ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),

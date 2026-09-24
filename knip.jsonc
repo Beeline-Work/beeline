@@ -57,12 +57,12 @@
         "scripts/transcript-dates-proof.tsx",
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/bookmarks-empty-proof.tsx",
-        "scripts/mine-corners-proof.tsx",
         "scripts/render-room-list-proof.mjs",
         "scripts/room-list-proof.tsx",
         "scripts/render-consolidated-board-proof.mjs",
         "scripts/consolidated-board-proof.tsx",
         "scripts/android-splash-theme-proof.js",
+        "scripts/corner-sections-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

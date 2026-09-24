@@ -3,7 +3,7 @@ import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import type { CornerListItem } from '@beeline/buzz-client';
-import { inspectorCornerWindow } from '@/buzz/inspector-corners';
+import { isMineCorner } from '@/buzz/mine-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import {
@@ -20,11 +20,12 @@ import { Typography } from '@/constants/Typography';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /**
- * The Room's dedicated corners index. Windowing is `inspectorCornerWindow` —
- * the same cap, archived fallback, and see-more the desktop work-pane corner
- * list already uses — so this is a second door onto that list, not a third set
- * of rules. The Room header's corners door and this screen are the door and
- * the room; the inspector remains the desktop work pane's corner list.
+ * The Room's dedicated corners index, in three folding sections: Mine (the
+ * viewer's corners and any waiting on them) starts open and uncapped, Others
+ * starts folded behind its count, and Archived starts folded and pages ten at
+ * a time from the server. Fold state lives only as long as the screen does.
+ * The desktop work pane's corner list keeps its own five-row window
+ * (`inspectorCornerWindow`); this screen does not share that cap.
  *
  * The row reads in the index vocabulary `DESIGN.md` gives the Room list: the
  * opener's small face tile, the name at the brightest tier, one quiet line
@@ -39,6 +40,15 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
  * the only sign the Room has a past. Its list arrives on tap and lands under
  * the live rows, newest closure first, each stamped with its age.
  */
+type Entry =
+  | {
+      readonly kind: 'fold';
+      readonly key: 'mine' | 'others';
+      readonly label: string;
+      readonly open: boolean;
+    }
+  | { readonly kind: 'row'; readonly item: CornerListItem };
+
 export function RoomCornersList({
   corners,
   parentRoomName,
@@ -48,7 +58,8 @@ export function RoomCornersList({
   bottomInset = 0,
   archived = { status: 'idle' },
   onShowArchived,
-  hiddenByMine = 0,
+  onMoreArchived,
+  viewerPubkey,
   nowMs,
 }: {
   corners: readonly CornerListItem[];
@@ -61,18 +72,41 @@ export function RoomCornersList({
   /** The archived fetch the footer reports and reveals. */
   archived?: ArchivedCornersState;
   onShowArchived?: () => void;
-  /** Open corners the "Mine" toggle is hiding, so an empty list says why. */
-  hiddenByMine?: number;
+  /** Reads the next ten archived corners. */
+  onMoreArchived?: () => void;
+  /** Whose corners make up the Mine section. */
+  viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
   nowMs?: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const window = useMemo(() => inspectorCornerWindow(corners, expanded), [corners, expanded]);
-  // FlatList compares `data` by identity, so a fresh copy per render repaints
-  // every row on any parent state change.
-  const data = useMemo(() => [...window.visible], [window]);
+  const [mineOpen, setMineOpen] = useState(true);
+  const [othersOpen, setOthersOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  // FlatList compares `data` by identity, so it is rebuilt only when the
+  // corners or a fold change, not on every parent render.
+  const data = useMemo(() => {
+    const mine = corners.filter((item) => isMineCorner(item, viewerPubkey));
+    const others = corners.filter((item) => !isMineCorner(item, viewerPubkey));
+    const section = (
+      key: 'mine' | 'others',
+      title: string,
+      rows: readonly CornerListItem[],
+      open: boolean,
+    ): Entry[] =>
+      rows.length
+        ? [
+            { kind: 'fold', key, label: `${title} · ${rows.length}`, open },
+            ...(open ? rows.map((item) => ({ kind: 'row' as const, item })) : []),
+          ]
+        : [];
+    return [
+      ...section('mine', 'Mine', mine, mineOpen),
+      ...section('others', 'Others', others, othersOpen),
+    ];
+  }, [corners, viewerPubkey, mineOpen, othersOpen]);
   const stampedAt = nowMs ?? Date.now();
-  const archivedRows = archived.status === 'ready' ? archived.corners : [];
+  const archivedRows = archived.status === 'ready' && archivedOpen ? archived.corners : [];
+  const more = archived.status === 'ready' ? archived.more : undefined;
 
   const row = (item: CornerListItem) => {
     const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
@@ -139,10 +173,39 @@ export function RoomCornersList({
     );
   };
 
+  const fold = (
+    key: string,
+    label: string,
+    open: boolean,
+    onPress: (() => void) | undefined,
+    busy = false,
+  ) => (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open, busy }}
+      disabled={busy}
+      onPress={onPress}
+      style={styles.more}
+      testID={`room-corners-${key}`}
+    >
+      <Text style={styles.moreLabel}>{label}</Text>
+      {busy ? (
+        <SurfaceGlyphLoader compact testID={`room-corners-${key}-loading`} />
+      ) : (
+        <ChevronGlyph
+          color={styles.chevron.color}
+          direction={open ? 'up' : 'down'}
+          size={CHEVRON_ROW_SIZE}
+        />
+      )}
+    </Pressable>
+  );
+
   return (
     <FlatList
       data={data}
-      keyExtractor={(item) => item.corner.id}
+      keyExtractor={(entry) => (entry.kind === 'fold' ? `fold-${entry.key}` : entry.item.corner.id)}
       refreshing={refreshing}
       onRefresh={onRefresh}
       contentContainerStyle={[
@@ -150,64 +213,57 @@ export function RoomCornersList({
         { paddingBottom: bottomInset },
       ]}
       testID="room-corners-list"
-      renderItem={({ item }) => row(item)}
+      renderItem={({ item: entry }) =>
+        entry.kind === 'row'
+          ? row(entry.item)
+          : fold(entry.key, entry.label, entry.open, () =>
+              (entry.key === 'mine' ? setMineOpen : setOthersOpen)(!entry.open),
+            )
+      }
       ListFooterComponent={
         <View>
-          {window.overflowLabel ? (
-            <Pressable
-              accessibilityLabel={`Show the rest: ${window.overflowLabel}`}
-              accessibilityRole="button"
-              onPress={() => setExpanded(true)}
-              style={styles.more}
-              testID="room-corners-more"
-            >
-              <Text style={styles.moreLabel}>{window.overflowLabel}</Text>
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction="right"
-                size={CHEVRON_ROW_SIZE}
-              />
-            </Pressable>
-          ) : null}
-          {/* The door to closed work, standing by default. Once its list has
-            landed it stops being a control and becomes the heading the
-            archived rows beneath it sit under, which is why they hang off the
-            footer rather than joining `data`: the door has to precede them. */}
-          <Pressable
-            accessibilityLabel={archivedCornersLabel(archived)}
-            accessibilityRole="button"
-            disabled={archived.status === 'loading' || archived.status === 'ready'}
-            onPress={onShowArchived}
-            style={styles.more}
-            testID="room-corners-archived"
-          >
-            <Text style={styles.moreLabel}>{archivedCornersLabel(archived)}</Text>
-            {archived.status === 'loading' ? (
-              <SurfaceGlyphLoader compact testID="room-corners-archived-loading" />
-            ) : archived.status === 'ready' ? null : (
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction="right"
-                size={CHEVRON_ROW_SIZE}
-              />
-            )}
-          </Pressable>
+          {/* The fold for closed work, standing on every Room. The first
+            open reads the first page; after that it only folds and unfolds.
+            The archived rows hang off the footer rather than joining `data`
+            because the fold has to precede them. */}
+          {fold(
+            'archived',
+            archivedCornersLabel(archived),
+            archivedOpen && archived.status === 'ready',
+            () => {
+              if (archived.status !== 'ready') onShowArchived?.();
+              setArchivedOpen(archived.status !== 'ready' || !archivedOpen);
+            },
+            archived.status === 'loading',
+          )}
           {archivedRows.map((item) => (
             <React.Fragment key={item.corner.id}>{row(item)}</React.Fragment>
           ))}
+          {archivedOpen && archived.status === 'ready' && archived.next ? (
+            <Pressable
+              accessibilityLabel={
+                more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More archived corners'
+              }
+              accessibilityRole="button"
+              disabled={more?.status === 'loading'}
+              onPress={onMoreArchived}
+              style={styles.more}
+              testID="room-corners-archived-more"
+            >
+              <Text style={styles.moreLabel}>
+                {more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More'}
+              </Text>
+              {more?.status === 'loading' ? (
+                <SurfaceGlyphLoader compact testID="room-corners-archived-more-loading" />
+              ) : null}
+            </Pressable>
+          ) : null}
         </View>
       }
       ListEmptyComponent={
         // A Room whose only work is closed is not an empty Room: once the
         // archived rows are on screen the invitation to start would be a lie.
-        archivedRows.length ? null : hiddenByMine > 0 ? (
-          <View style={styles.empty} testID="room-corners-mine-empty">
-            <Text style={styles.emptyTitle}>No {CHANGES_LABEL} of yours</Text>
-            <Text style={styles.emptyText}>
-              Turn off Mine to see all {hiddenByMine} in {parentRoomName}.
-            </Text>
-          </View>
-        ) : (
+        archivedRows.length ? null : (
           <View style={styles.empty} testID="room-corners-empty">
             <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
             <Text style={styles.emptyText}>

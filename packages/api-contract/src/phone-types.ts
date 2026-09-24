@@ -532,9 +532,6 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
-  /** Present when the viewer commissioned this corner or it awaits them, the
-   * same rule as the corners page's "Mine" filter. */
-  readonly mine?: true;
 };
 
 export type ChatListItem = {
@@ -825,6 +822,8 @@ export type CornerListItem = {
 export type CornerListView = {
   readonly room: RoomViewHeader;
   readonly corners: readonly CornerListItem[];
+  /** On an archived page: the cursor that reads the next page. Absent on the last one. */
+  readonly nextArchived?: string;
   /** Apps connected to this Workspace and available for a new corner. */
   readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;

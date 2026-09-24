@@ -12,14 +12,11 @@ import { RoomCornerSummary } from './RoomCornerSummary';
 
 export function DesktopRoomCorners({
   item,
-  mine,
   onOpen,
   renderDrag,
   active = false,
 }: {
   item: ChatListItem;
-  /** The sidebar's one device-wide Mine setting. */
-  mine: boolean;
   active?: boolean;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
@@ -43,18 +40,12 @@ export function DesktopRoomCorners({
   const corners = [...(item.openCorners ?? [])].sort(
     (a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'),
   );
-  // With Mine on, the summary counts the rows Mine shows, not the whole Room.
-  const filtered = mine && item.openCorners !== undefined;
-  const visible = mine ? corners.filter((corner) => corner.mine) : corners;
   return (
     <View>
       <RoomCornerSummary
-        count={filtered ? visible.length : (item.cornerCount ?? corners.length)}
+        count={item.cornerCount ?? corners.length}
         waiting={
-          filtered
-            ? visible.filter((corner) => corner.state === 'waiting').length
-            : (item.waitingCornerCount ??
-              corners.filter((corner) => corner.state === 'waiting').length)
+          item.waitingCornerCount ?? corners.filter((corner) => corner.state === 'waiting').length
         }
         expanded={expanded}
         onPress={() => {
@@ -66,12 +57,10 @@ export function DesktopRoomCorners({
       />
       {expanded && (
         <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
-          {visible.length === 0 ? (
-            <Text style={styles.notice}>
-              {corners.length ? 'No open corners of yours.' : 'No open corners.'}
-            </Text>
+          {corners.length === 0 ? (
+            <Text style={styles.notice}>No open corners.</Text>
           ) : (
-            visible.map((corner) => {
+            corners.map((corner) => {
               const ready = corner.state === 'waiting';
               return (
                 <React.Fragment key={corner.id}>

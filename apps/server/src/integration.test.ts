@@ -184,8 +184,8 @@ describe('monolith integration', () => {
       database,
       live,
       async () => ({
-        token: 'github-room-token',
-        expiresAt: Date.now() + 60_000,
+      token: 'github-room-token',
+      expiresAt: Date.now() + 60_000,
       }),
       undefined,
       false,
@@ -715,19 +715,13 @@ describe('monolith integration', () => {
     const created = await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' });
     expect(created.status).toBe(200);
     const { id } = (await created.json()) as { id: string };
-    expect(
-      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status,
-    ).toBe(400);
-    expect(
-      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
-    ).toBe(409);
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status).toBe(400);
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map-2' })).status).toBe(204);
     expect((await operation('updateRoom', { roomId: id, name: 'Road Map 3' })).status).toBe(400);
     // Renaming frees the old slug; a later Room can claim it, and the renamed
     // Room can no longer take it back.
-    expect(
-      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
-    ).toBe(200);
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(200);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map' })).status).toBe(409);
   });
 
@@ -1748,11 +1742,7 @@ describe('monolith integration', () => {
 
   it('lets an author or Room manager delete a message while retaining its transcript record', async () => {
     const authorMessageId = 'd'.repeat(64);
-    await phone.execute(
-      'sendRoomMessage',
-      { roomId: ROOM, messageId: authorMessageId, text: 'remove me' },
-      AGENT,
-    );
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: authorMessageId, text: 'remove me' }, AGENT);
     await phone.execute(
       'setMessageBookmark',
       { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
@@ -1766,29 +1756,19 @@ describe('monolith integration', () => {
     expect(authorDeleted).toMatchObject({ text: 'Message deleted', deleted: true });
     expect(authorDeleted?.attachments).toBeUndefined();
     expect(authorDeleted?.reactions).toBeUndefined();
-    expect(
-      (await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks,
-    ).toContainEqual(expect.objectContaining({ messageId: authorMessageId, available: false }));
+    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks).toContainEqual(
+      expect.objectContaining({ messageId: authorMessageId, available: false }),
+    );
 
     const managerMessageId = 'e'.repeat(64);
-    await phone.execute(
-      'sendRoomMessage',
-      { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' },
-      AGENT,
-    );
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' }, AGENT);
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, HUMAN);
     expect(
-      (await phone.readRoom(ROOM, HUMAN))!.messages.find(
-        (message) => message.id === managerMessageId,
-      ),
+      (await phone.readRoom(ROOM, HUMAN))!.messages.find((message) => message.id === managerMessageId),
     ).toMatchObject({ text: 'Message deleted', deleted: true });
 
     await expect(
-      phone.execute(
-        'reactToMessage',
-        { roomId: ROOM, messageId: managerMessageId, emoji: '👍' },
-        HUMAN,
-      ),
+      phone.execute('reactToMessage', { roomId: ROOM, messageId: managerMessageId, emoji: '👍' }, HUMAN),
     ).rejects.toThrow('message is not available for reaction');
   });
 
@@ -1822,9 +1802,7 @@ describe('monolith integration', () => {
     await expect(
       phone.execute('deleteRoomMessage', { roomId: directRoomId, messageId }, HUMAN),
     ).rejects.toThrow('message is not available for deletion');
-    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe(
-      'private message',
-    );
+    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe('private message');
   });
 
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
@@ -2656,6 +2634,64 @@ describe('monolith integration', () => {
     expect(chat?.openCorners).toEqual([
       { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'waiting' },
     ]);
+  });
+
+  it('pages archived corners ten at a time by closure, without skips or repeats', async () => {
+    // 23 closed corners. Pairs share an exact closure instant, and neighbours
+    // differ by one microsecond, so a cursor rounded to the millisecond, or
+    // one without the id tiebreak, would skip or repeat rows.
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
+       SELECT ('00000000-0000-4000-8000-' || lpad(i::text,12,'0'))::uuid,$1,$2,'Closed ' || i,
+         timestamptz '2026-09-01 00:00:00.000001+00' + (i/2) * interval '1 microsecond'
+       FROM generate_series(1,23) i`,
+      [WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,id,$2,'member' FROM rooms WHERE parent_id=$1`,
+      [ROOM, HUMAN],
+    );
+    const expected = (
+      await database.query<{ id: string }>(
+        `SELECT id::text FROM rooms WHERE parent_id=$1 AND archived_at IS NOT NULL
+         ORDER BY archived_at DESC,id DESC`,
+        [ROOM],
+      )
+    ).rows.map((row) => row.id);
+    const page = async (before?: string) =>
+      (await (
+        await request(
+          `/v1/phone/rooms/${ROOM}/corners?archived=1${
+            before ? `&before=${encodeURIComponent(before)}` : ''
+          }`,
+        )
+      ).json()) as { corners: Array<{ corner: { id: string } }>; nextArchived?: string };
+
+    const first = await page();
+    // Work closed after the first page is newer than its cursor, so it cannot
+    // shift the later pages.
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
+       VALUES('00000000-0000-4000-8000-000000000099',$1,$2,'Closed later',now())`,
+      [WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,'00000000-0000-4000-8000-000000000099',$2,'member')`,
+      [WORKSPACE, HUMAN],
+    );
+    const second = await page(first.nextArchived);
+    const third = await page(second.nextArchived);
+    expect([first, second, third].map((item) => item.corners.length)).toEqual([10, 10, 3]);
+    expect(first.nextArchived).toMatch(/^\d+,[0-9a-f-]{36}$/);
+    expect(third).not.toHaveProperty('nextArchived');
+    expect(
+      [first, second, third].flatMap((item) => item.corners.map((row) => row.corner.id)),
+    ).toEqual(expected);
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/corners?archived=1&before=yesterday`)).status,
+    ).toBe(400);
   });
 
   it('keeps the Room list readable when corner enrichment fails', async () => {
@@ -7434,52 +7470,6 @@ describe('monolith integration', () => {
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
-  it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
-    const created = await daemonOperation('createCorner', {
-      roomId: ROOM,
-      requestId: 'corner-chat-mine',
-      name: 'Pick a shape',
-      objective: 'Pick a shape for the widget',
-    });
-    const { cornerId } = (await created.json()) as { cornerId: string };
-    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
-      cornerId,
-    ]);
-    const listed = async () =>
-      (
-        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-          chats: Array<{
-            room: { id: string };
-            openCorners: Array<{ id: string; state: string; mine?: true }>;
-          }>;
-        }
-      ).chats
-        .find((item) => item.room.id === ROOM)
-        ?.openCorners.find((item) => item.id === cornerId);
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
-      [cornerId, AGENT],
-    );
-    expect(await listed()).not.toHaveProperty('mine');
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('chat-mine-tagged',$1,$2,'@owner square or round?',now()+interval '2 seconds')`,
-      [cornerId, AGENT],
-    );
-    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
-      [cornerId, AGENT],
-    );
-    expect(await listed()).not.toHaveProperty('mine');
-    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
-      cornerId,
-      HUMAN,
-    ]);
-    expect(await listed()).toEqual(expect.objectContaining({ mine: true }));
-  });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
     const input = {

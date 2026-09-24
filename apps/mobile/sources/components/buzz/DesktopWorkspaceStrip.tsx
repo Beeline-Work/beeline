@@ -91,5 +91,5 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftWidth: 2,
     borderLeftColor: theme.buzz.accent,
   },
-  add: { ...theme.buzz.type.body, fontSize: 24, color: theme.buzz.accent },
+  add: { ...theme.buzz.type.hero, color: theme.buzz.accent },
 }));

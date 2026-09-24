@@ -371,9 +371,11 @@ the list without removing access to quiet Rooms. The Messages section remains
 in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
 on All.
 
-`ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
-`bodyStrong` for unread messages; a trailing brass dot means the Room has new
-messages, independent of corner state. Room names retain their brass `#`; DMs use the peer's identity.
+`ConversationRow.tsx` is shared by mobile and desktop. Names use `body`. An
+unread row sits on `bgUnread` with a `bodyStrong` name and a `textPrimary`
+preview; a trailing brass dot means the Room has new messages, independent of
+corner state; the row's corner summary shares that ground. Read cursors are
+unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
 On phone, the byline sits above a two-line `body` preview in `textSecondary`;
 on desktop, author and preview share a two-line `meta` block. DMs omit the
 byline because the peer is already named in the heading. Rows have generous
@@ -387,8 +389,10 @@ Long press immediately toggles pin/unpin; pins are device-local and scoped to vi
 workspace, separate from server-backed saved-message bookmarks.
 The Pinned filter uses text, while pinned rows show the pin glyph. At the
 default desktop sidebar width, all filters and both actions fit on the first
-toolbar row; the visible search field stays below it. An empty Pinned view
-explains the long-press action and links back to All.
+toolbar row; the visible search field stays below it. An empty Pinned view is
+one shared component (`PinnedConversationsEmpty.tsx`) on phone and desktop: a
+single pin glyph, a two-line 22px heading, copy explaining the long-press
+action, and a quiet outlined Show all conversations action that returns to All.
 Desktop section headings use 20px above and `space.xs` below; the following
 row starts after 18px, without a second large section gap. Phone corner
 summaries retain a `space.md` bottom margin before the next conversation.
@@ -435,7 +439,10 @@ floating bracket), the mark's own heavier frame, and tone — the Workspaces you
 are _not_ in recede a step rather than the one you are in lighting up. Every
 rail command is _named_ by a mono micro-label rather than framed in a box — the
 affordance is named, not outlined — and its glyph sits on the chrome's quiet
-tier, because the label already carries the meaning.
+tier, because the label already carries the meaning. Add scrolls with the
+Workspace tiles; personal settings stays pinned at the bottom. The rail carries
+no Workspace settings command — that lives only in the Room-list header menu.
+The persistent desktop strip uses the drawer's framed picture geometry.
 
 **Settings is one entry, not two.** The rail's `YOU` command opens the account
 hub (`buzz/settings/`), which is itself an index in this same vocabulary —
@@ -739,9 +746,6 @@ check), never as a page or Room/Corner load gate.
    channel. It lives only inside a fenced block and the sheet that opens one;
    it does not authorize a fifth exception.
 
-
-## Conversation navigation and agent profiles
-
-Pinned’s empty state has a single pin glyph, a two-line 22px heading, explanatory copy, and a quiet outlined Show all conversations action. Both Room indexes use the same component. Unread rows use `bgUnread`, stronger name weight, a bright preview and the existing dot; the corner summary shares the row ground.
+## Agent profiles
 
 Agent bylines and roster identities open Profile. Mentions retain DM navigation. Profile uses the assigned 72px animal mark, a centered name (`agentProfileTypography.name`, 28/36 from the consolidated mock), handle, outlined Message action, two model/effort facts, expandable soul and linked merged work. A phone uses a page; a desktop transcript uses an adjacent pane. Manage is a separate permission-gated tab with existing controls and the destructive action below them. Its field labels are readable body text, explanatory copy uses `ledgerQuiet`, and web/native switches share the brass track and canvas thumb. See [agent profiles](docs/agent-profiles.md) for authorization and verification scope.

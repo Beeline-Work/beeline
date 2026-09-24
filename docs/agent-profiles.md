@@ -6,7 +6,7 @@ The Profile tab shows the server-assigned animal, name and handle, current model
 
 Manage reuses the existing settings and write operations. The agent owner can edit its name/soul and live model/effort choices, Answers everyone and Yolo. Public Workspace policy still forces Yolo off. Workspace managers may remove/ban an agent but gain no owner-only configuration powers. Ordinary members see no Manage tab. The avatar remains the assigned animal; this change does not introduce photo uploads or a new agent-face permission.
 
-Pinned uses one empty-state component on phone and desktop; Show all conversations returns to All. Unread conversations use the existing theme’s `bgUnread` plus stronger title, brighter preview and dot, without changing read-cursor behavior. Workspace Add stays with the Workspace tiles; personal settings stays at the bottom. Workspace settings is available through the header menu only. The persistent desktop strip uses the same framed picture geometry as the drawer.
+The Pinned empty state, unread rows and Workspace rail changes shipped alongside this are specified in [DESIGN.md](../DESIGN.md#index-rows).
 
 ## Verification
 

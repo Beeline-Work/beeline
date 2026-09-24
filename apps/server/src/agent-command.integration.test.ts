@@ -9,6 +9,7 @@ import { LiveHub } from './live.js';
 import {
   createAgentCommand,
   nextAgentDepth,
+  reconcileCornerMergeBlockers,
   reconcileConfiguredCornerReviewers,
   routeSystemCommand,
 } from './agent-command.js';
@@ -497,6 +498,63 @@ it('gives old helpers only projected commands and refuses unsolicited old output
     ),
   ).rejects.toThrow();
 });
+it('wakes the opener for failed checks even after a reviewer turn and retries a lost command', async () => {
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  const reviewerSource = await send('Review this', C);
+  await db.transaction((tx) => routeSystemCommand(tx, {
+    roomId: C, sourceMessageId: reviewerSource.messageId, targets: [A], kind: 'joined',
+  }));
+  const [review] = await commands(A, C);
+  await claim(review!);
+  await result(review!, 'Review complete');
+  await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+  const headSha = 'e'.repeat(40);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`, [C,
+    JSON.stringify({ checks: 'failing', pr: { number: 31, headSha, title: 'Fix checks', url: 'https://github.com/acme/repo/pull/31' } }),
+  ]);
+  const note = await systemLine(db, {
+    roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+    verb: 'failed a check', kind: 'check-failed', object: { text: 'typecheck', headSha },
+  });
+  expect(await commands(B, C)).toEqual([expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id })]);
+  expect(await commands(A, C)).toHaveLength(0);
+  await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  expect(await commands(B, C)).toHaveLength(1);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
+});
+
+it('recovers a dirty PR lifecycle once per head and retries an undelivered conflict', async () => {
+  const headSha = 'f'.repeat(40);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    JSON.stringify({ checks: 'passing', pr: { number: 32, headSha, title: 'Resolve conflict', url: 'https://github.com/acme/repo/pull/32', mergeability: 'dirty' } }),
+  ]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  expect(await commands(B, C)).toEqual([expect.objectContaining({ reason: 'corner_merge_conflict' })]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
+  await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  expect(await commands(B, C)).toHaveLength(1);
+});
+
+it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
+  const headSha = '9'.repeat(40);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`, [C,
+    JSON.stringify({ checks: 'failing', pr: { number: 33, headSha, title: 'Repair CI', url: 'https://github.com/acme/repo/pull/33' } }),
+  ]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [C, B]);
+  await systemLine(db, {
+    roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+    verb: 'failed a check', kind: 'check-failed', object: { text: 'typecheck', headSha },
+  });
+  expect((await db.query<{ command_check_state: string | null }>(
+    `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`, [C],
+  )).rows[0]?.command_check_state).toBeNull();
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [C, B]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  expect(await commands(B, C)).toHaveLength(1);
+});
+
 it('routes subscribed events, grants and changed corner checks through actions', async () => {
   await daemon.execute('setEventSubscriptions', { roomId: R, kinds: ['joined'] }, A);
   await systemLine(db, {

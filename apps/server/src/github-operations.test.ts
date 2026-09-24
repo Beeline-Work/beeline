@@ -223,6 +223,41 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ agent_id: REVIEWER }]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, REVIEWER]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    const dirty = {
+      action: 'synchronize', installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks', sha: headSha }, base: { ref: 'main' },
+        mergeable_state: 'dirty', merged: false,
+      },
+    };
+    await operations.processWebhook('pull_request', dirty);
+    expect((await database.query<{ reason: string }>(
+      `SELECT reason FROM agent_commands WHERE room_id=$1`, [corner],
+    )).rows).toEqual([{ reason: 'corner_merge_conflict' }]);
+    await operations.processWebhook('pull_request', dirty);
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount).toBe(1);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    await operations.processWebhook('pull_request', dirty);
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount).toBe(1);
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'failed', total: 1, failing: ['lint'],
+      checks: [{ name: 'lint', status: 'failed' }],
+    });
+    const failed = payload('lint', 'completed');
+    failed.check_run.conclusion = 'failure';
+    await operations.processWebhook('check_run', failed);
+    expect((await database.query<{ reason: string }>(
+      `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner],
+    )).rows).toEqual([{ reason: 'corner_check' }]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner]);
+    await operations.processWebhook('check_run', failed);
+    expect((await database.query<{ reason: string }>(
+      `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner],
+    )).rows).toEqual([{ reason: 'corner_check' }]);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

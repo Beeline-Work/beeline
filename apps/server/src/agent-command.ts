@@ -8,7 +8,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { ensureSystemIdentity, systemLine } from './system-line.js';
+import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 export const COMMAND_LEASE_SECONDS = 90;
@@ -1059,30 +1059,39 @@ export async function routeSystemCommand(
       if (
         fact.state === 'pending' ||
         fact.state === 'unknown' ||
-        fact.state === fact.command_check_state
+        (input.kind === 'check-failed' && fact.state !== 'failing') ||
+        (input.kind === 'check-passed' && fact.state !== 'passing')
       )
         return;
+      if (fact.state === fact.command_check_state) {
+        const delivered = await db.query(
+          `SELECT 1 FROM agent_commands command
+           JOIN messages source ON source.id=command.source_message_id
+           JOIN corner_facts fact ON fact.corner_id=command.room_id
+           WHERE command.room_id=$1 AND command.reason=$2
+             AND source.system_event->>'kind'=$3
+             AND (source.system_event->'object'->>'headSha' IS NULL
+                  OR source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+           LIMIT 1`,
+          [input.roomId, input.kind === 'check-failed' ? 'corner_check' : 'subscribed_event', input.kind],
+        );
+        if (delivered.rowCount) return;
+      }
       // Failed checks still wake the opener. The author fallback is only for
       // corners with no reviewer configured — a configured id whose parent
       // membership is missing is not "no reviewer".
       if (input.kind === 'check-failed' || !fact.configured_reviewer_id) {
-        const fallbackCarrier =
-          (
-            await db.query<{ agent_id: string }>(
-              `SELECT agent_id FROM agent_commands WHERE room_id=$1 AND result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
-              [input.roomId],
-            )
-          ).rows[0]?.agent_id ?? fact.owner_agent_id;
-        await createAgentCommand(db, {
+        const command = await createAgentCommand(db, {
           roomId: input.roomId,
-          agentId: fallbackCarrier,
+          agentId: fact.owner_agent_id,
           sourceMessageId: input.sourceMessageId,
           reason: 'corner_check',
         });
-        await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
-          input.roomId,
-          fact.state,
-        ]);
+        if (command)
+          await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
+            input.roomId,
+            fact.state,
+          ]);
         return;
       }
       const unreachable = {
@@ -1187,6 +1196,117 @@ export async function routeSystemCommand(
         : {}),
     });
   }
+}
+
+/** A dirty current PR head is an actionable author turn, even with green CI. */
+export async function queueCornerMergeConflict(
+  db: SqlDatabase,
+  cornerId: string,
+  sourceMessageId: string,
+): Promise<boolean> {
+  const owner = (
+    await db.query<{ owner_agent_id: string }>(
+      `SELECT fact.owner_agent_id FROM corner_facts fact
+       JOIN rooms corner ON corner.id=fact.corner_id
+       WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
+         AND fact.lifecycle->'pr'->>'mergeability'='dirty'`,
+      [cornerId],
+    )
+  ).rows[0]?.owner_agent_id;
+  if (!owner) return false;
+  const command = await createAgentCommand(db, {
+    roomId: cornerId,
+    agentId: owner,
+    sourceMessageId,
+    reason: 'corner_merge_conflict',
+  });
+  return Boolean(command);
+}
+
+/** Recover blocker lifecycles whose note or command was lost before delivery. */
+export async function reconcileCornerMergeBlockers(
+  db: SqlDatabase,
+  cornerId?: string,
+): Promise<number> {
+  const stranded = await db.query<{
+    corner_id: string;
+    owner_agent_id: string;
+    checks: string;
+    mergeability: string;
+    head_sha: string;
+    number: number;
+    title: string;
+    url: string;
+  }>(
+    `SELECT fact.corner_id,fact.owner_agent_id,
+            fact.lifecycle->>'checks' checks,
+            fact.lifecycle->'pr'->>'mergeability' mergeability,
+            fact.lifecycle->'pr'->>'headSha' head_sha,
+            (fact.lifecycle->'pr'->>'number')::integer number,
+            fact.lifecycle->'pr'->>'title' title,
+            fact.lifecycle->'pr'->>'url' url
+     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     WHERE corner.archived_at IS NULL AND fact.owner_agent_id IS NOT NULL
+       AND ($1::uuid IS NULL OR fact.corner_id=$1)
+       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
+       AND (fact.lifecycle->>'checks'='failing'
+            OR fact.lifecycle->'pr'->>'mergeability'='dirty')`,
+    [cornerId ?? null],
+  );
+  let commands = 0;
+  for (const row of stranded.rows) {
+    if (row.checks === 'failing') {
+      const existing = await db.query(
+        `SELECT 1 FROM agent_commands command
+         JOIN messages source ON source.id=command.source_message_id
+         WHERE command.room_id=$1 AND command.agent_id=$2
+           AND command.reason='corner_check'
+           AND source.system_event->'object'->>'headSha'=$3 LIMIT 1`,
+        [row.corner_id, row.owner_agent_id, row.head_sha],
+      );
+      if (!existing.rowCount) {
+        const source = await systemLine(db, {
+          id: createHash('sha256').update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`).digest('hex'),
+          roomId: row.corner_id,
+          authorId: row.owner_agent_id,
+          subject: GITHUB_SUBJECT,
+          verb: 'found failing checks on',
+          kind: 'check-failed',
+          object: { text: row.title ?? `pull request #${row.number}`, url: row.url, headSha: row.head_sha },
+        });
+        if (!source.inserted) {
+          await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [row.corner_id]);
+          await routeSystemCommand(db, {
+            roomId: row.corner_id,
+            sourceMessageId: source.id,
+            kind: 'check-failed',
+            targets: [],
+          });
+        }
+        const routed = await db.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+          [row.corner_id, source.id, row.owner_agent_id],
+        );
+        if (routed.rowCount) commands += 1;
+      }
+    }
+    if (row.mergeability === 'dirty') {
+      const id = createHash('sha256').update(`beeline:${row.corner_id}:github:merge-conflict:${row.number}:${row.head_sha}`).digest('hex');
+      const exists = await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`, [row.corner_id, id, row.owner_agent_id]);
+      if (exists.rowCount) continue;
+      const note = await systemLine(db, {
+        id,
+        roomId: row.corner_id,
+        authorId: row.owner_agent_id,
+        subject: GITHUB_SUBJECT,
+        verb: 'found merge conflicts in',
+        object: { text: row.title ?? `pull request #${row.number}`, url: row.url, headSha: row.head_sha },
+      });
+      if (await queueCornerMergeConflict(db, row.corner_id, note.id)) commands += 1;
+    }
+  }
+  return commands;
 }
 
 /**

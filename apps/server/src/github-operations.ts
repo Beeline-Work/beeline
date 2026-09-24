@@ -14,7 +14,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
-import { routeSystemCommand } from './agent-command.js';
+import { queueCornerMergeConflict, reconcileCornerMergeBlockers, routeSystemCommand } from './agent-command.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -953,22 +953,31 @@ export class GitHubOperations {
               ? 'dirty'
               : 'unknown';
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
-          await this.updateLifecycle(
-            target.corner_id,
-            {
-              lifecycle: 'in-review',
-              branch,
-              pr: {
-                number,
-                url,
-                title,
-                targetBranch,
-                headSha,
-                mergeability,
+          await database.transaction(async (tx) => {
+            await this.updateLifecycle(
+              target.corner_id,
+              {
+                lifecycle: 'in-review',
+                branch,
+                pr: { number, url, title, targetBranch, headSha, mergeability },
               },
-            },
-            database,
-          );
+              tx,
+            );
+            if (mergeability === 'dirty') {
+              const note = await systemLine(tx, {
+                id: hash(`beeline:${target.corner_id}:github:merge-conflict:${number}:${headSha}`),
+                roomId: target.corner_id,
+                authorId: target.author_id,
+                subject: GITHUB_SUBJECT,
+                verb: 'found merge conflicts in',
+                object: { text: title, url, headSha },
+                cardType: 'github-corner-note',
+                card: { source: 'github', dedupe: `merge-conflict:${number}:${headSha}` },
+              });
+              await queueCornerMergeConflict(tx, target.corner_id, note.id);
+              if (note.inserted) this.onRoomChanged?.(target.corner_id);
+            }
+          });
         }
         if (merged && url) {
           await this.mergeCorner(
@@ -1118,6 +1127,8 @@ export class GitHubOperations {
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
             database,
           );
+          if (summary.status === 'failing' && !becameFailing)
+            await reconcileCornerMergeBlockers(database, target.corner_id);
         });
       }
     }
@@ -1169,11 +1180,11 @@ export class GitHubOperations {
     if (note.inserted) this.onRoomChanged?.(roomId);
     // A previously written green fact can outlive a lost dispatch. Its note
     // remains idempotent, but the command routing must be retried.
-    if (!note.inserted && phrase.kind === 'check-passed')
+    if (!note.inserted && (phrase.kind === 'check-passed' || phrase.kind === 'check-failed'))
       await routeSystemCommand(database, {
         roomId,
         sourceMessageId: note.id,
-        kind: 'check-passed',
+        kind: phrase.kind,
         targets: [],
       });
   }

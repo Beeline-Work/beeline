@@ -1,4 +1,4 @@
-import { AGENT_COMMAND_SCHEMA, reconcileConfiguredCornerReviewers } from './agent-command.js';
+import { AGENT_COMMAND_SCHEMA, reconcileConfiguredCornerReviewers, reconcileCornerMergeBlockers } from './agent-command.js';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
@@ -1339,6 +1339,8 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);
+  const blockers = await reconcileCornerMergeBlockers(database);
+  if (blockers) console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
   const reviewers = await reconcileConfiguredCornerReviewers(database);
   console.log(
     `reconcileConfiguredCornerReviewers: restored ${reviewers.subscriptions} subscription(s), dispatched ${reviewers.commands} review(s)`,

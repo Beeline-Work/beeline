@@ -158,12 +158,18 @@ async function main() {
     publicOrigin,
     mediaExpiryMediaMaximumBytes,
   );
-  const googleOAuth = process.env.BEELINE_GOOGLE_CLIENT_ID &&
-    process.env.BEELINE_GOOGLE_CLIENT_SECRET && process.env.BEELINE_GOOGLE_TOKEN_KEY
-    ? new GoogleOAuth(database, process.env.BEELINE_GOOGLE_CLIENT_ID,
-        process.env.BEELINE_GOOGLE_CLIENT_SECRET, publicOrigin,
-        process.env.BEELINE_GOOGLE_TOKEN_KEY)
-    : undefined;
+  const googleOAuth =
+    process.env.BEELINE_GOOGLE_CLIENT_ID &&
+    process.env.BEELINE_GOOGLE_CLIENT_SECRET &&
+    process.env.BEELINE_GOOGLE_TOKEN_KEY
+      ? new GoogleOAuth(
+          database,
+          process.env.BEELINE_GOOGLE_CLIENT_ID,
+          process.env.BEELINE_GOOGLE_CLIENT_SECRET,
+          publicOrigin,
+          process.env.BEELINE_GOOGLE_TOKEN_KEY,
+        )
+      : undefined;
   const mediaExpiry = objectStorage
     ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
         storage: objectStorage,
@@ -253,6 +259,13 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
+        if (github) {
+          try {
+            await github.refreshUnknownMergeability();
+          } catch (error) {
+            console.error('[server] mergeability refresh failed:', error);
+          }
+        }
       }
       const nextDue = await schedules.nextDueAt();
       return Math.min(

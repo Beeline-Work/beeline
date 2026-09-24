@@ -523,7 +523,18 @@ export class GitHubAppClient {
     const head = body.head as { sha?: unknown } | undefined;
     if (typeof head?.sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(head.sha))
       throw new Error('GitHub pull request has no valid head');
-    return { number, url: `https://github.com/${fullName}/pull/${number}`, headSha: head.sha };
+    const mergeableState = body.mergeable_state;
+    return {
+      number,
+      url: `https://github.com/${fullName}/pull/${number}`,
+      headSha: head.sha,
+      mergeability:
+        mergeableState === 'dirty'
+          ? ('dirty' as const)
+          : mergeableState === 'clean'
+            ? ('clean' as const)
+            : ('unknown' as const),
+    };
   }
 
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */

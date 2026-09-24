@@ -14,7 +14,11 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
-import { queueCornerMergeConflict, reconcileCornerMergeBlockers, routeSystemCommand } from './agent-command.js';
+import {
+  queueCornerMergeConflict,
+  reconcileCornerMergeBlockers,
+  routeSystemCommand,
+} from './agent-command.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -829,6 +833,90 @@ export class GitHubOperations {
     await this.syncInstallation(owner, install.id);
   }
 
+  /** Retry GitHub's asynchronous mergeability calculation for open corner PRs. */
+  async refreshUnknownMergeability(cornerId?: string): Promise<void> {
+    const rows = await this.database.query<{
+      corner_id: string;
+      repository: string;
+      repository_id: string;
+      installation_id: string;
+      number: number;
+      head_sha: string;
+      author_id: string;
+      title: string;
+      url: string;
+    }>(
+      `SELECT fact.corner_id,github.full_name repository,github.repository_id,
+              github.installation_id,(fact.lifecycle->'pr'->>'number')::integer number,
+              fact.lifecycle->'pr'->>'headSha' head_sha,
+              COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+              fact.lifecycle->'pr'->>'title' title,fact.lifecycle->'pr'->>'url' url
+       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+         AND fact.lifecycle->'pr'->>'mergeability'='unknown'
+         AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
+         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+         AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
+      [cornerId ?? null],
+    );
+    for (const row of rows.rows) {
+      try {
+        const token = await this.app.installationToken(Number(row.installation_id), {
+          repositoryIds: [Number(row.repository_id)],
+        });
+        const pr = await this.app.readPullRequest(token.token, row.repository, row.number);
+        if (pr.mergeability === 'unknown') continue;
+        await this.database.transaction(async (tx) => {
+          const current = (
+            await tx.query<{ lifecycle: CornerLifecycleView }>(
+              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+              [row.corner_id],
+            )
+          ).rows[0]?.lifecycle;
+          if (
+            !current?.pr ||
+            current.pr.number !== row.number ||
+            current.pr.headSha !== pr.headSha ||
+            current.pr.mergeability !== 'unknown'
+          )
+            return;
+          await this.updateLifecycle(
+            row.corner_id,
+            {
+              pr: { ...current.pr, mergeability: pr.mergeability },
+            },
+            tx,
+          );
+          if (pr.mergeability !== 'dirty') return;
+          const note = await systemLine(tx, {
+            id: hash(`beeline:${row.corner_id}:github:merge-conflict:${row.number}:${pr.headSha}`),
+            roomId: row.corner_id,
+            authorId: row.author_id,
+            subject: GITHUB_SUBJECT,
+            verb: 'found merge conflicts in',
+            object: {
+              text: row.title ?? `pull request #${row.number}`,
+              url: row.url,
+              headSha: pr.headSha,
+            },
+            cardType: 'github-corner-note',
+            card: { source: 'github', dedupe: `merge-conflict:${row.number}:${pr.headSha}` },
+          });
+          await queueCornerMergeConflict(tx, row.corner_id, note.id);
+          if (note.inserted) this.onRoomChanged?.(row.corner_id);
+        });
+      } catch (error) {
+        console.error(`[server] mergeability refresh failed for corner ${row.corner_id}:`, error);
+      }
+    }
+  }
+
   /**
    * Room-level repository activity. Issues and pull requests post on
    * opened/closed. Raw pushes and CI do NOT post: commit churn and
@@ -946,7 +1034,7 @@ export class GitHubOperations {
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
-        const mergeability =
+        let mergeability: 'clean' | 'dirty' | 'unknown' =
           mergeabilityValue === 'clean'
             ? 'clean'
             : mergeabilityValue === 'dirty'
@@ -954,6 +1042,18 @@ export class GitHubOperations {
               : 'unknown';
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
           await database.transaction(async (tx) => {
+            const previous = (
+              await tx.query<{ lifecycle: CornerLifecycleView }>(
+                `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+                [target.corner_id],
+              )
+            ).rows[0]?.lifecycle;
+            if (
+              mergeability === 'unknown' &&
+              previous?.pr?.headSha === headSha &&
+              (previous.pr.mergeability === 'clean' || previous.pr.mergeability === 'dirty')
+            )
+              mergeability = previous.pr.mergeability;
             await this.updateLifecycle(
               target.corner_id,
               {
@@ -978,6 +1078,7 @@ export class GitHubOperations {
               if (note.inserted) this.onRoomChanged?.(target.corner_id);
             }
           });
+          if (mergeability === 'unknown') await this.refreshUnknownMergeability(target.corner_id);
         }
         if (merged && url) {
           await this.mergeCorner(
@@ -1130,6 +1231,7 @@ export class GitHubOperations {
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
+        await this.refreshUnknownMergeability(target.corner_id);
       }
     }
   }

@@ -44,6 +44,7 @@ vi.mock('react-native-unistyles', () => ({
 }));
 
 import type { AgentPaletteCommand } from '@/buzz/slash-verbs';
+import { availableAgentMentionCommands, insertAgentSlashCommand } from '@/buzz/slash-verbs';
 import { SlashVerbPicker } from './SlashVerbPicker';
 
 const originalConsoleError = console.error;
@@ -92,6 +93,30 @@ function find_by_test_id(renderer: ReactTestRenderer, testId: string) {
 }
 
 describe('SlashVerbPicker agent command palette', () => {
+  it('shows the server restart command and selects it when the harness has no catalog', () => {
+    const onCommand = vi.fn();
+    const renderer = render(
+      React.createElement(SlashVerbPicker, {
+        verbs: [],
+        query: 'res',
+        highlightedIndex: 0,
+        onDismiss: () => undefined,
+        onSelect: () => undefined,
+        commands: availableAgentMentionCommands([], 'res'),
+        agentName: 'bee',
+        agentLacksCommands: true,
+        onSelectCommand: onCommand,
+      }),
+    );
+    const restart = find_by_test_id(renderer, 'slash-agent-command-restart');
+    expect(restart).toHaveLength(1);
+    restart[0].props.onPress();
+    expect(onCommand).toHaveBeenCalledWith('restart');
+    expect(insertAgentSlashCommand('@bee /res', onCommand.mock.calls[0][0])).toBe(
+      '@bee /restart ',
+    );
+  });
+
   it('renders ONLY from the published command list handed to it — never a hardcoded inventory', () => {
     const renderer = render(
       React.createElement(SlashVerbPicker, {

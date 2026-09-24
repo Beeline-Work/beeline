@@ -163,6 +163,16 @@ export function matchesAgentCommand(command: AgentPaletteCommand, query: string)
   );
 }
 
+/** Restart is a Beeline lifecycle action, available even without a harness catalog. */
+export function availableAgentMentionCommands(
+  advertised: readonly AgentPaletteCommand[],
+  query: string,
+): AgentPaletteCommand[] {
+  const restart = { name: 'restart', description: 'Restart this agent' };
+  return [restart, ...advertised.filter((command) => command.name.toLowerCase() !== 'restart')]
+    .filter((command) => matchesAgentCommand(command, query));
+}
+
 /** Replace only the active slash token, preserving the exact agent mention that authorizes it. */
 export function insertAgentSlashCommand(text: string, command: string): string {
   return text.replace(/\/[a-z0-9-]*$/i, `/${command} `);

@@ -59,7 +59,11 @@ describe('tagged agent lifecycle commands', () => {
 
   it('parses only an exact tagged command', () => {
     expect(parseTaggedAgentLifecycleCommand('@bee restart', 'bee')).toBe('restart');
+    expect(parseTaggedAgentLifecycleCommand('@bee /restart', 'bee')).toBe('restart');
+    expect(parseTaggedAgentLifecycleCommand(' @BEE /RESTART ', 'bee')).toBe('restart');
     expect(parseTaggedAgentLifecycleCommand(' @BEE STATUS ', 'bee')).toBe('status');
+    expect(parseTaggedAgentLifecycleCommand('@bee /status', 'bee')).toBeUndefined();
+    expect(parseTaggedAgentLifecycleCommand('@bee /restart please', 'bee')).toBeUndefined();
     expect(parseTaggedAgentLifecycleCommand('@bee restart please', 'bee')).toBeUndefined();
     expect(parseTaggedAgentLifecycleCommand('restart @bee', 'bee')).toBeUndefined();
     expect(parseTaggedAgentLifecycleCommand('@other restart', 'bee')).toBeUndefined();
@@ -99,7 +103,7 @@ describe('tagged agent lifecycle commands', () => {
   });
 
   it('enforces restart authority and deduplicates the accepted request', async () => {
-    await send('3'.repeat(64), MEMBER, '@bee restart');
+    await send('3'.repeat(64), MEMBER, '@bee /restart');
     expect(
       (await database.query(`SELECT 1 FROM agent_commands WHERE action='restart'`)).rowCount,
     ).toBe(0);
@@ -112,7 +116,12 @@ describe('tagged agent lifecycle commands', () => {
     ).toContain('only its owner or a Room manager');
 
     const id = '4'.repeat(64);
-    await send(id, OWNER, '@bee restart');
+    const phone = new PhoneService(database, 'http://local.test', undefined, undefined, live);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: id, text: '@bee /restart', mentions: [AGENT] },
+      OWNER,
+    );
     await routeHumanMessage(database, id);
     await send('a'.repeat(64), OWNER, '@bee restart');
     expect(

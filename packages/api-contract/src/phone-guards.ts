@@ -1087,15 +1087,15 @@ function readChat(value: unknown): ChatListItem | null {
       : undefined;
   return {
     room,
-    ...field(
-      'nameAliases',
-      Array.isArray(item.nameAliases)
-        ? item.nameAliases.filter((name): name is string => typeof name === 'string')
-        : undefined,
-    ),
     unread: item.unread === true,
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
+    ...field(
+      'waitingCornerCount',
+      integer(item.waitingCornerCount) && item.waitingCornerCount >= 0
+        ? item.waitingCornerCount
+        : undefined,
+    ),
     ...field(
       'agentsOffline',
       typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined,

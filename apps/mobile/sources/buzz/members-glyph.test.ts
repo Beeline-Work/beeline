@@ -3,15 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import { MEMBERS_LABEL } from './vocabulary';
 
-/**
- * Chrome that opens the members screen next to bookmarks uses MembersGlyph.
- * In-list titles keep the word. The retired hexagon never returns, and no
- * Speakeasy animal stands in for "members" — animals are identity faces.
- */
-const CHROME_ENTRY_POINTS = [
-  '../app/(app)/beeline/channels.tsx',
-  '../components/SidebarView.tsx',
-];
+/** The Workspace menu is the shared mobile and desktop members entry. */
+const MENU_ENTRY_POINT = '../components/buzz/WorkspaceActionsMenu.tsx';
 
 const ROOM_ENTRY_POINTS = ['../app/(app)/beeline/chat/_chat-surface.tsx'];
 
@@ -27,7 +20,7 @@ const RETIRED_GLYPH = '⌬';
 describe('the members word', () => {
   it('names the destination the same way everywhere, from the shared vocabulary', () => {
     expect(MEMBERS_LABEL).toBe('Members');
-    for (const relativePath of [...CHROME_ENTRY_POINTS, ...WORD_ENTRY_POINTS]) {
+    for (const relativePath of [MENU_ENTRY_POINT, ...WORD_ENTRY_POINTS]) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
       expect(source, `${relativePath} should spread the shared members word`).toContain(
         'MEMBERS_LABEL',
@@ -35,33 +28,17 @@ describe('the members word', () => {
     }
   });
 
-  it('draws the Room-list and desktop heading as MembersGlyph', () => {
-    for (const relativePath of CHROME_ENTRY_POINTS) {
-      const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
-      expect(source, `${relativePath} should use MembersGlyph`).toContain('<MembersGlyph');
-      // Phone Room-list chrome is 21; the desktop heading stays 16 until that
-      // surface is taken through the same resize. What must not drift is that
-      // each surface names the size it actually draws.
-      const size = source.match(/<MembersGlyph[\s\S]*?size=\{([A-Za-z_0-9]+)\}/)?.[1];
-      expect(size, `${relativePath} should pass MembersGlyph a size`).toBeTruthy();
-      const resolved =
-        size === '16' || size === '21'
-          ? Number(size)
-          : Number(source.match(new RegExp(`const ${size} = (\\d+)`))?.[1]);
-      const expected = relativePath.endsWith('channels.tsx') ? 21 : 16;
-      expect(resolved, `${relativePath} should keep its chrome size`).toBe(expected);
-      expect(source, `${relativePath} still paints the members word`).not.toContain(
-        'MEMBERS_LABEL.toUpperCase()',
-      );
-      expect(source, `${relativePath} still uses the retired Ionicons people mark`).not.toContain(
-        'people-outline',
-      );
-    }
-    const phone = readFileSync(new URL(CHROME_ENTRY_POINTS[0], import.meta.url), 'utf8');
-    expect(phone).toContain('accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}');
-    const desktop = readFileSync(new URL(CHROME_ENTRY_POINTS[1], import.meta.url), 'utf8');
-    expect(desktop).toContain('accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}');
-    expect(desktop).toContain('testID="desktop-members"');
+  it('offers the same named Members action from phone and desktop Workspace menus', () => {
+    const menu = readFileSync(new URL(MENU_ENTRY_POINT, import.meta.url), 'utf8');
+    const phone = readFileSync(new URL('../app/(app)/beeline/channels.tsx', import.meta.url), 'utf8');
+    const desktop = readFileSync(new URL('../components/SidebarView.tsx', import.meta.url), 'utf8');
+    expect(menu).toContain('label={MEMBERS_LABEL}');
+    expect(menu).toContain('testID="workspace-menu-members"');
+    expect(menu).not.toContain('<MembersGlyph');
+    expect(phone).toContain('<WorkspaceActionsMenu');
+    expect(desktop).toContain('<WorkspaceActionsMenu');
+    expect(phone).toContain("pathname: '/beeline/members'");
+    expect(desktop).toContain("pathname: '/beeline/members'");
   });
 
   it('keeps MembersGlyph off the overflow roster rows and the work pane', () => {
@@ -79,7 +56,7 @@ describe('the members word', () => {
   });
 
   it('keeps the retired hexagon and any animal-as-members mark out of every entry', () => {
-    for (const relativePath of [...CHROME_ENTRY_POINTS, ...WORD_ENTRY_POINTS]) {
+    for (const relativePath of [MENU_ENTRY_POINT, ...WORD_ENTRY_POINTS]) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
       expect(source, `${relativePath} still carries the retired members glyph`).not.toContain(
         RETIRED_GLYPH,

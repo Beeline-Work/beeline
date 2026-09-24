@@ -141,7 +141,7 @@ describe('SidebarNavigator web width class', () => {
     const tree = await renderNavigator(1440);
     const options = tree.root.findByType('Drawer' as any).props.screenOptions;
     expect(options.drawerType).toBe('permanent');
-    expect(options.drawerStyle.width).toBe(280);
+    expect(options.drawerStyle.width).toBe(356);
     expect(resizer(tree).props.testID).toBe('desktop-navigation-resizer');
   });
 });
@@ -183,7 +183,7 @@ describe('SidebarNavigator resize handle', () => {
   it('still reserves content space once the window is wide enough for both panes', async () => {
     // At 700px, reserving 440px for content leaves only 260px for the nav
     // pane, so the rendered width is still capped, not unclamped. The
-    // persisted preference (360, the pane's own max) is unaffected by this
+    // persisted preference (420, the pane's own max) is unaffected by this
     // transient window-width cap, same as before the fix.
     const tree = await renderNavigator(700);
     const handlers = resizer(tree).props;
@@ -194,7 +194,7 @@ describe('SidebarNavigator resize handle', () => {
     });
 
     expect(drawerWidth(tree)).toBe(260);
-    expect(saveDesktopPaneWidthMock).toHaveBeenCalledWith('navigation', 360);
+    expect(saveDesktopPaneWidthMock).toHaveBeenCalledWith('navigation', 420);
   });
 
   it('persists the released width and clamps to the pane maximum', async () => {
@@ -206,7 +206,7 @@ describe('SidebarNavigator resize handle', () => {
       handlers.onPanResponderRelease(null, { dx: 1000 });
     });
 
-    expect(drawerWidth(tree)).toBe(360);
-    expect(saveDesktopPaneWidthMock).toHaveBeenCalledWith('navigation', 360);
+    expect(drawerWidth(tree)).toBe(420);
+    expect(saveDesktopPaneWidthMock).toHaveBeenCalledWith('navigation', 420);
   });
 });

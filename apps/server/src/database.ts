@@ -7,7 +7,6 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
-import { normalizeRoomNames } from './room-names.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
@@ -117,7 +116,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 3;
+export const REQUIRED_SCHEMA_VERSION = 1;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -465,19 +464,6 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL D
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
-CREATE TABLE IF NOT EXISTS room_name_aliases (
-  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  PRIMARY KEY (room_id, name)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS room_name_aliases_workspace_name_idx
-  ON room_name_aliases(workspace_id, lower(name));
-CREATE TABLE IF NOT EXISTS room_name_ambiguities (
-  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  PRIMARY KEY (workspace_id, name)
-);
 
 CREATE TABLE IF NOT EXISTS memberships (
   id bigserial PRIMARY KEY,
@@ -1334,10 +1320,6 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
-  await normalizeRoomNames(database);
-  await database.query(`CREATE UNIQUE INDEX IF NOT EXISTS rooms_workspace_slug_idx
-    ON rooms(workspace_id,name)
-    WHERE parent_id IS NULL AND direct_participants IS NULL`);
   await database.query(AGENT_COMMAND_SCHEMA);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,

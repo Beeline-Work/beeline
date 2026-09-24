@@ -680,14 +680,14 @@ describe('DesktopRoomInspector work pane', () => {
     expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
   });
 
-  it('passes historical Room references to the desktop navigation handler', async () => {
+  it('passes Room references to the desktop navigation handler', async () => {
     const onChannelReference = vi.fn();
     const detail = {
       ...room(), room: corners[0].corner, parent: room().room,
-      messages: [{ id: 'link', text: 'See #Old Room', createdAt: 5, author: agent, presentation: 'message' }],
+      messages: [{ id: 'link', text: 'See #new-room', createdAt: 5, author: agent, presentation: 'message' }],
     } as any;
     const channelIndex = buildChannelReferenceIndex(
-      [{ channelId: 'another-room', name: 'new-room', aliases: ['Old Room'] }], [],
+      [{ channelId: 'another-room', name: 'new-room' }], [],
     );
     let tree!: ReactTestRenderer;
     await act(async () => {
@@ -698,9 +698,9 @@ describe('DesktopRoomInspector work pane', () => {
     });
     const message = tree.root.findByType('OrdinaryLedgerMessage' as any);
     expect(message.props.channelIndex).toBe(channelIndex);
-    act(() => message.props.onChannelReference({ kind: 'room', channelId: 'another-room' }, '#Old Room'));
+    act(() => message.props.onChannelReference({ kind: 'room', channelId: 'another-room' }, '#new-room'));
     expect(onChannelReference).toHaveBeenCalledWith(
-      { kind: 'room', channelId: 'another-room' }, '#Old Room',
+      { kind: 'room', channelId: 'another-room' }, '#new-room',
     );
   });
 

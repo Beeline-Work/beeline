@@ -1,60 +1,52 @@
-import * as React from 'react';
-import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { type Href, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native-unistyles';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  type ChatListView,
-  type CornerListItem,
-  type RoomViewIdentity,
-  type WorkspaceListView,
-} from '@beeline/buzz-client';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
-import { navigateToRoom } from '@/buzz/corner-navigation';
 import {
   loadActiveCommunityId,
   loadLastViewedChannel,
   saveActiveCommunityId,
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
-import { compactRelativeTime } from '@/buzz/relative-time';
+import { navigateToRoom } from '@/buzz/corner-navigation';
+import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
+import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
+import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
+import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
+import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
+import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
+import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
+import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { RoomDeckComposeMenu } from '@/components/buzz/RoomDeckComposeMenu';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import {
-  MEMBERS_LABEL,
-  ROOM_LABEL,
-  ROOMS_LABEL,
-  WORKSPACE_LABEL,
-  WORKSPACES_LABEL,
-  formatRoomCornerCount,
-} from '@/buzz/vocabulary';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+  type ChatListView,
+  type RoomViewIdentity,
+  type WorkspaceListView,
+} from '@beeline/buzz-client';
+import { Ionicons } from '@expo/vector-icons';
+import { useGlobalSearchParams, usePathname, useRouter, type Href } from 'expo-router';
+import * as React from 'react';
 import {
-  displayGroupedCornerTitle,
-  NO_ACTIVITY_PREVIEW,
-  roomListSections,
-  roomRowName,
-  roomRowNeedsAttention,
-  roomRowPreview,
-} from '@/buzz/room-list-row';
-import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
-import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
-import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
-import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
-import {
-  desktopWorkspaceRoute,
-  loadDesktopRoomCornersExpanded,
-  saveDesktopRoomCornersExpanded,
-} from '@/buzz/desktop-workbench-state';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { subscribeBookmarkChanges } from '@/buzz/bookmark-events';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet } from 'react-native-unistyles';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -120,93 +112,24 @@ const stylesheet = StyleSheet.create((theme) => ({
   workspaceSelected: { backgroundColor: theme.colors.surfaceSelected },
   workspaceText: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
   workspaceTextSelected: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
-  searchWrap: {
-    marginHorizontal: 12,
-    marginVertical: 10,
-    minHeight: 36,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.divider,
-    borderRadius: 8,
-    backgroundColor: theme.colors.surface,
-  },
-  searchWrapFocused: { borderColor: theme.buzz.accent },
-  search: {
-    ...theme.buzz.type.meta,
-    flex: 1,
-    color: theme.colors.text,
-    outlineStyle: 'none',
-  } as any,
-  shortcut: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
-  roomRowShell: { position: 'relative' },
-  roomRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    minHeight: 64,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  conversationCell: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.divider,
+    borderBottomColor: theme.buzz.border,
   },
-  roomRowWithCornerToggle: { paddingRight: 52 },
-  roomCornersToggle: {
-    position: 'absolute',
-    right: 4,
-    top: 10,
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 3,
-  },
-  roomCornersTogglePressed: { backgroundColor: theme.colors.surfaceSelected },
-  roomCornersToggleGlyph: { color: theme.colors.textSecondary },
-  roomRowCompact: { alignItems: 'center' },
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
-  roomStateSlot: { width: 7, height: 7, marginTop: 7 },
-  roomStateSlotCompact: { marginTop: 0 },
-  roomStateMark: { width: 7, height: 7 },
-  roomStateNeedsYou: { backgroundColor: theme.colors.textLink },
-  roomStateWorking: { backgroundColor: theme.colors.textSecondary },
-  cornerStateWaiting: { backgroundColor: theme.buzz.accent },
-  cornerStateQuiet: { backgroundColor: theme.buzz.ledgerQuiet },
-  cornerStateGhost: { backgroundColor: theme.buzz.ledgerGhost },
-  roomCopy: { flex: 1, minWidth: 0 },
-  roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  roomTitle: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.colors.text },
-  roomSigil: { color: theme.colors.textLink },
-  roomTime: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  roomFact: { ...theme.buzz.type.meta, marginTop: 3, color: theme.colors.textSecondary },
-  cornerRow: {
-    minHeight: 45,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    paddingLeft: 34,
-    paddingRight: 16,
-    paddingVertical: 7,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.divider,
-  },
-  cornerTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
-  cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, marginTop: 2 },
-  cornerMetaWaiting: { color: theme.buzz.accent },
-  cornerMetaQuiet: { color: theme.buzz.ledgerQuiet },
-  cornerMetaGhost: { color: theme.buzz.ledgerGhost },
-  previewSelf: { color: theme.colors.textSecondary },
-  previewAuthor: { color: theme.colors.textLink },
   empty: {
     ...theme.buzz.type.meta,
     paddingHorizontal: 18,
     paddingVertical: 24,
     color: theme.colors.textSecondary,
   },
+  pinnedEmpty: { padding: 18, gap: 8 },
+  pinnedEmptyTitle: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  pinnedEmptyCopy: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
+  pinnedEmptyAction: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  pinnedEmptyActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   loading: {
     alignItems: 'center',
     paddingHorizontal: 18,
@@ -230,14 +153,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: 2,
   },
-  headerGlyph: {
-    minHeight: 32,
-    minWidth: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 3,
-  },
-  headerGlyphColor: { color: theme.colors.textSecondary },
   settingsFaceSlot: { width: 22, height: 22, borderRadius: 11 },
   settingsViewerName: {
     ...theme.buzz.type.meta,
@@ -252,6 +167,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
   const isDesktop = useIsDesktop();
+  const { width: windowWidth } = useWindowDimensions();
+  const showWorkspaceStrip = isDesktop && windowWidth >= 1360;
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{
@@ -272,7 +189,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
   const [query, setQuery] = React.useState('');
-  const [searchFocused, setSearchFocused] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
@@ -282,11 +198,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceRoomCounts, setWorkspaceRoomCounts] = React.useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
-  const [activeCorners, setActiveCorners] = React.useState<readonly CornerListItem[]>([]);
-  const [roomCornersExpanded, setRoomCornersExpanded] = React.useState<
-    Readonly<Record<string, boolean>>
-  >({});
-  const [bookmarkCount, setBookmarkCount] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -331,67 +242,6 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
     };
   }, [client, pathname, workspaceId]);
-
-  React.useEffect(() => {
-    if (!workspaceId) {
-      setBookmarkCount(0);
-      return;
-    }
-    let cancelled = false;
-    void monolithPhoneOperation('listMessageBookmarks', { workspaceId })
-      .then((result) => {
-        if (!cancelled) setBookmarkCount(result.bookmarks.length);
-      })
-      .catch(() => {
-        if (!cancelled) setBookmarkCount(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname, workspaceId]);
-
-  React.useEffect(
-    () =>
-      subscribeBookmarkChanges((change) => {
-        if (change.workspaceId !== workspaceId) return;
-        setBookmarkCount((count) => Math.max(0, count + (change.bookmarked ? 1 : -1)));
-      }),
-    [workspaceId],
-  );
-
-  React.useEffect(() => {
-    if (!isDesktop || !client || !activeRoomId) {
-      setActiveCorners([]);
-      return;
-    }
-    let cancelled = false;
-    void client
-      .corners(activeRoomId)
-      .then((view) => {
-        if (!cancelled)
-          setActiveCorners(view.corners.filter((corner) => corner.state !== 'archived'));
-      })
-      .catch(() => {
-        if (!cancelled) setActiveCorners([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRoomId, client, isDesktop, pathname]);
-
-  React.useEffect(() => {
-    if (!isDesktop || !activeRoomId) return;
-    let cancelled = false;
-    void loadDesktopRoomCornersExpanded(activeRoomId).then((expanded) => {
-      if (cancelled) return;
-      setRoomCornersExpanded((current) =>
-        current[activeRoomId] === undefined ? { ...current, [activeRoomId]: expanded } : current,
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRoomId, isDesktop]);
 
   React.useEffect(() => {
     if (!identityPubkey) return;
@@ -446,13 +296,17 @@ export const SidebarView = React.memo(function SidebarView() {
     };
   }, [client, pathname, workspaces]);
 
-  const filteredChats = React.useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return surface?.chats ?? [];
-    return (surface?.chats ?? []).filter((item) =>
-      `${item.room.name} ${item.latestMessage?.text ?? ''}`.toLocaleLowerCase().includes(needle),
-    );
-  }, [query, surface?.chats]);
+  const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
+  const counts = React.useMemo(() => roomListCounts(surface?.chats ?? [], pinned), [surface?.chats, pinned]);
+  const [filter, setFilter] = useRoomListFilter(
+    workspaceId,
+    pinsLoaded && Boolean(surface),
+    Boolean(surface?.chats.some((item) => !item.closed && !item.directMessage && pinned.includes(item.room.id))),
+  );
+  const filteredChats = React.useMemo(
+    () => filterConversations(surface?.chats ?? [], query, filter, pinned),
+    [query, filter, pinned, surface?.chats],
+  );
   const filteredChatSections = React.useMemo(
     () => roomListSections(filteredChats),
     [filteredChats],
@@ -466,7 +320,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
-  const membersSelected = pathname.startsWith('/beeline/members');
   const profileSettingsSelected =
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
@@ -557,443 +410,330 @@ export const SidebarView = React.memo(function SidebarView() {
   );
 
   return (
-    <View
-      style={[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]}
-      testID="desktop-navigation-pane"
-    >
-      {isDesktop ? (
-        <View style={styles.desktopWorkspaceHeader}>
-          <View style={styles.desktopWorkspaceHeaderRow}>
-            <CommunitySwitcherTrigger
-              community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
-              expanded={workspaceSwitcherOpen}
-              onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
-              attention={otherWorkspaceNeedsAttention}
-              pickerTitle={WORKSPACES_LABEL}
-            />
-            <View style={styles.desktopWorkspaceHeaderActions}>
-              {workspaceId ? (
-                <Pressable
-                  accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: membersSelected }}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/beeline/members',
-                      params: { communityId: workspaceId },
-                    } as Href)
-                  }
-                  style={({ pressed }) => [
-                    styles.headerGlyph,
-                    (membersSelected || pressed) && styles.roomRowSelected,
-                  ]}
-                  testID="desktop-members"
-                >
-                  <MembersGlyph
-                    color={styles.headerGlyphColor.color}
-                    size={16}
-                    testID="desktop-members-glyph"
+    <View style={{ flex: 1, flexDirection: 'row' }}>
+      {showWorkspaceStrip && (
+        <DesktopWorkspaceStrip
+          workspaces={workspaces}
+          activeWorkspaceId={workspaceId}
+          viewerName={viewerIdentity?.name}
+          viewerPubkey={identityPubkey ?? undefined}
+          viewerFace={viewerIdentity?.face}
+          viewerAvatarUrl={viewerIdentity?.avatar}
+          onSelect={selectWorkspace}
+          onAdd={() => router.push('/beeline/community' as Href)}
+          onAccount={() => router.push('/beeline/settings' as Href)}
+        />
+      )}
+      <View
+        style={[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]}
+        testID="desktop-navigation-pane"
+      >
+        {isDesktop ? (
+          <View style={styles.desktopWorkspaceHeader}>
+            <View style={styles.desktopWorkspaceHeaderRow}>
+              <CommunitySwitcherTrigger
+                community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
+                expanded={workspaceSwitcherOpen}
+                onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
+                attention={otherWorkspaceNeedsAttention}
+                pickerTitle={WORKSPACES_LABEL}
+              />
+              <View style={styles.desktopWorkspaceHeaderActions}>
+                {workspaceId && (
+                  <WorkspaceActionsMenu
+                    onMembers={() =>
+                      router.push({
+                        pathname: '/beeline/members',
+                        params: { communityId: workspaceId },
+                      } as Href)
+                    }
+                    onSettings={
+                      canManageWorkspace
+                        ? () =>
+                            router.push({
+                              pathname: '/beeline/settings/workspace',
+                              params: { communityId: workspaceId },
+                            } as Href)
+                        : undefined
+                    }
                   />
-                </Pressable>
-              ) : null}
-              {workspaceId ? (
-                <Pressable
-                  accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: bookmarksSelected }}
-                  onPress={() =>
+                )}
+                {workspaceId && !viewerIsAgent && (
+                  <RoomDeckComposeMenu
+                    header
+                    canManageWorkspace={canManageWorkspace}
+                    onSelect={(action) =>
+                      runRoomDeckComposeAction(action, {
+                        communityId: workspaceId,
+                        openMessagePicker: () =>
+                          router.push({
+                            pathname: '/beeline/channels',
+                            params: {
+                              communityId: workspaceId,
+                              newDirectMessage: String(Date.now()),
+                            },
+                          } as Href),
+                        openRoomCreator: () =>
+                          router.push({
+                            pathname: '/beeline/channels',
+                            params: { communityId: workspaceId, newRoom: String(Date.now()) },
+                          } as Href),
+                        invitePerson: () =>
+                          router.push({
+                            pathname: '/beeline/members',
+                            params: { communityId: workspaceId, action: 'invite' },
+                          } as Href),
+                        navigate: (target) => router.push(target as Href),
+                      })
+                    }
+                  />
+                )}
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.workspaceBlock}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.workspaceRow}
+            >
+              {workspaces.map((workspace) => {
+                const selected = workspace.id === workspaceId;
+                return (
+                  <Pressable
+                    key={workspace.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => selectWorkspace(workspace.id)}
+                    style={[styles.workspaceButton, selected && styles.workspaceSelected]}
+                    testID={`desktop-workspace-${workspace.id}`}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
+                    >
+                      {workspace.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+        <>
+          <RoomListToolbar
+            desktop
+            searchRef={searchRef}
+            filter={filter}
+            onFilter={setFilter}
+            query={query}
+            onQuery={setQuery}
+            bookmarksSelected={bookmarksSelected}
+            counts={counts}
+            onBookmarks={
+              workspaceId
+                ? () =>
                     router.push({
                       pathname: '/beeline/bookmarks',
                       params: { communityId: workspaceId },
                     } as Href)
-                  }
-                  style={({ pressed }) => [
-                    styles.headerGlyph,
-                    (bookmarksSelected || pressed) && styles.roomRowSelected,
-                  ]}
-                  testID="desktop-bookmarks"
-                >
-                  <Ionicons
-                    name="bookmark-outline"
-                    size={16}
-                    color={styles.headerGlyphColor.color}
-                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                  />
-                </Pressable>
-              ) : null}
-              {canManageWorkspace && workspaceId ? (
-                <Pressable
-                  accessibilityLabel={`Open ${WORKSPACE_LABEL} settings`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: workspaceSettingsSelected }}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/beeline/settings/workspace',
-                      params: { communityId: workspaceId },
-                    } as Href)
-                  }
-                  style={({ pressed }) => [
-                    styles.headerGlyph,
-                    (workspaceSettingsSelected || pressed) && styles.roomRowSelected,
-                  ]}
-                  testID="desktop-workspace-settings"
-                >
-                  <Ionicons
-                    name="settings-outline"
-                    size={16}
-                    color={styles.headerGlyphColor.color}
-                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                  />
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.workspaceBlock}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.workspaceRow}
-          >
-            {workspaces.map((workspace) => {
-              const selected = workspace.id === workspaceId;
-              return (
-                <Pressable
-                  key={workspace.id}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  onPress={() => selectWorkspace(workspace.id)}
-                  style={[styles.workspaceButton, selected && styles.workspaceSelected]}
-                  testID={`desktop-workspace-${workspace.id}`}
-                >
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
-                  >
-                    {workspace.name}
+                : undefined
+            }
+          />
+          {pinError && (
+            <Text accessibilityRole="alert" style={styles.empty}>
+              {pinError}
+            </Text>
+          )}
+          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+            {navigationError ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setRefreshNonce((value) => value + 1)}
+              >
+                <Text style={styles.empty}>{navigationError} Select to retry.</Text>
+              </Pressable>
+            ) : !filteredChats.length ? (
+              surface ? (
+                filter === 'pinned' && !query.trim() ? (
+                  <View style={styles.pinnedEmpty} testID="desktop-pinned-empty">
+                    <Text style={styles.pinnedEmptyTitle}>No pinned conversations</Text>
+                    <Text style={styles.pinnedEmptyCopy}>Long press a Room to pin it here.</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setFilter('all')}
+                      style={styles.pinnedEmptyAction}
+                      testID="desktop-show-all-conversations"
+                    >
+                      <Text style={styles.pinnedEmptyActionText}>Show all conversations</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Text style={styles.empty}>
+                    {query.trim() || filter !== 'all'
+                      ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
+                      : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`}
                   </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-      <>
-        <View style={[styles.searchWrap, searchFocused && styles.searchWrapFocused]}>
-          <Ionicons
-            name="search"
-            size={14}
-            color={stylesheet.roomTime.color}
-            {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-          />
-          <TextInput
-            ref={searchRef}
-            value={query}
-            onChangeText={setQuery}
-            onBlur={() => setSearchFocused(false)}
-            onFocus={() => setSearchFocused(true)}
-            accessibilityLabel={
-              isDesktop ? `Search ${ROOMS_LABEL} and direct messages` : `Search ${ROOMS_LABEL}`
-            }
-            placeholder={
-              isDesktop ? `Search ${ROOMS_LABEL} and direct messages` : `Search ${ROOMS_LABEL}`
-            }
-            placeholderTextColor={stylesheet.roomTime.color}
-            style={styles.search}
-            testID="desktop-room-search"
-          />
-          <Text style={styles.shortcut} {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}>
-            ⌘K
-          </Text>
-        </View>
-        <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-          {navigationError ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setRefreshNonce((value) => value + 1)}
-            >
-              <Text style={styles.empty}>{navigationError} Select to retry.</Text>
-            </Pressable>
-          ) : !filteredChats.length ? (
-            surface ? (
-              <Text style={styles.empty}>
-                {query.trim()
-                  ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
-                  : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`}
-              </Text>
+                )
+              ) : (
+                <View style={styles.loading} testID="desktop-rooms-loader">
+                  <SurfaceGlyphLoader compact />
+                  <Text style={styles.empty}>
+                    Loading {ROOMS_LABEL.toLowerCase()} and direct messages…
+                  </Text>
+                </View>
+              )
             ) : (
-              <View style={styles.loading} testID="desktop-rooms-loader">
-                <SurfaceGlyphLoader compact />
-                <Text style={styles.empty}>
-                  Loading {ROOMS_LABEL.toLowerCase()} and direct messages…
-                </Text>
-              </View>
-            )
-          ) : (
-            filteredChatSections.map((section) => (
-              <React.Fragment key={section.kind}>
-                <RoomListSectionHeader
-                  title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                  actionTestID={
-                    section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
-                  }
-                  actionAccessibilityLabel={
-                    section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
-                  }
-                  onAction={
-                    !workspaceId || viewerIsAgent
-                      ? undefined
-                      : section.kind === 'rooms' && !canCreateRoom
+              filteredChatSections.map((section) => (
+                <React.Fragment key={section.kind}>
+                  <RoomListSectionHeader
+                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Messages'}
+                    count={section.kind === 'rooms' ? section.data.length : undefined}
+                    actionTestID={
+                      section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                    }
+                    actionAccessibilityLabel={
+                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                    }
+                    onAction={
+                      !workspaceId || viewerIsAgent
                         ? undefined
-                        : () =>
-                            router.push({
-                              pathname: '/beeline/channels',
-                              params:
-                                section.kind === 'rooms'
-                                  ? { communityId: workspaceId, newRoom: String(Date.now()) }
-                                  : { communityId: workspaceId, newDirectMessage: String(Date.now()) },
-                            } as Href)
-                  }
-                />
-                {section.data.map((item) => {
-                  const rowName = roomRowName(item);
-                  const preview = roomRowPreview(item, identityPubkey ?? undefined);
-                  const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
-                  const attention = roomRowNeedsAttention(item);
-                  const active = activeRoomId === item.room.id;
-                  const cornerCount = formatRoomCornerCount(item.cornerCount);
-                  const cornersExpanded = roomCornersExpanded[item.room.id] ?? true;
-                  const showCornerToggle = isDesktop && active && Boolean(cornerCount);
-                  return (
-                    <React.Fragment key={item.room.id}>
-                      <View style={styles.roomRowShell}>
-                        <Pressable
-                          accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: active }}
+                        : section.kind === 'rooms' && !canCreateRoom
+                          ? undefined
+                          : () =>
+                              router.push({
+                                pathname: '/beeline/channels',
+                                params:
+                                  section.kind === 'rooms'
+                                    ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                    : {
+                                        communityId: workspaceId,
+                                        newDirectMessage: String(Date.now()),
+                                      },
+                              } as Href)
+                    }
+                  />
+                  {section.data.map((item) => {
+                    const active = activeRoomId === item.room.id;
+                    return (
+                      <View key={item.room.id} style={styles.conversationCell}>
+                        <ConversationRow
+                          item={item}
+                          viewer={identityPubkey ?? undefined}
+                          now={Date.now()}
+                          selected={isDesktop && active}
+                          desktop
+                          pinned={pinned.includes(item.room.id)}
+                          onPin={() => void togglePin(item.room.id)}
                           onPress={() => openRoom(item.room.id)}
-                          style={({ pressed }) => [
-                            styles.roomRow,
-                            showCornerToggle && styles.roomRowWithCornerToggle,
-                            !isDesktop && styles.roomRowCompact,
-                            active && styles.roomRowSelected,
-                            pressed && styles.roomRowSelected,
-                          ]}
                           testID={`desktop-room-${item.room.id}`}
-                        >
-                          <View
-                            style={[
-                              styles.roomStateSlot,
-                              !isDesktop && styles.roomStateSlotCompact,
-                            ]}
-                            {...(Platform.OS === 'web'
-                              ? { 'aria-hidden': true }
-                              : { accessibilityElementsHidden: true })}
-                          >
-                            {(attention || (isDesktop && item.agentState === 'working')) && (
-                              <View
-                                style={[
-                                  styles.roomStateMark,
-                                  attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
-                                ]}
-                                testID={`desktop-room-state-${item.room.id}`}
-                              />
-                            )}
-                          </View>
-                          <View style={styles.roomCopy}>
-                            <View style={styles.roomTitleLine}>
-                              <Text numberOfLines={1} style={styles.roomTitle}>
-                                <Text style={styles.roomSigil}>{rowName.sigil}</Text>
-                                {rowName.name}
-                              </Text>
-                              <Text style={styles.roomTime}>
-                                {item.latestMessage
-                                  ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
-                                  : ''}
-                              </Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.roomFact}>
-                              {hasPreview && preview.attribution === 'self' && (
-                                <Text style={styles.previewSelf}>you: </Text>
-                              )}
-                              {hasPreview && preview.attribution === 'other' && (
-                                <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                              )}
-                              {preview.text}
-                            </Text>
-                          </View>
-                        </Pressable>
-                        {showCornerToggle ? (
-                          <Pressable
-                            accessibilityLabel={`${cornersExpanded ? 'Hide' : 'Show'} ${cornerCount} in ${rowName.sigil}${rowName.name}`}
-                            accessibilityRole="button"
-                            accessibilityState={{ expanded: cornersExpanded }}
-                            onPress={() => {
-                              const expanded = !cornersExpanded;
-                              setRoomCornersExpanded((current) => ({
-                                ...current,
-                                [item.room.id]: expanded,
-                              }));
-                              void saveDesktopRoomCornersExpanded(item.room.id, expanded);
+                        />
+                        {!item.directMessage && (item.cornerCount ?? 0) > 0 && (
+                          <DesktopRoomCorners
+                            key={`${workspaceId}/${item.room.id}`}
+                            item={item}
+                            active={active}
+                            client={client}
+                            refreshKey={pathname}
+                            onOpen={(cornerId) => {
+                              selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
+                              if (activeRoomId !== item.room.id) openRoom(item.room.id);
                             }}
-                            style={({ pressed }) => [
-                              styles.roomCornersToggle,
-                              pressed && styles.roomCornersTogglePressed,
-                            ]}
-                            testID={`desktop-room-corners-toggle-${item.room.id}`}
-                          >
-                            <ChevronGlyph
-                              color={styles.roomCornersToggleGlyph.color}
-                              direction={cornersExpanded ? 'up' : 'down'}
-                              size={CHEVRON_ROW_SIZE}
-                              testID={`desktop-room-corners-toggle-glyph-${item.room.id}`}
-                            />
-                          </Pressable>
-                        ) : null}
+                            renderDrag={(cornerId, children) => (
+                              <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
+                                {children}
+                              </DesktopCornerDragSource>
+                            )}
+                          />
+                        )}
                       </View>
-                      {isDesktop &&
-                        active &&
-                        cornersExpanded &&
-                        activeCorners.map((corner) => (
-                          <DesktopCornerDragSource
-                            key={corner.corner.id}
-                            roomId={item.room.id}
-                            cornerId={corner.corner.id}
-                          >
-                            <Pressable
-                              accessibilityLabel={`Open corner ${corner.corner.name}`}
-                              accessibilityRole="button"
-                              onPress={() =>
-                                selectDesktopWorkCorner({
-                                  roomId: item.room.id,
-                                  cornerId: corner.corner.id,
-                                })
-                              }
-                              style={styles.cornerRow}
-                              testID={`desktop-corner-${corner.corner.id}`}
-                            >
-                              <View style={styles.roomStateSlot}>
-                                <View
-                                  style={[
-                                    styles.roomStateMark,
-                                    corner.state === 'waiting'
-                                      ? styles.cornerStateWaiting
-                                      : corner.state === 'archived'
-                                        ? styles.cornerStateGhost
-                                        : styles.cornerStateQuiet,
-                                  ]}
-                                />
-                              </View>
-                              <View style={styles.roomCopy}>
-                                <Text numberOfLines={1} style={styles.cornerTitle}>
-                                  {displayGroupedCornerTitle(
-                                    item.room.name,
-                                    corner.corner.name,
-                                    corner.corner.id,
-                                  )}
-                                </Text>
-                                <Text
-                                  numberOfLines={1}
-                                  style={[
-                                    styles.cornerMeta,
-                                    corner.state === 'waiting'
-                                      ? styles.cornerMetaWaiting
-                                      : corner.state === 'archived'
-                                        ? styles.cornerMetaGhost
-                                        : styles.cornerMetaQuiet,
-                                  ]}
-                                >
-                                  {corner.state}
-                                </Text>
-                              </View>
-                            </Pressable>
-                          </DesktopCornerDragSource>
-                        ))}
-                    </React.Fragment>
-                  );
-                })}
-              </React.Fragment>
-            ))
+                    );
+                  })}
+                </React.Fragment>
+              ))
+            )}
+          </ScrollView>
+          {!showWorkspaceStrip && (
+            <Pressable
+              accessibilityLabel={
+                viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings'
+              }
+              accessibilityRole="button"
+              accessibilityState={{ selected: profileSettingsSelected }}
+              onPress={() => router.push('/beeline/settings' as Href)}
+              style={({ pressed }) => [
+                styles.settingsRow,
+                (profileSettingsSelected || pressed) && styles.roomRowSelected,
+              ]}
+              testID="profile-settings-navigation"
+            >
+              {isDesktop ? (
+                identityPubkey ? (
+                  <>
+                    <IdentityMark
+                      seed={identityPubkey}
+                      kind="human"
+                      size={22}
+                      name={viewerIdentity?.name}
+                      avatarUrl={viewerIdentity?.avatar}
+                      face={viewerIdentity?.face}
+                    />
+                    {viewerIdentity?.name ? (
+                      <Text
+                        numberOfLines={1}
+                        style={styles.settingsViewerName}
+                        testID="profile-settings-name"
+                      >
+                        {viewerIdentity.name}
+                      </Text>
+                    ) : null}
+                  </>
+                ) : (
+                  <View style={styles.settingsFaceSlot} />
+                )
+              ) : (
+                <>
+                  <Ionicons
+                    name="person-outline"
+                    size={18}
+                    color={stylesheet.settingsText.color}
+                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                  />
+                  <Text style={styles.settingsText}>SETTINGS</Text>
+                </>
+              )}
+            </Pressable>
           )}
-        </ScrollView>
-        <Pressable
-          accessibilityLabel={
-            viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings'
-          }
-          accessibilityRole="button"
-          accessibilityState={{ selected: profileSettingsSelected }}
-          onPress={() => router.push('/beeline/settings' as Href)}
-          style={({ pressed }) => [
-            styles.settingsRow,
-            (profileSettingsSelected || pressed) && styles.roomRowSelected,
-          ]}
-          testID="profile-settings-navigation"
-        >
-          {isDesktop ? (
-            identityPubkey ? (
-              <>
-                <IdentityMark
-                  seed={identityPubkey}
-                  kind="human"
-                  size={22}
-                  name={viewerIdentity?.name}
-                  avatarUrl={viewerIdentity?.avatar}
-                  face={viewerIdentity?.face}
-                />
-                {viewerIdentity?.name ? (
-                  <Text
-                    numberOfLines={1}
-                    style={styles.settingsViewerName}
-                    testID="profile-settings-name"
-                  >
-                    {viewerIdentity.name}
-                  </Text>
-                ) : null}
-              </>
-            ) : (
-              <View style={styles.settingsFaceSlot} />
-            )
-          ) : (
-            <>
-              <Ionicons
-                name="person-outline"
-                size={18}
-                color={stylesheet.settingsText.color}
-                {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-              />
-              <Text style={styles.settingsText}>SETTINGS</Text>
-            </>
-          )}
-        </Pressable>
-      </>
-      {isDesktop && (
-        <DesktopWorkspaceRail
-          activeWorkspaceId={workspaceId}
-          onAdd={() => {
-            setWorkspaceSwitcherOpen(false);
-            router.push('/beeline/community' as Href);
-          }}
-          onClose={() => setWorkspaceSwitcherOpen(false)}
-          onOpenAccount={() => {
-            setWorkspaceSwitcherOpen(false);
-            router.push('/beeline/settings' as Href);
-          }}
-          onSelect={selectWorkspace}
-          open={workspaceSwitcherOpen}
-          viewerAvatarUrl={viewerIdentity?.avatar}
-          viewerFace={viewerIdentity?.face}
-          viewerName={viewerIdentity?.name}
-          viewerPubkey={identityPubkey ?? undefined}
-          workspaces={workspaces.map((workspace) => ({
-            id: workspace.id,
-            name: workspace.name,
-            avatar: workspace.avatar,
-            roomCount: workspaceRoomCounts.get(workspace.id) ?? 0,
-            needsAttention: attentionWorkspaceIds.has(workspace.id),
-          }))}
-        />
-      )}
+        </>
+        {isDesktop && (
+          <DesktopWorkspaceRail
+            activeWorkspaceId={workspaceId}
+            onAdd={() => {
+              setWorkspaceSwitcherOpen(false);
+              router.push('/beeline/community' as Href);
+            }}
+            onClose={() => setWorkspaceSwitcherOpen(false)}
+            onOpenAccount={() => {
+              setWorkspaceSwitcherOpen(false);
+              router.push('/beeline/settings' as Href);
+            }}
+            onSelect={selectWorkspace}
+            open={workspaceSwitcherOpen}
+            viewerAvatarUrl={viewerIdentity?.avatar}
+            viewerFace={viewerIdentity?.face}
+            viewerName={viewerIdentity?.name}
+            viewerPubkey={identityPubkey ?? undefined}
+            workspaces={workspaces.map((workspace) => ({
+              id: workspace.id,
+              name: workspace.name,
+              avatar: workspace.avatar,
+              roomCount: workspaceRoomCounts.get(workspace.id) ?? 0,
+              needsAttention: attentionWorkspaceIds.has(workspace.id),
+            }))}
+          />
+        )}
+      </View>
     </View>
   );
 });

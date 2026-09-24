@@ -361,81 +361,48 @@ placeholder.
 
 ## Index rows
 
-The Room list is the screen the product opens on, and it is an index: one
-leading column, one right edge, no boxes and no row surfaces. Every row —
-Room or DM — is 64 tall and reserves the same trailing column, so the age
-stamps read down a single straight edge whether or not a row has corners. The
-leading unit is the STATE column, on every row: a 7×7 brass mark, lit when the
-row wants the viewer, reserving its width either way so whatever follows it
-starts at the same edge whether or not the row is lit. Rows are parted by the
-shared `hairlineDivider` and nothing else, so the slab shows through each one.
+The Room list uses the approved Previews layout in Obsidian and Bone. The
+workspace name and existing bezel avatar head the list; the workspace menu
+(Members and authorized Workspace settings) sits beside that identity, with
+compose in the same header. The search field stays visible below the conversation
+toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
+a separate brass action beside Search. All, Unread, and Pinned text filters
+the list without removing access to quiet Rooms. The Messages section remains
+in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
+on All.
 
-**The row leads with state, then the name, and the name leads with its
-sigil.** After the state column, only a DM row also carries a 40px tile —
-its peer's own `IdentityMark`; a Room is many voices, so no one picture stands
-for it, and a Room row's copy follows the state column directly. The first
-glyph of the name itself reports the row's kind, in brass: a DM row reads
-`@peer`, a Room row reads `#room`; the rest of the name follows in the primary
-tone at one size (18) and one weight. Corner rows under a Room keep the drawn
-corner mark; Workspaces on the rail carry no sigil at all.
+`ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
+`bodyStrong` for unread messages; a trailing brass dot means the Room has new
+messages, independent of corner state. Room names retain their brass `#`; DMs use the peer's identity.
+On phone, the byline sits above a two-line `body` preview in `textSecondary`;
+on desktop, author and preview share a two-line `meta` block. DMs omit the
+byline because the peer is already named in the heading. Rows have generous
+vertical space and a hairline between conversations. Self attribution is quiet;
+other authors use brass. The app's Space Grotesk roles and theme tokens own type
+and contrast. Rows grow with content; the old fixed 64px height is not a cap.
 
-Line two is one preview line, single, truncated, in the quiet tone, with its
-attribution in front: the viewer's own last message reads `you: ` in the muted
-tone, anyone else's — a person or an agent alike — reads `@handle: ` in brass,
-and an empty Room reads `No messages yet` with no attribution. So a row
-previews the voice the transcript will show when it is opened.
+Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
+Mobile has no selected Room state: pressing a conversation navigates away.
+Long press immediately toggles pin/unpin; pins are device-local and scoped to viewer and
+workspace, separate from server-backed saved-message bookmarks.
+The Pinned filter uses text, while pinned rows show the pin glyph. At the
+default desktop sidebar width, all filters and both actions fit on the first
+toolbar row; the visible search field stays below it. An empty Pinned view
+explains the long-press action and links back to All.
+Desktop section headings use 20px above and `space.xs` below; the following
+row starts after 18px, without a second large section gap. Phone corner
+summaries retain a `space.md` bottom margin before the next conversation.
+Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
+sidebar; narrower windows retain the existing Workspace switcher overlay.
 
-**The index reads on three tones and nothing else**, the ledger's ladder at
-index scale: the name is the brightest thing on the row (`textPrimary`), the
-preview sits a step down on `ledgerQuiet` exactly as an inline handle does, and
-everything the gutter carries is `ledgerGhost`.
-
-**The right gutter carries the age stamp only** — one terse unit (`1h`, `3d`,
-`1w`), and nothing else; the trailing column never reserves space for a mark.
-**Unread is the leading 7×7 brass square, and only that**: no count, no
-weight, no `NEW` label, no row fill. A read row draws nothing in the leading
-state slot at all — the mark itself paints only when the row wants the
-viewer, so the slot's reserved width, not the mark, is what keeps the column
-straight. The same mark lights when the Room wants the viewer for any reason —
-a message past their read mark or a corner waiting on a human — and stays
-absent while an agent merely works. Unread never reorders: needs-you
-clustering and `meaningfulAt` recency stay the only sorting inputs. Every
-row-level decision — sigil, name, tile seed, attribution, whether the state
-mark is lit — is derived once in `apps/mobile/sources/buzz/room-list-row.ts`
-(`roomRowName`, `roomRowPreview`, `roomRowNeedsAttention`), so the screen
-renders answers and never re-derives.
-
-Preview text is sanitized where it is stored, not rewritten where it is drawn:
-fenced code, markdown syntax, git and tool plumbing, bare 40-hex shas, and a
-lone ref pointer (`remote/1a2b3c4`, `refs/heads/…`, `origin/main`) never reach
-a row (`roomPreviewText`, `apps/mobile/sources/buzz/room-list-summary.ts`). A
-row applies one reader-side floor and no more — `isMachinePreview` declines a
-preview that a cache entry from an older build already holds, rather than
-re-deriving it.
-
-**Brass on the index means the row is talking to you.** The sigil, the
-`@handle:` attribution, the attention square, and the compose square all take
-the accent; nothing on the index pulses or spins. The Room's own corner life
-is reachable through the reserved `⌄` slot at the row's right edge, which
-expands the same set the corner count reports: every UNFINISHED corner, which
-is `live`, `needs-attention`, `open`, and `failed` alike, plus the idle ones
-that have not finished (`roomListCorners`). A failure is the most actionable
-row in the list and stays in it. Only `merged` and `archived` corners are
-excluded, outright rather than dimmed, so the count always equals what
-expanding reveals; they stay reachable through the full corner list, which is
-the one place in the product a finished corner is recorded. Expanded corners
-hang off a 1px rail, not a nested container.
-
-Inside the dropdown the accent marks the one row a person can act on now. Each
-row's state is resolved once, in
-`apps/mobile/sources/buzz/corner-display-state.ts`, which is the only place the
-three fact families a corner has — the daemon's five-state DTO, its pull
-request, and that PR's checks — are collapsed into a single answer. The daemon
-owns lifecycle; PR and checks narrate it, and resolve it only where the daemon
-has gone silent. A needs-you row takes brass on its state word and lifts its
-name to the primary tone, and the word itself becomes the AFFORDANCE — `REVIEW`,
-`REPLY`, `RETRY` — where every other row reads `WORKING` or `IDLE`, so the
-accent is never the only thing carrying the fact.
+Corner summaries read “2 waiting” in brass when any corner waits; otherwise
+they read “5 corners” in quiet ink.
+The API batches canonical state derivation for visible corners; archived work
+is excluded. On mobile the label opens the existing Room Corners page. On
+desktop it toggles an inline list, waiting first, with each corner independently
+selectable and draggable. The active Room initially expands; explicit per-Room
+choices persist. Expanded rows use the canonical waiting/working/review/idle
+vocabulary rather than inventing an ambiguous “needs you” state.
 
 **The standalone corners list is that same index, full height.** The screen
 opened from the Room header's corners door (`corners/[roomId]`) is chrome on

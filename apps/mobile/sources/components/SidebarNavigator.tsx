@@ -31,6 +31,7 @@ import {
   DESKTOP_NAV_DEFAULT_WIDTH,
   DESKTOP_NAV_MIN_WIDTH,
   DESKTOP_TRANSCRIPT_MIN_WIDTH,
+  DESKTOP_WORKSPACE_STRIP_WIDTH,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
@@ -51,10 +52,11 @@ export const SidebarNavigator = React.memo(() => {
   const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell, isTablet);
   const isAppSurface = pathname.startsWith('/beeline/') && !pathname.includes('/onboarding');
   const showSessionChrome =
-    isAppSurface &&
-    showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
+    isAppSurface && showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
   const showSidebar = showSessionChrome && !zenMode;
   const { width: windowWidth } = useWindowDimensions();
+  const workspaceStripWidth =
+    isDesktopLayout && windowWidth >= 1360 ? DESKTOP_WORKSPACE_STRIP_WIDTH : 0;
 
   React.useEffect(() => {
     if (!inDesktopShell) return;
@@ -88,7 +90,7 @@ export const SidebarNavigator = React.memo(() => {
   // Otherwise `Math.min` against a ceiling below that minimum always loses to
   // clampDesktopPaneWidth's floor, pinning the rendered width to the floor no
   // matter what the user drags to — the resize handle stops moving anything.
-  const maxWidthForContent = windowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
+  const maxWidthForContent = windowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH - workspaceStripWidth;
   const fullDrawerWidth = isDesktopLayout
     ? clampDesktopPaneWidth(
         'navigation',
@@ -97,7 +99,7 @@ export const SidebarNavigator = React.memo(() => {
           : storedDrawerWidth,
       )
     : DESKTOP_NAV_DEFAULT_WIDTH;
-  const drawerWidth = showSidebar ? fullDrawerWidth : 0;
+  const drawerWidth = showSidebar ? fullDrawerWidth + workspaceStripWidth : 0;
   // fullDrawerWidth changes on every move (it derives from storedDrawerWidth,
   // which onPanResponderMove updates), so it can't be a dependency here: on
   // web, rebuilding the PanResponder mid-gesture makes react-native-web
@@ -266,53 +268,53 @@ const PersistentHeader = React.memo(() => {
           pointerEvents="auto"
           {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
         >
-        <Pressable
-          onPress={handleZenToggle}
-          hitSlop={10}
-          style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
-          accessibilityLabel={t('zen.toggle')}
-        >
-          <Image
-            source={require('@/assets/images/zen-icon.png')}
-            contentFit="contain"
-            style={{ width: 18, height: 18 }}
-            tintColor={zenMode ? theme.colors.textLink : theme.colors.header.tint}
-          />
-        </Pressable>
-        <Pressable
-          focusable={canGoBack}
-          tabIndex={canGoBack ? 0 : -1}
-          onPress={handleBack}
-          disabled={!canGoBack}
-          hitSlop={10}
-          style={{
-            width: 28,
-            height: 28,
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: canGoBack ? 1 : 0.3,
-          }}
-        >
-          <Ionicons name="chevron-back" size={20} color={theme.colors.header.tint} />
-        </Pressable>
-        {Platform.OS === 'web' && (
           <Pressable
-            focusable={canGoForward}
-            tabIndex={canGoForward ? 0 : -1}
-            onPress={handleForward}
-            disabled={!canGoForward}
+            onPress={handleZenToggle}
+            hitSlop={10}
+            style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
+            accessibilityLabel={t('zen.toggle')}
+          >
+            <Image
+              source={require('@/assets/images/zen-icon.png')}
+              contentFit="contain"
+              style={{ width: 18, height: 18 }}
+              tintColor={zenMode ? theme.colors.textLink : theme.colors.header.tint}
+            />
+          </Pressable>
+          <Pressable
+            focusable={canGoBack}
+            tabIndex={canGoBack ? 0 : -1}
+            onPress={handleBack}
+            disabled={!canGoBack}
             hitSlop={10}
             style={{
               width: 28,
               height: 28,
               alignItems: 'center',
               justifyContent: 'center',
-              opacity: canGoForward ? 1 : 0.3,
+              opacity: canGoBack ? 1 : 0.3,
             }}
           >
-            <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
+            <Ionicons name="chevron-back" size={20} color={theme.colors.header.tint} />
           </Pressable>
-        )}
+          {Platform.OS === 'web' && (
+            <Pressable
+              focusable={canGoForward}
+              tabIndex={canGoForward ? 0 : -1}
+              onPress={handleForward}
+              disabled={!canGoForward}
+              hitSlop={10}
+              style={{
+                width: 28,
+                height: 28,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: canGoForward ? 1 : 0.3,
+              }}
+            >
+              <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
+            </Pressable>
+          )}
         </View>
       )}
     </View>

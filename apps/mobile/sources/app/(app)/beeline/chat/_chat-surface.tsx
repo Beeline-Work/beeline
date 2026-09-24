@@ -274,7 +274,6 @@ import {
   monolithPhoneOperation,
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
-import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   forwardMessageToRoom,
@@ -591,6 +590,7 @@ export function BuzzChatSurface({
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
   const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
+  const [desktopWorkPaneHydrated, setDesktopWorkPaneHydrated] = useState(false);
   const desktopWorkPaneRef = useRef(desktopWorkPane);
   const workPaneMode = desktopWorkPaneMode(desktopWorkPane);
   const observedCornerCountRef = useRef<{ roomId: string; count: number } | null>(null);
@@ -766,9 +766,15 @@ export function BuzzChatSurface({
   useEffect(() => {
     if (!desktopExperience) return;
     let cancelled = false;
-    void loadDesktopWorkPanePreference(workPaneWindowClass).then((preference) => {
-      if (!cancelled) commitDesktopWorkPane({ type: 'hydrate', preference });
-    });
+    setDesktopWorkPaneHydrated(false);
+    void loadDesktopWorkPanePreference(workPaneWindowClass)
+      .then((preference) => {
+        if (!cancelled) commitDesktopWorkPane({ type: 'hydrate', preference });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setDesktopWorkPaneHydrated(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -933,14 +939,14 @@ export function BuzzChatSurface({
       [
         ...workspaceChats
           .filter((item) => !item.directMessage)
-          .map((item) => ({ channelId: item.room.id, name: item.room.name, aliases: item.nameAliases })),
+          .map((item) => ({ channelId: item.room.id, name: item.room.name })),
         ...(roomSurface?.parent
           ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
           : []),
         ...(parentChannelId
           ? []
           : [{ channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' }]),
-      ].filter((room): room is { channelId: string; name: string; aliases?: readonly string[] } => room !== null),
+      ].filter((room): room is { channelId: string; name: string } => room !== null),
       [
         ...(parentChannelId
           ? [
@@ -970,12 +976,13 @@ export function BuzzChatSurface({
     [commitDesktopWorkPane, workPaneWindowClass],
   );
   useEffect(() => {
-    if (!desktopExperience) return;
+    if (!desktopExperience || !desktopWorkPaneHydrated) return;
     return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
-      if (roomId !== desktopWorkRoomId) return;
+      if (roomId !== desktopWorkRoomId) return false;
       openDesktopCorner(roomId, cornerId);
+      return true;
     });
-  }, [desktopExperience, desktopWorkRoomId, openDesktopCorner]);
+  }, [desktopExperience, desktopWorkPaneHydrated, desktopWorkRoomId, openDesktopCorner]);
   // The work pane and the Room route are siblings, so an artifact Open press
   // arrives as a module event. A dismissed pane re-presents around it; the
   // pane then shows the artifact from its own module read. A suppressed pane
@@ -1029,8 +1036,7 @@ export function BuzzChatSurface({
           const list = await roomClient.corners(resolved.parentChannelId);
           const found = resolveCornerFromList(
             text ?? '',
-            { id: list.room.id, name: list.room.name,
-              aliases: channelReferenceIndex.rooms.find((room) => room.channelId === list.room.id)?.aliases },
+            { id: list.room.id, name: list.room.name },
             list.corners.map((item) => ({ id: item.corner.id, name: item.corner.name })),
           );
           if (!found) {
@@ -1065,7 +1071,7 @@ export function BuzzChatSurface({
         openingChannelReferenceRef.current = null;
       }
     },
-    [channelReferenceIndex, decodedId, openDesktopCorner, roomClient],
+    [decodedId, openDesktopCorner, roomClient],
   );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
@@ -3033,8 +3039,6 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        if (activeCommunityId)
-          publishBookmarkChange({ workspaceId: activeCommunityId, bookmarked });
         refreshSignal.force();
       } catch (error) {
         setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));

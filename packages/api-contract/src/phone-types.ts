@@ -524,8 +524,6 @@ export type AgentHistoryEntry = {
 
 export type ChatListItem = {
   readonly room: RoomViewHeader;
-  /** Earlier Room names that still resolve written channel references. */
-  readonly nameAliases?: readonly string[];
   /** Every current Room agent has a resolved presence fact and none is online.
    *  Carried by the deck so first-paint footer geometry matches the Room GET. */
   readonly agentsOffline?: boolean;
@@ -547,6 +545,8 @@ export type ChatListItem = {
    * Room header's brass mark stays the way into the corners list.
    */
   readonly cornerCount?: number;
+  /** Non-archived corners whose canonical state is waiting. */
+  readonly waitingCornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;

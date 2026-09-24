@@ -8,11 +8,13 @@ import { Pressable } from 'react-native';
 
 export function RoomListSectionHeader({
   title,
+  count,
   actionAccessibilityLabel,
   actionTestID,
   onAction,
 }: {
   title: string;
+  count?: number;
   actionAccessibilityLabel?: string;
   actionTestID?: string;
   onAction?: () => void;
@@ -22,6 +24,7 @@ export function RoomListSectionHeader({
       <Text accessibilityRole="header" style={styles.sectionHeaderText}>
         {title.toUpperCase()}
       </Text>
+      {count !== undefined && <Text style={styles.sectionCount}>{count}</Text>}
       {onAction ? (
         <Pressable
           accessibilityLabel={actionAccessibilityLabel}
@@ -44,8 +47,8 @@ const styles = StyleSheet.create((theme) => {
     sectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingTop: hull.space.lg,
-      paddingBottom: hull.space.sm,
+      paddingTop: 20,
+      paddingBottom: hull.space.xs,
       paddingHorizontal: hull.space.md,
       backgroundColor: hull.bgTerminal,
     },
@@ -61,5 +64,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     sectionHeaderActionGlyph: { color: hull.accent },
+    sectionCount: { ...hull.type.meta, color: hull.ledgerQuiet, marginRight: hull.space.sm },
   };
 });

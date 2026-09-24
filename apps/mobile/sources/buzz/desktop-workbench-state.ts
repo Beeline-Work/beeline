@@ -2,8 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LAYOUT_BREAKPOINTS } from '@/utils/layoutClass';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
-export const DESKTOP_NAV_MAX_WIDTH = 360;
-export const DESKTOP_NAV_DEFAULT_WIDTH = 280;
+export const DESKTOP_NAV_MAX_WIDTH = 420;
+export const DESKTOP_NAV_DEFAULT_WIDTH = 380;
+export const DESKTOP_WORKSPACE_STRIP_WIDTH = 76;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;
 export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400;
@@ -198,8 +199,12 @@ function desktopRoomCornersExpandedKey(roomId: string): string {
 }
 
 /** Existing desktop behavior is expanded; only an explicit collapse changes it. */
-export async function loadDesktopRoomCornersExpanded(roomId: string): Promise<boolean> {
-  return (await AsyncStorage.getItem(desktopRoomCornersExpandedKey(roomId))) !== 'collapsed';
+export async function loadDesktopRoomCornersExpanded(
+  roomId: string,
+  defaultExpanded = true,
+): Promise<boolean> {
+  const saved = await AsyncStorage.getItem(desktopRoomCornersExpandedKey(roomId));
+  return saved === null ? defaultExpanded : saved !== 'collapsed';
 }
 
 export async function saveDesktopRoomCornersExpanded(

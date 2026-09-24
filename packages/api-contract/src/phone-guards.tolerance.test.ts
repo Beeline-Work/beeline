@@ -399,6 +399,21 @@ describe('phone surface readers', () => {
     expect(view?.chats[0]?.unread).toBe(false);
   });
 
+  it('preserves valid waiting counts without inventing them for older servers', () => {
+    for (const count of [undefined, -1, '2', 2, 0]) {
+      const view = readChatListView({
+        workspace,
+        chats: [{ room: header, waitingCornerCount: count }],
+        viewer: identity,
+        truncated: false,
+        watchFilters: [],
+      });
+      expect(view?.chats[0]?.waitingCornerCount).toBe(
+        typeof count === 'number' && count >= 0 ? count : undefined,
+      );
+    }
+  });
+
   it('drops a watch filter it cannot read whole rather than widening the subscription', () => {
     expect(
       readRoomView({ ...currentRoom, watchFilters: [{ '#h': 'not-an-array' }] })?.watchFilters,

@@ -23,6 +23,7 @@ export type RoomDeckComposeAction = 'message' | 'room' | 'invite' | 'agent' | 'j
 type RoomDeckComposeMenuProps = {
   onSelect: (action: RoomDeckComposeAction) => void;
   canManageWorkspace?: boolean;
+  header?: boolean;
 };
 
 type ComposeOption = {
@@ -55,6 +56,7 @@ const FAB_SIZE = 44;
 export function RoomDeckComposeMenu({
   onSelect,
   canManageWorkspace = true,
+  header = false,
 }: RoomDeckComposeMenuProps) {
   const [open, setOpen] = useState(false);
   const rotation = useSharedValue(0);
@@ -84,7 +86,7 @@ export function RoomDeckComposeMenu({
         accessibilityState={{ expanded: open }}
         accessibilityValue={{ text: open ? '×' : '+' }}
         onPress={() => setOpen((value) => !value)}
-        style={styles.fab}
+        style={[styles.fab, header && styles.header]}
         testID="room-deck-compose-fab"
       >
         <Animated.View style={[styles.fabGlyph, glyphStyle]}>
@@ -97,7 +99,7 @@ export function RoomDeckComposeMenu({
           >
             <Path
               fill="none"
-              stroke="#1A0F22"
+              stroke={header ? styles.headerGlyph.color : '#1A0F22'}
               strokeLinecap="square"
               strokeWidth={FAB_GLYPH_STROKE_WIDTH}
               d="M12 4v16M4 12h16"
@@ -192,6 +194,8 @@ function ComposeGlyph({ action }: { action: RoomDeckComposeAction }) {
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    header: { backgroundColor: 'transparent' },
+    headerGlyph: { color: groknight.accent },
     optionList: {},
     glyphColumn: {
       width: 30,

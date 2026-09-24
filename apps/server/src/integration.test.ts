@@ -711,7 +711,7 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
-  it('enforces unique Room slugs and keeps old names available for channel links', async () => {
+  it('enforces unique Room slugs on create and rename', async () => {
     const created = await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' });
     expect(created.status).toBe(200);
     const { id } = (await created.json()) as { id: string };
@@ -719,12 +719,10 @@ describe('monolith integration', () => {
     expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map-2' })).status).toBe(204);
     expect((await operation('updateRoom', { roomId: id, name: 'Road Map 3' })).status).toBe(400);
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
-    const aliases = await database.query<{ name: string }>(
-      'SELECT name FROM room_name_aliases WHERE room_id=$1', [id]);
-    expect(aliases.rows).toEqual([{ name: 'road-map' }]);
-    const chats = await phone.readChats(WORKSPACE, HUMAN);
-    expect(chats?.chats.find((chat) => chat.room.id === id)?.nameAliases).toEqual(['road-map']);
+    // Renaming frees the old slug; a later Room can claim it, and the renamed
+    // Room can no longer take it back.
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(200);
+    expect((await operation('updateRoom', { roomId: id, name: 'road-map' })).status).toBe(409);
   });
 
   it('restores a removed public-Room membership with its current Workspace role', async () => {
@@ -2551,12 +2549,40 @@ describe('monolith integration', () => {
         ('44444444-4444-4444-8444-444444444444',$1,$2,'Open corner',NULL)`,
       [WORKSPACE, ROOM],
     );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,id,$2,'member' FROM rooms WHERE parent_id=$1`,
+      [ROOM, HUMAN],
+    );
     const chat = (
       (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-        chats: Array<{ room: { id: string }; cornerCount: number }>;
+        chats: Array<{ room: { id: string }; cornerCount: number; waitingCornerCount: number }>;
       }
     ).chats.find((item) => item.room.id === ROOM);
     expect(chat?.cornerCount).toBe(1);
+    expect(chat?.waitingCornerCount).toBe(1);
+  });
+
+  it('keeps the Room list readable when corner enrichment fails', async () => {
+    const brokenEnrichment = {
+      query: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+      transaction: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+    };
+    const phone = new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      brokenEnrichment,
+    );
+    const chats = await phone.readChats(WORKSPACE, HUMAN);
+    expect(chats?.chats.some((chat) => chat.room.id === ROOM)).toBe(true);
   });
 
   it('keeps a Room view valid when live activity joins a full transcript', async () => {

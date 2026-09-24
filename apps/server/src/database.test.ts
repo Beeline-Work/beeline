@@ -19,7 +19,7 @@ import {
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
-import { normalizeRoomNames, requireRoomSlug, reserveRoomName } from './room-names.js';
+import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
@@ -28,94 +28,33 @@ function result<Row>(rows: Row[]) {
 const TERMINATED = () => new Error('Connection terminated unexpectedly');
 
 describe('Room slugs', () => {
-  it('normalizes old names deterministically and retains unambiguous references', async () => {
-    const db = new PgliteDatabase();
-    await migrate(db);
-    await db.query('DROP INDEX rooms_workspace_slug_idx');
-    const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Slug test')`, [workspace]);
-    const ids = Array.from(
-      { length: 4 },
-      (_, index) => `bbbbbbbb-bbbb-4bbb-bbbb-${String(index + 1).padStart(12, '0')}`,
-    );
-    for (const [index, name] of ['Road Map', 'Road Map', 'Café & Tea', 'cafe-tea'].entries())
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [
-        ids[index],
-        workspace,
-        name,
-      ]);
-    await normalizeRoomNames(db);
-    const names = await db.query<{ id: string; name: string }>(
-      'SELECT id,name FROM rooms WHERE workspace_id=$1 ORDER BY id',
-      [workspace],
-    );
-    expect(names.rows.map((row) => row.name)).toEqual([
-      'road-map',
-      'road-map-2',
-      'cafe-tea-2',
-      'cafe-tea',
-    ]);
-    const aliases = await db.query<{ room_id: string; name: string }>(
-      'SELECT room_id,name FROM room_name_aliases WHERE workspace_id=$1 ORDER BY room_id',
-      [workspace],
-    );
-    expect(aliases.rows).toEqual([{ room_id: ids[2], name: 'Café & Tea' }]);
-    await normalizeRoomNames(db);
-    expect(
-      (await db.query('SELECT * FROM room_name_aliases WHERE workspace_id=$1', [workspace]))
-        .rowCount,
-    ).toBe(1);
-  });
-
-  it('keeps duplicate legacy names ambiguous and unavailable after migration', async () => {
-    const db = new PgliteDatabase();
-    await migrate(db);
-    await db.query('DROP INDEX rooms_workspace_slug_idx');
-    const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
-    const first = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000001';
-    const second = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000002';
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Ambiguous names')`, [workspace]);
-    for (const id of [first, second])
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'foo')`, [
-        id,
-        workspace,
-      ]);
-
-    await normalizeRoomNames(db);
-    expect(
-      (await db.query<{ name: string }>(
-        'SELECT name FROM rooms WHERE workspace_id=$1 ORDER BY id',
-        [workspace],
-      )).rows.map((row) => row.name),
-    ).toEqual(['foo-2', 'foo-3']);
-    expect(
-      (await db.query('SELECT 1 FROM room_name_aliases WHERE workspace_id=$1', [workspace]))
-        .rowCount,
-    ).toBe(0);
-    expect(
-      (await db.query<{ name: string }>(
-        'SELECT name FROM room_name_ambiguities WHERE workspace_id=$1',
-        [workspace],
-      )).rows,
-    ).toEqual([{ name: 'foo' }]);
-    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
-    await expect(reserveRoomName(db, workspace, 'foo', first)).rejects.toThrow(/conflict/);
-    await normalizeRoomNames(db);
-    expect(
-      (await db.query<{ name: string }>(
-        'SELECT name FROM rooms WHERE workspace_id=$1 ORDER BY id',
-        [workspace],
-      )).rows.map((row) => row.name),
-    ).toEqual(['foo-2', 'foo-3']);
-    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
-    await db.query('DELETE FROM rooms WHERE workspace_id=$1', [workspace]);
-    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
-  });
-
   it('requires a bounded lowercase slug for new names', () => {
     expect(requireRoomSlug('room-name-2')).toBe('room-name-2');
     for (const value of ['Room Name', 'room--name', '-room', 'room-', ''])
       expect(() => requireRoomSlug(value)).toThrow(/invalid Room name/);
+  });
+
+  it('refuses a name another top-level Room in the Workspace already uses', async () => {
+    const db = new PgliteDatabase();
+    await migrate(db);
+    const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    const otherWorkspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaab';
+    const room = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000001';
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Slug test'),($2,'Other')`, [
+      workspace,
+      otherWorkspace,
+    ]);
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Road-Map')`,
+      [room, workspace],
+    );
+
+    await expect(reserveRoomName(db, workspace, 'road-map')).rejects.toThrow(/conflict/);
+    await expect(reserveRoomName(db, workspace, 'Road-Map')).rejects.toThrow(/conflict/);
+    // A rename may keep the Room's own name.
+    await expect(reserveRoomName(db, workspace, 'road-map', room)).resolves.toBeUndefined();
+    // The same name is free in another Workspace.
+    await expect(reserveRoomName(db, otherWorkspace, 'road-map')).resolves.toBeUndefined();
   });
 });
 

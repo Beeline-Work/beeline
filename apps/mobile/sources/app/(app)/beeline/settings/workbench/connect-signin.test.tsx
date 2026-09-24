@@ -79,7 +79,7 @@ afterAll(() => vi.restoreAllMocks());
 describe('ConnectorSignInScreen', () => {
   it('dismisses the noVNC sign-in overlay when the helper settles connected', async () => {
     searchParams.method = 'streamed-page';
-    searchParams.url = 'https://tunnel.test/#p=secret&f=finish-token';
+    searchParams.url = 'https://tunnel.test/#p=secret';
     readInstallState.mockResolvedValue({ connected: true });
     vi.useFakeTimers();
     let renderer!: ReactTestRenderer;

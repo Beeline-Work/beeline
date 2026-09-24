@@ -630,16 +630,16 @@ describe('installSquire', () => {
         report: report({
           state: 'needs-sign-in',
           sign_in_url: 'https://trustysquire.ai/install?token=secret',
-          browser_location: { kind: 'virtual', url: 'https://tunnel.example/vnc.html#p=x&f=finish-token' },
+          browser_location: { kind: 'virtual', url: 'https://tunnel.example/vnc.html#p=x' },
         }),
       }),
       mcp: failing,
     });
     expect(result.status).toBe('installing');
-    expect(result.signIn?.url).toBe('https://tunnel.example/vnc.html#p=x&f=finish-token');
+    expect(result.signIn?.url).toBe('https://tunnel.example/vnc.html#p=x');
     expect(result.signIn?.browserLocation).toEqual({
       kind: 'virtual',
-      url: 'https://tunnel.example/vnc.html#p=x&f=finish-token',
+      url: 'https://tunnel.example/vnc.html#p=x',
     });
     expect(
       result.steps.find((step) => step.label === 'paired to workspace')?.reason,

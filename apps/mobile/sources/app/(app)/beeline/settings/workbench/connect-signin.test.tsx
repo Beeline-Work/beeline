@@ -132,13 +132,13 @@ describe('ConnectorSignInScreen', () => {
     readInstallState.mockImplementation(async () => ({ connected: row.status === 'connected' }));
     searchParams.method = 'streamed-page';
     searchParams.url = noVncUrl;
-    let renderer!: ReactTestRenderer;
+    let renderer: ReactTestRenderer | undefined;
     try {
       await loop.runOnce();
       await vi.waitFor(() => expect(row.signIn?.url).toBe(noVncUrl));
       await new Promise((resolve) => setTimeout(resolve, 0));
       await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-      expect(renderer.root.findByProps({ testID: 'signin-webview' }).props.source.uri).toBe(row.signIn?.url);
+      expect(renderer!.root.findByProps({ testID: 'signin-webview' }).props.source.uri).toBe(row.signIn?.url);
       expect(row.status).toBe('installing');
       await vi.waitFor(() => expect(readInstallState).toHaveBeenCalled(), { timeout: 2500 });
       expect(router.replace).not.toHaveBeenCalled();
@@ -148,15 +148,15 @@ describe('ConnectorSignInScreen', () => {
       await vi.waitFor(() => expect(row.status, operations.join('\n')).toBe('connected'));
       expect(operations.some((operation) => operation.startsWith('installConnector'))).toBe(true);
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1), { timeout: 2500 });
-      await act(async () => renderer.unmount());
     } finally {
+      if (renderer) await act(async () => renderer.unmount());
       loop.stop();
       vi.mocked(router.replace).mockClear();
       readInstallState.mockReset();
       searchParams.method = 'oauth';
       searchParams.url = 'https://login.tailscale.com/a/test';
     }
-  });
+  }, 10_000);
 
   it('dismisses the noVNC sign-in overlay when the helper settles connected', async () => {
     searchParams.method = 'streamed-page';

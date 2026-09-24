@@ -923,10 +923,17 @@ export class GitHubOperations {
   private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {
     const repository = repositoryName(body);
     const branch = branchForEvent('push', body);
-    const baseSha = text(body.after);
-    if (!repository || !branch || !baseSha || !/^[a-f0-9]{40,64}$/i.test(baseSha)) return;
-    const affected = await this.database.query<{ corner_id: string }>(
-      `SELECT fact.corner_id FROM corner_facts fact
+    const deliveredSha = text(body.after);
+    if (
+      !repository ||
+      !branch ||
+      !deliveredSha ||
+      !/^[a-f0-9]{40,64}$/i.test(deliveredSha) ||
+      /^0+$/.test(deliveredSha)
+    )
+      return;
+    const affected = await this.database.query<{ corner_id: string; repository_id: string }>(
+      `SELECT fact.corner_id,github.repository_id FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
        JOIN github_repositories github ON github.installation_id=$1
@@ -940,6 +947,11 @@ export class GitHubOperations {
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL`,
       [installationId, repository, branch],
     );
+    if (!affected.rows.length) return;
+    const token = await this.app.installationToken(installationId, {
+      repositoryIds: [Number(affected.rows[0]!.repository_id)],
+    });
+    const baseSha = await this.app.readBranchHead(token.token, repository, branch);
     for (const row of affected.rows) {
       let changed = false;
       await this.database.transaction(async (tx) => {

@@ -159,6 +159,7 @@ describe('GitHub phone operations', () => {
         headSha,
         mergeability: 'unknown' as const,
       })),
+      readBranchHead: vi.fn(async () => '4'.repeat(40)),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
     const payload = (name: string, status: 'in_progress' | 'completed') => ({
@@ -451,6 +452,18 @@ describe('GitHub phone operations', () => {
         )
       ).rows[0]?.lifecycle.pr,
     ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    const readsBeforeLatePush = readPullRequest.mock.calls.length;
+    const delayedOldBaseSha = '6'.repeat(40);
+    await operations.processWebhook('push', { ...basePush, after: delayedOldBaseSha });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    expect(readPullRequest).toHaveBeenCalledTimes(readsBeforeLatePush);
     readPullRequest.mockResolvedValueOnce({
       number: 1,
       url: dirty.pull_request.html_url,

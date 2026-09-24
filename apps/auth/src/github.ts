@@ -543,6 +543,19 @@ export class GitHubAppClient {
     };
   }
 
+  /** Resolve a branch at GitHub now; push deliveries can arrive out of order. */
+  async readBranchHead(accessToken: string, fullName: string, branch: string): Promise<string> {
+    const body = await this.readRepositoryJson(
+      accessToken,
+      fullName,
+      `branches/${encodeURIComponent(branch)}`,
+    );
+    const sha = (body.commit as { sha?: unknown } | undefined)?.sha;
+    if (typeof sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(sha))
+      throw new Error('GitHub branch has no valid head');
+    return sha;
+  }
+
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */
   async readCommitCheckRollup(
     accessToken: string,

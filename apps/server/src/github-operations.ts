@@ -1201,6 +1201,9 @@ export class GitHubOperations {
               ...(targetBranch ? { targetBranch } : {}),
               ...(headSha ? { headSha } : {}),
               ...(text(pullRequest?.merged_at) ? { mergedAt: text(pullRequest?.merged_at)! } : {}),
+              ...(text(pullRequest?.merge_commit_sha)
+                ? { mergeCommitSha: text(pullRequest?.merge_commit_sha)! }
+                : {}),
               ...(text(record(pullRequest?.merged_by)?.login)
                 ? { mergedBy: text(record(pullRequest?.merged_by)?.login)! }
                 : {}),
@@ -1411,6 +1414,7 @@ export class GitHubOperations {
       targetBranch?: string;
       headSha?: string;
       mergedAt?: string;
+      mergeCommitSha?: string;
       mergedBy?: string;
       commits: number;
       files: number;
@@ -1453,6 +1457,9 @@ export class GitHubOperations {
                   pr: {
                     ...mergedPr,
                     mergedAt: pullRequest.mergedAt ?? new Date().toISOString(),
+                    ...(pullRequest.mergeCommitSha
+                      ? { mergeCommitSha: pullRequest.mergeCommitSha }
+                      : {}),
                     ...(pullRequest.mergedBy ? { mergedBy: pullRequest.mergedBy } : {}),
                   },
                 }

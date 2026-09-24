@@ -423,6 +423,9 @@ export type CornerListResult = {
     readonly objective?: string;
     readonly createdBy: string;
     readonly archived: boolean;
+    readonly closedAt?: number;
+    readonly pullRequestNumber?: number;
+    readonly mergeCommitSha?: string;
   }[];
 };
 export type CornerRestoreResult = {

@@ -1877,10 +1877,12 @@ export class DaemonService {
       parent_id: string;
       created_by: string | null;
       archived: boolean;
+      closed_at: Date | null;
+      lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
       name: string;
       objective: string;
     }>(
-      `SELECT r.id,r.parent_id,r.name,f.objective,
+      `SELECT r.id,r.parent_id,r.name,r.archived_at closed_at,f.objective,f.lifecycle,
               COALESCE(f.owner_agent_id,r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
@@ -1894,6 +1896,13 @@ export class DaemonService {
         parentRoomId: row.parent_id,
         createdBy: row.created_by ?? agentId,
         archived: row.archived,
+        ...(row.closed_at
+          ? { closedAt: Math.floor(new Date(row.closed_at).getTime() / 1_000) }
+          : {}),
+        ...(row.lifecycle?.pr?.number ? { pullRequestNumber: row.lifecycle.pr.number } : {}),
+        ...(row.lifecycle?.pr?.mergeCommitSha
+          ? { mergeCommitSha: row.lifecycle.pr.mergeCommitSha }
+          : {}),
         name: row.name,
         objective: row.objective,
       })),

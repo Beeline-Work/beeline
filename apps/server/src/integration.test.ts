@@ -5845,12 +5845,31 @@ describe('monolith integration', () => {
         base: { ref: 'main' },
         merged: true,
         merged_at: '2026-09-02T14:00:00Z',
+        merge_commit_sha: 'f'.repeat(40),
         merged_by: { login: 'owner' },
         commits: 3,
         changed_files: 5,
       },
     };
     expect((await webhook('pull_request', 'corner-pr-merged', mergedPayload)).status).toBe(202);
+    expect(
+      (
+        (await (await daemonOperation('listRoomCorners', { roomId: ROOM })).json()) as {
+          corners: {
+            cornerId: string;
+            pullRequestNumber?: number;
+            mergeCommitSha?: string;
+            closedAt?: number;
+          }[];
+        }
+      ).corners.find((corner) => corner.cornerId === cornerId),
+    ).toEqual(
+      expect.objectContaining({
+        pullRequestNumber: 42,
+        mergeCommitSha: 'f'.repeat(40),
+        closedAt: expect.any(Number),
+      }),
+    );
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);

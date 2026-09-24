@@ -12,7 +12,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
 import { APP_UI_SIZE_SCALE } from '@/ui-size';
-import { LAYOUT_BREAKPOINTS } from '@/utils/layoutClass';
 import {
   canRouteForward,
   canUseRouteBack,
@@ -57,9 +56,7 @@ export const SidebarNavigator = React.memo(() => {
   const showSidebar = showSessionChrome && !zenMode;
   const { width: windowWidth } = useWindowDimensions();
   const workspaceStripWidth =
-    isDesktopLayout && desktopPlatform && windowWidth >= LAYOUT_BREAKPOINTS.regular
-      ? DESKTOP_WORKSPACE_STRIP_WIDTH
-      : 0;
+    isDesktopLayout && windowWidth >= 1360 ? DESKTOP_WORKSPACE_STRIP_WIDTH : 0;
 
   React.useEffect(() => {
     if (!inDesktopShell) return;

@@ -392,8 +392,8 @@ explains the long-press action and links back to All.
 Desktop section headings use 20px above and `space.xs` below; the following
 row starts after 18px, without a second large section gap. Phone corner
 summaries retain a `space.md` bottom margin before the next conversation.
-Desktop web windows at the regular layout width keep a 76px Workspace rail beside
-the Room sidebar; narrower windows use the single-column Room list.
+Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
+sidebar; narrower windows retain the existing Workspace switcher overlay.
 
 Corner summaries read “2 waiting” in brass when any corner waits; otherwise
 they read “5 corners” in quiet ink.

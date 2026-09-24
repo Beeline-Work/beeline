@@ -144,19 +144,13 @@ describe('SidebarNavigator web width class', () => {
     expect(options.drawerStyle.width).toBe(356);
     expect(resizer(tree).props.testID).toBe('desktop-navigation-resizer');
   });
-
-  it('reserves the Workspace rail alongside the Room list at narrow desktop widths', async () => {
-    const tree = await renderNavigator(1024);
-    expect(drawerWidth(tree)).toBe(356);
-    expect(1024 - drawerWidth(tree)).toBeGreaterThanOrEqual(440);
-  });
 });
 
 describe('SidebarNavigator resize handle', () => {
   it('drags the nav pane wider on an ordinary desktop window', async () => {
     const tree = await renderNavigator(1280);
     const before = drawerWidth(tree);
-    expect(before).toBe(356);
+    expect(before).toBe(280);
 
     const handlers = resizer(tree).props;
     act(() => {
@@ -212,7 +206,7 @@ describe('SidebarNavigator resize handle', () => {
       handlers.onPanResponderRelease(null, { dx: 1000 });
     });
 
-    expect(drawerWidth(tree)).toBe(420 + 76);
+    expect(drawerWidth(tree)).toBe(420);
     expect(saveDesktopPaneWidthMock).toHaveBeenCalledWith('navigation', 420);
   });
 });

@@ -43,6 +43,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
@@ -166,7 +167,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
   const isDesktop = useIsDesktop();
-  const showWorkspaceStrip = isDesktop;
+  const { width: windowWidth } = useWindowDimensions();
+  const showWorkspaceStrip = isDesktop && windowWidth >= 1360;
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{
@@ -416,7 +418,6 @@ export const SidebarView = React.memo(function SidebarView() {
           viewerPubkey={identityPubkey ?? undefined}
           viewerFace={viewerIdentity?.face}
           viewerAvatarUrl={viewerIdentity?.avatar}
-          accountSelected={profileSettingsSelected}
           onSelect={selectWorkspace}
           onAdd={() => router.push('/beeline/community' as Href)}
           onAccount={() => router.push('/beeline/settings' as Href)}

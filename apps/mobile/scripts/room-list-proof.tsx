@@ -104,7 +104,7 @@ function Proof() {
   };
   return (
     <View style={{ minHeight: '100vh' as any, backgroundColor: t.bgBase, flexDirection: 'row' }}>
-      {desktop && (
+      {desktop && innerWidth >= 1360 && (
         <DesktopWorkspaceStrip
           workspaces={[{ id: 'tubing', name: 'Tubing crew' }] as any}
           activeWorkspaceId="tubing"

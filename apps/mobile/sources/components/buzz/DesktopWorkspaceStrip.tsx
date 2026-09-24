@@ -12,7 +12,6 @@ export function DesktopWorkspaceStrip({
   viewerPubkey,
   viewerFace,
   viewerAvatarUrl,
-  accountSelected,
   onSelect,
   onAdd,
   onAccount,
@@ -23,7 +22,6 @@ export function DesktopWorkspaceStrip({
   viewerPubkey?: string;
   viewerFace?: string;
   viewerAvatarUrl?: string;
-  accountSelected?: boolean;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onAccount: () => void;
@@ -63,9 +61,8 @@ export function DesktopWorkspaceStrip({
       <Pressable
         accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'}
         accessibilityRole="button"
-        accessibilityState={{ selected: Boolean(accountSelected) }}
         onPress={onAccount}
-        style={[styles.tile, accountSelected && styles.active]}
+        style={styles.tile}
         testID="desktop-strip-account"
       >
         <IdentityMark

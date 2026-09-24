@@ -90,9 +90,10 @@ function Proof() {
   const { theme } = useUnistyles();
   const t = theme.buzz;
   const desktop = innerWidth >= 768;
-  const [filter, setFilter] = useState<RoomListFilter>('all');
+  const initialPin = new URLSearchParams(location.search).get('initialPin');
+  const [filter, setFilter] = useState<RoomListFilter>(initialPin ? 'pinned' : 'all');
   const [query, setQuery] = useState('');
-  const [pinned, setPinned] = useState<string[]>([]);
+  const [pinned, setPinned] = useState<string[]>(initialPin ? [initialPin] : []);
   const [destination, setDestination] = useState('');
   const searchRef = React.useRef(null);
   const visibleRooms = filterConversations(rooms, query, filter, pinned);
@@ -189,6 +190,21 @@ function Proof() {
               ))}
           </View>
         ))}
+        {filter === 'pinned' && !visibleRooms.length && (
+          <View style={{ padding: 24, gap: 16 }} testID="pinned-empty">
+            <Text style={{ ...t.type.body, color: t.textPrimary }}>No pinned conversations</Text>
+            <Text style={{ ...t.type.body, color: t.textSecondary }}>
+              Long press a Room to pin it here.
+            </Text>
+            <Text
+              accessibilityRole="button"
+              onPress={() => setFilter('all')}
+              style={{ ...t.type.meta, color: t.accent }}
+            >
+              Show all conversations
+            </Text>
+          </View>
+        )}
       </View>
       {desktop && (
         <View style={{ flex: 1, padding: 40 }}>

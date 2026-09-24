@@ -14,11 +14,7 @@ import {
 } from '@/buzz/community-storage';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import {
-  filterConversations,
-  useRoomPins,
-  type RoomListFilter,
-} from '@/buzz/room-list-preferences';
+import { filterConversations, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -216,15 +212,21 @@ export default function BuzzChannels() {
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const canLeaveRooms = chatList?.workspace.role === 'member';
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<RoomListFilter>('all');
-  const { pinned, togglePin, pinError } = useRoomPins(identity?.publicKey, activeCommunityId);
+  const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
+    identity?.publicKey,
+    activeCommunityId,
+  );
+  const [filter, setFilter] = useRoomListFilter(
+    activeCommunityId,
+    pinsLoaded && Boolean(chatList),
+    Boolean(chatList?.chats.some((item) => !item.directMessage && pinned.includes(item.room.id))),
+  );
   const chatSections = useMemo(
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
     [chatList?.chats, query, filter, pinned],
   );
   useEffect(() => {
     setQuery('');
-    setFilter('all');
   }, [activeCommunityId]);
 
   useEffect(() => {
@@ -918,7 +920,14 @@ export default function BuzzChannels() {
             ListEmptyComponent={
               query || filter !== 'all' ? (
                 <View style={styles.empty}>
-                  <Text style={styles.emptyTitle}>No matching conversations</Text>
+                  <Text style={styles.emptyTitle}>
+                    {filter === 'pinned' && !query
+                      ? 'No pinned conversations'
+                      : 'No matching conversations'}
+                  </Text>
+                  {filter === 'pinned' && !query && (
+                    <Text style={styles.emptyCopy}>Long press a Room to pin it here.</Text>
+                  )}
                   <MonoButton
                     label="SHOW ALL"
                     onPress={() => {

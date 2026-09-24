@@ -11,8 +11,8 @@ gap above its author, and a 16px margin below its corner summary. The desktop
 mock uses an 18px top inset and puts author and preview on the same line, in a
 compact two-line block. Its section heading has 20px above and 4px below.
 
-The current app keeps search visible at rest and spells out the Pinned filter,
-following later review feedback; both controls differ from the icon-first mocks.
-At the app's 280px default desktop sidebar width, those controls use two rows
-to keep every filter visible. The mock shows a wider navigation column and a
+The current app keeps search visible at rest, following later review feedback.
+The top bar uses All, Unread, and the mock's pin glyph; Messages remains a
+section below the Rooms. At the app's 280px default desktop sidebar width,
+all filters and actions fit above the visible search field. The mock shows a wider navigation column and a
 workspace rail, while the current app retains its existing navigation layout.

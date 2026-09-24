@@ -366,8 +366,10 @@ workspace name and existing bezel avatar head the list; the workspace menu
 (Members and authorized Workspace settings) sits beside that identity, with
 compose in the same header. The search field stays visible below the conversation
 toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
-a separate brass action beside Search. All, Unread, Messages and Pinned filter the list
-without removing access to quiet Rooms.
+a separate brass action beside Search. All, Unread, and the pin glyph filter
+the list without removing access to quiet Rooms. The Messages section remains
+in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
+on All.
 
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
 `bodyStrong` for unread messages; a trailing `textPrimary` dot means unread
@@ -383,9 +385,10 @@ Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
 Mobile has no selected Room state: pressing a conversation navigates away.
 Long press opens pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
-The Pinned filter uses a word label so it cannot be mistaken for another glyph.
-At the default desktop sidebar width, filters occupy the first toolbar row and
-the visible search field shares the second row with search and Bookmarks actions.
+The Pinned filter uses the pin glyph and retains an accessible label. At the
+default desktop sidebar width, all filters and both actions fit on the first
+toolbar row; the visible search field stays below it. An empty Pinned view
+explains the long-press action and links back to All.
 Desktop section headings use 20px above and `space.xs` below; the following
 row starts after 18px, without a second large section gap. Phone corner
 summaries retain a `space.md` bottom margin before the next conversation.

@@ -8,3 +8,7 @@ shared Room-list components with fixture conversations, using
 They cover Obsidian and Bone at 390px and 1440px, plus a 280px desktop sidebar.
 The desktop proof uses an illustrative transcript area; it verifies the list
 layout rather than navigation or live data behavior.
+
+The `phone-*` and `desktop-*` pin captures show the long-press menu, a pinned
+Room, and the empty Pinned view using the shared components. The authenticated
+versions are in `../room-list-live-web/`.

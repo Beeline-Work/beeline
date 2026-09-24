@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { BookmarksGlyph } from './BookmarksGlyph';
+import { PinGlyph } from './PinGlyph';
 import type { RoomListFilter } from '@/buzz/room-list-preferences';
 
 export function RoomListToolbar({
@@ -61,7 +62,7 @@ export function RoomListToolbar({
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filters}
         >
-          {(['all', 'unread', 'messages', 'pinned'] as const).map((value) => (
+          {(['all', 'unread', 'pinned'] as const).map((value) => (
             <Pressable
               key={value}
               accessibilityRole="button"
@@ -72,23 +73,23 @@ export function RoomListToolbar({
               testID={`room-filter-${value}`}
             >
               <Text style={[styles.label, value === filter && styles.selected]}>
-                {value === 'all'
-                  ? 'All'
-                  : value === 'unread'
-                    ? 'Unread'
-                    : value === 'messages'
-                      ? 'Messages'
-                      : 'Pinned'}
-                {counts && (value !== 'all' || !desktop) && value !== 'messages' ? (
+                {value === 'pinned' ? (
+                  <PinGlyph color={value === filter ? styles.selected.color : styles.label.color} />
+                ) : value === 'all' ? (
+                  'All'
+                ) : (
+                  'Unread'
+                )}
+                {counts && (value !== 'all' || !desktop) ? (
                   <Text style={styles.count}> {counts[value]}</Text>
                 ) : null}
               </Text>
             </Pressable>
           ))}
         </ScrollView>
-        {!desktop && actions}
+        {actions}
       </View>
-      <View style={desktop && styles.desktopSearchRow}>
+      <View>
         <TextInput
           ref={searchRef ?? localSearchRef}
           value={query}
@@ -98,10 +99,9 @@ export function RoomListToolbar({
           placeholderTextColor={styles.label.color}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          style={[styles.search, desktop && styles.desktopSearch, focused && styles.searchFocused]}
+          style={[styles.search, focused && styles.searchFocused]}
           testID={desktop ? 'desktop-room-search' : 'room-search'}
         />
-        {desktop && actions}
       </View>
     </View>
   );
@@ -130,11 +130,4 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
     minHeight: 44,
   },
-  desktopSearchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  desktopSearch: { flex: 1, minWidth: 0, borderBottomWidth: 0 },
 }));

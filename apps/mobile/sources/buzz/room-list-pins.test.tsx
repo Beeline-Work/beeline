@@ -11,7 +11,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
     }),
   },
 }));
-import { useRoomPins } from './room-list-preferences';
+import { useRoomListFilter, useRoomPins } from './room-list-preferences';
 const values = new Map<string, ReturnType<typeof useRoomPins>>();
 function Consumer({
   name,
@@ -35,6 +35,38 @@ afterEach(() => {
   if (tree) act(() => tree.unmount());
 });
 describe('device-local conversation pins', () => {
+  it('defaults to pinned Rooms after hydration without overriding a chosen filter', async () => {
+    let selection: ReturnType<typeof useRoomListFilter>;
+    function Filter({
+      workspace,
+      ready,
+      hasPinnedRoom,
+    }: {
+      workspace: string;
+      ready: boolean;
+      hasPinnedRoom: boolean;
+    }) {
+      selection = useRoomListFilter(workspace, ready, hasPinnedRoom);
+      return null;
+    }
+    await act(async () => {
+      tree = create(<Filter workspace="one" ready={false} hasPinnedRoom={false} />);
+    });
+    expect(selection![0]).toBe('all');
+    await act(async () => {
+      tree.update(<Filter workspace="one" ready hasPinnedRoom />);
+    });
+    expect(selection![0]).toBe('pinned');
+    await act(async () => selection![1]('unread'));
+    await act(async () => {
+      tree.update(<Filter workspace="one" ready hasPinnedRoom={false} />);
+    });
+    expect(selection![0]).toBe('unread');
+    await act(async () => {
+      tree.update(<Filter workspace="two" ready hasPinnedRoom={false} />);
+    });
+    expect(selection![0]).toBe('all');
+  });
   it('serializes rapid writes across mounted surfaces and retains previously saved pins', async () => {
     disk.set('@beeline/room-pins/viewer/workspace', JSON.stringify(['saved']));
     await act(async () => {

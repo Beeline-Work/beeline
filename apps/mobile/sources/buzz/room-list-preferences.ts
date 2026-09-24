@@ -4,6 +4,35 @@ import type { ChatListItem } from '@beeline/buzz-client';
 import { roomRowName } from './room-list-row';
 
 export type RoomListFilter = 'all' | 'unread' | 'messages' | 'pinned';
+export function useRoomListFilter(
+  workspace: string | null,
+  ready: boolean,
+  hasPinnedRoom: boolean,
+) {
+  const [selection, setSelection] = useState<{
+    workspace: string | null;
+    filter: RoomListFilter;
+    chosen: boolean;
+  }>({ workspace, filter: 'all', chosen: false });
+  const filter = selection.workspace === workspace ? selection.filter : 'all';
+  useEffect(() => {
+    if (!workspace) return;
+    setSelection((current) => {
+      if (current.workspace === workspace && current.chosen) return current;
+      if (!ready) {
+        return current.workspace === workspace
+          ? current
+          : { workspace, filter: 'all', chosen: false };
+      }
+      return { workspace, filter: hasPinnedRoom ? 'pinned' : 'all', chosen: true };
+    });
+  }, [workspace, ready, hasPinnedRoom]);
+  const chooseFilter = useCallback(
+    (next: RoomListFilter) => setSelection({ workspace, filter: next, chosen: true }),
+    [workspace],
+  );
+  return [filter, chooseFilter] as const;
+}
 const writes = new Map<string, Promise<void>>();
 const decodePins = (raw: string | null): string[] => {
   const value: unknown = raw ? JSON.parse(raw) : [];
@@ -37,9 +66,14 @@ export function useRoomPins(
   workspace: string | null | undefined,
 ) {
   const key = viewer && workspace ? `@beeline/room-pins/${viewer}/${workspace}` : null;
-  const [state, setState] = useState<{ key: string | null; ids: readonly string[] }>({
+  const [state, setState] = useState<{
+    key: string | null;
+    ids: readonly string[];
+    loaded: boolean;
+  }>({
     key: null,
     ids: [],
+    loaded: false,
   });
   const currentKey = useRef(key);
   currentKey.current = key;
@@ -51,7 +85,7 @@ export function useRoomPins(
     let changed = false;
     const receive = (next: readonly string[]) => {
       changed = true;
-      setState({ key, ids: next });
+      setState({ key, ids: next, loaded: true });
     };
     const bucket = listeners.get(key) ?? new Set();
     bucket.add(receive);
@@ -59,7 +93,7 @@ export function useRoomPins(
     void AsyncStorage.getItem(key)
       .then((raw) => {
         if (changed) return;
-        setState({ key, ids: decodePins(raw) });
+        setState({ key, ids: decodePins(raw), loaded: true });
       })
       .catch(() => {
         if (!changed) setError('Could not load pinned conversations.');
@@ -95,5 +129,10 @@ export function useRoomPins(
     },
     [key],
   );
-  return { pinned: ids, togglePin: toggle, pinError: error };
+  return {
+    pinned: ids,
+    pinsLoaded: state.key === key && state.loaded,
+    togglePin: toggle,
+    pinError: error,
+  };
 }

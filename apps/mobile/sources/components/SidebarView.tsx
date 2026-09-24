@@ -9,11 +9,7 @@ import { navigateToRoom } from '@/buzz/corner-navigation';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import {
-  filterConversations,
-  useRoomPins,
-  type RoomListFilter,
-} from '@/buzz/room-list-preferences';
+import { filterConversations, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -120,6 +116,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 24,
     color: theme.colors.textSecondary,
   },
+  pinnedEmpty: { padding: 18, gap: 8 },
+  pinnedEmptyTitle: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  pinnedEmptyCopy: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
+  pinnedEmptyAction: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  pinnedEmptyActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   loading: {
     alignItems: 'center',
     paddingHorizontal: 18,
@@ -284,11 +285,12 @@ export const SidebarView = React.memo(function SidebarView() {
     };
   }, [client, pathname, workspaces]);
 
-  const [filter, setFilter] = React.useState<RoomListFilter>('all');
-  const { pinned, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
-  React.useEffect(() => {
-    setFilter('all');
-  }, [workspaceId]);
+  const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
+  const [filter, setFilter] = useRoomListFilter(
+    workspaceId,
+    pinsLoaded && Boolean(surface),
+    Boolean(surface?.chats.some((item) => !item.directMessage && pinned.includes(item.room.id))),
+  );
   const filteredChats = React.useMemo(
     () => filterConversations(surface?.chats ?? [], query, filter, pinned),
     [query, filter, pinned, surface?.chats],
@@ -532,11 +534,26 @@ export const SidebarView = React.memo(function SidebarView() {
             </Pressable>
           ) : !filteredChats.length ? (
             surface ? (
-              <Text style={styles.empty}>
-                {query.trim() || filter !== 'all'
-                  ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
-                  : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`}
-              </Text>
+              filter === 'pinned' && !query.trim() ? (
+                <View style={styles.pinnedEmpty} testID="desktop-pinned-empty">
+                  <Text style={styles.pinnedEmptyTitle}>No pinned conversations</Text>
+                  <Text style={styles.pinnedEmptyCopy}>Long press a Room to pin it here.</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setFilter('all')}
+                    style={styles.pinnedEmptyAction}
+                    testID="desktop-show-all-conversations"
+                  >
+                    <Text style={styles.pinnedEmptyActionText}>Show all conversations</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Text style={styles.empty}>
+                  {query.trim() || filter !== 'all'
+                    ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
+                    : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`}
+                </Text>
+              )
             ) : (
               <View style={styles.loading} testID="desktop-rooms-loader">
                 <SurfaceGlyphLoader compact />

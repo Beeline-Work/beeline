@@ -5,8 +5,8 @@ import type { CornerListItem } from '@beeline/buzz-client';
  * matches the reporter's starting number, and still leaves one overflow row
  * for the rest. A denser cap would hide live work that fits; a larger one
  * recreates the unbounded dump this list is meant to stop.
- * The Room header's corners screen (`RoomCornersList`) uses this same helper
- * so the cap, archived fallback, and see-more cannot drift.
+ * The Room header's corners screen (`RoomCornersList`) does not use it: that
+ * screen shows the viewer's corners uncapped and folds the rest.
  */
 export const INSPECTOR_CORNER_LIST_CAP = 5;
 

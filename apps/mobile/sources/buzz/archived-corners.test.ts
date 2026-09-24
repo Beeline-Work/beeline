@@ -68,6 +68,9 @@ describe('archivedCornersLabel', () => {
     expect(
       archivedCornersLabel({ status: 'ready', corners: [closed('a', 1), closed('b', 2)] }),
     ).toBe('Archived corners · 2');
+    expect(
+      archivedCornersLabel({ status: 'ready', corners: [closed('a', 1)], next: '1,a' }),
+    ).toBe('Archived corners · 1+');
     expect(archivedCornersLabel({ status: 'error', reason: 'Beeline is offline' })).toBe(
       'Beeline is offline. Tap to retry',
     );

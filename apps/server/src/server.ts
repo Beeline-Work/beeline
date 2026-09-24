@@ -9,6 +9,7 @@ import {
   TURN_REQUESTER_AUTHORITY_MESSAGE,
   PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
+  parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
@@ -1144,11 +1145,18 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/corners$/);
   if (method === 'GET' && match) {
+    const before = url.searchParams.get('before');
+    const archivedBefore = parseArchivedCornerCursor(before);
+    if (before !== null && !archivedBefore) {
+      json(response, 400, { error: 'invalid_cursor' });
+      return;
+    }
     const result = await options.phone.readCorners(
       match[1]!,
       identityId!,
       false,
       url.searchParams.get('archived') === '1',
+      archivedBefore,
     );
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;

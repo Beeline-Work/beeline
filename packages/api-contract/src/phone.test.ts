@@ -280,6 +280,13 @@ describe('phone contract', () => {
         initiator: { ...identity, kind: 'agent' },
       }),
     ).toEqual([{ corner: header, lifecycle, state: 'working' }]);
+    // Only a literal true marks the corner as awaiting the viewer.
+    expect(cornersFor({ corner: header, lifecycle, state: 'waiting', awaitsViewer: true })).toEqual(
+      [{ corner: header, lifecycle, state: 'waiting', awaitsViewer: true }],
+    );
+    expect(
+      cornersFor({ corner: header, lifecycle, state: 'waiting', awaitsViewer: 'yes' }),
+    ).toEqual([{ corner: header, lifecycle, state: 'waiting' }]);
     // A lifecycle word this bundle does not know reads as unknown rather than
     // dropping the corner out of the list.
     expect(

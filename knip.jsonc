@@ -63,6 +63,7 @@
         "scripts/render-consolidated-board-proof.mjs",
         "scripts/consolidated-board-proof.tsx",
         "scripts/android-splash-theme-proof.js",
+        "scripts/corner-sections-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

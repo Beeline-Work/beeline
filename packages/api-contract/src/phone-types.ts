@@ -811,6 +811,9 @@ export type CornerListItem = {
   readonly closedAt?: number;
   /** Human whose request caused the agent to open this corner. */
   readonly initiator?: RoomViewIdentity;
+  /** Present when the corner is waiting or in review and its latest message
+   * tags the viewer. */
+  readonly awaitsViewer?: true;
   readonly agent?: RoomViewIdentity;
   readonly app?: CornerAppBindingView;
   readonly latestMessage?: {
@@ -824,6 +827,8 @@ export type CornerListItem = {
 export type CornerListView = {
   readonly room: RoomViewHeader;
   readonly corners: readonly CornerListItem[];
+  /** On an archived page: the cursor that reads the next page. Absent on the last one. */
+  readonly nextArchived?: string;
   /** Apps connected to this Workspace and available for a new corner. */
   readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;

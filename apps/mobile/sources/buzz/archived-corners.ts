@@ -14,7 +14,16 @@ import { CHANGES_LABEL } from '@/buzz/vocabulary';
 export type ArchivedCornersState =
   | { readonly status: 'idle' }
   | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly corners: readonly CornerListItem[] }
+  | {
+      readonly status: 'ready';
+      readonly corners: readonly CornerListItem[];
+      /** The server's cursor for the next ten; absent once every page has landed. */
+      readonly next?: string;
+      /** The next page, while its read is in flight or after it failed. */
+      readonly more?:
+        | { readonly status: 'loading' }
+        | { readonly status: 'error'; readonly reason: string };
+    }
   | { readonly status: 'error'; readonly reason: string };
 
 /**
@@ -50,8 +59,9 @@ export function archivedCornersLabel(state: ArchivedCornersState): string {
     case 'loading':
       return `Loading archived ${CHANGES_LABEL}…`;
     case 'ready':
+      // With another page still on the server, the count is a floor.
       return state.corners.length
-        ? `Archived ${CHANGES_LABEL} · ${state.corners.length}`
+        ? `Archived ${CHANGES_LABEL} · ${state.corners.length}${state.next ? '+' : ''}`
         : `No archived ${CHANGES_LABEL}`;
     case 'error':
       return `${state.reason}. Tap to retry`;

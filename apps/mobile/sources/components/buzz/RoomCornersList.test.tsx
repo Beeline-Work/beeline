@@ -3,7 +3,6 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CornerListItem } from '@beeline/buzz-client';
-import { INSPECTOR_CORNER_LIST_CAP } from '@/buzz/inspector-corners';
 import { RoomCornersList } from './RoomCornersList';
 import { RoomCornersHeader } from './RoomCornersHeader';
 import { beelineThemes } from '@/buzz/groknight';
@@ -65,6 +64,9 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 
+const VIEWER = 'viewer-pubkey';
+
+/** A corner the viewer commissioned, so it lands in the open Mine section. */
 function corner(id: string, state: CornerListItem['state'], name = id): CornerListItem {
   return {
     corner: {
@@ -79,7 +81,13 @@ function corner(id: string, state: CornerListItem['state'], name = id): CornerLi
     state,
     stateAt: 2,
     agent: { pubkey: `agent-${id}`, name: `Opener ${id}`, kind: 'agent' },
+    initiator: { pubkey: VIEWER, name: 'Viewer', kind: 'human' },
   } as CornerListItem;
+}
+
+/** A corner someone else commissioned, which lands in the folded Others section. */
+function theirs(id: string, state: CornerListItem['state'] = 'working'): CornerListItem {
+  return { ...corner(id, state), initiator: { pubkey: 'someone', name: 'Sam', kind: 'human' } };
 }
 
 function text(tree: ReactTestRenderer): string {
@@ -101,6 +109,7 @@ function render(
         corners={corners}
         parentRoomName="#alpha"
         parentRoomId="room-1"
+        viewerPubkey={VIEWER}
         {...extra}
       />,
     );
@@ -129,67 +138,69 @@ afterAll(() => {
 });
 
 describe('RoomCornersList', () => {
-  it('caps live work at five and reveals archived work behind the same see-more as the inspector', () => {
-    expect(INSPECTOR_CORNER_LIST_CAP).toBe(5);
-    const corners = [
-      ...Array.from({ length: 6 }, (_, index) => corner(`live-${index}`, 'working')),
-      corner('done', 'archived'),
-    ];
-    const tree = render(corners);
-    for (const id of ['live-0', 'live-1', 'live-2', 'live-3', 'live-4']) {
-      expect(tree.root.findByProps({ testID: `room-corner-${id}` })).toBeTruthy();
-    }
-    expect(() => tree.root.findByProps({ testID: 'room-corner-live-5' })).toThrow();
-    expect(() => tree.root.findByProps({ testID: 'room-corner-done' })).toThrow();
-    const more = tree.root.findByProps({ testID: 'room-corners-more' });
-    expect(text(tree)).toContain('2 more');
-    act(() => more.props.onPress());
-    expect(tree.root.findByProps({ testID: 'room-corner-live-5' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'room-corner-done' })).toBeTruthy();
-    expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
-  });
+  const rowIds = (tree: ReactTestRenderer) =>
+    tree.root
+      .findAllByType('Pressable' as any)
+      .map((node: any) => String(node.props.testID ?? ''))
+      .filter((testID: string) => /^room-corner-/.test(testID));
 
-  it('shows archived corners when the Room has no live work', () => {
-    const tree = render([
-      corner('done', 'archived', 'Landed work'),
-      corner('older', 'archived', 'Older work'),
+  it('opens Mine with every corner of the viewer, uncapped, and folds Others behind its count', () => {
+    const mine = Array.from({ length: 7 }, (_, index) => corner(`mine-${index}`, 'working'));
+    const tree = render([...mine, theirs('theirs-0'), theirs('theirs-1'), theirs('theirs-2')]);
+    expect(rowIds(tree)).toEqual(mine.map((item) => `room-corner-${item.corner.id}`));
+    expect(pressable(tree, 'room-corners-mine').props.accessibilityLabel).toBe('Mine · 7');
+    expect(pressable(tree, 'room-corners-mine').props.accessibilityState).toMatchObject({
+      expanded: true,
+    });
+    const others = pressable(tree, 'room-corners-others');
+    expect(others.props.accessibilityLabel).toBe('Others · 3');
+    expect(others.props.accessibilityState).toMatchObject({ expanded: false });
+
+    act(() => others.props.onPress());
+    expect(rowIds(tree)).toHaveLength(10);
+    expect(rowIds(tree).slice(7)).toEqual([
+      'room-corner-theirs-0',
+      'room-corner-theirs-1',
+      'room-corner-theirs-2',
     ]);
-    expect(tree.root.findByProps({ testID: 'room-corner-done' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'room-corner-older' })).toBeTruthy();
-    expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
-    expect(text(tree)).not.toContain('archived · 2');
+    act(() => pressable(tree, 'room-corners-mine').props.onPress());
+    expect(rowIds(tree)).toEqual([
+      'room-corner-theirs-0',
+      'room-corner-theirs-1',
+      'room-corner-theirs-2',
+    ]);
   });
 
-  it('pages a long archived-only list five at a time', () => {
-    const corners = Array.from({ length: 7 }, (_, index) =>
-      corner(`done-${index}`, 'archived', `Done ${index}`),
-    );
-    const tree = render(corners);
-    for (const id of ['done-0', 'done-1', 'done-2', 'done-3', 'done-4']) {
-      expect(tree.root.findByProps({ testID: `room-corner-${id}` })).toBeTruthy();
-    }
-    expect(() => tree.root.findByProps({ testID: 'room-corner-done-5' })).toThrow();
-    expect(text(tree)).toContain('2 more');
-    act(() => tree.root.findByProps({ testID: 'room-corners-more' }).props.onPress());
-    expect(tree.root.findByProps({ testID: 'room-corner-done-5' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'room-corner-done-6' })).toBeTruthy();
-    expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
+  it('counts a corner waiting on the viewer as Mine and one waiting on someone else as Others', () => {
+    const tree = render([
+      { ...theirs('asks-me', 'waiting'), awaitsViewer: true },
+      theirs('asks-them', 'waiting'),
+    ]);
+    expect(rowIds(tree)).toEqual(['room-corner-asks-me']);
+    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
   });
 
-  it('keeps archived behind archived · N while live work is showing', () => {
-    const tree = render([corner('live', 'working'), corner('done', 'archived')]);
-    expect(tree.root.findByProps({ testID: 'room-corner-live' })).toBeTruthy();
-    expect(() => tree.root.findByProps({ testID: 'room-corner-done' })).toThrow();
-    expect(text(tree)).toContain('archived · 1');
-    act(() => tree.root.findByProps({ testID: 'room-corners-more' }).props.onPress());
-    expect(tree.root.findByProps({ testID: 'room-corner-done' })).toBeTruthy();
+  it('does not remember a fold: a fresh screen starts with Mine open and Others folded', () => {
+    const first = render([corner('mine', 'working'), theirs('theirs')]);
+    act(() => pressable(first, 'room-corners-others').props.onPress());
+    act(() => pressable(first, 'room-corners-mine').props.onPress());
+    expect(rowIds(first)).toEqual(['room-corner-theirs']);
+    const second = render([corner('mine', 'working'), theirs('theirs')]);
+    expect(rowIds(second)).toEqual(['room-corner-mine']);
+  });
+
+  it('leaves out the heading of a section with nothing in it', () => {
+    const tree = render([corner('mine', 'working')]);
+    expect(pressable(tree, 'room-corners-others')).toBeUndefined();
+    const onlyTheirs = render([theirs('theirs')]);
+    expect(pressable(onlyTheirs, 'room-corners-mine')).toBeUndefined();
+    expect(pressable(onlyTheirs, 'room-corners-others')).toBeTruthy();
   });
 
   it('names an empty Room instead of inventing a list', () => {
     const tree = render([]);
     expect(tree.root.findByProps({ testID: 'room-corners-empty' })).toBeTruthy();
     expect(text(tree)).toContain('No corners yet');
-    expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
   });
 
   it.each([
@@ -251,7 +262,7 @@ describe('RoomCornersList', () => {
         agent: undefined,
         initiator: { pubkey: 'person-1', kind: 'human', name: 'Avery' },
       },
-    ]);
+    ], { viewerPubkey: 'person-1' });
     const row = tree.root.findByProps({ testID: 'room-corner-notes' });
     expect(row.props.accessibilityLabel).toContain('Opened by Avery');
     expect(row.findByType('IdentityMark' as any).props).toMatchObject({
@@ -269,6 +280,7 @@ describe('RoomCornersList', () => {
           corners={[corner('live', 'working')]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
+          viewerPubkey={VIEWER}
           bottomInset={bottomInset}
         />,
       );
@@ -396,11 +408,13 @@ describe('RoomCornersList archived footer', () => {
     expect(onShowArchived).toHaveBeenCalledOnce();
   });
 
-  it('stands beside the see-more rather than replacing it', () => {
-    const tree = render([corner('live', 'working'), corner('done', 'archived')]);
-    expect(text(tree)).toContain('archived · 1');
-    expect(pressable(tree, 'room-corners-more')).toBeTruthy();
-    expect(pressable(tree, 'room-corners-archived')).toBeTruthy();
+  it('starts folded and opens on the first tap', () => {
+    const onShowArchived = vi.fn();
+    const tree = render([corner('live', 'working')], { onShowArchived });
+    const door = pressable(tree, 'room-corners-archived');
+    expect(door.props.accessibilityState).toMatchObject({ expanded: false });
+    act(() => door.props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
   });
 
   it('says the fetch was heard while it is in flight', () => {
@@ -426,6 +440,9 @@ describe('RoomCornersList archived footer', () => {
         ],
       },
     });
+    // Landed but folded: the page opens with Archived closed.
+    expect(cornerRowIds(tree)).toEqual(['room-corner-live']);
+    act(() => pressable(tree, 'room-corners-archived').props.onPress());
     expect(cornerRowIds(tree)).toEqual([
       'room-corner-live',
       'room-corner-recent',
@@ -440,6 +457,81 @@ describe('RoomCornersList archived footer', () => {
     );
     // A live corner has no closure, so it carries no stamp.
     expect(pressable(tree, 'room-corner-live').props.accessibilityLabel).not.toContain('closed');
+    // Landed work folds without another read.
+    act(() => pressable(tree, 'room-corners-archived').props.onPress());
+    expect(cornerRowIds(tree)).toEqual(['room-corner-live']);
+  });
+
+  it('offers More under the archived rows while the server has another page', () => {
+    const onMoreArchived = vi.fn();
+    const page = Array.from({ length: 10 }, (_, index) =>
+      closed(`done-${index}`, `Done ${index}`, (index + 1) * 60),
+    );
+    const tree = render([], {
+      nowMs: NOW_MS,
+      onMoreArchived,
+      archived: { status: 'ready', corners: page, next: 'cursor' },
+    });
+    act(() => pressable(tree, 'room-corners-archived').props.onPress());
+    expect(cornerRowIds(tree)).toHaveLength(10);
+    expect(text(tree)).toContain('Archived corners · 10+');
+    const more = pressable(tree, 'room-corners-archived-more');
+    expect(more.props.accessibilityLabel).toBe('More archived corners');
+    act(() => more.props.onPress());
+    expect(onMoreArchived).toHaveBeenCalledOnce();
+
+    act(() =>
+      tree.update(
+        <RoomCornersList
+          corners={[]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          nowMs={NOW_MS}
+          onMoreArchived={onMoreArchived}
+          archived={{ status: 'ready', corners: page, next: 'cursor', more: { status: 'loading' } }}
+        />,
+      ),
+    );
+    expect(pressable(tree, 'room-corners-archived-more').props.disabled).toBe(true);
+    expect(tree.root.findByProps({ testID: 'room-corners-archived-more-loading' })).toBeTruthy();
+
+    act(() =>
+      tree.update(
+        <RoomCornersList
+          corners={[]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          nowMs={NOW_MS}
+          onMoreArchived={onMoreArchived}
+          archived={{
+            status: 'ready',
+            corners: page,
+            next: 'cursor',
+            more: { status: 'error', reason: 'Beeline is offline' },
+          }}
+        />,
+      ),
+    );
+    expect(text(tree)).toContain('Beeline is offline. Tap to retry');
+    act(() => pressable(tree, 'room-corners-archived-more').props.onPress());
+    expect(onMoreArchived).toHaveBeenCalledTimes(2);
+
+    act(() =>
+      tree.update(
+        <RoomCornersList
+          corners={[]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          nowMs={NOW_MS}
+          archived={{ status: 'ready', corners: [...page, closed('last', 'Last', 86_400)] }}
+        />,
+      ),
+    );
+    expect(cornerRowIds(tree)).toHaveLength(11);
+    expect(pressable(tree, 'room-corners-archived-more')).toBeUndefined();
   });
 
   it('retires the empty state once archived work is on screen', () => {
@@ -447,6 +539,7 @@ describe('RoomCornersList archived footer', () => {
       nowMs: NOW_MS,
       archived: { status: 'ready', corners: [closed('done', 'Landed work', 86_400)] },
     });
+    act(() => pressable(tree, 'room-corners-archived').props.onPress());
     expect(tree.root.findAllByProps({ testID: 'room-corners-empty' })).toHaveLength(0);
     expect(cornerRowIds(tree)).toEqual(['room-corner-done']);
   });

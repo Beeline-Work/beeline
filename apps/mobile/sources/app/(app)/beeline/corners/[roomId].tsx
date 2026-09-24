@@ -106,21 +106,50 @@ export default function BuzzCorners() {
    * Closed corners are not in the live surface, so the archived footer pays
    * for its own read the first time it is tapped. A read already in flight or
    * already landed is not repeated; a failed one is, because the footer offers
-   * the retry in its own label.
+   * the retry in its own label. The server sends ten at a time; `before` reads
+   * the page after the one ending at that cursor.
    */
+  const readArchived = async (before?: string) => {
+    const identity = (await loadBuzzIdentity()) as Identity | null;
+    if (!identity) throw new Error('Beeline identity is unavailable');
+    const relayUrl = await getEffectiveRelayUrl();
+    return new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
+      archived: true,
+      ...(before ? { before } : {}),
+    });
+  };
   const loadArchived = async () => {
     if (archived.status === 'loading' || archived.status === 'ready') return;
     setArchived({ status: 'loading' });
     try {
-      const identity = (await loadBuzzIdentity()) as Identity | null;
-      if (!identity) throw new Error('Beeline identity is unavailable');
-      const relayUrl = await getEffectiveRelayUrl();
-      const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
-        archived: true,
+      const view = await readArchived();
+      setArchived({
+        status: 'ready',
+        corners: archivedCornersByClosure(view.corners),
+        ...(view.nextArchived ? { next: view.nextArchived } : {}),
       });
-      setArchived({ status: 'ready', corners: archivedCornersByClosure(view.corners) });
     } catch (reason) {
       setArchived({ status: 'error', reason: phoneOperationFailureReason(reason) });
+    }
+  };
+  const loadMoreArchived = async () => {
+    if (archived.status !== 'ready' || !archived.next || archived.more?.status === 'loading') {
+      return;
+    }
+    const landed = archived;
+    setArchived({ ...landed, more: { status: 'loading' } });
+    try {
+      const view = await readArchived(landed.next);
+      setArchived({
+        status: 'ready',
+        corners: archivedCornersByClosure([...landed.corners, ...view.corners]),
+        ...(view.nextArchived ? { next: view.nextArchived } : {}),
+      });
+    } catch (reason) {
+      setArchived({
+        ...landed,
+        more: { status: 'error', reason: phoneOperationFailureReason(reason) },
+      });
     }
   };
 
@@ -228,6 +257,8 @@ export default function BuzzCorners() {
           bottomInset={insets.bottom}
           archived={archived}
           onShowArchived={() => void loadArchived()}
+          onMoreArchived={() => void loadMoreArchived()}
+          viewerPubkey={surface.viewer.identity.pubkey}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();

@@ -1224,6 +1224,7 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
     ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
+    ...field('awaitsViewer', item.awaitsViewer === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
     ...field('app', readCornerAppBinding(item.app)),
     ...field('latestMessage', readLatest(item.latestMessage)),
@@ -1549,6 +1550,12 @@ export function readCornerListView(value: unknown): CornerListView | null {
   return {
     room,
     corners,
+    ...field(
+      'nextArchived',
+      typeof item.nextArchived === 'string' && item.nextArchived.length <= 128
+        ? item.nextArchived
+        : undefined,
+    ),
     ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),

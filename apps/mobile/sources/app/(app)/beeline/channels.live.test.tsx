@@ -7,6 +7,7 @@ import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transpo
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
+  bottomInset: 0,
   chatsReads: 0,
   chatsResponse: null as unknown,
   reconnects: 0,
@@ -79,7 +80,7 @@ vi.mock('expo-router', () => ({
 }));
 vi.mock('react-native-gesture-handler', () => hostModule('Swipeable'));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, bottom: deck.bottomInset, left: 0, right: 0 }),
 }));
 vi.mock('@react-navigation/native', () => ({
   // One focused visit per mount; the test blurs and refocuses by hand.
@@ -208,6 +209,7 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 
 beforeEach(() => {
   deck.appState = 'active';
+  deck.bottomInset = 0;
   deck.chatsReads = 0;
   deck.reconnects = 0;
   deck.subscriptions.length = 0;
@@ -220,6 +222,18 @@ afterEach(() => {
 });
 
 describe('Room deck live path', () => {
+  it('keeps the final lobby card above the bottom safe area', async () => {
+    deck.bottomInset = 34;
+    const renderer = await mountDeck();
+    const list = renderer.root.find(
+      (node: { type: unknown; props: { testID?: string } }) =>
+        node.type === 'SectionList' && node.props.testID === 'room-list',
+    );
+    const contentStyles = [list.props.contentContainerStyle].flat().filter(Boolean);
+
+    expect(contentStyles.at(-1)).toMatchObject({ paddingBottom: 58 });
+  });
+
   it('opens the existing Corners page on mobile without a selected conversation state', async () => {
     const renderer = await mountDeck();
     const list = renderer.root.find((node: any) => node.type === 'SectionList');

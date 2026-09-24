@@ -101,9 +101,10 @@ async function runScenario(options: {
   prompt: (hooks: PromptHooks) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
 }): Promise<{ roomId: string; view: RoomView }> {
   const roomId = randomUUID();
-  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [
     roomId,
     WORKSPACE,
+    `scenario-${roomId}`,
   ]);
   for (const who of [HUMAN, AGENT])
     await db.query(

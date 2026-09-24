@@ -935,17 +935,21 @@ describe('on-disk profile claim reclaim', () => {
       '-e',
       [
         "const { spawn } = require('node:child_process');",
-        "const { writeFileSync } = require('node:fs');",
-        "const child = spawn('sleep', ['30'], { stdio: 'ignore' });",
-        'writeFileSync(process.argv[1], String(child.pid));',
+        'spawn(process.execPath, ["-e", [',
+        '  "const { writeFileSync } = require(\'node:fs\');",',
+        '  "process.on(\'SIGTERM\', () => {});",',
+        '  "writeFileSync(process.argv[1], String(process.pid));",',
+        '  "setInterval(() => {}, 30_000);",',
+        '].join("\\n"), process.argv[1]], { stdio: "ignore" });',
         `process.stdout.write(${JSON.stringify(`${line}\n`)});`,
         'setInterval(() => {}, 30_000);',
       ].join('\n'),
       childPidPath,
     ]);
+    let childPid: number | undefined;
     try {
       await until(() => existsSync(childPidPath));
-      const childPid = Number(readFileSync(childPidPath, 'utf8'));
+      childPid = Number(readFileSync(childPidPath, 'utf8'));
       writeLock(dir.lockPath, childPid);
       const { run } = scriptedRunner([{ stdout: '1.1.16' }, { stdout: '1.1.16' }]);
       const result = await installSquire({
@@ -962,10 +966,12 @@ describe('on-disk profile claim reclaim', () => {
         }),
         mcp: mockSquire({ list_credentials: () => ({}) }).client,
       });
+      expect(isProcessAlive(childPid)).toBe(true);
       expect(result.status).not.toBe('error');
       expect(existsSync(dir.lockPath)).toBe(false);
       await until(() => !isProcessAlive(first.pid));
     } finally {
+      if (childPid !== undefined && isProcessAlive(childPid)) process.kill(childPid, 'SIGKILL');
       first.abort();
       dir.cleanup();
     }

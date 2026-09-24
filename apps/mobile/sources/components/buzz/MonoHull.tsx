@@ -28,8 +28,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { typeRoles } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
-import { cornerVisualState, type CornerVisualState } from '@/buzz/corners';
-import type { CornerState } from '@beeline/api-contract/phone';
+import type { CornerVisualState } from '@/buzz/corners';
 import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
@@ -348,8 +347,6 @@ function LoaderCell({
   return <Animated.View style={[styles.loaderCell, compact && styles.loaderCellCompact, style]} />;
 }
 
-export type HullDeckState = 'needs-you' | 'working' | 'idle';
-
 /**
  * #419 unified the Room and corner treatments but accidentally promoted their
  * geometry to 20px/14px. Keep the unified vocabulary at the compact deck scale:
@@ -462,16 +459,6 @@ export function StateCircle({
   );
 }
 
-/** Room compatibility name: the room mark is the same circle component,
- * fed only by the max-severity rollup of its corners. */
-export function HullDeckMark({ state }: { state: HullDeckState }) {
-  return (
-    <View style={styles.deckMarkSlot}>
-      <StateCircle state={state} scale="room" />
-    </View>
-  );
-}
-
 type HullWaveSignalProps = {
   active?: boolean;
   label: 'LIVE' | 'WAITING' | 'RUNNING';
@@ -569,36 +556,6 @@ function WaveSegment({
 /** The dimmest the live pulse ever goes. High enough that the mark it carries
  * stays legible at every point in the cycle — a breath, not a blink. */
 const LIVE_PULSE_FLOOR = 0.55;
-
-/**
- * THE corner-state glyph, for every surface that names a corner: deck
- * expansion rows, corner lists, pinned references. This component is the only
- * thing that may draw a corner's state circle, with the same fill+motion
- * vocabulary as its Room.
- * No visible status word rides beside it.
- */
-export function CornerGlyph({
-  status,
-  awaitingReply,
-  agentOffline,
-  style,
-  testID,
-}: {
-  /** Canonical lifecycle projection; `null` renders on the quiet tier. */
-  status: CornerState;
-  awaitingReply?: boolean;
-  agentOffline?: boolean;
-  style?: StyleProp<ViewStyle>;
-  testID?: string;
-}) {
-  return (
-    <StateCircle
-      state={cornerVisualState(status, { awaitingReply, agentOffline })}
-      style={style}
-      testID={testID}
-    />
-  );
-}
 
 /**
  * The same live wave, reduced to a single mark: one slow sin² breath on
@@ -882,7 +839,6 @@ const styles = StyleSheet.create((theme) => {
     mechanismRailLive: { backgroundColor: groknight.accent },
     activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
     /* ── Unified state circle: Room rollup and corner state ──────────── */
-    deckMarkSlot: { width: 26, alignItems: 'center', justifyContent: 'center' },
     stateCircleSlot: {
       alignItems: 'center',
       justifyContent: 'center',

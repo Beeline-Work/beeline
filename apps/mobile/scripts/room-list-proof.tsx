@@ -69,7 +69,12 @@ const rooms = [
   waitingCornerCount,
   openCorners: (id === 'launch' ? states.slice(2, 3) : states)
     .slice(0, cornerCount as number)
-    .map((state, i) => ({ id: `corner-${i}`, name: cornerNames[i], state })),
+    .map((state, i) => ({
+      id: `corner-${i}`,
+      name: cornerNames[i],
+      state,
+      initiator: { pubkey: 'you' },
+    })),
   latestMessage: {
     text,
     createdAt: now / 1000 - (i + 1) * 120,
@@ -180,8 +185,8 @@ function Proof() {
             {!!item.cornerCount &&
               (desktop ? (
                 <DesktopRoomCorners
-                  active={item.room.id === 'product'}
                   item={item}
+                  viewerPubkey="you"
                   onOpen={(id) => action(`corner/${id}`)}
                   renderDrag={(_, children) => children}
                 />

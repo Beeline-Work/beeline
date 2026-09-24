@@ -7432,6 +7432,25 @@ describe('monolith integration', () => {
       [cornerId, AGENT],
     );
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
+
+    // The chat list's open corners carry the same Mine facts for the desktop deck.
+    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
+      cornerId,
+      HUMAN,
+    ]);
+    expect((await read())?.initiator?.pubkey).toBe(HUMAN);
+    const chat = (
+      (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+        chats: Array<{ room: { id: string }; openCorners?: Array<Record<string, unknown>> }>;
+      }
+    ).chats.find((item) => item.room.id === ROOM);
+    expect(chat?.openCorners?.find((corner) => corner.id === cornerId)).toEqual({
+      id: cornerId,
+      name: 'Pick a colour',
+      state: 'waiting',
+      initiator: { pubkey: HUMAN },
+      awaitsViewer: true,
+    });
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {

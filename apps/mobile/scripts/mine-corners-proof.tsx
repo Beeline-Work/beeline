@@ -27,9 +27,8 @@ const ids = (prefix: string) =>
     .filter((id) => id.startsWith('corner-'))
     .sort()
     .join(',');
-const text = (testID: string) =>
-  document.querySelector<HTMLElement>(`[data-testid="${testID}"]`)?.textContent;
-const summary = () => text(`desktop-room-corners-toggle-${MINE_CORNERS_ROOM_ID}`);
+const toggles = () =>
+  document.querySelectorAll('[data-testid^="desktop-room-corners-toggle-"]').length;
 const checked = (testID: string) =>
   document.querySelector<HTMLElement>(`[data-testid="${testID}"]`)?.getAttribute('aria-checked');
 
@@ -41,8 +40,16 @@ const chat = {
   },
   cornerCount: 4,
   waitingCornerCount: 2,
+  // The chat list's open corners carry the same commissioned-by and
+  // awaits-viewer facts as the Corners page rows.
+  openCorners: MINE_CORNERS_FIXTURE.corners.map((item) => ({
+    id: item.corner.id,
+    name: item.corner.name,
+    state: item.state,
+    ...(item.initiator ? { initiator: { pubkey: item.initiator.pubkey } } : {}),
+    ...(item.awaitsViewer ? { awaitsViewer: true } : {}),
+  })),
 } as unknown as ChatListItem;
-const client = { corners: async () => MINE_CORNERS_FIXTURE } as never;
 
 async function run() {
   createRoot(document.getElementById('root')!).render(
@@ -50,10 +57,7 @@ async function run() {
       <div style={{ width: 360 }}>
         <DesktopRoomCorners
           item={chat}
-          client={client}
           viewerPubkey={MINE_CORNERS_FIXTURE.viewer.identity.pubkey}
-          refreshKey="/"
-          active
           onOpen={() => undefined}
           renderDrag={(_, children) => children}
         />
@@ -72,9 +76,9 @@ async function run() {
     lines.push(
       `${step}: page Mine=${checked('room-corners-mine')} [${page}] | rail Mine=${checked(
         `desktop-room-corners-mine-${MINE_CORNERS_ROOM_ID}`,
-      )} [${rail}] "${summary()}"`,
+      )} [${rail}] toggles=${toggles()}`,
     );
-    return { page, rail, summary: summary() };
+    return { page, rail };
   };
 
   const first = read(saved ? `opened with saved=${saved}` : 'opened fresh');
@@ -83,13 +87,18 @@ async function run() {
       first.page === 'corner-mine,corner-theirs,corner-theirs-waiting,corner-waiting',
       `page: ${first.page}`,
     );
+    assert(
+      first.rail === 'corner-mine,corner-theirs,corner-theirs-waiting,corner-waiting',
+      `rail: ${first.rail}`,
+    );
+    assert(toggles() === 0, 'rail still has a corners toggle');
     report(`PASS\n${lines.join('\n')}`);
     return;
   }
   assert(checked('room-corners-mine') === 'true', 'page Mine is not on by default');
   assert(first.page === 'corner-mine,corner-waiting', `page shows: ${first.page}`);
   assert(first.rail === 'corner-mine,corner-waiting', `rail shows: ${first.rail}`);
-  assert(first.summary === '1 waiting', `rail summary: ${first.summary}`);
+  assert(toggles() === 0, 'rail still has a corners toggle');
 
   document.querySelector<HTMLElement>('[data-testid="room-corners-mine"]')!.click();
   await pause();
@@ -97,7 +106,6 @@ async function run() {
   const all = 'corner-mine,corner-theirs,corner-theirs-waiting,corner-waiting';
   assert(off.page === all, `page shows: ${off.page}`);
   assert(off.rail === all, `rail shows: ${off.rail}`);
-  assert(off.summary === '2 waiting', `rail summary: ${off.summary}`);
   const stored = localStorage.getItem('beeline.corners.mine.v1');
   lines.push(`device storage beeline.corners.mine.v1=${stored}`);
   assert(stored === 'all', `stored: ${stored}`);
@@ -111,7 +119,6 @@ async function run() {
   const on = read('tapped Mine on the rail');
   assert(on.page === 'corner-mine,corner-waiting', `page shows: ${on.page}`);
   assert(on.rail === 'corner-mine,corner-waiting', `rail shows: ${on.rail}`);
-  assert(on.summary === '1 waiting', `rail summary: ${on.summary}`);
   report(`PASS\n${lines.join('\n')}`);
 }
 

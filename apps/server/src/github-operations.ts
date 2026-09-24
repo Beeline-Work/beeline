@@ -5,6 +5,7 @@ import {
   GitHubOAuthClient,
   GitHubHttpError,
   GitHubCredentialRejectedError,
+  githubMergeability,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -1034,12 +1035,7 @@ export class GitHubOperations {
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
-        let mergeability: 'clean' | 'dirty' | 'unknown' =
-          mergeabilityValue === 'clean'
-            ? 'clean'
-            : mergeabilityValue === 'dirty'
-              ? 'dirty'
-              : 'unknown';
+        let mergeability = githubMergeability(mergeabilityValue);
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
           await database.transaction(async (tx) => {
             const previous = (
@@ -1051,7 +1047,8 @@ export class GitHubOperations {
             if (
               mergeability === 'unknown' &&
               previous?.pr?.headSha === headSha &&
-              (previous.pr.mergeability === 'clean' || previous.pr.mergeability === 'dirty')
+              previous.pr.mergeability &&
+              previous.pr.mergeability !== 'unknown'
             )
               mergeability = previous.pr.mergeability;
             await this.updateLifecycle(

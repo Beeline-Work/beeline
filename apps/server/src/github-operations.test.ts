@@ -393,6 +393,37 @@ describe('GitHub phone operations', () => {
         )
       ).rowCount,
     ).toBe(2);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      mergeability: 'other',
+    });
+    await operations.refreshUnknownMergeability(corner);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    const readsAfterSettlement = readPullRequest.mock.calls.length;
+    await operations.refreshUnknownMergeability(corner);
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: { ...unknown.pull_request, mergeable_state: 'behind' },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

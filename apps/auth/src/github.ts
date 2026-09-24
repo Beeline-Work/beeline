@@ -5,6 +5,13 @@ const GITHUB_ISSUER = 'https://github.com';
 export const GITHUB_IDENTITY_AUDIENCE = 'github';
 const DEFAULT_API = 'https://api.github.com';
 
+/** Only GitHub's unresolved answer should be retried as mergeability unknown. */
+export function githubMergeability(value: unknown): 'clean' | 'dirty' | 'unknown' | 'other' {
+  if (value === 'clean' || value === 'dirty') return value;
+  if (typeof value === 'string' && value !== 'unknown') return 'other';
+  return 'unknown';
+}
+
 function githubHeaders(token?: string): Record<string, string> {
   return {
     accept: 'application/vnd.github+json',
@@ -528,12 +535,7 @@ export class GitHubAppClient {
       number,
       url: `https://github.com/${fullName}/pull/${number}`,
       headSha: head.sha,
-      mergeability:
-        mergeableState === 'dirty'
-          ? ('dirty' as const)
-          : mergeableState === 'clean'
-            ? ('clean' as const)
-            : ('unknown' as const),
+      mergeability: githubMergeability(mergeableState),
     };
   }
 

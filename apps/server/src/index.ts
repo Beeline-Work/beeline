@@ -136,6 +136,16 @@ async function main() {
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
       )
     : undefined;
+  const githubJobs = githubClients
+    ? new GitHubOperations(
+        jobsDatabase,
+        githubClients.oauth,
+        githubClients.app,
+        process.env.GITHUB_CLIENT_SECRET!,
+        mountedAuth.sealedGitHubUserToken,
+        (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+      )
+    : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
@@ -259,9 +269,9 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
-        if (github) {
+        if (githubJobs) {
           try {
-            await github.refreshUnknownMergeability();
+            await githubJobs.refreshUnknownMergeability();
           } catch (error) {
             console.error('[server] mergeability refresh failed:', error);
           }

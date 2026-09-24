@@ -17,3 +17,19 @@ The Pinned empty state, unread rows and Workspace rail changes shipped alongside
 - Browser captures cover 390×844 phone and 1440×1000 desktop layouts in both themes. Manage is also rendered from the real Members controller at phone and desktop widths. The proof checks overflow, returning from Pinned, clearing unread fill, closing profiles, and absence of owner-only controls for administrators.
 
 These are responsive browser and component tests, not Android/iOS device captures. Native Back/scroll restoration and native device rendering still require an emulator or device; neither is available in this environment.
+
+## Consolidated board acceptance checklist
+
+The approved reference is `complete-room-agent-review.html`; `rooms-desktop-dark-v12.html` is the original rail reference. This is the single acceptance checklist for the implementation in PR #1677. Illustrative names, artwork, model choices, and PR titles belong only to the proof fixture, never production data.
+
+| Item | Implementation and evidence | Remaining acceptance |
+| --- | --- | --- |
+| 1. Pinned empty state | Shared `PinnedConversationsEmpty`, contained spacing, approved copy, Show all returns to All; phone/desktop captures in both themes. | Independent visual audit against canonical board. |
+| 2. Original workspace rail | Framed workspace identities, Add with workspace tiles, personal settings at bottom; Workspace Settings removed from rail, retained in header overflow. | Independent comparison with original rail source and header navigation. |
+| 3. Unread emphasis | Theme-specific background tint, stronger title and dot; browser exercise clears unread fill and existing read-cursor behavior is retained. | Independent read/unread and theme audit. |
+| 4. Profile vs DM navigation | Agent byline and roster open profiles; mentions/Message keep DMs. Desktop byline profile is adjacent to the transcript; phone uses a pushed route. Component and browser interaction checks pass. | Native Back/scroll restoration and byline long-press remain unverified. |
+| 5. Profile contents and work access | Assigned animal, handle, live model/effort, expandable full soul, recent merged PR headings and empty state. Database test excludes inaccessible, unmerged, unsafe-link and other-opener work, including after membership revocation. | Independent data/access audit. |
+| 6. Permitted management | Existing name/soul/model/effort/Answers everyone/Yolo/removal controls live in Manage. Owners retain configuration authority; non-owner managers get ban/removal only; members read profiles. Assigned-animal avatar is preserved; no new upload or face-edit permission. Role and mutation tests pass. | Independent check that all pre-existing permitted controls were retained. |
+| 7. Cross-surface verification | Phone and desktop browser widths, both themes, readable text, navigation, empty states and owner/admin views captured in `docs/evidence/consolidated-board/`. Component, contract and database checks supplement the fixture. | Native Android/iOS device coverage is outstanding. Remote CI and configured reviewer approval are required before merge. |
+
+A follow-up regression reproduces a failed profile read followed by a successful workspace subscription refresh. The refresh previously removed Retry; separate workspace error state preserves the profile error and the regression confirms retry succeeds. Do not classify that fix as unimplemented based on the earlier interrupted validation report.

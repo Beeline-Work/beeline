@@ -744,6 +744,7 @@ export function BuzzChatSurface({
     };
   }, [decodedId, desktopExperience]);
 
+  const stagedComposerFocusRef = useRef<{ start: number; end: number } | null>(null);
   useEffect(() => {
     // A corner opened by a swipe-right forward arrives with that forward ready
     // in its composer and the cursor after it.
@@ -753,11 +754,36 @@ export function BuzzChatSurface({
     inputTextRef.current = staged;
     setInputText(staged);
     setInputSelection(selection);
-    scheduleAnimationFrame(() => {
-      composerRef.current?.focus();
-      composerRef.current?.setNativeProps({ selection });
-    });
+    // The forward ends with the author's @handle; the cursor after it should
+    // not reopen the mention menu.
+    const mention = activeMentionAtCursor(staged, staged.length);
+    setDismissedMentionKey(mention ? `${staged}:${mention.start}:${mention.end}` : null);
+    stagedComposerFocusRef.current = selection;
   }, [decodedId]);
+
+  const composerMounted = Boolean(roomSurface);
+  useEffect(() => {
+    // The composer mounts only once the new corner has loaded, so the staged
+    // forward's cursor waits for it.
+    const selection = stagedComposerFocusRef.current;
+    if (!composerMounted || !selection) return;
+    stagedComposerFocusRef.current = null;
+    scheduleAnimationFrame(() => {
+      const composer = composerRef.current;
+      // React Native Web hands back the DOM textarea, which has no
+      // setNativeProps; focusing after the selection scrolls the cursor into view.
+      if (Platform.OS === 'web') {
+        (composer as unknown as HTMLTextAreaElement | null)?.setSelectionRange(
+          selection.start,
+          selection.end,
+        );
+        composer?.focus();
+      } else {
+        composer?.focus();
+        composer?.setNativeProps({ selection });
+      }
+    });
+  }, [composerMounted, decodedId]);
 
   useEffect(() => {
     if (!desktopExperience || loadedDraftForRef.current !== decodedId) return;

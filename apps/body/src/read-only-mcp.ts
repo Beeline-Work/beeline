@@ -218,11 +218,12 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
   {
     name: 'git_log',
     description:
-      'Read bounded local commit history, optionally scoped to one repository path. It cannot contact remotes or change git state.',
+      'Read bounded local commit history, optionally from a fetched origin/branch and scoped to one repository path. It cannot contact remotes or change git state.',
     inputSchema: {
       type: 'object',
       properties: {
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        revision: { type: 'string', description: 'HEAD or a fetched origin/branch; defaults to HEAD.' },
         path: { type: 'string', description: 'Optional repository-relative path.' },
       },
       additionalProperties: false,
@@ -237,7 +238,7 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       properties: {
         revision: {
           type: 'string',
-          description: 'HEAD, HEAD~N, a commit hash, or refs/heads|tags/...; defaults to HEAD.',
+          description: 'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
         },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
@@ -251,8 +252,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'Restricted local revision; defaults to HEAD~1.' },
-        to: { type: 'string', description: 'Restricted local revision; defaults to HEAD.' },
+        from: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.' },
+        to: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD.' },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
       additionalProperties: false,
@@ -1320,7 +1321,7 @@ function searchText(args: JsonObject): string {
 function revisionArg(args: JsonObject, name: string, fallback: string): string {
   const revision = stringArg(args, name, fallback)!;
   const valid =
-    /^(?:HEAD(?:~[0-9]{1,4})?|[0-9a-fA-F]{4,64}|refs\/(?:heads|tags)\/[A-Za-z0-9][A-Za-z0-9._/-]{0,240})$/.test(
+    /^(?:HEAD(?:~[0-9]{1,4})?|[0-9a-fA-F]{4,64}|(?:refs\/(?:heads|tags)\/|(?:refs\/remotes\/)?origin\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,240})$/.test(
       revision,
     ) && !revision.includes('..');
   if (!valid) throw new Error(`${name} is not an allowed local revision`);
@@ -1381,6 +1382,7 @@ function runGit(args: string[]): string {
 
 function gitLog(args: JsonObject): string {
   const limit = integerArg(args, 'limit', 20, 1, 100);
+  const revision = revisionArg(args, 'revision', 'HEAD');
   const path = optionalPath(args);
   return runGit([
     'log',
@@ -1388,6 +1390,7 @@ function gitLog(args: JsonObject): string {
     `--max-count=${limit}`,
     '--date=iso-strict',
     '--format=%H%x09%ad%x09%an%x09%s',
+    revision,
     ...(path ? ['--', path] : []),
   ]);
 }

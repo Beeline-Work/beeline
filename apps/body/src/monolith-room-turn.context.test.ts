@@ -157,10 +157,15 @@ describe('monolith Room turn context', () => {
     );
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
+    const refreshCheckout = vi
+      .fn()
+      .mockResolvedValueOnce({ branch: 'main', commit: 'a'.repeat(40) })
+      .mockResolvedValueOnce({ branch: 'main', commit: 'b'.repeat(40) });
     const loop = new MonolithRoomTurnLoop({
       roomId: 'room-id',
       workspaceId: 'workspace',
       cwd: config.workspaceRoot,
+      refreshCheckout,
       runtime,
       config,
       api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
@@ -175,6 +180,9 @@ describe('monolith Room turn context', () => {
     abort.abort();
     await running.catch(() => undefined);
     await scheduler.dispose();
+    expect(refreshCheckout).toHaveBeenCalledTimes(2);
+    expect(prompts[0]).toContain(`Repository checkout: origin/main at commit ${'a'.repeat(40)}`);
+    expect(prompts[1]).toContain(`Repository checkout: origin/main at commit ${'b'.repeat(40)}`);
 
     expect(systemPrompts[0]).toContain(
       'For every ask, first reply on one line `Proposed corner: <name> — <objective>`',

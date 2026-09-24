@@ -304,6 +304,8 @@ export interface MonolithRoomTurnOptions {
   roomId: string;
   workspaceId: string;
   cwd: string;
+  /** Refresh the server-bound checkout before each admitted Room turn. */
+  refreshCheckout?: () => Promise<{ branch: string; commit: string } | undefined>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -1020,6 +1022,7 @@ export class MonolithRoomTurnLoop {
               // queue wait, and `end` on a closed phase is a no-op.
               trace.end('queue-wait');
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
+              const checkout = await this.options.refreshCheckout?.();
               const [conversation, roster, delivered, corners] = await trace.measure(
                 'context-fetch',
                 () =>
@@ -1061,6 +1064,9 @@ export class MonolithRoomTurnLoop {
               const buildPrompt = (): string =>
                 [
                   this.turnInstructionPrefix,
+                  checkout
+                    ? `Repository checkout: origin/${checkout.branch} at commit ${checkout.commit}. This checkout was refreshed for this turn.`
+                    : '',
                   WarmTranscript.render(
                     this.warmTranscript.select(this.sessionId, transcriptRows),
                     'Room conversation so far:',

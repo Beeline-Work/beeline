@@ -850,6 +850,7 @@ export class RoomRuntimeCoordinator {
       roomId,
       workspaceId: this.runtime.communityId,
       cwd,
+      refreshCheckout: () => this.refreshRoomCheckout(roomId, cwd),
       grantRunner: this.grantRunner,
       ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
       ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
@@ -903,14 +904,17 @@ export class RoomRuntimeCoordinator {
    * short-lived GitHub token itself; it is never included in the Room MCP or
    * harness environment.
    */
-  private async materializeRoomCheckout(roomId: string): Promise<string> {
-    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+  private async materializeRoomCheckout(
+    roomId: string,
+    repository?: RoomRepositoryStateResult,
+  ): Promise<string> {
+    repository ??= await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
     if (repository.resolution !== 'repository' || !repository.remote) return this.roomRoot(roomId);
 
     const remote = roomCheckoutRemote(repository.remote);
     const targetBranch = repository.targetBranch || 'main';
     const checkoutId = createHash('sha256')
-      .update(`${remote}\0${targetBranch}`)
+      .update(`${roomId}\0${remote}\0${targetBranch}`)
       .digest('hex')
       .slice(0, 24);
     const path = resolve(this.runtime.supervisorRoot, 'beeline', 'room-checkouts', checkoutId);
@@ -947,6 +951,26 @@ export class RoomRuntimeCoordinator {
       },
     );
     return path;
+  }
+
+  private async refreshRoomCheckout(
+    roomId: string,
+    cwd: string,
+  ): Promise<{ branch: string; commit: string } | undefined> {
+    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    if (repository.resolution !== 'repository' || !repository.remote) {
+      if (cwd !== this.roomRoot(roomId)) {
+        throw new Error('Room repository binding changed; restart the Room checkout before answering');
+      }
+      return undefined;
+    }
+    const branch = repository.targetBranch || 'main';
+    const refreshed = await this.materializeRoomCheckout(roomId, repository);
+    if (refreshed !== cwd) {
+      throw new Error('Room repository binding changed; restart the Room checkout before answering');
+    }
+    const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
+    return { branch, commit: stdout.trim() };
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {

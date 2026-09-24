@@ -91,7 +91,7 @@ export function RoomListToolbar({
           </Pressable>
         )}
       </View>
-      {(searching || query) && (
+      {(searching || query.length > 0) && (
         <TextInput
           ref={searchRef}
           value={query}

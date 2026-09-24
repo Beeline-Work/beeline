@@ -590,9 +590,10 @@ export const SidebarView = React.memo(function SidebarView() {
                           active={active}
                           client={client}
                           refreshKey={pathname}
-                          onOpen={(cornerId) =>
-                            selectDesktopWorkCorner({ roomId: item.room.id, cornerId })
-                          }
+                          onOpen={(cornerId) => {
+                            selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
+                            if (activeRoomId !== item.room.id) openRoom(item.room.id);
+                          }}
                           renderDrag={(cornerId, children) => (
                             <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
                               {children}

@@ -5,7 +5,8 @@ export type DesktopWorkPaneSelection = {
 
 export const DESKTOP_CORNER_DRAG_TYPE = 'application/x-beeline-corner';
 
-const listeners = new Set<(selection: DesktopWorkPaneSelection) => void>();
+const listeners = new Set<(selection: DesktopWorkPaneSelection) => boolean | void>();
+let pendingSelection: DesktopWorkPaneSelection | null = null;
 
 /**
  * The desktop navigator and Room route are siblings in Expo's permanent drawer.
@@ -13,13 +14,17 @@ const listeners = new Set<(selection: DesktopWorkPaneSelection) => void>();
  * on the Room, the middle pane keeps talking, and the right pane opens work.
  */
 export function selectDesktopWorkCorner(selection: DesktopWorkPaneSelection): void {
-  for (const listener of listeners) listener(selection);
+  pendingSelection = selection;
+  for (const listener of listeners) {
+    if (listener(selection)) pendingSelection = null;
+  }
 }
 
 export function subscribeDesktopWorkCorner(
-  listener: (selection: DesktopWorkPaneSelection) => void,
+  listener: (selection: DesktopWorkPaneSelection) => boolean | void,
 ): () => void {
   listeners.add(listener);
+  if (pendingSelection && listener(pendingSelection)) pendingSelection = null;
   return () => listeners.delete(listener);
 }
 

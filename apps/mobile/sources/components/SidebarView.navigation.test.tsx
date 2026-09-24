@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const routerPush = vi.hoisted(() => vi.fn());
+const routerNavigate = vi.hoisted(() => vi.fn());
 const saveActiveCommunityId = vi.hoisted(() => vi.fn(async () => undefined));
 const loadLastViewedChannel = vi.hoisted(() => vi.fn(async () => null));
 const route = vi.hoisted(() => ({
@@ -83,7 +84,7 @@ vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ t
 vi.mock('expo-router', () => ({
   useGlobalSearchParams: () => route,
   usePathname: () => route.pathname,
-  useRouter: () => ({ push: routerPush }),
+  useRouter: () => ({ push: routerPush, navigate: routerNavigate }),
 }));
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 0, useIsDesktop: () => true }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
@@ -208,6 +209,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 }));
 
 import { SidebarView } from './SidebarView';
+import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 let tree: ReactTestRenderer;
 function control(id: string) {
   const nodes = tree.root.findAll(
@@ -543,6 +545,18 @@ describe('desktop Workspace navigation', () => {
     act(() => restore.props.onPress());
     expect(control('desktop-corner-corner-a')).toBeDefined();
     expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', true);
+  });
+
+  it('opens a Room before showing its corner from the empty deck', async () => {
+    act(() => control('desktop-room-corners-toggle-room-a').props.onPress());
+    await settle();
+    act(() => control('desktop-corner-corner-a').props.onPress());
+
+    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({ roomId: 'room-a', cornerId: 'corner-a' });
+    expect(routerNavigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { dangerouslySingular: true },
+    );
   });
 
   it('restores a saved collapsed Room corner list', async () => {

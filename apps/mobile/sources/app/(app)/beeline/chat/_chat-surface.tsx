@@ -110,6 +110,7 @@ import {
   type DesktopArtifactSelection,
 } from '@/buzz/desktop-artifact-pane';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
+import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import {
   desktopComposerKeyAction,
   desktopWorkPaneMode,
@@ -3908,6 +3909,10 @@ export function BuzzChatSurface({
       setRenameError(`${kindLabel} name cannot be empty.`);
       return;
     }
+    if (!isCorner && !validRoomSlug(name)) {
+      setRenameError(ROOM_SLUG_HINT);
+      return;
+    }
     if (!transport || !canRenameTitle || renameBusy) return;
 
     setRenameBusy(true);
@@ -5768,6 +5773,8 @@ export function BuzzChatSurface({
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
             client={roomClient}
+            channelIndex={channelReferenceIndex}
+            onChannelReference={handleOpenChannelReference}
             selectedCornerId={desktopWorkPane.selectedCornerId}
             onSelectCorner={(cornerId) =>
               commitDesktopWorkPane(
@@ -6056,8 +6063,8 @@ export function BuzzChatSurface({
               <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
               <TextInput
                 accessibilityLabel={`New ${ROOM_LABEL} name`}
-                autoCapitalize="sentences"
-                autoCorrect
+                autoCapitalize="none"
+                autoCorrect={false}
                 editable={!renameBusy}
                 onChangeText={(value) => {
                   setRenameDraft(value);
@@ -6070,6 +6077,9 @@ export function BuzzChatSurface({
                 testID="rename-room-input"
                 value={renameDraft}
               />
+              {!validRoomSlug(renameDraft.trim()) && (
+                <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+              )}
               <View style={styles.roomRenameControls}>
                 <MonoButton
                   disabled={renameBusy}
@@ -6081,7 +6091,7 @@ export function BuzzChatSurface({
                   variant="secondary"
                 />
                 <MonoButton
-                  disabled={renameBusy || !renameDraft.trim()}
+                  disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
                   label={renameBusy ? 'Renaming…' : 'Apply'}
                   loading={renameBusy}
                   onPress={() => void handleRenameRoom()}

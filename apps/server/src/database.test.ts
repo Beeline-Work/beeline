@@ -19,12 +19,44 @@ import {
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
+import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
 }
 
 const TERMINATED = () => new Error('Connection terminated unexpectedly');
+
+describe('Room slugs', () => {
+  it('requires a bounded lowercase slug for new names', () => {
+    expect(requireRoomSlug('room-name-2')).toBe('room-name-2');
+    for (const value of ['Room Name', 'room--name', '-room', 'room-', ''])
+      expect(() => requireRoomSlug(value)).toThrow(/invalid Room name/);
+  });
+
+  it('refuses a name another top-level Room in the Workspace already uses', async () => {
+    const db = new PgliteDatabase();
+    await migrate(db);
+    const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    const otherWorkspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaab';
+    const room = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000001';
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Slug test'),($2,'Other')`, [
+      workspace,
+      otherWorkspace,
+    ]);
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Road-Map')`,
+      [room, workspace],
+    );
+
+    await expect(reserveRoomName(db, workspace, 'road-map')).rejects.toThrow(/conflict/);
+    await expect(reserveRoomName(db, workspace, 'Road-Map')).rejects.toThrow(/conflict/);
+    // A rename may keep the Room's own name.
+    await expect(reserveRoomName(db, workspace, 'road-map', room)).resolves.toBeUndefined();
+    // The same name is free in another Workspace.
+    await expect(reserveRoomName(db, otherWorkspace, 'road-map')).resolves.toBeUndefined();
+  });
+});
 
 function stubClient() {
   const client = new EventEmitter() as EventEmitter & {

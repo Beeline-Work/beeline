@@ -570,7 +570,7 @@ describe('monolith integration', () => {
     );
 
     const created = (await (
-      await operation('createRoom', { workspaceId, name: 'Public by default' })
+      await operation('createRoom', { workspaceId, name: 'public-by-default' })
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
@@ -579,7 +579,7 @@ describe('monolith integration', () => {
       (
         await operation('updateRoom', {
           roomId: created.id,
-          name: 'Renamed Room',
+          name: 'renamed-room',
           visibility: 'invite-only',
         })
       ).status,
@@ -692,7 +692,7 @@ describe('monolith integration', () => {
     const room = (await (
       await operation('createRoom', {
         workspaceId: WORKSPACE,
-        name: 'Opening after an explicit removal',
+        name: 'opening-after-an-explicit-removal',
         visibility: 'invite-only',
       })
     ).json()) as { id: string };
@@ -711,12 +711,26 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
+  it('enforces unique Room slugs on create and rename', async () => {
+    const created = await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' });
+    expect(created.status).toBe(200);
+    const { id } = (await created.json()) as { id: string };
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status).toBe(400);
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
+    expect((await operation('updateRoom', { roomId: id, name: 'road-map-2' })).status).toBe(204);
+    expect((await operation('updateRoom', { roomId: id, name: 'Road Map 3' })).status).toBe(400);
+    // Renaming frees the old slug; a later Room can claim it, and the renamed
+    // Room can no longer take it back.
+    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(200);
+    expect((await operation('updateRoom', { roomId: id, name: 'road-map' })).status).toBe(409);
+  });
+
   it('restores a removed public-Room membership with its current Workspace role', async () => {
     const memberId = createHash('sha256').update('github:public-room-role-restore').digest('hex');
     await phoneToken('public-room-role-restore');
     await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'admin' });
     const room = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Role-preserving rejoin' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'role-preserving-rejoin' })
     ).json()) as { id: string };
 
     expect((await operation('removeRoomMember', { roomId: room.id, memberId })).status).toBe(204);
@@ -751,8 +765,8 @@ describe('monolith integration', () => {
 
     for (const [name, input] of [
       ['updateWorkspace', { workspaceId: WORKSPACE, name: 'Member renamed' }],
-      ['createRoom', { workspaceId: WORKSPACE, name: 'Member room' }],
-      ['updateRoom', { roomId: ROOM, name: 'Member renamed room' }],
+      ['createRoom', { workspaceId: WORKSPACE, name: 'member-room' }],
+      ['updateRoom', { roomId: ROOM, name: 'member-renamed-room' }],
       ['deleteRoom', { roomId: ROOM }],
     ] as const) {
       const response = await operation(name, input, memberToken);
@@ -770,7 +784,7 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(204);
     const adminRoom = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Admin room' }, adminToken)
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'admin-room' }, adminToken)
     ).json()) as { id: string };
     expect(
       (
@@ -784,7 +798,7 @@ describe('monolith integration', () => {
       (
         await operation(
           'updateRoom',
-          { roomId: adminRoom.id, name: 'Admin renamed room' },
+          { roomId: adminRoom.id, name: 'admin-renamed-room' },
           adminToken,
         )
       ).status,
@@ -921,7 +935,7 @@ describe('monolith integration', () => {
     const room = (await (
       await operation(
         'createRoom',
-        { workspaceId: WORKSPACE, name: 'Stale owner room' },
+        { workspaceId: WORKSPACE, name: 'stale-owner-room' },
         staleToken,
       )
     ).json()) as { id: string };
@@ -958,7 +972,7 @@ describe('monolith integration', () => {
     const room = (await (
       await operation(
         'createRoom',
-        { workspaceId: WORKSPACE, name: 'Stale owner removal' },
+        { workspaceId: WORKSPACE, name: 'stale-owner-removal' },
         staleToken,
       )
     ).json()) as { id: string };
@@ -999,7 +1013,7 @@ describe('monolith integration', () => {
     const workspaceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     await operation('createWorkspace', { workspaceId, name: 'Invites' });
     const room = (await (
-      await operation('createRoom', { workspaceId, name: 'Existing Room' })
+      await operation('createRoom', { workspaceId, name: 'existing-room' })
     ).json()) as { id: string };
     const invite = (await (await operation('createInvite', { workspaceId })).json()) as {
       token: string;
@@ -1034,7 +1048,7 @@ describe('monolith integration', () => {
     );
 
     const laterRoom = (await (
-      await operation('createRoom', { workspaceId, name: 'Later Room' })
+      await operation('createRoom', { workspaceId, name: 'later-room' })
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${laterRoom.id}`, 'GET', undefined, aliceToken)).status,
@@ -1049,7 +1063,7 @@ describe('monolith integration', () => {
     const privateRoom = (await (
       await operation('createRoom', {
         workspaceId,
-        name: 'Admins invite only',
+        name: 'admins-invite-only',
         visibility: 'invite-only',
       })
     ).json()) as { id: string };
@@ -1066,7 +1080,7 @@ describe('monolith integration', () => {
     };
     expect(aliceWorkspace.managerSettings?.rooms).toContainEqual({
       id: privateRoom.id,
-      name: 'Admins invite only',
+      name: 'admins-invite-only',
       visibility: 'invite-only',
       createdAt: expect.any(Number),
     });
@@ -1098,7 +1112,7 @@ describe('monolith integration', () => {
     const openedRoom = (await (
       await operation('createRoom', {
         workspaceId,
-        name: 'Open later',
+        name: 'open-later',
         visibility: 'invite-only',
       })
     ).json()) as { id: string };
@@ -1169,7 +1183,7 @@ describe('monolith integration', () => {
     const workspaceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
     await operation('createWorkspace', { workspaceId, name: 'DMs' });
     await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
-    const room = (await (await operation('createRoom', { workspaceId, name: 'Room' })).json()) as {
+    const room = (await (await operation('createRoom', { workspaceId, name: 'room' })).json()) as {
       id: string;
     };
 
@@ -1210,7 +1224,7 @@ describe('monolith integration', () => {
     await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
     await operation('addWorkspaceMember', { workspaceId, memberId: adminId, role: 'admin' });
     const room = (await (
-      await operation('createRoom', { workspaceId, name: 'Preserved Room' })
+      await operation('createRoom', { workspaceId, name: 'preserved-room' })
     ).json()) as { id: string };
     await operation('sendRoomMessage', { roomId: room.id, text: 'history stays' });
 
@@ -1244,7 +1258,7 @@ describe('monolith integration', () => {
     expect(await chat(aliceToken, room.id)).toBeUndefined();
 
     const failedRoom = (await (
-      await operation('createRoom', { workspaceId, name: 'Rollback Room' })
+      await operation('createRoom', { workspaceId, name: 'rollback-room' })
     ).json()) as { id: string };
     await database.query(`
       CREATE FUNCTION fail_member_left_insert() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1321,7 +1335,7 @@ describe('monolith integration', () => {
     await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'admin' });
     await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'admin' });
     const room = (await (
-      await operation('createRoom', { workspaceId, name: 'Shared' })
+      await operation('createRoom', { workspaceId, name: 'shared' })
     ).json()) as { id: string };
     await operation('addRoomMember', { roomId: room.id, memberId: bobId });
     await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
@@ -1409,7 +1423,7 @@ describe('monolith integration', () => {
     await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'member' });
     await operation('addWorkspaceMember', { workspaceId, memberId: soleAgentId, role: 'member' });
     const room = (await (
-      await operation('createRoom', { workspaceId, name: 'Shared' })
+      await operation('createRoom', { workspaceId, name: 'shared' })
     ).json()) as { id: string };
     await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
     await operation('sendRoomMessage', { roomId: room.id, text: 'last words' });
@@ -1841,7 +1855,7 @@ describe('monolith integration', () => {
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     await operation('createWorkspace', { workspaceId, name: 'Tubing Crew' });
     const room = (await (
-      await operation('createRoom', { workspaceId, name: 'Planning' })
+      await operation('createRoom', { workspaceId, name: 'planning' })
     ).json()) as { id: string };
     await operation('registerPushDevice', {
       token: 'owner-explicit-add-device-token-1234567890',
@@ -3742,7 +3756,7 @@ describe('monolith integration', () => {
   it('routes a Workspace join to one attributed @system DM and no shared Room lines', async () => {
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const secondRoom = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'workshop' })
     ).json()) as { id: string };
     await operation('registerPushDevice', {
       token: 'owner-person-join-device-token-1234567890',
@@ -3857,7 +3871,7 @@ describe('monolith integration', () => {
 
   it('publishes one @system DM note and one push through agent connect', async () => {
     const secondRoom = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'workshop' })
     ).json()) as { id: string };
     await operation('registerPushDevice', {
       token: 'owner-agent-join-device-token-1234567890',
@@ -4014,7 +4028,7 @@ describe('monolith integration', () => {
 
     const plain = await request('/v1/phone/operations/createRoom', 'POST', {
       workspaceId: WORKSPACE,
-      name: 'Plain Room',
+      name: 'plain-room',
     });
     expect(plain.status).toBe(200);
     const plainId = ((await plain.json()) as { id: string }).id;
@@ -4040,7 +4054,7 @@ describe('monolith integration', () => {
 
     const bound = await request('/v1/phone/operations/createRoom', 'POST', {
       workspaceId: WORKSPACE,
-      name: 'Repository Room',
+      name: 'repository-room',
       repositoryId: 77,
     });
     expect(bound.status).toBe(200);
@@ -7688,11 +7702,11 @@ describe('monolith integration', () => {
     await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
     // A second live Room the agent sits in, plus an archived one it must not touch.
     const second = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Second' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'second' })
     ).json()) as { id: string };
     await operation('addRoomMember', { roomId: second.id, memberId: AGENT });
     const archived = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Archived' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'archived' })
     ).json()) as { id: string };
     await operation('addRoomMember', { roomId: archived.id, memberId: AGENT });
     await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived.id]);

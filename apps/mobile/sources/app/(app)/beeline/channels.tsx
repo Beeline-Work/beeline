@@ -16,6 +16,7 @@ import { navigateToRoom } from '@/buzz/corner-navigation';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
@@ -648,7 +649,7 @@ export default function BuzzChannels() {
 
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!name || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
+    if (!validRoomSlug(name) || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;

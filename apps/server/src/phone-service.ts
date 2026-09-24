@@ -9,6 +9,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { GoogleOAuth } from './google-oauth.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
+import { requireRoomSlug, reserveRoomName } from './room-names.js';
 import {
   createAgentPairingCode,
   HUMAN_CORNER_TITLE_MAX_LENGTH,
@@ -4142,8 +4143,10 @@ export class PhoneService {
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    const name = requireRoomSlug(input.name);
     const id = randomUUID();
     await this.database.transaction(async (db) => {
+      await reserveRoomName(db, input.workspaceId, name);
       const repository =
         input.repositoryId === undefined
           ? undefined
@@ -4173,7 +4176,7 @@ export class PhoneService {
           id,
           input.workspaceId,
           viewerId,
-          input.name,
+          name,
           input.visibility ?? 'public',
           repository ? `github:${repository.repository_id}` : null,
           repository?.full_name ?? null,
@@ -4301,7 +4304,10 @@ export class PhoneService {
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
+    const name = input.name === undefined ? undefined : requireRoomSlug(input.name);
     await this.database.transaction(async (database) => {
+      if (name !== undefined)
+        await reserveRoomName(database, room.workspace_id, name, input.roomId);
       const current = (
         await database.query<{
           visibility: 'public' | 'invite-only';
@@ -4328,7 +4334,7 @@ export class PhoneService {
          WHERE id=$1`,
         [
           input.roomId,
-          input.name ?? null,
+          name ?? null,
           input.visibility ?? null,
           input.reviewerAgentId !== undefined,
           input.reviewerAgentId ?? null,

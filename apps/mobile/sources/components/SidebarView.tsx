@@ -24,6 +24,8 @@ import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
+import { MineCornersToggle } from '@/components/buzz/MineCornersToggle';
+import { useMineCorners } from '@/buzz/mine-corners';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -299,6 +301,7 @@ export const SidebarView = React.memo(function SidebarView() {
   }, [client, pathname, workspaces]);
 
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
+  const [mineCorners, setMineCorners] = useMineCorners();
   const counts = React.useMemo(
     () => roomListCounts(surface?.chats ?? [], pinned),
     [surface?.chats, pinned],
@@ -588,6 +591,19 @@ export const SidebarView = React.memo(function SidebarView() {
                   <RoomListSectionHeader
                     title={section.kind === 'rooms' ? ROOMS_LABEL : 'Messages'}
                     count={section.kind === 'rooms' ? section.data.length : undefined}
+                    accessory={
+                      // One Mine switch for every Room's corner list below.
+                      section.kind === 'rooms' &&
+                      section.data.some(
+                        (item) => !item.directMessage && (item.cornerCount ?? 0) > 0,
+                      ) ? (
+                        <MineCornersToggle
+                          mine={mineCorners}
+                          onChange={setMineCorners}
+                          testID="desktop-corners-mine"
+                        />
+                      ) : undefined
+                    }
                     actionTestID={
                       section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
                     }
@@ -634,6 +650,7 @@ export const SidebarView = React.memo(function SidebarView() {
                           <DesktopRoomCorners
                             key={`${workspaceId}/${item.room.id}`}
                             item={item}
+                            mine={mineCorners}
                             onOpen={(cornerId) => {
                               selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
                               if (activeRoomId !== item.room.id) openRoom(item.room.id);

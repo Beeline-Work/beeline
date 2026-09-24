@@ -4,6 +4,8 @@ import { createRoot } from 'react-dom/client';
 import type { ChatListItem } from '@beeline/buzz-client';
 import BuzzCorners from '../sources/app/(app)/beeline/corners/[roomId]';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
+import { MineCornersToggle } from '../sources/components/buzz/MineCornersToggle';
+import { useMineCorners } from '../sources/buzz/mine-corners';
 import { MINE_CORNERS_FIXTURE, MINE_CORNERS_ROOM_ID } from './mine-corners-fixture';
 
 /**
@@ -51,16 +53,26 @@ const chat = {
   })),
 } as unknown as ChatListItem;
 
+/** The sidebar's wiring: one Mine switch that every Room corner list reads. */
+function Rail() {
+  const [mine, setMine] = useMineCorners();
+  return (
+    <div style={{ width: 360 }}>
+      <MineCornersToggle mine={mine} onChange={setMine} testID="desktop-corners-mine" />
+      <DesktopRoomCorners
+        item={chat}
+        mine={mine}
+        onOpen={() => undefined}
+        renderDrag={(_, children) => children}
+      />
+    </div>
+  );
+}
+
 async function run() {
   createRoot(document.getElementById('root')!).render(
     <div style={{ display: 'flex', height: 800 }}>
-      <div style={{ width: 360 }}>
-        <DesktopRoomCorners
-          item={chat}
-          onOpen={() => undefined}
-          renderDrag={(_, children) => children}
-        />
-      </div>
+      <Rail />
       <div style={{ flex: 1 }}>
         <BuzzCorners />
       </div>
@@ -74,7 +86,7 @@ async function run() {
     const rail = ids('desktop-corner-');
     lines.push(
       `${step}: page Mine=${checked('room-corners-mine')} [${page}] | rail Mine=${checked(
-        `desktop-room-corners-mine-${MINE_CORNERS_ROOM_ID}`,
+        'desktop-corners-mine',
       )} [${rail}] toggles=${toggles()}`,
     );
     return { page, rail };
@@ -95,6 +107,12 @@ async function run() {
     return;
   }
   assert(checked('room-corners-mine') === 'true', 'page Mine is not on by default');
+  const switches = document.querySelectorAll('[data-testid$="corners-mine"]').length;
+  const header = document.querySelector('[data-testid="room-corners-mine"]')!.parentElement!;
+  const headerText = header.textContent;
+  lines.push(`Mine switches on screen: ${switches}; page header reads "${headerText}"`);
+  assert(switches === 2, `switches: ${switches}`);
+  assert(!/\d/.test(headerText ?? ''), `page header still shows a count: ${headerText}`);
   assert(first.page === 'corner-mine,corner-waiting', `page shows: ${first.page}`);
   assert(first.rail === 'corner-mine,corner-waiting', `rail shows: ${first.rail}`);
   assert(toggles() === 0, 'rail still has a corners toggle');
@@ -109,11 +127,7 @@ async function run() {
   lines.push(`device storage beeline.corners.mine.v1=${stored}`);
   assert(stored === 'all', `stored: ${stored}`);
 
-  document
-    .querySelector<HTMLElement>(
-      `[data-testid="desktop-room-corners-mine-${MINE_CORNERS_ROOM_ID}"]`,
-    )!
-    .click();
+  document.querySelector<HTMLElement>('[data-testid="desktop-corners-mine"]')!.click();
   await pause();
   const on = read('tapped Mine on the rail');
   assert(on.page === 'corner-mine,corner-waiting', `page shows: ${on.page}`);

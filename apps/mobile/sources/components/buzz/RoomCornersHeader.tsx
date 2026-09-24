@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import Svg, { Line } from 'react-native-svg';
@@ -13,14 +13,12 @@ const SCREEN_TITLE = `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.sl
 
 export function RoomCornersHeader({
   title,
-  count,
   mine,
   onMine,
   onBack,
   onAdd,
 }: {
   title: string;
-  count: number;
   mine: boolean;
   onMine: (mine: boolean) => void;
   onBack: () => void;
@@ -45,13 +43,8 @@ export function RoomCornersHeader({
           {SCREEN_TITLE}
         </Text>
       </View>
+      {/* Mine sits where the corner count used to. */}
       <MineCornersToggle mine={mine} onChange={onMine} testID="room-corners-mine" />
-      <Text
-        accessibilityLabel={`${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`}
-        style={styles.count}
-      >
-        {count}
-      </Text>
       <TouchableOpacity
         accessibilityLabel="Create a corner"
         accessibilityRole="button"
@@ -101,16 +94,6 @@ const styles = StyleSheet.create((theme) => {
     headerCopy: { flex: 1, minWidth: 0 },
     eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    // F6: reserved so the title column ends at the same x for 9 corners and
-    // for 10, the way an index gutter is supposed to read.
-    count: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      minWidth: hull.space.lg,
-      paddingHorizontal: hull.space.sm,
-      color: hull.textMuted,
-      textAlign: 'right',
-    },
     add: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     addGlyph: { color: hull.accent },
   };

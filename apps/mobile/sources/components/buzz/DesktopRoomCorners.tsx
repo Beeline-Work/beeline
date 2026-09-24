@@ -4,77 +4,62 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
-import { MineCornersToggle } from './MineCornersToggle';
-import { useMineCorners } from '@/buzz/mine-corners';
 
 export function DesktopRoomCorners({
   item,
+  mine,
   onOpen,
   renderDrag,
 }: {
   item: ChatListItem;
+  /** The sidebar's one device-wide Mine setting. */
+  mine: boolean;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
 }) {
-  const [mine, setMine] = useMineCorners();
   // The chat list carries each Room's open corners; no per-Room corners read.
   const corners = [...(item.openCorners ?? [])].sort(
     (a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'),
   );
   const visible = mine ? corners.filter((corner) => corner.mine) : corners;
   return (
-    <View>
-      <View style={styles.header}>
-        <MineCornersToggle
-          mine={mine}
-          onChange={setMine}
-          testID={`desktop-room-corners-mine-${item.room.id}`}
-        />
-      </View>
-      <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
-        {visible.length === 0 ? (
-          <Text style={styles.notice}>
-            {corners.length ? 'No open corners of yours.' : 'No open corners.'}
-          </Text>
-        ) : (
-          visible.map((corner) => {
-            const ready = corner.state === 'waiting';
-            return (
-              <React.Fragment key={corner.id}>
-                {renderDrag(
-                  corner.id,
-                  <Pressable
-                    onPress={() => onOpen(corner.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
-                    style={styles.corner}
-                    testID={`desktop-corner-${corner.id}`}
-                  >
-                    <CornerGlyph
-                      size={CORNER_META_SIZE}
-                      testID={`desktop-corner-glyph-${corner.id}`}
-                    />
-                    <Text numberOfLines={2} style={styles.name}>
-                      {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
-                    </Text>
-                    <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
-                  </Pressable>,
-                )}
-              </React.Fragment>
-            );
-          })
-        )}
-      </View>
+    <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
+      {visible.length === 0 ? (
+        <Text style={styles.notice}>
+          {corners.length ? 'No open corners of yours.' : 'No open corners.'}
+        </Text>
+      ) : (
+        visible.map((corner) => {
+          const ready = corner.state === 'waiting';
+          return (
+            <React.Fragment key={corner.id}>
+              {renderDrag(
+                corner.id,
+                <Pressable
+                  onPress={() => onOpen(corner.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
+                  style={styles.corner}
+                  testID={`desktop-corner-${corner.id}`}
+                >
+                  <CornerGlyph
+                    size={CORNER_META_SIZE}
+                    testID={`desktop-corner-glyph-${corner.id}`}
+                  />
+                  <Text numberOfLines={2} style={styles.name}>
+                    {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
+                  </Text>
+                  <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
+                </Pressable>,
+              )}
+            </React.Fragment>
+          );
+        })
+      )}
     </View>
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: theme.buzz.space.md,
-    paddingBottom: theme.buzz.space.sm,
-  },
   list: {
     paddingLeft: theme.buzz.space.lg,
     paddingRight: theme.buzz.space.md,

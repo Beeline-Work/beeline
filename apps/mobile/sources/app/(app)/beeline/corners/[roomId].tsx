@@ -217,7 +217,6 @@ export default function BuzzCorners() {
           type weight — the same header the Members screen carries. */}
         <RoomCornersHeader
           title={title}
-          count={visibleCorners.length}
           mine={mine}
           onMine={setMine}
           onBack={() => router.back()}

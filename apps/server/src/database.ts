@@ -1,4 +1,8 @@
-import { AGENT_COMMAND_SCHEMA, reconcileConfiguredCornerReviewers, reconcileCornerMergeBlockers } from './agent-command.js';
+import {
+  AGENT_COMMAND_SCHEMA,
+  reconcileConfiguredCornerReviewers,
+  reconcileCornerMergeBlockers,
+} from './agent-command.js';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
@@ -786,7 +790,7 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
-  CHECK (lane IN ('code', 'no_code'));
+  CHECK (lane IN ('code', 'no_code', 'research'));
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
@@ -1340,7 +1344,8 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);
   const blockers = await reconcileCornerMergeBlockers(database);
-  if (blockers) console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
+  if (blockers)
+    console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
   const reviewers = await reconcileConfiguredCornerReviewers(database);
   console.log(
     `reconcileConfiguredCornerReviewers: restored ${reviewers.subscriptions} subscription(s), dispatched ${reviewers.commands} review(s)`,

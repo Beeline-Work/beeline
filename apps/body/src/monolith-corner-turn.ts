@@ -437,6 +437,8 @@ export interface MonolithCornerTurnOptions {
   openedBy?: string;
   objective: string;
   worktreePath: string;
+  /** Immutable server lane; research has a worktree but no automatic delivery or agent close. */
+  lane?: 'code' | 'no_code' | 'research';
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
   requesterHandle?: string;
   /** Present only when the parent Room is bound to a repository AND the corner is on the code lane. */
@@ -721,15 +723,19 @@ export class MonolithCornerTurnLoop {
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
     };
-    const reviewerInstruction = cornerReviewerInstruction(reviewerInput)
-      ? CORNER_REVIEWER_SESSION_INSTRUCTION
-      : undefined;
+    const reviewerInstruction =
+      this.options.lane !== 'research' && cornerReviewerInstruction(reviewerInput)
+        ? CORNER_REVIEWER_SESSION_INSTRUCTION
+        : undefined;
     this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
-    const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
+    const selfReviewerInstruction =
+      this.options.lane === 'research' ? undefined : cornerSelfReviewerInstruction(reviewerInput);
     this.cornerTurnEndNudge =
       reviewerInstruction ??
       selfReviewerInstruction ??
-      cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle);
+      (this.options.lane === 'research'
+        ? 'Research hold: keep this corner open. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge; a human closes this corner.'
+        : cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle));
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
       configuration.model || configuration.effort
@@ -922,7 +928,7 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
-        agentMayCloseCorner: Boolean(repository),
+        agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
         reviewer: Boolean(reviewerInstruction),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
@@ -981,19 +987,37 @@ export class MonolithCornerTurnLoop {
         ...(repository
           ? [
               `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
-              `Commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Before pushing, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the objective if needed, then rerun affected tests. Open the pull request with gh.`,
-              ...(reviewerInstruction
-                ? [reviewerInstruction]
+              ...(this.options.lane === 'research'
+                ? [
+                    'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.',
+                  ]
+                : []),
+              ...(this.options.lane === 'research'
+                ? []
                 : [
-                    configuration.reviewerHandle
-                      ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
-                      : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
-                    CORNER_AUTHOR_CONTRACT,
-                    selfReviewerInstruction ??
-                      cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
+                    `Commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Before pushing, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the objective if needed, then rerun affected tests. Open the pull request with gh.`,
                   ]),
-              'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+              ...(this.options.lane === 'research'
+                ? []
+                : reviewerInstruction
+                  ? [reviewerInstruction]
+                  : [
+                      configuration.reviewerHandle
+                        ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
+                        : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
+                      CORNER_AUTHOR_CONTRACT,
+                      selfReviewerInstruction ??
+                        cornerMergeInstruction(
+                          configuration.yoloMode,
+                          configuration.reviewerHandle,
+                        ),
+                    ]),
+              ...(this.options.lane === 'research'
+                ? []
+                : [
+                    'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
+                    'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+                  ]),
             ]
           : [
               'This is a no-code corner with no repository checkout and no GitHub workflow.',
@@ -1482,7 +1506,7 @@ export class MonolithCornerTurnLoop {
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
               const deliveryState =
-                !checksTurn && this.options.repository
+                !checksTurn && this.options.repository && this.options.lane !== 'research'
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -1504,7 +1528,9 @@ export class MonolithCornerTurnLoop {
               if (
                 !explained &&
                 (needsDeliveryNudge ||
-                  (checksTurn && (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
+                  (checksTurn &&
+                    this.options.lane !== 'research' &&
+                    (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 // The flush comes first: it is what puts this run's narration
@@ -1590,9 +1616,9 @@ export class MonolithCornerTurnLoop {
               // has no offset for that earlier ledger row.
               const repeatedNarration = Boolean(
                 durableReply &&
-                  conversation.savedNarration?.some(
-                    (saved) => spoken(durableReplyText(saved)) === durableReply,
-                  ),
+                conversation.savedNarration?.some(
+                  (saved) => spoken(durableReplyText(saved)) === durableReply,
+                ),
               );
               deliberateNoReply = repeatedNarration || isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>

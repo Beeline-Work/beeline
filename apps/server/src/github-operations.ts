@@ -15,6 +15,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
@@ -1206,6 +1207,9 @@ export class GitHubOperations {
               ...(targetBranch ? { targetBranch } : {}),
               ...(headSha ? { headSha } : {}),
               ...(text(pullRequest?.merged_at) ? { mergedAt: text(pullRequest?.merged_at)! } : {}),
+              ...(text(pullRequest?.merge_commit_sha)
+                ? { mergeCommitSha: text(pullRequest?.merge_commit_sha)! }
+                : {}),
               ...(text(record(pullRequest?.merged_by)?.login)
                 ? { mergedBy: text(record(pullRequest?.merged_by)?.login)! }
                 : {}),
@@ -1416,6 +1420,7 @@ export class GitHubOperations {
       targetBranch?: string;
       headSha?: string;
       mergedAt?: string;
+      mergeCommitSha?: string;
       mergedBy?: string;
       commits: number;
       files: number;
@@ -1458,6 +1463,9 @@ export class GitHubOperations {
                   pr: {
                     ...mergedPr,
                     mergedAt: pullRequest.mergedAt ?? new Date().toISOString(),
+                    ...(pullRequest.mergeCommitSha
+                      ? { mergeCommitSha: pullRequest.mergeCommitSha }
+                      : {}),
                     ...(pullRequest.mergedBy ? { mergedBy: pullRequest.mergedBy } : {}),
                   },
                 }
@@ -1505,6 +1513,12 @@ export class GitHubOperations {
           },
         },
       });
+      await reportUnansweredCornerAsks(
+        database,
+        target.corner_id,
+        target.parent_id,
+        target.corner_name,
+      );
     });
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);

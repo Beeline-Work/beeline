@@ -111,6 +111,16 @@ export type DaemonOperationMap = {
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
+  getCornerAsk: Operation<
+    RoomInput & { readonly askId: string },
+    {
+      readonly askId: string;
+      readonly cornerId: string;
+      readonly question: string;
+      readonly status: 'pending' | 'answered' | 'unanswered';
+      readonly answer?: string;
+    }
+  >;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
@@ -338,6 +348,8 @@ export type RoomInboxResult = {
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
+    /** Present on a corner answer or unanswered-close report. */
+    readonly cornerAskId?: string;
     readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */
@@ -411,6 +423,9 @@ export type CornerListResult = {
     readonly objective?: string;
     readonly createdBy: string;
     readonly archived: boolean;
+    readonly closedAt?: number;
+    readonly pullRequestNumber?: number;
+    readonly mergeCommitSha?: string;
   }[];
 };
 export type CornerRestoreResult = {
@@ -647,11 +662,12 @@ export type CreateCornerInput = TurnOutputAuthority &
      * `no_code` skips the worktree, the commit, the pull request and the merge:
      * the work comes back as artifacts and a reply tagging the requester. A
      * corner with no repository is `no_code` whatever this says.
+     * `research` keeps a writable worktree under a durable delivery and merge hold.
      */
     readonly lane?: CornerLane;
   };
 export type CornerResult = { readonly cornerId: string };
-export type CornerLane = 'code' | 'no_code';
+export type CornerLane = 'code' | 'no_code' | 'research';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

@@ -25,7 +25,8 @@ beforeEach(() => {
   reviewerExists = true;
   reviewerIsAuthor = false;
   yoloMode = true;
-  gateRule = "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
+  gateRule =
+    "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
   reviewerWake = {
     status: 'dispatched',
     detail: 'The checks-passed transition woke @reviewer.',
@@ -70,6 +71,17 @@ afterEach(() => {
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
+  it('keeps a research hold even after a human says to proceed and a reviewer passes', async () => {
+    restore.lane = 'research';
+    items = [{ authorId: 'human', body: 'proceed and merge now' }];
+    const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(status).toMatchObject({
+      held: true,
+      mergeAllowed: false,
+      approvalPending: true,
+    });
+    expect(status.rule).toContain('durable hold');
+  });
   it.each([614, url])(
     'asks the server about an explicit reviewer target %s',
     async (pullRequest) => {

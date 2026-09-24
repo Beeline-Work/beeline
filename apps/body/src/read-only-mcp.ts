@@ -218,11 +218,12 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
   {
     name: 'git_log',
     description:
-      'Read bounded local commit history, optionally scoped to one repository path. It cannot contact remotes or change git state.',
+      'Read bounded local commit history, optionally from a fetched origin/branch and scoped to one repository path. It cannot contact remotes or change git state.',
     inputSchema: {
       type: 'object',
       properties: {
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        revision: { type: 'string', description: 'HEAD or a fetched origin/branch; defaults to HEAD.' },
         path: { type: 'string', description: 'Optional repository-relative path.' },
       },
       additionalProperties: false,
@@ -237,7 +238,7 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       properties: {
         revision: {
           type: 'string',
-          description: 'HEAD, HEAD~N, a commit hash, or refs/heads|tags/...; defaults to HEAD.',
+          description: 'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
         },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
@@ -251,8 +252,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'Restricted local revision; defaults to HEAD~1.' },
-        to: { type: 'string', description: 'Restricted local revision; defaults to HEAD.' },
+        from: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.' },
+        to: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD.' },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
       additionalProperties: false,
@@ -380,7 +381,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'ask_corner',
     description:
-      'Ask the corner opener one question. Its one answer is linked to the corner card in this Room and muted for notifications.',
+      'Ask the corner opener one question. The returned id is the askId for get_corner_ask. The answer wakes your next Room turn and is linked to the corner card.',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'text'],
@@ -388,6 +389,17 @@ const AGENT_TOOLS: ToolDefinition[] = [
         cornerId: { type: 'string' },
         text: { type: 'string', minLength: 1, maxLength: 16000 },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_corner_ask',
+    description:
+      'Retrieve your corner question by the askId returned by ask_corner, including its answer or unanswered close status.',
+    inputSchema: {
+      type: 'object',
+      required: ['askId'],
+      properties: { askId: { type: 'string' } },
       additionalProperties: false,
     },
   },
@@ -529,7 +541,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" in a repository Room when the objective produces no code change. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" for artifact work without a checkout, or lane="research" for writable repository investigation held open without automatic commit, pull request, merge, or agent closure. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -548,9 +560,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         lane: {
           type: 'string',
-          enum: ['code', 'no_code'],
+          enum: ['code', 'no_code', 'research'],
           description:
-            'Defaults to "code". Use "no_code" for an objective that produces no code change: the corner skips the worktree, the commit, the pull request and the merge, and delivers artifacts plus a reply tagging you.',
+            'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
         },
       },
       additionalProperties: false,
@@ -959,7 +971,7 @@ export function agentToolsFor(
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
-    if (['steer_corner', 'ask_corner', 'inspect_corner'].includes(tool.name))
+    if (['steer_corner', 'ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
     // A connector is offered where a person is answering — a Room or a DM —
@@ -1320,7 +1332,7 @@ function searchText(args: JsonObject): string {
 function revisionArg(args: JsonObject, name: string, fallback: string): string {
   const revision = stringArg(args, name, fallback)!;
   const valid =
-    /^(?:HEAD(?:~[0-9]{1,4})?|[0-9a-fA-F]{4,64}|refs\/(?:heads|tags)\/[A-Za-z0-9][A-Za-z0-9._/-]{0,240})$/.test(
+    /^(?:HEAD(?:~[0-9]{1,4})?|[0-9a-fA-F]{4,64}|(?:refs\/(?:heads|tags)\/|(?:refs\/remotes\/)?origin\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,240})$/.test(
       revision,
     ) && !revision.includes('..');
   if (!valid) throw new Error(`${name} is not an allowed local revision`);
@@ -1381,6 +1393,7 @@ function runGit(args: string[]): string {
 
 function gitLog(args: JsonObject): string {
   const limit = integerArg(args, 'limit', 20, 1, 100);
+  const revision = revisionArg(args, 'revision', 'HEAD');
   const path = optionalPath(args);
   return runGit([
     'log',
@@ -1388,6 +1401,7 @@ function gitLog(args: JsonObject): string {
     `--max-count=${limit}`,
     '--date=iso-strict',
     '--format=%H%x09%ad%x09%an%x09%s',
+    revision,
     ...(path ? ['--', path] : []),
   ]);
 }
@@ -1526,17 +1540,16 @@ async function relayMessage(direction: 'down', args: JsonObject, reply = false):
   const context = await activeCommandContext();
   const toRoomId = args.cornerId;
   if (typeof toRoomId !== 'string' || !toRoomId) throw new Error('cornerId is required');
-  return JSON.stringify(
-    await daemonExecute('postRoomMessage', {
-      text: args.text,
-      relay: {
-        fromRoomId: context.roomId,
-        toRoomId,
-        direction,
-        ...(reply ? { reply: 'once' } : {}),
-      },
-    }),
-  );
+  const sent = await daemonExecute('postRoomMessage', {
+    text: args.text,
+    relay: {
+      fromRoomId: context.roomId,
+      toRoomId,
+      direction,
+      ...(reply ? { reply: 'once' } : {}),
+    },
+  });
+  return JSON.stringify(reply ? { ...sent, askId: sent.id } : sent);
 }
 
 async function openCorner(args: JsonObject, toolCallId: string): Promise<string> {
@@ -1544,10 +1557,20 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is available only in a top-level Room');
   }
   const { name, objective } = cornerCallText(args);
-  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
-    throw new Error('lane must be "code" or "no_code"');
+  if (
+    args.lane !== undefined &&
+    args.lane !== 'code' &&
+    args.lane !== 'no_code' &&
+    args.lane !== 'research'
+  ) {
+    throw new Error('lane must be "code", "no_code", or "research"');
   }
-  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
+  const lane =
+    args.lane === 'no_code'
+      ? ('no_code' as const)
+      : args.lane === 'research'
+        ? ('research' as const)
+        : ('code' as const);
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {
@@ -1601,7 +1624,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   if (process.env.BEELINE_CORNER_AGENT_CLOSE !== '1') {
-    throw new Error('no-code corners stay open until a human closes them');
+    throw new Error('this corner stays open until a human closes it');
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
@@ -1659,7 +1682,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       : [],
   );
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
-  let held = false;
+  let held = restore.lane === 'research';
   let pullRequest: unknown = args.pullRequest ?? lifecycle?.pr?.url;
   // An objective URL is a target hint only, never a check verdict.
   if (pullRequest === undefined && typeof restore.objective === 'string')
@@ -1675,7 +1698,11 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     if (url && args.pullRequest === undefined && !lifecycle?.pr?.url) pullRequest = url;
     if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
       if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
-      if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
+      if (
+        restore.lane !== 'research' &&
+        /\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)
+      )
+        held = false;
     }
   }
   const verdict =
@@ -1722,7 +1749,9 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     reviewerExists,
   });
   const mergeConditionsRule =
-    "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+    restore.lane === 'research'
+      ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
+      : "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
   return JSON.stringify({
     checks,
     reason,
@@ -1741,7 +1770,10 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next:
+            restore.lane === 'research'
+              ? 'Keep investigating in the writable worktree. Do not commit, push, or open a pull request until a human explicitly directs it.'
+              : 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
     rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),
@@ -2774,6 +2806,17 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return relayMessage('down', args);
     case 'ask_corner':
       return relayMessage('down', args, true);
+    case 'get_corner_ask': {
+      if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
+        throw new Error('get_corner_ask requires a Room turn');
+      if (typeof args.askId !== 'string' || !args.askId) throw new Error('askId is required');
+      return JSON.stringify(
+        await daemonExecute('getCornerAsk', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          askId: args.askId,
+        }),
+      );
+    }
     case 'inspect_corner': {
       if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
         throw new Error('inspect_corner requires a Room turn');

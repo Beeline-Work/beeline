@@ -28,20 +28,18 @@ describe('chat corner counts', () => {
       'review',
     ]);
   });
-  it('carries who commissioned each open corner and whether it awaits the viewer', () => {
+  it('marks corners the viewer commissioned or that await them', () => {
     const result = chatCornerCounts([
-      { ...row({ reason: 'question' }), initiator_id: 'human', latest_tags_viewer: true },
+      { ...row(), commissioned_by_viewer: true },
+      { ...row({ reason: 'question' }), latest_tags_viewer: true },
       { ...row({}, 'working'), latest_tags_viewer: true },
+      row({ reason: 'question' }),
     ]);
-    expect(result.get('room')?.openCorners).toEqual([
-      {
-        id: 'corner',
-        name: 'Corner',
-        state: 'waiting',
-        initiator: { pubkey: 'human' },
-        awaitsViewer: true,
-      },
-      { id: 'corner', name: 'Corner', state: 'working' },
+    expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([
+      true,
+      true,
+      undefined,
+      undefined,
     ]);
   });
   it('excludes terminal lifecycle even before archived_at is projected', () => {

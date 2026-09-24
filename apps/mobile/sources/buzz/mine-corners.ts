@@ -13,18 +13,14 @@ const MINE_CORNERS_KEY = 'beeline.corners.mine.v1';
 let current: boolean | null = null;
 const listeners = new Set<(mine: boolean) => void>();
 
-/** A Corners page row or a chat-list open corner: both carry who commissioned
- * it and whether it awaits the viewer. */
-type MineCandidate = {
-  readonly initiator?: { readonly pubkey: string };
-  readonly awaitsViewer?: CornerListItem['awaitsViewer'];
-};
-
-function isMineCorner(item: MineCandidate, viewerPubkey: string | null | undefined): boolean {
+function isMineCorner(
+  item: Pick<CornerListItem, 'initiator' | 'awaitsViewer'>,
+  viewerPubkey: string | null | undefined,
+): boolean {
   return item.awaitsViewer === true || (!!viewerPubkey && item.initiator?.pubkey === viewerPubkey);
 }
 
-export function mineCorners<T extends MineCandidate>(
+export function mineCorners<T extends Pick<CornerListItem, 'initiator' | 'awaitsViewer'>>(
   corners: readonly T[],
   viewerPubkey: string | null | undefined,
   mine: boolean,

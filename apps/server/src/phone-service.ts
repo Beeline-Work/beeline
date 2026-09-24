@@ -1171,18 +1171,16 @@ export class PhoneService {
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
           latest_turn_status: string | null;
-          initiator_id: string | null;
+          commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
-           initiator.id initiator_id,$2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
+           initiator.id=$2 commissioned_by_viewer,
+           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN identities initiator
            ON initiator.id=f.commissioned_by AND initiator.kind='human'
-         LEFT JOIN LATERAL (
-           SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system')
-           ORDER BY created_at DESC,id DESC LIMIT 1
-         ) lm ON true
+         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1

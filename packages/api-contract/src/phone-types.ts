@@ -532,11 +532,9 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
-  /** Human who commissioned the corner, so the deck can apply the Mine filter. */
-  readonly initiator?: { readonly pubkey: string };
-  /** Present when the corner is waiting or in review and its latest message
-   * tags the viewer. */
-  readonly awaitsViewer?: true;
+  /** Present when the viewer commissioned this corner or it awaits them, the
+   * same rule as the corners page's "Mine" filter. */
+  readonly mine?: true;
 };
 
 export type ChatListItem = {

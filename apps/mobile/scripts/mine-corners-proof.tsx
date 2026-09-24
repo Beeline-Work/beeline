@@ -40,14 +40,14 @@ const chat = {
   },
   cornerCount: 4,
   waitingCornerCount: 2,
-  // The chat list's open corners carry the same commissioned-by and
-  // awaits-viewer facts as the Corners page rows.
+  // The rail reads the chat list, where the server marks the viewer's corners.
   openCorners: MINE_CORNERS_FIXTURE.corners.map((item) => ({
     id: item.corner.id,
     name: item.corner.name,
     state: item.state,
-    ...(item.initiator ? { initiator: { pubkey: item.initiator.pubkey } } : {}),
-    ...(item.awaitsViewer ? { awaitsViewer: true } : {}),
+    ...(item.awaitsViewer || item.initiator?.pubkey === MINE_CORNERS_FIXTURE.viewer.identity.pubkey
+      ? { mine: true }
+      : {}),
   })),
 } as unknown as ChatListItem;
 
@@ -57,7 +57,6 @@ async function run() {
       <div style={{ width: 360 }}>
         <DesktopRoomCorners
           item={chat}
-          viewerPubkey={MINE_CORNERS_FIXTURE.viewer.identity.pubkey}
           onOpen={() => undefined}
           renderDrag={(_, children) => children}
         />

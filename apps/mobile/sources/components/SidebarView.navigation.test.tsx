@@ -29,18 +29,8 @@ const chats = vi.hoisted(() =>
               room: { id: 'room-a', workspaceId, name: 'Alpha' },
               cornerCount: 2,
               openCorners: [
-                {
-                  id: 'corner-a',
-                  name: 'Fix fixture',
-                  state: openCornerState.current,
-                  initiator: { pubkey: 'viewer' },
-                },
-                {
-                  id: 'corner-b',
-                  name: 'Someone else',
-                  state: 'working',
-                  initiator: { pubkey: 'someone' },
-                },
+                { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current, mine: true },
+                { id: 'corner-b', name: 'Someone else', state: 'working' },
               ],
             },
             {

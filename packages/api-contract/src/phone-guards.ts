@@ -1079,16 +1079,11 @@ function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
   const state = oneOf(item?.state, ['working', 'waiting', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
-  const initiator = record(item.initiator);
   return {
     id: item.id,
     name: item.name,
     state,
-    ...field(
-      'initiator',
-      typeof initiator?.pubkey === 'string' ? { pubkey: initiator.pubkey } : undefined,
-    ),
-    ...field('awaitsViewer', item.awaitsViewer === true ? (true as const) : undefined),
+    ...field('mine', item.mine === true ? (true as const) : undefined),
   };
 }
 

@@ -66,8 +66,8 @@ function flat(style: unknown): Record<string, unknown> {
 /** A stateful host: the screen behind the sheet, holding the face like Settings does. */
 type SaveFace = React.ComponentProps<typeof FacePickerSheet>['onSave'];
 
-function Host({ onSave }: { onSave: SaveFace }) {
-  const [face, setFace] = React.useState<string | null>('fox');
+function Host({ onSave, initialFace = 'fox' }: { onSave: SaveFace; initialFace?: string | null }) {
+  const [face, setFace] = React.useState<string | null>(initialFace);
   return React.createElement(
     React.Fragment,
     null,
@@ -83,10 +83,10 @@ function Host({ onSave }: { onSave: SaveFace }) {
   );
 }
 
-async function render(onSave: SaveFace) {
+async function render(onSave: SaveFace, initialFace: string | null = 'fox') {
   let tree!: ReactTestRenderer;
   await act(async () => {
-    tree = create(React.createElement(Host, { onSave }));
+    tree = create(React.createElement(Host, { onSave, initialFace }));
   });
   return tree;
 }
@@ -97,6 +97,25 @@ async function press(node: any) {
 }
 
 describe('FacePickerSheet', () => {
+  it('can save a face when none is on record', async () => {
+    const onSave = vi.fn(async () => undefined);
+    const tree = await render(onSave, null);
+    expect(flat(host(tree, 'face-picker-whale').props.style).borderColor).toBe(theme.faint);
+    await press(host(tree, 'face-picker-whale'));
+    expect(onSave).toHaveBeenCalledWith('whale');
+    expect(host(tree, 'host-face').props.children).toBe('whale');
+  });
+
+  it('returns to no face when the first save fails', async () => {
+    const onSave = vi.fn(async () => {
+      throw new Error('save failed');
+    });
+    const tree = await render(onSave, null);
+    await press(host(tree, 'face-picker-whale'));
+    expect(host(tree, 'host-face').props.children).toBeNull();
+    expect(flat(host(tree, 'face-picker-whale').props.style).borderColor).toBe(theme.faint);
+  });
+
   it('saves a tapped face immediately and keeps the optimistic choice on success', async () => {
     const onSave = vi.fn(async () => undefined);
     const tree = await render(onSave);

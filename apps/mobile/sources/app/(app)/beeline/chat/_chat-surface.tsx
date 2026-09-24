@@ -213,10 +213,10 @@ import {
 import {
   availableSlashVerbs,
   availableCornerAppCommands,
+  availableAgentMentionCommands,
   slashVerbQuery,
   agentMentionSlashQuery,
   insertAgentSlashCommand,
-  matchesAgentCommand,
   type BuiltInSlashVerbId,
 } from '@/buzz/slash-verbs';
 import {
@@ -1718,9 +1718,7 @@ export function BuzzChatSurface({
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
     const published = agentCommandsByScope[mentionAgentCommandScope];
-    return (published ?? []).filter((command) =>
-      matchesAgentCommand(command, mentionSlash.query),
-    );
+    return availableAgentMentionCommands(published ?? [], mentionSlash.query);
   }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
@@ -4997,13 +4995,6 @@ export function BuzzChatSurface({
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({
-          pathname: '/beeline/settings/workspace',
-          params: { communityId },
-        } as unknown as Href)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >

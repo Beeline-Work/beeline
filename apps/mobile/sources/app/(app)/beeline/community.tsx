@@ -53,12 +53,6 @@ export default function BuzzCommunityCreateOrJoin() {
   );
   const viewerAvatarUrl = workspaceList?.viewer.avatar;
   const viewerFace = workspaceList?.viewer.face;
-  const canManageWorkspace =
-    workspaceList?.workspaces.some(
-      (workspace) =>
-        workspace.id === activeCommunityId &&
-        (workspace.role === 'owner' || workspace.role === 'admin'),
-    ) ?? false;
 
   useEffect(() => {
     let cancelled = false;
@@ -182,13 +176,6 @@ export default function BuzzCommunityCreateOrJoin() {
       onSelect={selectCommunity}
       onAdd={() => undefined}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({
-          pathname: '/beeline/settings/workspace',
-          params: { communityId },
-        } as unknown as Href)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
       viewerFace={viewerFace}

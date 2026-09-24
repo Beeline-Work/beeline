@@ -6,6 +6,7 @@ import {
   slashVerbQuery,
   agentMentionSlashQuery,
   insertAgentSlashCommand,
+  availableAgentMentionCommands,
   matchesAgentCommand,
   type SlashVerbAvailability,
 } from './slash-verbs';
@@ -129,6 +130,22 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
 });
 
 describe('agent-mention slash palette query', () => {
+  it('offers Beeline restart without a harness catalog and preserves the mention on selection', () => {
+    expect(availableAgentMentionCommands([], '')).toEqual([
+      { name: 'restart', description: 'Restart this agent' },
+    ]);
+    expect(availableAgentMentionCommands([], 'res')).toHaveLength(1);
+    expect(availableAgentMentionCommands([], 'loop')).toEqual([]);
+    expect(insertAgentSlashCommand('@bee /res', 'restart')).toBe('@bee /restart ');
+  });
+
+  it('does not duplicate restart if a harness advertises one', () => {
+    expect(availableAgentMentionCommands([
+      { name: 'restart', description: 'Harness restart' },
+      { name: 'loop', description: 'Run repeatedly' },
+    ], '').map((command) => command.name)).toEqual(['restart', 'loop']);
+  });
+
   it('detects a slash token typed right after a completed @mention', () => {
     expect(agentMentionSlashQuery('@lena /lo')).toEqual({ mention: 'lena', query: 'lo' });
     expect(agentMentionSlashQuery('@lena /')).toEqual({ mention: 'lena', query: '' });

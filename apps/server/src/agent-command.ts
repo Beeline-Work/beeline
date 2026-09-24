@@ -251,9 +251,9 @@ export function parseTaggedAgentLifecycleCommand(
   handle: string | null,
 ): TaggedAgentLifecycleCommand | undefined {
   if (!handle) return undefined;
-  const match = text.trim().match(/^@([^\s]+)\s+(restart|status|stop|retry|debug|help)$/i);
+  const match = text.trim().match(/^@([^\s]+)\s+(?:\/(restart)|(restart|status|stop|retry|debug|help))$/i);
   if (!match || match[1]!.toLocaleLowerCase() !== handle.toLocaleLowerCase()) return undefined;
-  return match[2]!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
+  return (match[2] ?? match[3])!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
 }
 
 type LifecycleTarget = {
@@ -285,7 +285,7 @@ async function routeTaggedLifecycleCommand(
 ): Promise<boolean> {
   if (
     source.tagged_ids.length !== 1 ||
-    !/^@[^\s]+\s+(?:restart|status|stop|retry|debug|help)$/i.test(source.text.trim())
+    !/^@[^\s]+\s+(?:\/(?:restart)|restart|status|stop|retry|debug|help)$/i.test(source.text.trim())
   )
     return false;
   const target = (

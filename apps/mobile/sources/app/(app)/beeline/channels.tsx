@@ -796,10 +796,6 @@ export default function BuzzChannels() {
       onSelect={selectWorkspace}
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={chatList.viewer.avatar}
       viewerFace={chatList.viewer.face}

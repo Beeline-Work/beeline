@@ -51,10 +51,8 @@ type CommunityRailProps = {
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
   onSettings: () => void;
-  onWorkspaceSettings?: (communityId: string) => void;
   /** Long-press a Workspace tile to arm its exit affordance; confirm from there. */
   onLeaveWorkspace?: (communityId: string) => void;
-  canManageActiveCommunity?: boolean;
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
   viewerFace?: string;
@@ -170,9 +168,7 @@ export function CommunityRail({
   onSelect,
   onAdd,
   onSettings,
-  onWorkspaceSettings,
   onLeaveWorkspace,
-  canManageActiveCommunity = false,
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
@@ -408,9 +404,7 @@ export function BuzzCommunityShell({
   onSelect,
   onAdd,
   onSettings,
-  onWorkspaceSettings,
   onLeaveWorkspace,
-  canManageActiveCommunity,
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
@@ -472,14 +466,6 @@ export function BuzzCommunityShell({
     onSettings();
   }, [closeDrawer, onSettings]);
 
-  const workspaceSettingsAndClose = useCallback(
-    (communityId: string) => {
-      closeDrawer();
-      onWorkspaceSettings?.(communityId);
-    },
-    [closeDrawer, onWorkspaceSettings],
-  );
-
   const drawerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: drawerX.value }],
   }));
@@ -507,9 +493,7 @@ export function BuzzCommunityShell({
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
                 onSettings={settingsAndClose}
-                onWorkspaceSettings={workspaceSettingsAndClose}
                 onLeaveWorkspace={onLeaveWorkspace}
-                canManageActiveCommunity={canManageActiveCommunity}
                 viewerPubkey={viewerPubkey}
                 viewerAvatarUrl={viewerAvatarUrl}
                 viewerFace={viewerFace}

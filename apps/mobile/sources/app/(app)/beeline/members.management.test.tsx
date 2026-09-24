@@ -419,12 +419,15 @@ async function press(renderer: ReactTestRenderer, testID: string): Promise<void>
   });
 }
 
-async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
+async function openAgentProfile(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => {
     renderer.update(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
   });
-  const tabs = renderer.root.findAllByProps({ testID: 'agent-tab-manage' });
-  if (tabs.length) await press(renderer, 'agent-tab-manage');
+}
+
+async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
+  await openAgentProfile(renderer);
+  await press(renderer, 'agent-tab-manage');
 }
 
 beforeEach(() => {
@@ -974,7 +977,7 @@ describe('Members workspace management', () => {
       access: { policy: 'everyone', canChange: false, owner: { id: OWNER, name: 'Captain' } },
     };
     const renderer = await render();
-    await openAgentManagement(renderer);
+    await openAgentProfile(renderer);
     expect(renderer.root.findAllByProps({ testID: 'agent-tab-manage' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.soul.instructions,
@@ -987,7 +990,7 @@ describe('Members workspace management', () => {
   it('retries a failed profile read without collapsing the profile', async () => {
     roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
     const renderer = await render();
-    await openAgentManagement(renderer);
+    await openAgentProfile(renderer);
     const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
     await act(async () => retry.props.onPress());
     expect(roomView.agent).toHaveBeenCalledTimes(2);

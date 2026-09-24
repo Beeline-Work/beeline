@@ -1374,10 +1374,6 @@ export default function BuzzMembers({
       }
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
-      }
-      canManageActiveCommunity={canManage}
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
       viewerFace={surface.viewer.identity.face}
@@ -1517,13 +1513,11 @@ export default function BuzzMembers({
               </TouchableOpacity>
             </View>
             {agents.map((member) => {
-              const agentDetail = true;
-
               return (
                 <View key={member.identity.pubkey}>
                   <MemberRosterRow
                     avatarUrl={member.identity.avatar}
-                    disabled={!agentDetail || busy}
+                    disabled={busy}
                     divider="bottom"
                     face={member.identity.face}
                     handle={member.identity.handle}
@@ -1540,13 +1534,11 @@ export default function BuzzMembers({
                     pubkey={member.identity.pubkey}
                     testID={`agent-${member.identity.pubkey}-identity`}
                     trailing={
-                      agentDetail ? (
-                        <ChevronGlyph
-                          color={styles.chevron.color}
-                          direction="right"
-                          size={CHEVRON_ROW_SIZE}
-                        />
-                      ) : undefined
+                      <ChevronGlyph
+                        color={styles.chevron.color}
+                        direction="right"
+                        size={CHEVRON_ROW_SIZE}
+                      />
                     }
                   />
                 </View>

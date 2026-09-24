@@ -105,7 +105,6 @@ function renderShell(
   onAdd = vi.fn(),
   onSettings = vi.fn(),
   viewer?: { pubkey: string; avatarUrl?: string },
-  workspaceSettings?: { canManage: boolean; onOpen: (communityId: string) => void },
 ): ReactTestRenderer {
   const community = {
     communityId: 'community-1',
@@ -123,8 +122,6 @@ function renderShell(
           onSelect,
           onAdd,
           onSettings,
-          canManageActiveCommunity: workspaceSettings?.canManage,
-          onWorkspaceSettings: workspaceSettings?.onOpen,
           viewerPubkey: viewer?.pubkey,
           viewerAvatarUrl: viewer?.avatarUrl,
         },
@@ -250,19 +247,14 @@ describe('Workspace drawer', () => {
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
-  it('keeps Workspace settings in the header menu, including for managers', () => {
-    for (const canManage of [false, true]) {
-      const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
-        canManage,
-        onOpen: vi.fn(),
-      });
-      act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
-      expect(
-        renderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
-      ).toHaveLength(0);
-      expect(renderer.root.findByProps({ testID: 'community-rail-add' })).toBeDefined();
-      expect(renderer.root.findByProps({ testID: 'community-rail-settings' })).toBeDefined();
-    }
+  it('keeps Workspace settings out of the drawer', () => {
+    const renderer = renderShell();
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+    expect(
+      renderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
+    ).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'community-rail-add' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'community-rail-settings' })).toBeDefined();
   });
 
   it('closes after selecting or adding a Workspace', () => {

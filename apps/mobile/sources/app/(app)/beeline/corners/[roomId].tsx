@@ -193,10 +193,6 @@ export default function BuzzCorners() {
       }
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
-      }
-      canManageActiveCommunity={surface.viewer.permissions.manage}
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
       viewerFace={surface.viewer.identity.face}

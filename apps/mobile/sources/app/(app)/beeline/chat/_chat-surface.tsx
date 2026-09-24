@@ -4995,13 +4995,6 @@ export function BuzzChatSurface({
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/beeline/community' as Href)}
       onSettings={() => router.push('/beeline/settings' as Href)}
-      onWorkspaceSettings={(communityId) =>
-        router.push({
-          pathname: '/beeline/settings/workspace',
-          params: { communityId },
-        } as unknown as Href)
-      }
-      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >

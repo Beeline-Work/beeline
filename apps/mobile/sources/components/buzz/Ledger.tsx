@@ -326,8 +326,9 @@ function Byline({ byline }: { byline: LedgerByline }) {
   const Container = byline.onOpenProfile ? Pressable : View;
   return (
     <Container
-      style={[styles.byline, byline.onOpenProfile && { minHeight: 44 }]}
+      style={styles.byline}
       onPress={byline.onOpenProfile}
+      hitSlop={byline.onOpenProfile ? { top: 9, bottom: 9 } : undefined}
       accessibilityRole={byline.onOpenProfile ? 'button' : undefined}
       accessibilityLabel={
         byline.onOpenProfile ? `Open ${byline.name ?? 'agent'} profile` : undefined

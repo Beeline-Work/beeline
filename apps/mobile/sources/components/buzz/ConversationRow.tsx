@@ -15,6 +15,7 @@ export function ConversationRow({
   onPin,
   pinned = false,
   selected = false,
+  desktop = false,
   testID,
 }: {
   item: ChatListItem;
@@ -24,6 +25,7 @@ export function ConversationRow({
   onPin: () => void;
   pinned?: boolean;
   selected?: boolean;
+  desktop?: boolean;
   testID: string;
 }) {
   const name = roomRowName(item);
@@ -47,6 +49,8 @@ export function ConversationRow({
         }}
         style={({ pressed }) => [
           styles.row,
+          desktop && styles.desktopRow,
+          desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
           selected && styles.selected,
           pressed && styles.pressed,
         ]}
@@ -74,16 +78,32 @@ export function ConversationRow({
           </Text>
           {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
         </View>
-        {!peer && preview.text !== NO_ACTIVITY_PREVIEW && preview.attribution !== 'none' && (
-          <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
-            {preview.attribution === 'self'
-              ? 'you'
-              : preview.attribution === 'other'
-                ? preview.handle
-                : ''}
-          </Text>
-        )}
-        <Text numberOfLines={2} style={styles.preview} testID={`${testID}-preview`}>
+        {!desktop &&
+          !peer &&
+          preview.text !== NO_ACTIVITY_PREVIEW &&
+          preview.attribution !== 'none' && (
+            <Text style={[styles.author, preview.attribution === 'self' && styles.quiet]}>
+              {preview.attribution === 'self'
+                ? 'you'
+                : preview.attribution === 'other'
+                  ? preview.handle
+                  : ''}
+            </Text>
+          )}
+        <Text
+          numberOfLines={2}
+          style={[styles.preview, desktop && styles.desktopPreview]}
+          testID={`${testID}-preview`}
+        >
+          {desktop &&
+            !peer &&
+            preview.attribution !== 'none' &&
+            preview.text !== NO_ACTIVITY_PREVIEW && (
+              <Text style={preview.attribution === 'self' ? styles.quiet : styles.desktopAuthor}>
+                {preview.attribution === 'self' ? 'you' : preview.handle}
+                <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
+              </Text>
+            )}
           {preview.text}
         </Text>
       </Pressable>
@@ -103,19 +123,28 @@ export function ConversationRow({
 const styles = StyleSheet.create((theme) => ({
   row: {
     paddingHorizontal: theme.buzz.space.md,
-    paddingTop: theme.buzz.space.md,
+    paddingTop: theme.buzz.space.lg,
     paddingBottom: theme.buzz.space.md,
     backgroundColor: theme.buzz.bgBase,
   },
+  desktopRow: { paddingTop: 18, paddingBottom: 18, minHeight: 98 },
+  desktopRowWithCorners: { paddingBottom: theme.buzz.space.xs, minHeight: 94 },
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   name: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
   unreadName: { fontFamily: theme.buzz.type.bodyStrong.fontFamily },
   sigil: { color: theme.buzz.accent },
-  author: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: theme.buzz.space.sm },
+  author: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: 12 },
+  desktopAuthor: { color: theme.buzz.accent },
   preview: {
     ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
     marginTop: theme.buzz.space.xs,
+  },
+  desktopPreview: {
+    ...theme.buzz.type.meta,
+    color: theme.buzz.textSecondary,
+    lineHeight: 20,
+    marginTop: theme.buzz.space.sm,
   },
   age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   open: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },

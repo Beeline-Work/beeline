@@ -44,7 +44,7 @@ const styles = StyleSheet.create((theme) => {
     sectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingTop: hull.space.md,
+      paddingTop: 20,
       paddingBottom: hull.space.xs,
       paddingHorizontal: hull.space.md,
       backgroundColor: hull.bgTerminal,

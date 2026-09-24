@@ -14,6 +14,7 @@ export function RoomListToolbar({
   searchRef,
   desktop = false,
   bookmarksSelected = false,
+  counts,
 }: {
   filter: RoomListFilter;
   onFilter: (filter: RoomListFilter) => void;
@@ -23,9 +24,35 @@ export function RoomListToolbar({
   searchRef?: React.RefObject<TextInput | null>;
   desktop?: boolean;
   bookmarksSelected?: boolean;
+  counts?: { all: number; unread: number; pinned: number };
 }) {
   const localSearchRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
+  const actions = (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Search conversations"
+        onPress={() => (searchRef ?? localSearchRef).current?.focus()}
+        style={styles.action}
+        testID="room-search-toggle"
+      >
+        <Ionicons name="search-outline" size={21} color={styles.label.color} />
+      </Pressable>
+      {onBookmarks && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Bookmarks"
+          accessibilityState={{ selected: bookmarksSelected }}
+          onPress={onBookmarks}
+          style={styles.action}
+          testID={desktop ? 'desktop-bookmarks' : 'workspace-bookmarks'}
+        >
+          <BookmarksGlyph size={21} color={styles.bookmark.color} filled={bookmarksSelected} />
+        </Pressable>
+      )}
+    </>
+  );
   return (
     <View>
       <View style={styles.toolbar}>
@@ -52,44 +79,30 @@ export function RoomListToolbar({
                     : value === 'messages'
                       ? 'Messages'
                       : 'Pinned'}
+                {counts && (value !== 'all' || !desktop) && value !== 'messages' ? (
+                  <Text style={styles.count}> {counts[value]}</Text>
+                ) : null}
               </Text>
             </Pressable>
           ))}
         </ScrollView>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Search conversations"
-          onPress={() => (searchRef ?? localSearchRef).current?.focus()}
-          style={styles.action}
-          testID="room-search-toggle"
-        >
-          <Ionicons name="search-outline" size={21} color={styles.label.color} />
-        </Pressable>
-        {onBookmarks && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Bookmarks"
-            accessibilityState={{ selected: bookmarksSelected }}
-            onPress={onBookmarks}
-            style={styles.action}
-            testID={desktop ? 'desktop-bookmarks' : 'workspace-bookmarks'}
-          >
-            <BookmarksGlyph size={21} color={styles.bookmark.color} filled={bookmarksSelected} />
-          </Pressable>
-        )}
+        {!desktop && actions}
       </View>
-      <TextInput
-        ref={searchRef ?? localSearchRef}
-        value={query}
-        onChangeText={onQuery}
-        accessibilityLabel="Search Rooms and direct messages"
-        placeholder="Search conversations"
-        placeholderTextColor={styles.label.color}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={[styles.search, focused && styles.searchFocused]}
-        testID={desktop ? 'desktop-room-search' : 'room-search'}
-      />
+      <View style={desktop && styles.desktopSearchRow}>
+        <TextInput
+          ref={searchRef ?? localSearchRef}
+          value={query}
+          onChangeText={onQuery}
+          accessibilityLabel="Search Rooms and direct messages"
+          placeholder="Search conversations"
+          placeholderTextColor={styles.label.color}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={[styles.search, desktop && styles.desktopSearch, focused && styles.searchFocused]}
+          testID={desktop ? 'desktop-room-search' : 'room-search'}
+        />
+        {desktop && actions}
+      </View>
     </View>
   );
 }
@@ -105,6 +118,7 @@ const styles = StyleSheet.create((theme) => ({
   filter: { minHeight: 44, minWidth: 32, alignItems: 'center', justifyContent: 'center' },
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   label: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  count: { color: theme.buzz.ledgerQuiet },
   selected: { color: theme.buzz.textPrimary },
   bookmark: { color: theme.buzz.accent },
   searchFocused: { borderBottomColor: theme.buzz.accent },
@@ -116,4 +130,11 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
     minHeight: 44,
   },
+  desktopSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.buzz.border,
+  },
+  desktopSearch: { flex: 1, minWidth: 0, borderBottomWidth: 0 },
 }));

@@ -372,8 +372,9 @@ without removing access to quiet Rooms.
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`, with
 `bodyStrong` for unread messages; a trailing `textPrimary` dot means unread
 messages only. Room names retain their brass `#`; DMs use the peer's identity.
-The byline sits above a two-line `body` preview in `textSecondary` for Rooms;
-DMs omit it because the peer is already named in the heading. Rows have generous
+On phone, the byline sits above a two-line `body` preview in `textSecondary`;
+on desktop, author and preview share a two-line `meta` block. DMs omit the
+byline because the peer is already named in the heading. Rows have generous
 vertical space and a hairline between conversations. Self attribution is quiet;
 other authors use brass. The app's Space Grotesk roles and theme tokens own type
 and contrast. Rows grow with content; the old fixed 64px height is not a cap.
@@ -383,8 +384,11 @@ Mobile has no selected Room state: pressing a conversation navigates away.
 Long press opens pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
 The Pinned filter uses a word label so it cannot be mistaken for another glyph.
-Section headings use one `space.md` above and `space.xs` below; the following
-row starts after `space.md`, without a second large section gap.
+At the default desktop sidebar width, filters occupy the first toolbar row and
+the visible search field shares the second row with search and Bookmarks actions.
+Desktop section headings use 20px above and `space.xs` below; the following
+row starts after 18px, without a second large section gap. Phone corner
+summaries retain a `space.md` bottom margin before the next conversation.
 
 Corner summaries read “2 waiting · 5 corners”, with brass only on waiting.
 The API batches canonical state derivation for visible corners; archived work

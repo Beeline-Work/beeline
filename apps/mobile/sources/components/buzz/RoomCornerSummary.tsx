@@ -23,7 +23,7 @@ export function RoomCornerSummary({
       accessibilityRole="button"
       accessibilityLabel={`${expanded === undefined ? 'Open' : expanded ? 'Hide' : 'Show'} ${corners}${waiting ? `, ${waiting} waiting` : ''}`}
       accessibilityState={expanded === undefined ? undefined : { expanded }}
-      style={styles.row}
+      style={[styles.row, expanded !== undefined && styles.desktopRow]}
       testID={testID}
     >
       <Text style={styles.text}>
@@ -45,8 +45,10 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 44,
     paddingHorizontal: theme.buzz.space.md,
     paddingBottom: theme.buzz.space.sm,
+    marginBottom: theme.buzz.space.md,
     gap: theme.buzz.space.sm,
   },
+  desktopRow: { minHeight: 53, paddingBottom: theme.buzz.space.md, marginBottom: 0 },
   text: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, flex: 1 },
   waiting: { color: theme.buzz.accent },
 }));

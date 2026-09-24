@@ -502,6 +502,11 @@ export const SidebarView = React.memo(function SidebarView() {
           query={query}
           onQuery={setQuery}
           bookmarksSelected={bookmarksSelected}
+          counts={{
+            all: surface?.chats.length ?? 0,
+            unread: surface?.chats.filter((item) => item.unread).length ?? 0,
+            pinned: pinned.length,
+          }}
           onBookmarks={
             workspaceId
               ? () =>
@@ -578,6 +583,7 @@ export const SidebarView = React.memo(function SidebarView() {
                         viewer={identityPubkey ?? undefined}
                         now={Date.now()}
                         selected={isDesktop && active}
+                        desktop
                         pinned={pinned.includes(item.room.id)}
                         onPin={() => void togglePin(item.room.id)}
                         onPress={() => openRoom(item.room.id)}

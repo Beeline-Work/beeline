@@ -809,6 +809,11 @@ export default function BuzzChannels() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
+            counts={{
+              all: chatList.chats.length,
+              unread: chatList.chats.filter((item) => item.unread).length,
+              pinned: pinned.length,
+            }}
             onBookmarks={
               activeCommunityId
                 ? () =>

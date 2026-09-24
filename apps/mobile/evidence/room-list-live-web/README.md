@@ -9,7 +9,10 @@ API reads, not production user data or a connected device.
 The Chromium walk covered a 1440×900 desktop window and a 390×900 phone window.
 It confirmed the search field is visible at rest, the Bookmarks mark uses the
 brass accent, Pinned is a readable label, and DM rows show the peer name once.
-The Messages heading and first DM row now sit closer together.
+The Messages heading and first DM row now sit closer together. At the default
+280px desktop sidebar width, all four filters remain visible above search.
+Desktop Room rows put the author and excerpt in a compact two-line block, as in
+the supplied Obsidian reference mock in `../room-list-reference/`.
 In both, the list showed the seeded Room, empty Room, and direct message with
 their previews; All, Unread, Messages, and Pinned filters worked; search found a
 Room and showed the no-match state; pinning survived reload; and Room and DM

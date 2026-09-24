@@ -9,6 +9,7 @@ import { RoomDeckComposeMenu } from '../sources/components/buzz/RoomDeckComposeM
 import { RoomListToolbar } from '../sources/components/buzz/RoomListToolbar';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
+import { RoomListSectionHeader } from '../sources/components/buzz/RoomListSectionHeader';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
 import { filterConversations, type RoomListFilter } from '../sources/buzz/room-list-preferences';
 import type { ChatListItem } from '@beeline/buzz-client';
@@ -94,6 +95,7 @@ function Proof() {
   const [pinned, setPinned] = useState<string[]>([]);
   const [destination, setDestination] = useState('');
   const searchRef = React.useRef(null);
+  const visibleRooms = filterConversations(rooms, query, filter, pinned);
   const action = (value: string) => {
     setDestination(value);
     (window as any).__destination = value;
@@ -137,20 +139,25 @@ function Proof() {
           onFilter={setFilter}
           query={query}
           onQuery={setQuery}
+          counts={{
+            all: rooms.length,
+            unread: rooms.filter((item) => item.unread).length,
+            pinned: pinned.length,
+          }}
           onBookmarks={() => action('bookmarks')}
         />
-        {filterConversations(rooms, query, filter, pinned).map((item) => (
+        {desktop && visibleRooms.some((item) => !item.directMessage) && (
+          <RoomListSectionHeader title="Rooms" />
+        )}
+        {visibleRooms.map((item) => (
           <View key={item.room.id} style={{ borderBottomWidth: 1, borderBottomColor: t.border }}>
-            {item.directMessage && (
-              <Text style={{ ...t.type.sectionHead, color: t.ledgerQuiet, padding: 16 }}>
-                MESSAGES
-              </Text>
-            )}
+            {item.directMessage && <RoomListSectionHeader title="Messages" />}
             <ConversationRow
               item={item}
               viewer="you"
               now={now}
               selected={desktop && item.room.id === 'product'}
+              desktop={desktop}
               pinned={pinned.includes(item.room.id)}
               onPress={() => action(`room/${item.room.id}`)}
               onPin={() =>

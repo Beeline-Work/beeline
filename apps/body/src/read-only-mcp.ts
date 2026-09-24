@@ -380,7 +380,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'ask_corner',
     description:
-      'Ask the corner opener one question. Its one answer is linked to the corner card in this Room and muted for notifications.',
+      'Ask the corner opener one question. The returned id is the askId for get_corner_ask. The answer wakes your next Room turn and is linked to the corner card.',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'text'],
@@ -388,6 +388,17 @@ const AGENT_TOOLS: ToolDefinition[] = [
         cornerId: { type: 'string' },
         text: { type: 'string', minLength: 1, maxLength: 16000 },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_corner_ask',
+    description:
+      'Retrieve your corner question by the askId returned by ask_corner, including its answer or unanswered close status.',
+    inputSchema: {
+      type: 'object',
+      required: ['askId'],
+      properties: { askId: { type: 'string' } },
       additionalProperties: false,
     },
   },
@@ -959,7 +970,7 @@ export function agentToolsFor(
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
-    if (['steer_corner', 'ask_corner', 'inspect_corner'].includes(tool.name))
+    if (['steer_corner', 'ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
     // A connector is offered where a person is answering — a Room or a DM —
@@ -1526,17 +1537,16 @@ async function relayMessage(direction: 'down', args: JsonObject, reply = false):
   const context = await activeCommandContext();
   const toRoomId = args.cornerId;
   if (typeof toRoomId !== 'string' || !toRoomId) throw new Error('cornerId is required');
-  return JSON.stringify(
-    await daemonExecute('postRoomMessage', {
-      text: args.text,
-      relay: {
-        fromRoomId: context.roomId,
-        toRoomId,
-        direction,
-        ...(reply ? { reply: 'once' } : {}),
-      },
-    }),
-  );
+  const sent = await daemonExecute('postRoomMessage', {
+    text: args.text,
+    relay: {
+      fromRoomId: context.roomId,
+      toRoomId,
+      direction,
+      ...(reply ? { reply: 'once' } : {}),
+    },
+  });
+  return JSON.stringify(reply ? { ...sent, askId: sent.id } : sent);
 }
 
 async function openCorner(args: JsonObject, toolCallId: string): Promise<string> {
@@ -2774,6 +2784,17 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return relayMessage('down', args);
     case 'ask_corner':
       return relayMessage('down', args, true);
+    case 'get_corner_ask': {
+      if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
+        throw new Error('get_corner_ask requires a Room turn');
+      if (typeof args.askId !== 'string' || !args.askId) throw new Error('askId is required');
+      return JSON.stringify(
+        await daemonExecute('getCornerAsk', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          askId: args.askId,
+        }),
+      );
+    }
     case 'inspect_corner': {
       if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
         throw new Error('inspect_corner requires a Room turn');

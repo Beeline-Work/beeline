@@ -492,6 +492,11 @@ export class DaemonService {
           input as Input<'getRoomConversation'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getCornerAsk':
+        return (await this.getCornerAsk(
+          input as Input<'getCornerAsk'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'waitForCornerWake':
         return (await this.waitForCornerWake(
           (input as Input<'waitForCornerWake'>).cornerId,
@@ -704,8 +709,12 @@ export class DaemonService {
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
-          (input as Input<'getGoogleOAuthGrant'>).connectorId, authenticatedAgentId);
-        return (credentials ? { status: 'ready', credentials } : { status: 'pending' }) as Output<Name>;
+          (input as Input<'getGoogleOAuthGrant'>).connectorId,
+          authenticatedAgentId,
+        );
+        return (
+          credentials ? { status: 'ready', credentials } : { status: 'pending' }
+        ) as Output<Name>;
       }
       case 'installConnector':
         return (await this.connectorInstall(
@@ -1591,6 +1600,7 @@ export class DaemonService {
       created_at: Date;
       presentation: string;
       text: string;
+      corner_ask_id: string | null;
       agent_author: boolean;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
@@ -1666,6 +1676,7 @@ export class DaemonService {
         createdAt: seconds(row.created_at),
         type: row.presentation,
         body: row.text,
+        ...(row.corner_ask_id ? { cornerAskId: row.corner_ask_id } : {}),
         ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
@@ -2165,23 +2176,65 @@ export class DaemonService {
     );
     return Boolean(result.rowCount);
   }
+  private async getCornerAsk(input: Input<'getCornerAsk'>, agentId: string) {
+    await this.access(input.roomId, agentId);
+    const ask = (
+      await this.database.query<{
+        corner_id: string;
+        question: string;
+        archived: boolean;
+        answer: string | null;
+      }>(
+        `SELECT question.room_id corner_id,question.text question,
+              corner.archived_at IS NOT NULL archived,answer.text answer
+       FROM messages question JOIN rooms corner ON corner.id=question.room_id
+       LEFT JOIN LATERAL (
+         SELECT report.text FROM messages report
+         WHERE report.room_id=$1 AND report.card_type='relay'
+           AND report.card->>'direction'='up' AND report.card->>'askId'=question.id
+           AND report.card->>'unanswered' IS DISTINCT FROM 'true'
+         ORDER BY report.created_at,report.id LIMIT 1
+       ) answer ON true
+       WHERE question.id=$2 AND question.card_type='relay'
+         AND question.card->>'reply'='once' AND corner.parent_id=$1
+         AND question.author_id=$3`,
+        [input.roomId, input.askId, agentId],
+      )
+    ).rows[0];
+    if (!ask) throw new Error('corner ask not found');
+    return {
+      askId: input.askId,
+      cornerId: ask.corner_id,
+      question: ask.question,
+      status:
+        ask.answer !== null
+          ? ('answered' as const)
+          : ask.archived
+            ? ('unanswered' as const)
+            : ('pending' as const),
+      ...(ask.answer !== null ? { answer: ask.answer } : {}),
+    };
+  }
 
   private async postCornerQuestionReport(command: CommandRow, answerId: string, agentId: string) {
     if (command.reason !== 'relay_question') return;
     const source = (
       await this.database.query<{
         room_id: string;
+        ask_id: string;
+        asking_agent_id: string;
         text: string;
         card: { fromRoomId?: string; reply?: string };
         parent_id: string;
         corner_name: string;
         answer: string;
       }>(
-        `SELECT source.room_id,source.text,source.card,corner.parent_id,corner.name corner_name,
+        `SELECT source.id ask_id,source.author_id asking_agent_id,source.room_id,source.text,source.card,corner.parent_id,corner.name corner_name,
                 answer.text answer
          FROM messages source JOIN rooms corner ON corner.id=source.room_id
          JOIN messages answer ON answer.id=$2 AND answer.room_id=corner.id
-         WHERE source.id=$1 AND source.card_type='relay'`,
+         WHERE source.id=$1 AND source.card_type='relay' AND corner.archived_at IS NULL
+         FOR SHARE OF corner`,
         [command.source_message_id, answerId],
       )
     ).rows[0];
@@ -2195,11 +2248,12 @@ export class DaemonService {
         [source.parent_id, source.room_id],
       )
     ).rows[0]?.id;
+    const reportId = id();
     await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
        VALUES($1,$2,$3,$4,'card','relay',$5::jsonb)`,
       [
-        id(),
+        reportId,
         source.parent_id,
         agentId,
         source.answer,
@@ -2209,11 +2263,21 @@ export class DaemonService {
           direction: 'up',
           fromName: source.corner_name,
           cornerId: source.room_id,
+          askId: source.ask_id,
+          answerMessageId: answerId,
           ...(anchor ? { anchorMessageId: anchor } : {}),
           received: true,
         }),
       ],
     );
+    await createAgentCommand(this.database, {
+      roomId: source.parent_id,
+      agentId: source.asking_agent_id,
+      sourceMessageId: reportId,
+      reason: 'relay_answer',
+      parent: command,
+      retainDepth: true,
+    });
     this.live.publish({ type: 'invalidate', roomId: source.parent_id, reason: 'message', agentId });
   }
 
@@ -4050,10 +4114,14 @@ export class DaemonService {
         connectorType: entry.connectorType,
         name: entry.name,
         purpose: connectorPurpose(entry.connectorType),
-        available: entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
+        available:
+          entry.available &&
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
         offerable:
-          entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth))
-            && !context.isCorner && isOfferableConnectorKind(entry.connectorType),
+          entry.available &&
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          !context.isCorner &&
+          isOfferableConnectorKind(entry.connectorType),
         ...(row
           ? {
               paired: {
@@ -4599,7 +4667,7 @@ function grantCardPhrase(
 }
 
 /** The one projection an inbox or conversation row is read through. */
-const conversationColumns = `SELECT id,author_id,created_at,presentation,text,
+const conversationColumns = `SELECT id,author_id,created_at,presentation,text,card->>'askId' corner_ask_id,
         EXISTS(SELECT 1 FROM identities author
                WHERE author.id=messages.author_id AND author.kind='agent') agent_author,
         reply_to_message_id,
@@ -4636,6 +4704,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkspaceRoster: true,
   getRoomInbox: true,
   getRoomConversation: true,
+  getCornerAsk: true,
   getRoomAuthority: true,
   getPermissionAuthority: true,
   getMissionAuthority: true,

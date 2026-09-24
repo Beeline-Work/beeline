@@ -109,6 +109,7 @@ type HumanMessage = Pick<
   | 'replyToAuthorId'
   | 'requestAuthorId'
   | 'agentHopCount'
+  | 'cornerAskId'
 >;
 
 /**
@@ -810,7 +811,7 @@ export class MonolithRoomTurnLoop {
       SOUL_HOUSE_RULE,
       ...(!directMessage
         ? [
-            'Use inspect_corner to read a member corner’s status or recent transcript. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Its answer returns as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
+            'Use inspect_corner to read a member corner’s status or recent transcript. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
           ]
         : []),
     ].join('\n');
@@ -1080,6 +1081,9 @@ export class MonolithRoomTurnLoop {
                     MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                   ].join(' '),
                   `Current task selected by the server from ${inboxItemAuthorName(item, names)}:`,
+                  item.cornerAskId
+                    ? `Corner ask id: ${item.cornerAskId}. Use get_corner_ask to retrieve its status and answer.`
+                    : '',
                   roomMessagePrompt(
                     '',
                     inboxItemPromptBody(item),

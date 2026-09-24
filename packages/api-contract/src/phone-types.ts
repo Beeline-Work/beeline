@@ -202,6 +202,9 @@ export type RoomViewMessage = {
     readonly anchorMessageId?: string;
     readonly received: boolean;
     readonly reply?: 'once';
+    readonly askId?: string;
+    readonly answerMessageId?: string;
+    readonly unanswered?: boolean;
   };
   readonly id: string;
   readonly text: string;

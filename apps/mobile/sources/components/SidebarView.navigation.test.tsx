@@ -14,12 +14,6 @@ const route = vi.hoisted(() => ({
 }));
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
-const roomCornersExpanded = vi.hoisted(() => new Map<string, boolean>());
-const saveDesktopRoomCornersExpanded = vi.hoisted(() =>
-  vi.fn(async (roomId: string, expanded: boolean) => {
-    roomCornersExpanded.set(roomId, expanded);
-  }),
-);
 const openCornerState = vi.hoisted(() => ({
   current: 'working' as 'working' | 'waiting' | 'review',
 }));
@@ -33,9 +27,10 @@ const chats = vi.hoisted(() =>
         ? [
             {
               room: { id: 'room-a', workspaceId, name: 'Alpha' },
-              cornerCount: 1,
+              cornerCount: 2,
               openCorners: [
-                { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current },
+                { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current, mine: true },
+                { id: 'corner-theirs', name: 'Their fix', state: 'waiting' },
               ],
             },
             {
@@ -124,13 +119,6 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     chats = chats;
     corners = corners;
   },
-}));
-vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/buzz/desktop-workbench-state')>()),
-  loadDesktopRoomCornersExpanded: vi.fn(
-    async (roomId: string, fallback = true) => roomCornersExpanded.get(roomId) ?? fallback,
-  ),
-  saveDesktopRoomCornersExpanded,
 }));
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
@@ -273,7 +261,6 @@ describe('desktop Workspace navigation', () => {
     viewport.width = 1280;
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
-    roomCornersExpanded.clear();
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -554,33 +541,24 @@ describe('desktop Workspace navigation', () => {
     expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
   });
 
-  it('collapses and restores the active Room corner list with an accessible disclosure', async () => {
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="room-corners-toggle" />);
-    });
-    await settle();
-
-    const toggle = control('desktop-room-corners-toggle-room-a');
-    expect(toggle.props.accessibilityLabel).toBe('Hide 1 corner');
-    expect(toggle.props.accessibilityState).toEqual({ expanded: true });
-    expect(control('desktop-corner-corner-a')).toBeDefined();
-
-    act(() => toggle.props.onPress());
-    expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
-    const restore = control('desktop-room-corners-toggle-room-a');
-    expect(restore.props.accessibilityLabel).toBe('Show 1 corner');
-    expect(restore.props.accessibilityState).toEqual({ expanded: false });
-    expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', false);
-
-    act(() => restore.props.onPress());
-    expect(control('desktop-corner-corner-a')).toBeDefined();
-    expect(saveDesktopRoomCornersExpanded).toHaveBeenLastCalledWith('room-a', true);
+  it("lists only the viewer's corners, with no toggle, switch, or count", async () => {
+    const hosts = (match: (id: string) => boolean) =>
+      tree.root.findAll(
+        (node: any) =>
+          typeof node.type === 'string' &&
+          typeof node.props.testID === 'string' &&
+          match(node.props.testID),
+      );
+    expect(
+      hosts((id) => id.startsWith('desktop-corner-corner-')).map((node: any) => node.props.testID),
+    ).toEqual(['desktop-corner-corner-a']);
+    expect(hosts((id) => id.includes('corners-toggle') || id.includes('mine'))).toHaveLength(0);
+    expect(
+      tree.root.findAll((node: any) => /\bcorners?\b/.test(String(node.props.children ?? ''))),
+    ).toHaveLength(0);
   });
 
   it('opens a Room before showing its corner from the empty deck', async () => {
-    act(() => control('desktop-room-corners-toggle-room-a').props.onPress());
-    await settle();
     act(() => control('desktop-corner-corner-a').props.onPress());
 
     expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
@@ -638,20 +616,6 @@ describe('desktop Workspace navigation', () => {
     );
     expect(label.props.style).toContainEqual({ color: '#b08a4a' });
     expect(corners).not.toHaveBeenCalled();
-  });
-
-  it('restores a saved collapsed Room corner list', async () => {
-    roomCornersExpanded.set('room-a', false);
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="room-corners-collapsed" />);
-    });
-    await settle();
-
-    expect(control('desktop-room-corners-toggle-room-a').props.accessibilityState).toEqual({
-      expanded: false,
-    });
-    expect(tree.root.findAllByProps({ testID: 'desktop-corner-corner-a' })).toHaveLength(0);
   });
 
   it('closes without routing when the current Workspace is picked', () => {

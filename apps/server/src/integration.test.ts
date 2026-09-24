@@ -7464,6 +7464,53 @@ describe('monolith integration', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-chat-mine',
+      name: 'Pick a shape',
+      objective: 'Pick a shape for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
+      cornerId,
+    ]);
+    const listed = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{
+            room: { id: string };
+            openCorners: Array<{ id: string; state: string; mine?: true }>;
+          }>;
+        }
+      ).chats
+        .find((item) => item.room.id === ROOM)
+        ?.openCorners.find((item) => item.id === cornerId);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).not.toHaveProperty('mine');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-tagged',$1,$2,'@owner square or round?',now()+interval '2 seconds')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).not.toHaveProperty('mine');
+    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
+      cornerId,
+      HUMAN,
+    ]);
+    expect(await listed()).toEqual(expect.objectContaining({ mine: true }));
+  });
+
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
     const input = {
       roomId: ROOM,

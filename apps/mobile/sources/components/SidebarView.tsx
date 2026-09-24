@@ -634,7 +634,6 @@ export const SidebarView = React.memo(function SidebarView() {
                           <DesktopRoomCorners
                             key={`${workspaceId}/${item.room.id}`}
                             item={item}
-                            active={active}
                             onOpen={(cornerId) => {
                               selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
                               if (activeRoomId !== item.room.id) openRoom(item.room.id);

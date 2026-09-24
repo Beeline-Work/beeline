@@ -1079,7 +1079,12 @@ function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
   const state = oneOf(item?.state, ['working', 'waiting', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
-  return { id: item.id, name: item.name, state };
+  return {
+    id: item.id,
+    name: item.name,
+    state,
+    ...field('mine', item.mine === true ? (true as const) : undefined),
+  };
 }
 
 function readChat(value: unknown): ChatListItem | null {

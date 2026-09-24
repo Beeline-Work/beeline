@@ -532,6 +532,9 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
+  /** Present when the viewer commissioned this corner or it awaits them, the
+   * same rule as the corners page's "Mine" filter. */
+  readonly mine?: true;
 };
 
 export type ChatListItem = {

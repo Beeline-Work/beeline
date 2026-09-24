@@ -57,6 +57,7 @@
         "scripts/transcript-dates-proof.tsx",
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/bookmarks-empty-proof.tsx",
+        "scripts/desktop-rail-mine-proof.tsx",
         "scripts/render-room-list-proof.mjs",
         "scripts/room-list-proof.tsx",
         "scripts/render-consolidated-board-proof.mjs",

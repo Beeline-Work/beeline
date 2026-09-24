@@ -21,6 +21,39 @@ describe('direct-message member display', () => {
       ),
     ).toBe('Trusty Squire');
   });
+  it('uses the server connector name over an older Lena profile', () => {
+    expect(
+      directMessageHeaderName(
+        { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
+        { name: 'Lena', handle: 'lena', nip05: 'lena@example.com' },
+        's'.repeat(64),
+        'verified',
+        false,
+      ),
+    ).toBe('Trusty Squire');
+  });
+  it('uses another server connector name without hardcoding it', () => {
+    expect(
+      directMessageHeaderName(
+        { pubkey: 'g'.repeat(64), kind: 'human', name: 'Google Drive', handle: 'google-drive' },
+        { name: 'Lena' },
+        'g'.repeat(64),
+        'none',
+        false,
+      ),
+    ).toBe('Google Drive');
+  });
+  it('keeps the profile label for an ordinary writable DM', () => {
+    expect(
+      directMessageHeaderName(
+        { pubkey, kind: 'human', name: 'Ada', handle: 'ada' },
+        { name: 'Lena', handle: 'lena' },
+        pubkey,
+        'none',
+        false,
+      ),
+    ).toBe('@lena');
+  });
   it('uses the indexed System name for an announcements-only DM header', () => {
     expect(
       directMessageHeaderName(

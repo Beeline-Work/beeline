@@ -6,6 +6,12 @@ import {
   type RoomViewIdentity,
 } from '@beeline/buzz-client';
 import type { Nip05VerificationStatus } from '@beeline/buzz-client';
+import { isConnectorKind } from '@beeline/api-contract/workbench';
+
+/** Connector peer names come from the server, even when an old profile exists. */
+function isConnectorPeer(peer: RoomViewIdentity | undefined): boolean {
+  return peer?.kind === 'human' && isConnectorKind(peer.handle);
+}
 
 export function fallbackMemberName(pubkey: string): string {
   return fallbackPersonName(pubkey);
@@ -44,7 +50,7 @@ export function directMessageHeaderName(
   announcementsOnly: boolean,
   announcementAuthor?: RoomViewIdentity,
 ): string {
-  if (announcementsOnly && peer?.name.trim()) return peer.name.trim();
+  if ((announcementsOnly || isConnectorPeer(peer)) && peer?.name.trim()) return peer.name.trim();
   if (announcementsOnly && announcementAuthor?.name.trim()) return announcementAuthor.name.trim();
   return personIdentityLabel(profile ?? peer, pubkey, nip05Status);
 }

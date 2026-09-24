@@ -1829,7 +1829,8 @@ export function BuzzChatSurface({
     : undefined;
   const dmPeerProfile = dmPeerPubkey ? personProfileByPubkey.get(dmPeerPubkey) : undefined;
   const dmPeerIdentity = dmPeerPubkey
-    ? roomSurface?.members.find((member) => member.identity.pubkey === dmPeerPubkey)?.identity
+    ? (roomSurface?.members.find((member) => member.identity.pubkey === dmPeerPubkey)?.identity ??
+      directMessageListItem?.directMessage?.peer)
     : undefined;
   const dmPeerAgent = dmPeerPubkey ? agentByPubkey.get(dmPeerPubkey) : undefined;
   const dmPeerAgentDisplay =

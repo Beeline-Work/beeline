@@ -636,6 +636,7 @@ export const SidebarView = React.memo(function SidebarView() {
                             item={item}
                             active={active}
                             client={client}
+                            viewerPubkey={identityPubkey ?? undefined}
                             refreshKey={pathname}
                             onOpen={(cornerId) => {
                               selectDesktopWorkCorner({ roomId: item.room.id, cornerId });

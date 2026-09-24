@@ -117,6 +117,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
           corner: { id: 'corner-a', name: 'Fix fixture' },
           state: 'working',
           lifecycle: { lifecycle: 'open', checks: 'unknown' },
+          initiator: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
         },
       ],
     }));

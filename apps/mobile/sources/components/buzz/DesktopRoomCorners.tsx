@@ -9,11 +9,14 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
+import { mineCorners, useMineCorners } from '@/buzz/mine-corners';
 import { RoomCornerSummary } from './RoomCornerSummary';
+import { MineCornersToggle } from './MineCornersToggle';
 
 export function DesktopRoomCorners({
   item,
   client,
+  viewerPubkey,
   refreshKey,
   onOpen,
   renderDrag,
@@ -21,6 +24,7 @@ export function DesktopRoomCorners({
 }: {
   item: ChatListItem;
   client: RoomViewClient | null;
+  viewerPubkey?: string;
   refreshKey: string;
   active?: boolean;
   onOpen: (cornerId: string) => void;
@@ -31,6 +35,8 @@ export function DesktopRoomCorners({
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const touched = React.useRef(false);
+  const [mine, setMine] = useMineCorners();
+  const visible = corners && mineCorners(corners, viewerPubkey, mine);
   useEffect(() => {
     let cancelled = false;
     void loadDesktopRoomCornersExpanded(item.room.id, active)
@@ -76,19 +82,31 @@ export function DesktopRoomCorners({
   ]);
   return (
     <View>
-      <RoomCornerSummary
-        count={item.cornerCount ?? corners?.length ?? 0}
-        waiting={
-          item.waitingCornerCount ?? corners?.filter((corner) => corner.state === 'waiting').length
-        }
-        expanded={expanded}
-        onPress={() => {
-          touched.current = true;
-          setExpanded(!expanded);
-          void saveDesktopRoomCornersExpanded(item.room.id, !expanded).catch(() => undefined);
-        }}
-        testID={`desktop-room-corners-toggle-${item.room.id}`}
-      />
+      <View style={styles.summary}>
+        <View style={styles.summaryToggle}>
+          <RoomCornerSummary
+            count={item.cornerCount ?? corners?.length ?? 0}
+            waiting={
+              item.waitingCornerCount ??
+              corners?.filter((corner) => corner.state === 'waiting').length
+            }
+            expanded={expanded}
+            onPress={() => {
+              touched.current = true;
+              setExpanded(!expanded);
+              void saveDesktopRoomCornersExpanded(item.room.id, !expanded).catch(() => undefined);
+            }}
+            testID={`desktop-room-corners-toggle-${item.room.id}`}
+          />
+        </View>
+        {expanded && (
+          <MineCornersToggle
+            mine={mine}
+            onChange={setMine}
+            testID={`desktop-room-corners-mine-${item.room.id}`}
+          />
+        )}
+      </View>
       {expanded && (
         <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
           {error ? (
@@ -99,12 +117,14 @@ export function DesktopRoomCorners({
             >
               <Text style={styles.name}>Could not load corners. Retry</Text>
             </Pressable>
-          ) : corners === null ? (
+          ) : visible === null ? (
             <Text style={styles.notice}>Loading corners…</Text>
-          ) : corners.length === 0 ? (
-            <Text style={styles.notice}>No open corners.</Text>
+          ) : visible.length === 0 ? (
+            <Text style={styles.notice}>
+              {corners?.length ? 'No open corners of yours.' : 'No open corners.'}
+            </Text>
           ) : (
-            corners.map((corner) => {
+            visible.map((corner) => {
               const state = cornerDisplayState(corner);
               return (
                 <React.Fragment key={corner.corner.id}>
@@ -139,6 +159,8 @@ export function DesktopRoomCorners({
   );
 }
 const styles = StyleSheet.create((theme) => ({
+  summary: { flexDirection: 'row', alignItems: 'center', paddingRight: theme.buzz.space.md },
+  summaryToggle: { flex: 1 },
   list: {
     paddingLeft: theme.buzz.space.lg,
     paddingRight: theme.buzz.space.md,

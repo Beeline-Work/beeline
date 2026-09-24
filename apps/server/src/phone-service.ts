@@ -315,6 +315,7 @@ interface CornerRow extends RoomRow {
   latest_author_id: string | null;
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
+  latest_tags_viewer: boolean | null;
   agent_id: string | null;
   agent_name: string | null;
   agent_handle: string | null;
@@ -1221,20 +1222,20 @@ export class PhoneService {
                 createdAt: unix(row.latest_created_at),
                 ...(row.latest_attachments?.length
                   ? {
-                      attachments: (row.latest_attachments as NonNullable<RoomViewMessage['attachments']>).map(
-                        (attachment) => ({
-                          ...attachment,
-                          url: attachment.url.startsWith('/')
-                            ? `${this.publicOrigin}${attachment.url}`
-                            : attachment.url,
-                          ...(attachment.previewUrl?.startsWith('/')
-                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                            : {}),
-                          ...(attachment.thumbnailUrl?.startsWith('/')
-                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                            : {}),
-                        }),
-                      ),
+                      attachments: (
+                        row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
+                      ).map((attachment) => ({
+                        ...attachment,
+                        url: attachment.url.startsWith('/')
+                          ? `${this.publicOrigin}${attachment.url}`
+                          : attachment.url,
+                        ...(attachment.previewUrl?.startsWith('/')
+                          ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                          : {}),
+                        ...(attachment.thumbnailUrl?.startsWith('/')
+                          ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                          : {}),
+                      })),
                     }
                   : {}),
                 author: identity(
@@ -1870,7 +1871,8 @@ export class PhoneService {
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
-        li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
+        li.kind latest_author_kind,li.name latest_author_name,
+        $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
         turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
@@ -1930,6 +1932,11 @@ export class PhoneService {
         // `updated_at` moves with any later write, so the closure stamp reads
         // the archive time itself rather than the row's last touch.
         ...(corner.archived_at ? { closedAt: unix(corner.archived_at) } : {}),
+        // A corner awaits the viewer when it is parked on a person and its
+        // latest message tags them.
+        ...(corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review')
+          ? { awaitsViewer: true as const }
+          : {}),
         ...(corner.initiator_id && corner.initiator_name
           ? {
               initiator: {
@@ -6457,10 +6464,10 @@ export class PhoneService {
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
       ? (
           await database.query<{ status: string }>(
-          `SELECT status FROM workspace_connectors
+            `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
+            [ws.workspace_id, viewerId, input.connectorType, machineId],
           )
         ).rows[0]?.status
       : undefined;

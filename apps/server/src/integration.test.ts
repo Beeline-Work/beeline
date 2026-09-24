@@ -184,8 +184,8 @@ describe('monolith integration', () => {
       database,
       live,
       async () => ({
-      token: 'github-room-token',
-      expiresAt: Date.now() + 60_000,
+        token: 'github-room-token',
+        expiresAt: Date.now() + 60_000,
       }),
       undefined,
       false,
@@ -715,13 +715,19 @@ describe('monolith integration', () => {
     const created = await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' });
     expect(created.status).toBe(200);
     const { id } = (await created.json()) as { id: string };
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status).toBe(400);
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status,
+    ).toBe(400);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
+    ).toBe(409);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map-2' })).status).toBe(204);
     expect((await operation('updateRoom', { roomId: id, name: 'Road Map 3' })).status).toBe(400);
     // Renaming frees the old slug; a later Room can claim it, and the renamed
     // Room can no longer take it back.
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(200);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
+    ).toBe(200);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map' })).status).toBe(409);
   });
 
@@ -1742,7 +1748,11 @@ describe('monolith integration', () => {
 
   it('lets an author or Room manager delete a message while retaining its transcript record', async () => {
     const authorMessageId = 'd'.repeat(64);
-    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: authorMessageId, text: 'remove me' }, AGENT);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: authorMessageId, text: 'remove me' },
+      AGENT,
+    );
     await phone.execute(
       'setMessageBookmark',
       { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
@@ -1756,19 +1766,29 @@ describe('monolith integration', () => {
     expect(authorDeleted).toMatchObject({ text: 'Message deleted', deleted: true });
     expect(authorDeleted?.attachments).toBeUndefined();
     expect(authorDeleted?.reactions).toBeUndefined();
-    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks).toContainEqual(
-      expect.objectContaining({ messageId: authorMessageId, available: false }),
-    );
+    expect(
+      (await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks,
+    ).toContainEqual(expect.objectContaining({ messageId: authorMessageId, available: false }));
 
     const managerMessageId = 'e'.repeat(64);
-    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' }, AGENT);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' },
+      AGENT,
+    );
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, HUMAN);
     expect(
-      (await phone.readRoom(ROOM, HUMAN))!.messages.find((message) => message.id === managerMessageId),
+      (await phone.readRoom(ROOM, HUMAN))!.messages.find(
+        (message) => message.id === managerMessageId,
+      ),
     ).toMatchObject({ text: 'Message deleted', deleted: true });
 
     await expect(
-      phone.execute('reactToMessage', { roomId: ROOM, messageId: managerMessageId, emoji: '👍' }, HUMAN),
+      phone.execute(
+        'reactToMessage',
+        { roomId: ROOM, messageId: managerMessageId, emoji: '👍' },
+        HUMAN,
+      ),
     ).rejects.toThrow('message is not available for reaction');
   });
 
@@ -1802,7 +1822,9 @@ describe('monolith integration', () => {
     await expect(
       phone.execute('deleteRoomMessage', { roomId: directRoomId, messageId }, HUMAN),
     ).rejects.toThrow('message is not available for deletion');
-    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe('private message');
+    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe(
+      'private message',
+    );
   });
 
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
@@ -7376,6 +7398,32 @@ describe('monolith integration', () => {
     );
     expect(await loop.runOnce()).toBe(0);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('marks a parked corner as awaiting the viewer its latest message tags', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-awaits-viewer',
+      name: 'Pick a colour',
+      objective: 'Pick a colour for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const read = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('awaits-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
+      [cornerId, AGENT],
+    );
+    expect(await read()).not.toHaveProperty('awaitsViewer');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('awaits-tagged',$1,$2,'@owner red or blue?',now()+interval '2 seconds')`,
+      [cornerId, AGENT],
+    );
+    expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {

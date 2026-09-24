@@ -28,6 +28,7 @@ const client = vi.hoisted(() => ({
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
   useLocalSearchParams: () => ({ communityId: WORKSPACE, action: route.action }),
+  useNavigation: () => ({ addListener: () => () => undefined, dispatch: vi.fn() }),
 }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
@@ -143,7 +144,9 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     HullActionSheetModal: (props: any) =>
-      props.visible ? ReactModule.createElement('HullActionSheetModal', props, props.children) : null,
+      props.visible
+        ? ReactModule.createElement('HullActionSheetModal', props, props.children)
+        : null,
     HullActionSheetRow: host('HullActionSheetRow'),
     HullActionSheetCancel: host('HullActionSheetCancel'),
   };

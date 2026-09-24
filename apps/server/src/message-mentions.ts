@@ -166,7 +166,7 @@ function withoutForwardCaptionSql(textExpr: string): string {
 
 /** `handleWrittenIn`, pinned to the reserved `@channel` token, case-insensitive. */
 function channelMentionWrittenSql(textExpr: string): string {
-  return `${textExpr} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
+  return `${withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
 }
 
 /**

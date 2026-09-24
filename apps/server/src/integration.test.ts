@@ -3275,9 +3275,11 @@ describe('monolith integration', () => {
 
     const humanForward = '7'.repeat(64);
     const agentForward = '8'.repeat(64);
+    const channelForward = '9'.repeat(64);
     for (const [messageId, author] of [
       [humanForward, 'recipient'],
       [agentForward, 'bee'],
+      [channelForward, 'channel'],
     ] as const) {
       const sent = await operation('sendRoomMessage', {
         roomId: ROOM,
@@ -3289,7 +3291,7 @@ describe('monolith integration', () => {
       expect(await taggedBy(database, messageId)).toEqual([]);
     }
     const projected = (await phone.readRoom(ROOM, HUMAN))!;
-    for (const messageId of [humanForward, agentForward]) {
+    for (const messageId of [humanForward, agentForward, channelForward]) {
       expect(
         projected.messages.find((message) => message.id === messageId)?.mentionPubkeys,
       ).toBeUndefined();

@@ -199,6 +199,8 @@ export type DaemonOperationMap = {
   postWorkScheduleReceipt: Operation<PostWorkScheduleReceiptInput, WriteResult>;
   postAgentToolScheduleIndex: Operation<PostScheduleIndexInput, WriteResult>;
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
+  getAgentAvatar: Operation<RoomInput, { readonly drawing: unknown; readonly soul: unknown }>;
+  postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
   postAgentCommands: Operation<PostAgentCommandsInput, WriteResult>;
   postAgentModelCatalog: Operation<PostAgentModelCatalogInput, WriteResult>;
   postAgentMachineReport: Operation<

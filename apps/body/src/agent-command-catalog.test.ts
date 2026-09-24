@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DRAW_AVATAR_COMMAND } from './draw-avatar-skill.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 
 describe('agent command catalog publisher', () => {
@@ -21,7 +22,7 @@ describe('agent command catalog publisher', () => {
       expect(execute).toHaveBeenCalledWith('postAgentCommands', {
         agentId: 'agent-id',
         workspaceId: 'workspace-id',
-        commands,
+        commands: [...commands, DRAW_AVATAR_COMMAND],
       }),
     );
   });

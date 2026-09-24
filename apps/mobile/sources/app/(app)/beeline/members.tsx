@@ -3,6 +3,7 @@ import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
 // so a screen beside its route is a second URL for the same screen.
+import { SoulPortraitControls } from '@/components/buzz/SoulPortraitControls';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -325,11 +326,13 @@ export default function BuzzMembers({
   };
 
   const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
+    const generation = agentRequestGenerationRef.current;
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
       workspaceId,
       agentPubkey,
     );
+    if (generation !== agentRequestGenerationRef.current) return value;
     setSelectedAgent(value);
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
       workspaceId,
@@ -719,6 +722,22 @@ export default function BuzzMembers({
     }
   };
 
+  const requestSoulAvatar = async (soul: string) => {
+    if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
+      throw new Error('Agent settings are unavailable.');
+    const client = new BuzzRigTransport(identity);
+    const agent = selectedAgent.agent.identity;
+    const room = await client.resolveDirectMessage(workspaceId, agent.pubkey);
+    const message = await client.composeMessage(
+      {
+        sessionId: room.channelId,
+        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}`,
+      },
+      { mentionAgent: agent.pubkey },
+    );
+    await client.publishPreparedMessage(message);
+  };
+
   const beginAgentSoulEdit = () => {
     if (!selectedAgent || !ownsSelectedAgent) return;
     setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
@@ -1021,6 +1040,7 @@ export default function BuzzMembers({
                     <IdentityMark
                       kind="agent"
                       seed={selectedAgent.agent.identity.pubkey}
+                      avatarUrl={selectedAgent.agent.identity.avatar}
                       face={selectedAgent.agent.identity.face}
                       name={selectedAgent.agent.identity.name}
                       size={44}
@@ -1076,6 +1096,14 @@ export default function BuzzMembers({
                         testID="agent-soul-instructions"
                         value={agentSoulDraft}
                       />
+                      <SoulPortraitControls
+                        key={selectedAgent.agent.identity.pubkey}
+                        detail={selectedAgent}
+                        soul={agentSoulDraft}
+                        disabled={busy}
+                        generate={requestSoulAvatar}
+                        refresh={() => readAgent(selectedAgent.agent.identity.pubkey)}
+                      />
                       <View style={styles.soulActions}>
                         <MonoButton
                           label="CANCEL"
@@ -1093,9 +1121,19 @@ export default function BuzzMembers({
                       </View>
                     </>
                   ) : (
-                    <Text style={styles.soulCopy} testID="agent-soul-copy">
-                      {agentSoulCopy(selectedAgent)}
-                    </Text>
+                    <>
+                      <Text style={styles.soulCopy} testID="agent-soul-copy">
+                        {agentSoulCopy(selectedAgent)}
+                      </Text>
+                      <SoulPortraitControls
+                        key={selectedAgent.agent.identity.pubkey}
+                        detail={selectedAgent}
+                        soul={agentSoulCopy(selectedAgent)}
+                        disabled={busy}
+                        generate={requestSoulAvatar}
+                        refresh={() => readAgent(selectedAgent.agent.identity.pubkey)}
+                      />
+                    </>
                   )}
                 </View>
               )}

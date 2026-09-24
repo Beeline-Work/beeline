@@ -691,6 +691,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  /** Present only after a generated portrait has committed successfully. */
+  readonly avatarGenerationId?: string;
   /** Merged PRs opened by this agent in corners the viewer may read. */
   readonly recentWork?: readonly { readonly title: string; readonly url: string }[];
   readonly workspaceId: string;

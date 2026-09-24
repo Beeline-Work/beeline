@@ -438,6 +438,22 @@ describe('one mark, everywhere', () => {
     expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
+  it('renders generated agent art and falls back to its assigned face on image failure', () => {
+    const renderer = render(
+      React.createElement(IdentityMark, {
+        seed: AGENT,
+        kind: 'agent',
+        alive: true,
+        avatarUrl: 'https://api.example.test/v1/agent-avatars/11111111-1111-4111-8111-111111111111',
+      }),
+    );
+    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+    expect(hosts(renderer, 'face-figure')).toHaveLength(0);
+    act(() => renderer.root.findByType('Image').props.onError());
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(hosts(renderer, 'face-figure')).toHaveLength(1);
+  });
+
   it('renders a fixed server connector logo without enabling human profile photos', () => {
     const renderer = render(
       React.createElement(IdentityMark, {

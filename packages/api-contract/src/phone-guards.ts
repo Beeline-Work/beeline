@@ -1593,6 +1593,10 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     watchFilters: readWatchFilters(item.watchFilters),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
     ...field('soul', projectedSoul),
+    ...field(
+      'avatarGenerationId',
+      nonempty(item.avatarGenerationId) ? item.avatarGenerationId : undefined,
+    ),
     ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),
     ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
     ...field('selected', readModelSelection(item.selected)),

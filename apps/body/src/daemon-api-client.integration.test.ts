@@ -654,7 +654,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
               PATH: `${supervisorRoot}:${process.env.PATH ?? ''}`,
-              BUZZ_DEV_MCP_BIN: fakeAgent,
+              BUZZ_DEV_MCP_BIN: '/bin/false',
               BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(new URL('../dist/read-only-mcp.js', import.meta.url)),
               XDG_STATE_HOME: supervisorRoot,
             },

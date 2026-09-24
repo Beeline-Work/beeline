@@ -46,6 +46,8 @@ import {
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   type ArtifactMimeType,
+  type CornerRestoreResult,
+  type RoomConversationResult,
 } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_KINDS,
@@ -366,14 +368,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'inspect_corner',
     description:
-      'Read the status and newest transcript page of a corner you belong to in this Room. Pass after from a previous earliest page to walk older history.',
+      'Read compact corner status by default. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages.',
     inputSchema: {
       type: 'object',
       required: ['cornerId'],
       properties: {
         cornerId: { type: 'string' },
-        after: { type: 'string', description: 'Opaque cursor from a previous earliest page.' },
-        earliest: { type: 'boolean', description: 'Start at the oldest page.' },
+        mode: { type: 'string', enum: ['status', 'transcript'] },
+        after: { type: 'string', description: 'The after cursor from transcript next.' },
+        offset: {
+          type: 'integer',
+          minimum: 0,
+          description: 'The body offset from transcript next.',
+        },
       },
       additionalProperties: false,
     },
@@ -2825,8 +2832,17 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
         throw new Error('cornerId is required');
       if (args.after !== undefined && (typeof args.after !== 'string' || !args.after))
         throw new Error('after must be a nonempty cursor');
-      if (args.earliest !== undefined && typeof args.earliest !== 'boolean')
-        throw new Error('earliest must be true or false');
+      if (args.mode !== undefined && args.mode !== 'status' && args.mode !== 'transcript')
+        throw new Error('mode must be status or transcript');
+      if (args.after && args.mode !== 'transcript')
+        throw new Error('after requires transcript mode');
+      if (
+        args.offset !== undefined &&
+        (!Number.isSafeInteger(args.offset) ||
+          (args.offset as number) < 0 ||
+          args.mode !== 'transcript')
+      )
+        throw new Error('offset requires transcript mode and a nonnegative safe integer');
       const corners = await daemonExecute('listRoomCorners', { roomId });
       if (
         !Array.isArray(corners.corners) ||
@@ -2838,16 +2854,98 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
         )
       )
         throw new Error('corner is not available in this Room');
-      const [status, transcript] = await Promise.all([
-        daemonExecute('getCornerRestoreState', { cornerId: args.cornerId }),
-        daemonExecute('getRoomConversation', {
+      if (args.mode === 'transcript') {
+        const page = (await daemonExecute('getRoomConversation', {
           roomId: args.cornerId,
-          limit: 200,
-          ...(args.after ? { after: args.after } : {}),
-          ...(args.earliest ? { window: 'earliest' } : {}),
-        }),
-      ]);
-      return JSON.stringify({ status, transcript });
+          limit: 9,
+          ...(args.after ? { after: args.after } : { window: 'earliest' }),
+        })) as unknown as RoomConversationResult;
+        const items: Record<string, unknown>[] = [];
+        let nextAfter = args.after as string | undefined;
+        let nextOffset = args.offset as number | undefined;
+        let hasMore = false;
+        for (const item of page.items.slice(0, 8)) {
+          const offset = nextOffset ?? 0;
+          if (offset > item.body.length) throw new Error('offset exceeds message body');
+          let body = item.body.slice(offset, offset + 1000);
+          const row = {
+            id: item.id,
+            cursor: item.cursor,
+            authorId: item.authorId,
+            createdAt: item.createdAt,
+            type: item.type,
+            ...(offset ? { bodyOffset: offset } : {}),
+            ...(item.attachments.length ? { attachmentCount: item.attachments.length } : {}),
+          };
+          // Escaped control characters can occupy six JSON characters each.
+          while (body && JSON.stringify([...items, { ...row, body }]).length > 11000)
+            body = body.slice(0, Math.floor(body.length / 2));
+          if (!body && item.body.length > offset) {
+            hasMore = true;
+            break;
+          }
+          items.push({
+            ...row,
+            body,
+            ...(offset + body.length < item.body.length ? { bodyContinues: true } : {}),
+          });
+          if (offset + body.length < item.body.length) {
+            nextOffset = offset + body.length;
+            hasMore = true;
+            break;
+          }
+          nextAfter = item.cursor;
+          nextOffset = undefined;
+        }
+        if (!hasMore) hasMore = page.items.length > items.length;
+        return JSON.stringify({
+          cornerId: args.cornerId,
+          items,
+          ...(hasMore
+            ? {
+                next: {
+                  ...(nextAfter ? { after: nextAfter } : {}),
+                  ...(nextOffset ? { offset: nextOffset } : {}),
+                },
+              }
+            : {}),
+          limits: { items: 8, bodyChars: 1000, responseChars: 12000 },
+        });
+      }
+      const status = (await daemonExecute('getCornerRestoreState', {
+        cornerId: args.cornerId,
+      })) as unknown as CornerRestoreResult;
+      const pr = status.lifecycle?.pr;
+      // GitHub can be unavailable while the server-owned lifecycle remains readable.
+      const verdict = pr
+        ? await daemonExecute('getPrChecksStatus', {
+            cornerId: args.cornerId,
+            pullRequest: pr.number,
+          }).catch(() => undefined)
+        : undefined;
+      return JSON.stringify({
+        cornerId: args.cornerId,
+        state: status.lifecycle?.lifecycle ?? 'unknown',
+        ...(pr ? { pr: { number: pr.number, url: pr.url, title: pr.title } } : {}),
+        ...(verdict?.headSha || pr?.headSha ? { head: verdict?.headSha ?? pr?.headSha } : {}),
+        checks: verdict?.checks ?? status.lifecycle?.checks ?? 'unknown',
+        verdict: verdict
+          ? {
+              approvalPending: verdict.approvalPending,
+              reviewer: verdict.reviewer,
+              reviewerExists: verdict.reviewerExists,
+              reviewerIsAuthor: verdict.reviewerIsAuthor,
+              reviewerWake: verdict.reviewerWake,
+            }
+          : { approvalPending: true, status: 'unavailable' },
+        merge: {
+          mergeability: pr?.mergeability ?? 'unknown',
+          ...(pr?.mergedAt ? { mergedAt: pr.mergedAt } : {}),
+          // This read lacks the worker's yolo setting and the latest human hold.
+          // It must never imply that a passing reviewer verdict authorizes a merge.
+          authorization: 'check pr_checks_status in the corner',
+        },
+      });
     }
     case 'react_to_message':
       return reactToMessage(args);

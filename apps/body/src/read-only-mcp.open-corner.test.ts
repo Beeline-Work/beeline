@@ -40,6 +40,17 @@ async function daemonDoor(
     remote: 'https://github.com/owner/widgets.git',
     targetBranch: 'main',
   },
+  conversationItems: Record<string, unknown>[] = [
+    {
+      id: 'message-1',
+      cursor: `123,${'a'.repeat(64)}`,
+      authorId: 'agent',
+      createdAt: 123,
+      type: 'message',
+      body: 'Tests pending',
+      attachments: [],
+    },
+  ],
 ): Promise<{ origin: string; calls: Record<string, unknown>[] }> {
   const calls: Record<string, unknown>[] = [];
   const server = createServer((request, response) => {
@@ -58,13 +69,33 @@ async function daemonDoor(
               ? {
                   cornerId: CORNER,
                   objective: 'Ship the endpoint',
-                  lifecycle: { checks: 'pending' },
+                  lifecycle: {
+                    lifecycle: 'in-review',
+                    checks: 'pending',
+                    pr: {
+                      number: 42,
+                      url: 'https://github.com/owner/widgets/pull/42',
+                      title: 'Ship endpoint',
+                      headSha: 'b'.repeat(40),
+                      mergeability: 'clean',
+                    },
+                  },
                 }
-              : operation === 'getRoomConversation'
-                ? { items: [{ id: 'message-1', body: 'Tests pending' }] }
-                : operation === 'createCorner'
-                  ? { cornerId: CORNER }
-                  : { ok: true };
+              : operation === 'getPrChecksStatus'
+                ? {
+                    checks: 'pending',
+                    headSha: 'b'.repeat(40),
+                    approvalPending: true,
+                    reviewer: '@reviewer',
+                    reviewerExists: true,
+                    reviewerIsAuthor: false,
+                    reviewerWake: { status: 'waiting', detail: 'checks pending' },
+                  }
+                : operation === 'getRoomConversation'
+                  ? { items: conversationItems }
+                  : operation === 'createCorner'
+                    ? { cornerId: CORNER }
+                    : { ok: true };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
@@ -391,17 +422,24 @@ describe('relay tools', () => {
     const response = await callTool(door.origin, { cornerId: CORNER }, { name: 'inspect_corner' });
     expect(response.result?.isError).not.toBe(true);
     expect(JSON.parse(response.result!.content[0]!.text)).toEqual({
-      status: {
-        cornerId: CORNER,
-        objective: 'Ship the endpoint',
-        lifecycle: { checks: 'pending' },
+      cornerId: CORNER,
+      state: 'in-review',
+      pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', title: 'Ship endpoint' },
+      head: 'b'.repeat(40),
+      checks: 'pending',
+      verdict: {
+        approvalPending: true,
+        reviewer: '@reviewer',
+        reviewerExists: true,
+        reviewerIsAuthor: false,
+        reviewerWake: { status: 'waiting', detail: 'checks pending' },
       },
-      transcript: { items: [{ id: 'message-1', body: 'Tests pending' }] },
+      merge: { mergeability: 'clean', authorization: 'check pr_checks_status in the corner' },
     });
     expect(door.calls.map((call) => call.operation)).toEqual([
       'listRoomCorners',
       'getCornerRestoreState',
-      'getRoomConversation',
+      'getPrChecksStatus',
     ]);
   });
   it('passes a transcript cursor only after listing the member corner', async () => {
@@ -410,7 +448,7 @@ describe('relay tools', () => {
       door.origin,
       {
         cornerId: CORNER,
-        earliest: true,
+        mode: 'transcript',
         after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
       { name: 'inspect_corner' },
@@ -418,10 +456,124 @@ describe('relay tools', () => {
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls.find((call) => call.operation === 'getRoomConversation')).toMatchObject({
       roomId: CORNER,
-      limit: 200,
-      window: 'earliest',
+      limit: 9,
       after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     });
+  });
+  it('caps a transcript page and carries a cursor to its remaining rows', async () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: `message-${index}`,
+      cursor: `${index + 1},${'a'.repeat(64)}`,
+      authorId: 'agent',
+      createdAt: index,
+      type: 'message',
+      body: 'x'.repeat(50000),
+      attachments: [],
+    }));
+    const door = await daemonDoor(undefined, items);
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript' },
+      { name: 'inspect_corner' },
+    );
+    const raw = response.result!.content[0]!.text;
+    const page = JSON.parse(raw);
+    expect(raw.length).toBeLessThan(12000);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ bodyContinues: true, body: 'x'.repeat(1000) });
+    expect(page.next).toEqual({ offset: 1000 });
+    expect(door.calls.find((call) => call.operation === 'getRoomConversation')).toMatchObject({
+      limit: 9,
+      window: 'earliest',
+    });
+    const continuation = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript', ...page.next },
+      { name: 'inspect_corner' },
+    );
+    expect(JSON.parse(continuation.result!.content[0]!.text).items[0]).toMatchObject({
+      id: 'message-0',
+      bodyOffset: 1000,
+      body: 'x'.repeat(1000),
+    });
+  });
+  it('pages past eight complete messages without skipping the ninth', async () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: `message-${index}`,
+      cursor: `${index + 1},${'a'.repeat(64)}`,
+      authorId: 'agent',
+      createdAt: index,
+      type: 'message',
+      body: 'short',
+      attachments: [],
+    }));
+    const door = await daemonDoor(undefined, items);
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript' },
+      { name: 'inspect_corner' },
+    );
+    const page = JSON.parse(response.result!.content[0]!.text);
+    expect(page.items).toHaveLength(8);
+    expect(page.next).toEqual({ after: items[7]!.cursor });
+  });
+  it('finishes a split message before advancing to the following message', async () => {
+    const items = [
+      {
+        id: 'long',
+        cursor: `1,${'a'.repeat(64)}`,
+        authorId: 'agent',
+        createdAt: 1,
+        type: 'message',
+        body: 'x'.repeat(1500),
+        attachments: [],
+      },
+      {
+        id: 'next',
+        cursor: `2,${'a'.repeat(64)}`,
+        authorId: 'agent',
+        createdAt: 2,
+        type: 'message',
+        body: 'done',
+        attachments: [],
+      },
+    ];
+    const door = await daemonDoor(undefined, items);
+    const first = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript' },
+      { name: 'inspect_corner' },
+    );
+    const next = JSON.parse(first.result!.content[0]!.text).next;
+    const second = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript', ...next },
+      { name: 'inspect_corner' },
+    );
+    const page = JSON.parse(second.result!.content[0]!.text);
+    expect(page.items.map((item: { id: string }) => item.id)).toEqual(['long', 'next']);
+    expect(page.items[0]).toMatchObject({ bodyOffset: 1000, body: 'x'.repeat(500) });
+    expect(page.next).toBeUndefined();
+  });
+  it('caps escaped transcript JSON as well as raw message characters', async () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: `message-${index}`,
+      cursor: `${index + 1},${'a'.repeat(64)}`,
+      authorId: 'agent',
+      createdAt: index,
+      type: 'message',
+      body: '\u0000'.repeat(1000),
+      attachments: [],
+    }));
+    const door = await daemonDoor(undefined, items);
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript' },
+      { name: 'inspect_corner' },
+    );
+    const raw = response.result!.content[0]!.text;
+    expect(raw.length).toBeLessThanOrEqual(12000);
+    expect(JSON.parse(raw).next).toBeDefined();
   });
   it('refuses steering from a corner turn', async () => {
     const door = await daemonDoor();

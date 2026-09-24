@@ -210,6 +210,7 @@ describe('phone contract', () => {
       'activeSteerAgentIds',
     );
     expectTypeOf<PhoneOperationMap['setMessageBookmark']['input']>().toHaveProperty('bookmarked');
+    expectTypeOf<PhoneOperationMap['deleteRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['listMessageBookmarks']['output']>().toHaveProperty('bookmarks');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');

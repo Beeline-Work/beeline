@@ -3081,10 +3081,38 @@ export function BuzzChatSurface({
     },
     [markUnreadFrom, refreshSignal],
   );
+  const canDeleteMessage = useCallback(
+    (message: ChatDisplayMessage) =>
+      !message.deleted && !message.isAgentActivity && !message.isAgentDraft &&
+      (message.isUser || canManageWorkspace),
+    [canManageWorkspace],
+  );
+  const handleDeleteMessage = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (!canDeleteMessage(message)) return;
+      const confirmed = await Modal.confirm(
+        'Delete message?',
+        'The message text and attachments will be removed. A deleted-message record will remain in this Room.',
+        { cancelText: 'Cancel', confirmText: 'Delete message', destructive: true },
+      );
+      if (!confirmed) return;
+      try {
+        await monolithPhoneOperation('deleteRoomMessage', {
+          roomId: decodedId,
+          messageId: message.relayId ?? message.id,
+        });
+        AccessibilityInfo.announceForAccessibility('Message deleted');
+        refreshSignal.force();
+      } catch (error) {
+        Modal.alert('Could not delete message', error instanceof Error ? error.message : String(error));
+      }
+    },
+    [canDeleteMessage, decodedId, refreshSignal],
+  );
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
     // A live draft is the turn still writing — it settles into the reply the
     // actions would target, so it offers none.
-    if (message.isAgentDraft) return;
+    if (message.isAgentDraft || message.deleted) return;
     void Haptics.selectionAsync();
     setMessageActionsTarget(message);
   }, []);
@@ -5920,6 +5948,19 @@ export function BuzzChatSurface({
               if (target) void handleMarkUnread(target);
             }}
             testID="message-mark-unread-action"
+          />
+        ) : null}
+        {messageActionsTarget && canDeleteMessage(messageActionsTarget) ? (
+          <HullActionSheetRow
+            accessibilityLabel="Delete message"
+            destructive
+            label="Delete message"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleDeleteMessage(target);
+            }}
+            testID="message-delete-action"
           />
         ) : null}
         <HullActionSheetCancel

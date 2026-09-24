@@ -214,6 +214,8 @@ export type RoomViewMessage = {
   readonly createdAtMs?: number;
   readonly author: RoomViewIdentity;
   readonly presentation: 'message' | 'system' | 'activity' | 'card';
+  /** The original text and attachments were removed; this row remains as a transcript record. */
+  readonly deleted?: boolean;
   /** Private viewer state. Omitted unless this viewer saved the message. */
   readonly bookmarked?: boolean;
   /** The structured event behind a server-phrased system line or card header;

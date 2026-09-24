@@ -78,12 +78,15 @@ describe('a helper joining a corner it did not open', () => {
     });
 
     await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .rejects.toThrow();
-    await expect(git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .rejects.toThrow();
-    await expect(git(remote.slice('file://'.length), 'show-ref', '--verify', 'refs/heads/main'))
-      .resolves.toBeTruthy();
+    await expect(
+      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', 'refs/heads/main'),
+    ).resolves.toBeTruthy();
   });
 
   it('refuses to delete a branch that does not own the corner worktree', async () => {
@@ -108,10 +111,12 @@ describe('a helper joining a corner it did not open', () => {
         token: 'unused',
       }),
     ).rejects.toThrow(/branch mismatch/);
-    await expect(git(remote.slice('file://'.length), 'show-ref', '--verify', 'refs/heads/main'))
-      .resolves.toBeTruthy();
-    await expect(git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .resolves.toBeTruthy();
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', 'refs/heads/main'),
+    ).resolves.toBeTruthy();
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).resolves.toBeTruthy();
   });
 
   it('keeps the exact local ref when remote deletion fails, then retries successfully', async () => {
@@ -140,8 +145,9 @@ describe('a helper joining a corner it did not open', () => {
       }),
     ).rejects.toThrow();
     await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .resolves.toBeTruthy();
+    await expect(
+      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).resolves.toBeTruthy();
 
     await rename(unavailable, bare);
     await removeCornerWorktreeAndBranches({
@@ -150,8 +156,9 @@ describe('a helper joining a corner it did not open', () => {
       branch: FEATURE,
       token: 'fresh',
     });
-    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .rejects.toThrow();
+    await expect(
+      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
     await expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).rejects.toThrow();
   });
 
@@ -179,8 +186,9 @@ describe('a helper joining a corner it did not open', () => {
     });
 
     await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
-      .rejects.toThrow();
+    await expect(
+      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
   });
 
   it('treats a second cleanup after success as idempotent', async () => {
@@ -245,6 +253,19 @@ describe('a helper joining a corner it did not open', () => {
 });
 
 describe('syncCornerBranch — two agents pushing to one branch', () => {
+  it('does not treat an auth failure as an unpushed branch', async () => {
+    await expect(
+      syncCornerBranch({
+        worktreePath: '/unused',
+        featureBranch: FEATURE,
+        git: async (args) => {
+          if (args[0] === 'fetch') throw new Error('fatal: Authentication failed');
+          throw new Error('unexpected git command');
+        },
+      }),
+    ).rejects.toThrow('Authentication failed');
+  });
+
   async function helperWorktree(prefix: string, featureBranch = FEATURE) {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), prefix));

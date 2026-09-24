@@ -256,6 +256,7 @@ interface MessageRow {
   author_id: string;
   text: string;
   presentation: RoomViewMessage['presentation'];
+  deleted_at?: Date | null;
   bookmarked?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
@@ -494,11 +495,12 @@ function projectedMessage(
   );
   const base: RoomViewMessage = {
     id: row.id,
-    text: row.text,
+    text: row.deleted_at ? 'Message deleted' : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
     author,
     presentation: row.presentation,
+    ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
     ...(row.presentation === 'message'
       ? {
@@ -512,7 +514,7 @@ function projectedMessage(
     ...(row.request_id
       ? { requestId: row.request_id, liveTurnId: row.turn_id ?? `live-turn:${row.request_id}` }
       : {}),
-    ...(row.attachments.length
+    ...(!row.deleted_at && row.attachments.length
       ? {
           attachments: (row.attachments as NonNullable<RoomViewMessage['attachments']>).map(
             (attachment) => ({
@@ -530,9 +532,9 @@ function projectedMessage(
           ),
         }
       : {}),
-    ...(row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),
+    ...(!row.deleted_at && row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),
     ...(row.agent_model ? { agentModel: row.agent_model } : {}),
-    ...(Object.keys(row.reactions ?? {}).length
+    ...(!row.deleted_at && Object.keys(row.reactions ?? {}).length
       ? {
           reactions: MESSAGE_REACTION_EMOJIS.flatMap((emoji) => {
             const reactors = (row.reactions ?? {})[emoji] ?? [];
@@ -2675,6 +2677,9 @@ export class PhoneService {
       case 'reactToMessage':
         await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
         return undefined as Output<Name>;
+      case 'deleteRoomMessage':
+        await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId);
+        return undefined as Output<Name>;
       case 'setMessageBookmark':
         return (await this.setMessageBookmark(
           input as Input<'setMessageBookmark'>,
@@ -3337,6 +3342,7 @@ export class PhoneService {
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
              AND workspace_member.removed_at IS NULL
            WHERE message.id=$1 AND message.room_id=$2 AND message.presentation='message'
+             AND message.deleted_at IS NULL
            FOR UPDATE OF message`,
           [input.messageId, input.roomId, viewerId],
         )
@@ -3353,6 +3359,34 @@ export class PhoneService {
         input.roomId,
         JSON.stringify(reactions),
       ]);
+    });
+  }
+
+  private async deleteRoomMessage(
+    input: Input<'deleteRoomMessage'>,
+    viewerId: string,
+  ): Promise<void> {
+    if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
+    await this.database.transaction(async (database) => {
+      const deleted = await database.query(
+        `UPDATE messages message SET deleted_at=COALESCE(message.deleted_at,now()),
+           deleted_by=COALESCE(message.deleted_by,$3),text='',attachments='[]'::jsonb,reactions='{}'::jsonb
+         FROM rooms room
+         WHERE message.id=$1 AND message.room_id=$2 AND message.room_id=room.id
+           AND message.presentation='message' AND EXISTS(
+               SELECT 1 FROM memberships member
+               WHERE member.room_id=message.room_id AND member.identity_id=$3
+                 AND member.removed_at IS NULL
+             ) AND (message.author_id=$3 OR EXISTS(
+               SELECT 1 FROM memberships manager
+               WHERE manager.workspace_id=room.workspace_id AND manager.room_id IS NULL
+                 AND manager.identity_id=$3 AND manager.role IN ('owner','admin')
+                 AND manager.removed_at IS NULL
+             ))
+         RETURNING message.id`,
+        [input.messageId, input.roomId, viewerId],
+      );
+      if (!deleted.rowCount) throw new Error('message is not available for deletion');
     });
   }
 
@@ -3437,14 +3471,14 @@ export class PhoneService {
          COALESCE(room.name,bookmark.source_room_name) room_name,
          bookmark.source_room_kind room_kind,
          bookmark.message_created_at,bookmark.created_at bookmarked_at,
-         (message.id IS NOT NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN message.text END text,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.id END author_id,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.kind END author_kind,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.name END author_name,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.handle END author_handle,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.avatar END author_avatar,
-         CASE WHEN room_member.identity_id IS NOT NULL THEN author.face_id END author_face
+         (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.handle END author_handle,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.avatar END author_avatar,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.face_id END author_face
        FROM message_bookmarks bookmark
        LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
        LEFT JOIN memberships room_member ON room_member.room_id=room.id
@@ -7416,6 +7450,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',
   'sendRoomReply',
   'reactToMessage',
+  'deleteRoomMessage',
   'setMessageBookmark',
   'listMessageBookmarks',
   'createRoomSchedule',

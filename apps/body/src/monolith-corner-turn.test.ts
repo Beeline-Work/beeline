@@ -29,6 +29,10 @@ import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.j
 import { SessionScheduler } from './session-scheduler.js';
 import { sharedNpmCacheDir } from './warm-node-modules.js';
 
+// Turn fixtures use scratch repositories. Branch synchronization has its own
+// real-git suite; these tests exercise the conversation and merge instructions.
+vi.mock('./corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 'unchanged') }));
+
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
@@ -47,6 +51,23 @@ function stored(hex: string, name: string) {
 const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
 
 describe('corner merge instructions', () => {
+  it('does not reuse a startup token after the Room denies a fresh credential', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('repository access denied'));
+    const loop = Object.create(MonolithCornerTurnLoop.prototype) as {
+      options: Record<string, unknown>;
+      syncBranch(): Promise<void>;
+    };
+    loop.options = {
+      repository: {
+        featureBranch: 'feature/widget', targetBranch: 'main', githubToken: 'stale-token',
+      },
+      api: { execute }, parentRoomId: 'exact-room', worktreePath: '/unused',
+    };
+    await expect(loop.syncBranch()).rejects.toThrow('repository access denied');
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: 'exact-room' });
+  });
+
   it('selects the no-reviewer and reviewer matrix', () => {
     expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
     expect(cornerMergeInstruction(false)).toContain('never merge');

@@ -1069,6 +1069,66 @@ describe('Room message variant components', () => {
     );
   });
 
+  it('forwards a message to a new corner on a phone swipe right', () => {
+    const onReply = vi.fn();
+    const onForwardToNewCorner = vi.fn();
+    const row = message({ id: 'swipe-corner' });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={row}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={onReply}
+        onForwardToNewCorner={onForwardToNewCorner}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const swipeable = renderer.root.findByType('Swipeable');
+    const leftAction = render(swipeable.props.renderLeftActions());
+    expect(
+      leftAction.root.findByProps({ testID: 'corner-swipe-action-swipe-corner' }).props
+        .accessibilityLabel,
+    ).toBe('Forward message to a new corner');
+    act(() => swipeable.props.onSwipeableOpen('left'));
+    expect(onForwardToNewCorner).toHaveBeenCalledWith(row);
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('leaves swipe right inert where no new corner can open', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'no-swipe-corner' })}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const swipeable = renderer.root.findByType('Swipeable');
+    expect(swipeable.props.renderLeftActions).toBeUndefined();
+    act(() => swipeable.props.onSwipeableOpen('left'));
+  });
+
   it('adds Open and Cancel to an exact agent corner proposal without replacing reply swipe', () => {
     const onDecision = vi.fn();
     const onReply = vi.fn();

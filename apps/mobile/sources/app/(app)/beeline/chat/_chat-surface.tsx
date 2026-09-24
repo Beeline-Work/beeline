@@ -277,6 +277,7 @@ import {
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
+  formatForwardedMessage,
   forwardMessageToRoom,
   forwardTargets,
   resolveForwardTargetRoom,
@@ -344,6 +345,10 @@ import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { openRandomNamedCorner } from '@/buzz/open-random-corner';
+import {
+  forwardMessageToNewCorner,
+  takeCornerComposerDraft,
+} from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
@@ -738,6 +743,21 @@ export function BuzzChatSurface({
       cancelled = true;
     };
   }, [decodedId, desktopExperience]);
+
+  useEffect(() => {
+    // A corner opened by a swipe-right forward arrives with that forward ready
+    // in its composer and the cursor after it.
+    const staged = takeCornerComposerDraft(decodedId);
+    if (staged === undefined) return;
+    const selection = { start: staged.length, end: staged.length };
+    inputTextRef.current = staged;
+    setInputText(staged);
+    setInputSelection(selection);
+    scheduleAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setNativeProps({ selection });
+    });
+  }, [decodedId]);
 
   useEffect(() => {
     if (!desktopExperience || loadedDraftForRef.current !== decodedId) return;
@@ -4011,6 +4031,60 @@ export function BuzzChatSurface({
     viewerIsAgent,
   ]);
 
+  const handleForwardToNewCorner = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
+      if (!transport) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Modal.alert(
+          'Not connected yet',
+          `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+        );
+        return;
+      }
+      void Haptics.selectionAsync();
+      setOpeningRandomCorner(true);
+      try {
+        await forwardMessageToNewCorner({
+          confirm: () =>
+            Modal.confirm(
+              `Forward to a new ${CORNER_LABEL}?`,
+              `A human-owned ${CORNER_LABEL} opens with this message ready to send in its composer.`,
+              { cancelText: 'Cancel', confirmText: `Open ${CORNER_LABEL}` },
+            ),
+          forwardText: formatForwardedMessage(
+            message.text,
+            displayRoomName,
+            message.authorIdentity ?? {
+              name: message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE',
+              ...(message.pubkey ? { handle: fallbackMemberHandle(message.pubkey) } : {}),
+            },
+          ),
+          createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+          roomId: decodedId,
+          openCorner: (cornerId, title) => {
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            router.push(cornerHref(cornerId, decodedId, title));
+          },
+        });
+      } catch (err) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+      } finally {
+        setOpeningRandomCorner(false);
+      }
+    },
+    [
+      decodedId,
+      desktopExperience,
+      displayRoomName,
+      isArchived,
+      openingRandomCorner,
+      transport,
+      viewerIsAgent,
+    ],
+  );
+
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
       if (!transport || !activeCommunityId) return;
@@ -4880,6 +4954,13 @@ export function BuzzChatSurface({
           onForward={beginForward}
           onBookmark={handleBookmarkMessage}
           {...(!isCorner &&
+          !isDirectMessage &&
+          !isArchived &&
+          !viewerIsAgent &&
+          !desktopExperience
+            ? { onForwardToNewCorner: handleForwardToNewCorner }
+            : {})}
+          {...(!isCorner &&
           !isArchived &&
           !viewerIsAgent &&
           !isReadOnlyDirectMessage &&
@@ -4911,6 +4992,7 @@ export function BuzzChatSurface({
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,
+      handleForwardToNewCorner,
       grantActionId,
       connectorOfferActionId,
       handleAcceptConnectorOffer,
@@ -4944,6 +5026,8 @@ export function BuzzChatSurface({
       handleCopyLedgerMessage,
       openMessageActions,
       isReadOnlyDirectMessage,
+      isDirectMessage,
+      desktopExperience,
       isArchived,
       isCorner,
       decodedId,

@@ -356,6 +356,84 @@ describe('monolith integration', () => {
     });
   };
 
+  it('generates and refines durable avatars through an authorized slash-command turn', async () => {
+    const before = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
+    expect(before?.avatarGenerationId).toBeUndefined();
+    const drawing = [
+      { type: 'path', d: 'M20,30 L50,10 L80,30 L70,80 L50,92 L30,80 Z', fill: 'bone' },
+      { type: 'polygon', points: '26,36 44,42 40,49', fill: 'ink' },
+      { type: 'polygon', points: '74,36 56,42 60,49', fill: 'ink' },
+    ];
+    const send = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      text: '@bee /draw-avatar "a star god"',
+    });
+    expect(send.status).toBe(200);
+    const message = (await send.json()) as { messageId: string };
+    const command = (
+      await database.query<{ id: string; turn_request_id: string }>(
+        'SELECT id,turn_request_id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2',
+        [message.messageId, AGENT],
+      )
+    ).rows[0]!;
+    expect(command).toBeDefined();
+    const input = {
+      roomId: ROOM,
+      drawing,
+      requestId: command.turn_request_id,
+      generationId: 'avatar-turn',
+    };
+    const call = (body: unknown) =>
+      request('/v1/daemon/operations/postAgentAvatar', 'POST', body, daemonToken);
+    expect((await call(input)).status).not.toBe(200);
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'avatar-turn');
+    expect((await call({ ...input, agentId: 'c'.repeat(64) })).status).not.toBe(200);
+    expect((await call({ ...input, drawing: [] })).status).not.toBe(200);
+    expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBeUndefined();
+    const saved = await call(input);
+    expect(saved.status).toBe(200);
+    const first = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
+    expect(first?.avatarGenerationId).toBeTruthy();
+    expect(isAgentDetailView(first)).toBe(true);
+    const url = first!.agent.identity.avatar!;
+    expect(url).toContain('/v1/agent-avatars/');
+    const picture = await fetch(url);
+    expect(picture.status).toBe(200);
+    expect(picture.headers.get('content-type')).toBe('image/webp');
+    const bytes = new Uint8Array(await picture.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(100);
+    // Corrupt generation leaves both persisted face and success marker untouched.
+    expect(
+      (await call({ ...input, drawing: [{ type: 'image', href: 'file:///etc/passwd' }] })).status,
+    ).not.toBe(200);
+    expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
+    expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBe(
+      first?.avatarGenerationId,
+    );
+    const soulSave = await operation('updateAgentSoul', {
+      workspaceId: WORKSPACE, agentId: AGENT, name: 'Bee', instructions: 'A star god',
+      avatarSeed: AGENT, avatar: 'https://example.com/old-avatar.png',
+    });
+    expect(soulSave.status).toBe(204);
+    expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
+    const context = await daemonOperation('getAgentAvatar', { roomId: ROOM });
+    expect((await context.json()).drawing).toEqual(drawing);
+    const refined = [
+      ...drawing,
+      { type: 'path', d: 'M36,68 L50,74 L64,68', fill: 'none', stroke: 'ink', strokeWidth: 2 },
+    ];
+    expect((await call({ ...input, drawing: refined })).status).toBe(200);
+    const reopened = await new PhoneService(database, origin).readAgent(WORKSPACE, AGENT, HUMAN);
+    expect(reopened?.avatarGenerationId).not.toBe(first?.avatarGenerationId);
+    expect(reopened?.agent.identity.avatar).not.toBe(url);
+    expect(
+      (await database.query('SELECT id FROM agent_avatars WHERE agent_id=$1', [AGENT])).rowCount,
+    ).toBe(1);
+    expect((await fetch(url)).status).toBe(404);
+    await database.query("UPDATE agent_commands SET state='complete' WHERE id=$1", [command.id]);
+    expect((await call(input)).status).not.toBe(200);
+  });
+
   it('projects exact Room read cursors and omits unread state from corners', async () => {
     const corner = '44444444-4444-4444-8444-444444444444';
     await database.query(
@@ -7470,6 +7548,53 @@ describe('monolith integration', () => {
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
+
+  it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-chat-mine',
+      name: 'Pick a shape',
+      objective: 'Pick a shape for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
+      cornerId,
+    ]);
+    const listed = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{
+            room: { id: string };
+            openCorners: Array<{ id: string; state: string; mine?: true }>;
+          }>;
+        }
+      ).chats
+        .find((item) => item.room.id === ROOM)
+        ?.openCorners.find((item) => item.id === cornerId);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).not.toHaveProperty('mine');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-tagged',$1,$2,'@owner square or round?',now()+interval '2 seconds')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
+      [cornerId, AGENT],
+    );
+    expect(await listed()).not.toHaveProperty('mine');
+    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
+      cornerId,
+      HUMAN,
+    ]);
+    expect(await listed()).toEqual(expect.objectContaining({ mine: true }));
+  });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
     const input = {

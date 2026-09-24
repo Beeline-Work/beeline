@@ -93,6 +93,32 @@ function find_by_test_id(renderer: ReactTestRenderer, testId: string) {
 }
 
 describe('SlashVerbPicker agent command palette', () => {
+  it('selects the published draw-avatar skill and preserves the exact target mention', () => {
+    const onCommand = vi.fn();
+    const renderer = render(
+      React.createElement(SlashVerbPicker, {
+        verbs: [],
+        query: 'dra',
+        highlightedIndex: 0,
+        onDismiss: () => undefined,
+        onSelect: () => undefined,
+        commands: availableAgentMentionCommands(
+          [{ name: 'draw-avatar', description: 'Draw from my soul' }],
+          'dra',
+        ),
+        agentName: 'emberus',
+        agentLacksCommands: false,
+        onSelectCommand: onCommand,
+      }),
+    );
+    const entry = find_by_test_id(renderer, 'slash-agent-command-draw-avatar');
+    expect(entry).toHaveLength(1);
+    entry[0].props.onPress();
+    expect(insertAgentSlashCommand('@emberus /dra', onCommand.mock.calls[0][0])).toBe(
+      '@emberus /draw-avatar ',
+    );
+  });
+
   it('shows the server restart command and selects it when the harness has no catalog', () => {
     const onCommand = vi.fn();
     const renderer = render(

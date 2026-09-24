@@ -603,3 +603,17 @@ describe('relay tools', () => {
     expect(door.calls).toHaveLength(0);
   });
 });
+
+
+describe('avatar skill tools over MCP', () => {
+  it('sends generated geometry with active command authority and reads back refinement context', async () => {
+    const { origin, calls } = await daemonDoor();
+    const drawing = [{ type: 'circle', cx: 50, cy: 50, r: 30, fill: 'bone' }];
+    const saved = await callTool(origin, { drawing }, { name: 'set_avatar' });
+    expect(saved.error).toBeUndefined();
+    expect(saved.result?.isError).not.toBe(true);
+    expect(calls).toContainEqual({ operation: 'postAgentAvatar', roomId: ROOM, requestId: 'command-request', generationId: 'g1', drawing });
+    await callTool(origin, {}, { name: 'get_avatar' });
+    expect(calls).toContainEqual({ operation: 'getAgentAvatar', roomId: ROOM });
+  });
+});

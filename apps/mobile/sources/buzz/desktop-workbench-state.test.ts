@@ -26,11 +26,9 @@ import {
   isDesktopWorkPaneCommand,
   type DesktopWorkPaneEvent,
   loadDesktopDraft,
-  loadDesktopRoomCornersExpanded,
   loadDesktopWorkPanePreference,
   loadDesktopPaneWidth,
   saveDesktopDraft,
-  saveDesktopRoomCornersExpanded,
   saveDesktopWorkPanePreference,
   saveDesktopPaneWidth,
   transitionDesktopWorkPane,
@@ -243,14 +241,6 @@ describe('desktop workbench state', () => {
     await saveDesktopWorkPanePreference('regular-window', 'present');
     expect(await loadDesktopWorkPanePreference('regular-window')).toBe('present');
     expect(await loadDesktopWorkPanePreference('wide-window')).toBe('dismissed');
-  });
-
-  it('defaults Room corner lists open and preserves each Room preference independently', async () => {
-    expect(await loadDesktopRoomCornersExpanded('room/one')).toBe(true);
-    await saveDesktopRoomCornersExpanded('room/one', false);
-    await saveDesktopRoomCornersExpanded('room two', true);
-    expect(await loadDesktopRoomCornersExpanded('room/one')).toBe(false);
-    expect(await loadDesktopRoomCornersExpanded('room two')).toBe(true);
   });
 
   it('treats only non-archived corners as live work the handle may present', () => {

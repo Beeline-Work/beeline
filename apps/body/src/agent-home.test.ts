@@ -561,7 +561,7 @@ describe('operator skills + MCP passthrough', () => {
 
     await prepareRoomAgentHome({ root: implementerRoot, operatorHome, agentKind: 'claude' });
     expect(readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort()).toEqual(
-      ['greet', BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
+      ['greet', 'draw-avatar', BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
     );
 
     await prepareRoomAgentHome({
@@ -574,6 +574,7 @@ describe('operator skills + MCP passthrough', () => {
       [
         BEELINE_REVIEW_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
+        'draw-avatar',
         'greet',
         USING_BEELINE_SKILL_NAME,
       ].sort(),

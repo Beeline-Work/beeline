@@ -908,6 +908,65 @@ describe('on-disk profile claim reclaim', () => {
     dir.cleanup();
   });
 
+  it('recognizes the shared broker claim when its vault answers, preserving the browser', async () => {
+    const dir = claimDir();
+    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
+    writeLock(dir.lockPath, broker.pid!);
+    const { client, calls } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    let startedConnect = false;
+    try {
+      const result = await installSquire({
+        workspaceId: 'ws-1',
+        profileDir: dir.profileDir,
+        lockRoot: dir.lockRoot,
+        run: async (command, args) => {
+          expect([command, ...args]).toEqual([
+            'systemctl', '--user', 'show', '--property=MainPID', '--value',
+            'trusty-squire-broker.service',
+          ]);
+          return { code: 0, stdout: String(broker.pid), stderr: '' };
+        },
+        streamRun: async () => {
+          startedConnect = true;
+          return { stdout: '', stderr: '', abort: () => {} };
+        },
+        mcp: client,
+      });
+      expect(result.status).toBe('connected');
+      expect(result.signIn).toBeUndefined();
+      expect(result.steps.map(({ status }) => status)).toEqual(['done', 'done', 'done', 'done']);
+      expect(calls).toEqual([{ tool: 'list_credentials', args: { fields: 'summary' } }]);
+      expect(startedConnect).toBe(false);
+      expect(existsSync(dir.lockPath)).toBe(true);
+      expect(isProcessAlive(broker.pid)).toBe(true);
+    } finally {
+      broker.kill();
+      dir.cleanup();
+    }
+  });
+
+  it('keeps a broker claim and reports a failed vault probe', async () => {
+    const dir = claimDir();
+    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
+    writeLock(dir.lockPath, broker.pid!);
+    try {
+      const result = await installSquire({
+        workspaceId: 'ws-1',
+        profileDir: dir.profileDir,
+        lockRoot: dir.lockRoot,
+        run: async () => ({ code: 0, stdout: String(broker.pid), stderr: '' }),
+        mcp: { call: async () => { throw new Error('vault unavailable'); } },
+      });
+      expect(result.status).toBe('error');
+      expect(result.errorMessage).toBe('vault unavailable');
+      expect(existsSync(dir.lockPath)).toBe(true);
+      expect(isProcessAlive(broker.pid)).toBe(true);
+    } finally {
+      broker.kill();
+      dir.cleanup();
+    }
+  });
+
   it('releases a lock this helper already claimed without killing a live owner', () => {
     const dir = claimDir();
     const holder = spawn('sleep', ['30'], { stdio: 'ignore' });

@@ -60,6 +60,7 @@ import {
   NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
+import { validRoomSlug } from '@/buzz/room-name';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
@@ -727,7 +728,7 @@ export default function BuzzChannels() {
 
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!name || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
+    if (!validRoomSlug(name) || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;

@@ -234,7 +234,7 @@ describe('DM attachments', () => {
 
   it('treats a group Room the same way', async () => {
     const group = (await (
-      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Files' })
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'files' })
     ).json()) as { id: string };
 
     const attachment = await uploadPng();

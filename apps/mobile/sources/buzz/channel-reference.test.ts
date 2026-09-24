@@ -62,6 +62,32 @@ describe('buildChannelReferenceIndex', () => {
 });
 
 describe('findChannelReferences — known references resolve exactly', () => {
+  it('navigates historical Room and corner links after a slug rename', () => {
+    const renamed = buildChannelReferenceIndex(
+      [{ channelId: 'room-roadmap', name: 'road-map', aliases: ['Road Map'] }],
+      [{ channelId: 'corner-fix', parentChannelId: 'room-roadmap', name: 'fix-relay' }],
+    );
+    expect(
+      findChannelReferences('#Road Map and #road-map/fix-relay', renamed).map(
+        (match) => match.target,
+      ),
+    ).toEqual([
+      { kind: 'room', channelId: 'room-roadmap' },
+      { kind: 'corner', channelId: 'corner-fix', parentChannelId: 'room-roadmap' },
+    ]);
+    expect(findChannelReferences('#Road Map/fix-relay', renamed)[0]?.target).toEqual({
+      kind: 'corner',
+      channelId: 'corner-fix',
+      parentChannelId: 'room-roadmap',
+    });
+    expect(
+      resolveCornerFromList(
+        '#Road Map/fix-relay',
+        { id: 'room-roadmap', name: 'road-map', aliases: ['Road Map'] },
+        [{ id: 'corner-fix', name: 'fix-relay' }],
+      ),
+    ).toEqual({ kind: 'corner', channelId: 'corner-fix', parentChannelId: 'room-roadmap' });
+  });
   it('links a known room reference and reports exact offsets', () => {
     const text = 'discuss in #Roadmap please';
     expect(targets(text)).toEqual([
@@ -122,9 +148,11 @@ describe('findChannelReferences — unknown tokens stay ordinary text', () => {
       },
     ]);
     expect(
-      resolveCornerFromList('#infra/unknown-corner stays plain.', { id: 'room-infra', name: 'infra' }, [
-        { id: 'corner-unknown', name: 'unknown-corner' },
-      ]),
+      resolveCornerFromList(
+        '#infra/unknown-corner stays plain.',
+        { id: 'room-infra', name: 'infra' },
+        [{ id: 'corner-unknown', name: 'unknown-corner' }],
+      ),
     ).toEqual({
       kind: 'corner',
       channelId: 'corner-unknown',

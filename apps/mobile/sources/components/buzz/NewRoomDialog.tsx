@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
 import {
   HULL_DIALOG_LAYOUT,
@@ -108,9 +109,9 @@ export function NewRoomDialog({
         testID="create-room-name"
         value={roomName}
       />
-      {!roomName.trim() && (
+      {!validRoomSlug(roomName) && (
         <Text testID="create-room-name-hint" style={styles.hint}>
-          Enter a Room name to create it.
+          {ROOM_SLUG_HINT}
         </Text>
       )}
       <TouchableOpacity
@@ -155,7 +156,7 @@ export function NewRoomDialog({
         {
           label: creatingRoom ? 'Creating' : 'Create',
           onPress: () => void createRoom(),
-          disabled: !roomName.trim() || creatingRoom,
+          disabled: !validRoomSlug(roomName) || creatingRoom,
           busy: creatingRoom,
           variant: 'primary',
           testID: 'create-room-submit',

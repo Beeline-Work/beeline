@@ -9,6 +9,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { GoogleOAuth } from './google-oauth.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
+import { requireRoomSlug, reserveRoomName } from './room-names.js';
 import {
   createAgentPairingCode,
   HUMAN_CORNER_TITLE_MAX_LENGTH,
@@ -1013,6 +1014,16 @@ export class PhoneService {
     );
     const current = workspace.rows[0];
     if (!current) return null;
+    const aliases = await this.database.query<{ room_id: string; name: string }>(
+      `SELECT alias.room_id,alias.name FROM room_name_aliases alias
+       JOIN memberships member ON member.room_id=alias.room_id
+         AND member.identity_id=$2 AND member.removed_at IS NULL
+       WHERE alias.workspace_id=$1`,
+      [workspaceId, viewerId],
+    );
+    const aliasesByRoom = new Map<string, string[]>();
+    for (const alias of aliases.rows)
+      aliasesByRoom.set(alias.room_id, [...(aliasesByRoom.get(alias.room_id) ?? []), alias.name]);
     const rooms = await this.database.query<
       RoomRow & {
         member_count: string;
@@ -1180,6 +1191,7 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        ...(aliasesByRoom.has(row.id) ? { nameAliases: aliasesByRoom.get(row.id) } : {}),
         ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
@@ -4120,8 +4132,10 @@ export class PhoneService {
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    const name = requireRoomSlug(input.name);
     const id = randomUUID();
     await this.database.transaction(async (db) => {
+      await reserveRoomName(db, input.workspaceId, name);
       const repository =
         input.repositoryId === undefined
           ? undefined
@@ -4151,7 +4165,7 @@ export class PhoneService {
           id,
           input.workspaceId,
           viewerId,
-          input.name,
+          name,
           input.visibility ?? 'public',
           repository ? `github:${repository.repository_id}` : null,
           repository?.full_name ?? null,
@@ -4279,13 +4293,26 @@ export class PhoneService {
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
+    const name = input.name === undefined ? undefined : requireRoomSlug(input.name);
     await this.database.transaction(async (database) => {
+      if (name !== undefined)
+        await reserveRoomName(database, room.workspace_id, name, input.roomId);
       const current = (
         await database.query<{
+          name: string;
           visibility: 'public' | 'invite-only';
           reviewer_agent_id: string | null;
-        }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
+        }>('SELECT name,visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [
+          input.roomId,
+        ])
       ).rows[0];
+      if (name !== undefined && current && current.name !== name) {
+        await database.query(
+          `INSERT INTO room_name_aliases(workspace_id,room_id,name) VALUES($1,$2,$3)
+           ON CONFLICT DO NOTHING`,
+          [room.workspace_id, input.roomId, current.name],
+        );
+      }
       if (input.reviewerAgentId !== undefined && input.reviewerAgentId !== null) {
         const reviewer = await database.query(
           `SELECT 1
@@ -4306,7 +4333,7 @@ export class PhoneService {
          WHERE id=$1`,
         [
           input.roomId,
-          input.name ?? null,
+          name ?? null,
           input.visibility ?? null,
           input.reviewerAgentId !== undefined,
           input.reviewerAgentId ?? null,
@@ -6377,10 +6404,10 @@ export class PhoneService {
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
       ? (
           await database.query<{ status: string }>(
-          `SELECT status FROM workspace_connectors
+            `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
+            [ws.workspace_id, viewerId, input.connectorType, machineId],
           )
         ).rows[0]?.status
       : undefined;

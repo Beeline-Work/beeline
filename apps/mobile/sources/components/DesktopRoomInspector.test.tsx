@@ -149,6 +149,7 @@ import {
 } from '@/buzz/desktop-artifact-pane';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
+import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
 
 const agent = {
   pubkey: 'agent-1',
@@ -677,6 +678,30 @@ describe('DesktopRoomInspector work pane', () => {
     expect(onOpenInMain).toHaveBeenCalledWith('working');
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
+  });
+
+  it('passes historical Room references to the desktop navigation handler', async () => {
+    const onChannelReference = vi.fn();
+    const detail = {
+      ...room(), room: corners[0].corner, parent: room().room,
+      messages: [{ id: 'link', text: 'See #Old Room', createdAt: 5, author: agent, presentation: 'message' }],
+    } as any;
+    const channelIndex = buildChannelReferenceIndex(
+      [{ channelId: 'another-room', name: 'new-room', aliases: ['Old Room'] }], [],
+    );
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<DesktopRoomInspector {...props({
+        client: { room: vi.fn(async () => detail) }, selectedCornerId: 'working',
+        channelIndex, onChannelReference,
+      })} />);
+    });
+    const message = tree.root.findByType('OrdinaryLedgerMessage' as any);
+    expect(message.props.channelIndex).toBe(channelIndex);
+    act(() => message.props.onChannelReference({ kind: 'room', channelId: 'another-room' }, '#Old Room'));
+    expect(onChannelReference).toHaveBeenCalledWith(
+      { kind: 'room', channelId: 'another-room' }, '#Old Room',
+    );
   });
 
   it('inscribes a focused bookmark in the corner transcript instead of restating it', async () => {

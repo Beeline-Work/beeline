@@ -178,9 +178,9 @@ describe('New Room form', () => {
           .some((node: any) => textContent(node).includes('Repository optional')),
       ).toBe(true);
       act(() => host('create-room-no-repository').props.onPress());
-      act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
+      act(() => host('create-room-name').props.onChangeText(`${viewport}-room`));
       act(() => host('create-room-submit').props.onPress());
-      expect(submit).toHaveBeenCalledWith(`${viewport} room`, null, false);
+      expect(submit).toHaveBeenCalledWith(`${viewport}-room`, null, false);
       act(() => renderer.unmount());
       windowHeight = 844;
     },
@@ -190,7 +190,7 @@ describe('New Room form', () => {
     const { renderer, host, submit } = mount();
     expect(host('create-room-name').props.accessibilityLabel).toBe('Room name');
     expect(host('create-room-name').props.autoFocus).toBe(true);
-    expect(host('create-room-name-hint').children.join('')).toContain('Enter a Room name');
+    expect(host('create-room-name-hint').children.join('')).toContain('lowercase letters');
     expect(host('create-room-submit').props.disabled).toBe(true);
     const controls = renderer.root.findAll(
       (node: any) => typeof node.type === 'string' && !!node.props.testID,
@@ -201,7 +201,9 @@ describe('New Room form', () => {
     expect(host('create-room-name').parent).not.toBe(host('create-room-submit').parent);
     act(() => host('create-room-name').props.onChangeText('   '));
     expect(host('create-room-submit').props.disabled).toBe(true);
-    act(() => host('create-room-name').props.onChangeText(' kitchen '));
+    act(() => host('create-room-name').props.onChangeText('Kitchen Room'));
+    expect(host('create-room-submit').props.disabled).toBe(true);
+    act(() => host('create-room-name').props.onChangeText('kitchen'));
     expect(host('create-room-submit').props.disabled).toBe(false);
     expect(host('create-room-name-hint')).toBeUndefined();
     act(() => host('create-room-submit').props.onPress());
@@ -258,9 +260,9 @@ describe('New Room form', () => {
     const { renderer, host, submit } = mount();
     expect(host('create-room-invite-only').props.value).toBe(false);
     act(() => host('create-room-invite-only').props.onValueChange(true));
-    act(() => host('create-room-name').props.onChangeText('private room'));
+    act(() => host('create-room-name').props.onChangeText('private-room'));
     act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenCalledWith('private room', null, true);
+    expect(submit).toHaveBeenCalledWith('private-room', null, true);
     act(() => renderer.unmount());
   });
 });

@@ -24,7 +24,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
-import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
+import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -60,6 +60,8 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 type Props = {
   room: RoomView;
   client: RoomViewClient | null;
+  channelIndex?: ChannelReferenceIndex;
+  onChannelReference?: (target: ChannelReferenceTarget, text?: string) => void;
   selectedCornerId: string | null;
   onSelectCorner(cornerId: string | null): void;
   onOpenInMain(cornerId: string): void;
@@ -110,6 +112,8 @@ function HeaderIconControl({
 export function DesktopRoomInspector({
   room,
   client,
+  channelIndex,
+  onChannelReference,
   selectedCornerId,
   onSelectCorner,
   onOpenInMain,
@@ -244,6 +248,8 @@ export function DesktopRoomInspector({
       ) : selectedCornerId ? (
         <CornerCockpit
           client={client}
+          channelIndex={channelIndex}
+          onChannelReference={onChannelReference}
           roomId={selectedCornerId}
           detail={detail}
           loading={loading}
@@ -429,6 +435,8 @@ function inspectorMessageKind(message: ChatDisplayMessage) {
 
 function CornerCockpit({
   client,
+  channelIndex: workspaceChannelIndex,
+  onChannelReference,
   roomId,
   detail,
   loading,
@@ -440,6 +448,8 @@ function CornerCockpit({
   onRefresh,
 }: {
   client: RoomViewClient | null;
+  channelIndex?: ChannelReferenceIndex;
+  onChannelReference?: (target: ChannelReferenceTarget, text?: string) => void;
   roomId: string;
   detail: RoomView | null;
   loading: boolean;
@@ -549,7 +559,7 @@ function CornerCockpit({
       }),
     );
   }, [focusMessageId, messages, roomId]);
-  const channelIndex = React.useMemo(
+  const localChannelIndex = React.useMemo(
     () =>
       buildChannelReferenceIndex(
         [],
@@ -565,6 +575,7 @@ function CornerCockpit({
       ),
     [detail],
   );
+  const channelIndex = workspaceChannelIndex ?? localChannelIndex;
   const send = React.useCallback(async () => {
     const text = input.trim();
     if (!text || !detail || sending) return;
@@ -645,7 +656,7 @@ function CornerCockpit({
             )}
             channelIndex={channelIndex}
             deliveryFailed={false}
-            onChannelReference={() => undefined}
+            onChannelReference={onChannelReference ?? (() => undefined)}
             onReply={() => undefined}
             onCopy={() => undefined}
             onRetry={() => undefined}
@@ -666,7 +677,7 @@ function CornerCockpit({
       }
       return captioned;
     },
-    [bylineOpeners, channelIndex, detail, focusMessageId, messages, onOpenCorner],
+    [bylineOpeners, channelIndex, detail, focusMessageId, messages, onOpenCorner, onChannelReference],
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;

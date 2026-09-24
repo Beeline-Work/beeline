@@ -2,6 +2,13 @@ import type { SqlDatabase } from './database.js';
 
 const MENTION_TOKEN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
 const TOKEN_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
+/**
+ * The attribution line a forward ends with (`FORWARDED FROM #room · @author`).
+ * It credits the original author; it does not address them, so its handle is
+ * never read as a tag.
+ */
+const FORWARD_CAPTION = /\n\nFORWARDED FROM #[^\n]+$/;
+const FORWARD_CAPTION_SQL = `'\\n\\nFORWARDED FROM #[^\\n]+$'`;
 
 /**
  * `@channel` is not a handle: it is the one reserved broadcast token, read
@@ -35,7 +42,8 @@ function codePointAt(text: string, offset: number): string | undefined {
 }
 
 /** Exact @handles written as standalone tokens. */
-export function typedMentionHandles(text: string): Set<string> {
+export function typedMentionHandles(message: string): Set<string> {
+  const text = message.replace(FORWARD_CAPTION, '');
   const handles = new Set<string>();
   for (const match of text.matchAll(MENTION_TOKEN)) {
     const offset = match.index ?? 0;
@@ -146,14 +154,19 @@ async function resolveChannelMentionMembers(
  * underscores, none of which are pattern operators.
  */
 function handleWrittenIn(textExpr: string, handleExpr: string): string {
-  return `${textExpr} ~ ('(^|[^[:alnum:]_.-])@' ||
+  return `${withoutForwardCaptionSql(textExpr)} ~ ('(^|[^[:alnum:]_.-])@' ||
     regexp_replace(btrim(ltrim(${handleExpr},'@')),'([.-])','\\&','g') ||
     '[.-]*($|[^[:alnum:]_.-])')`;
 }
 
+/** The text a tag is read from: everything but a forward's attribution line. */
+function withoutForwardCaptionSql(textExpr: string): string {
+  return `regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},'')`;
+}
+
 /** `handleWrittenIn`, pinned to the reserved `@channel` token, case-insensitive. */
 function channelMentionWrittenSql(textExpr: string): string {
-  return `${textExpr} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
+  return `${withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
 }
 
 /**

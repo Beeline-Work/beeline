@@ -3314,6 +3314,51 @@ describe('monolith integration', () => {
     );
   });
 
+  it('does not tag or push the author named in a forward caption', async () => {
+    const recipient = createHash('sha256').update('github:recipient').digest('hex');
+    await auth.exchangeGitHubOidc('recipient-proof');
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, recipient, ROOM],
+    );
+    const send = vi.fn(async () => undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    await pushes.runOnce();
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('recipient-device-token-12345678901234567890',$1,'android','physical')`,
+      [recipient],
+    );
+
+    const humanForward = '7'.repeat(64);
+    const agentForward = '8'.repeat(64);
+    const channelForward = '9'.repeat(64);
+    for (const [messageId, author] of [
+      [humanForward, 'recipient'],
+      [agentForward, 'bee'],
+      [channelForward, 'channel'],
+    ] as const) {
+      const sent = await operation('sendRoomMessage', {
+        roomId: ROOM,
+        messageId,
+        text: `> ship it\n\nFORWARDED FROM #general · @${author}`,
+        mentions: [],
+      });
+      expect(sent.status).toBe(200);
+      expect(await taggedBy(database, messageId)).toEqual([]);
+    }
+    const projected = (await phone.readRoom(ROOM, HUMAN))!;
+    for (const messageId of [humanForward, agentForward, channelForward]) {
+      expect(
+        projected.messages.find((message) => message.id === messageId)?.mentionPubkeys,
+      ).toBeUndefined();
+    }
+    expect(await wokenBy(database, agentForward)).toEqual([]);
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('does not persist a typed agent outside the Room as a mention', async () => {
     const outsideAgent = 'd'.repeat(64);
     await database.query(

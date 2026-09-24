@@ -51,6 +51,7 @@ import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
+import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import {
   TRANSCRIPT_BRASS,
   TRANSCRIPT_SETTLE_MS,
@@ -1577,7 +1578,7 @@ function SwipeToReply({
                 style={styles.cornerSwipeAction}
                 testID={`corner-swipe-action-${messageId}`}
               >
-                <Text style={styles.replySwipeGlyph}>◇</Text>
+                <CornerGlyph size={20} />
                 <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
               </View>
             )

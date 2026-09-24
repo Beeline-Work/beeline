@@ -9,6 +9,13 @@ describe('typedMentionHandles', () => {
     expect(typedMentionHandles('> old line\n@bee take a look')).toEqual(new Set(['bee']));
   });
 
+  it('does not read the author credited in a forward caption as a mention', () => {
+    expect(typedMentionHandles('> ship it\n\nFORWARDED FROM #general · @bee')).toEqual(new Set());
+    expect(typedMentionHandles('@ada see this\n\nFORWARDED FROM #general · @bee')).toEqual(
+      new Set(['ada']),
+    );
+  });
+
   it('reads a literal @channel token through the same tokenizer path as a handle', () => {
     expect(typedMentionHandles('@channel please review')).toEqual(new Set(['channel']));
   });

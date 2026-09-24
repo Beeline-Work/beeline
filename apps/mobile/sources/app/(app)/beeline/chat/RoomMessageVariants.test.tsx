@@ -118,6 +118,10 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/CornerGlyph', async () => {
+  const ReactModule = await import('react');
+  return { CornerGlyph: (props: any) => ReactModule.createElement('CornerGlyph', props) };
+});
 vi.mock('@/components/buzz/MessageReactionRoster', async () => {
   const ReactModule = await import('react');
   return {
@@ -1099,6 +1103,7 @@ describe('Room message variant components', () => {
       leftAction.root.findByProps({ testID: 'corner-swipe-action-swipe-corner' }).props
         .accessibilityLabel,
     ).toBe('Forward message to a new corner');
+    expect(leftAction.root.findAllByType('CornerGlyph' as never)).toHaveLength(1);
     act(() => swipeable.props.onSwipeableOpen('left'));
     expect(onForwardToNewCorner).toHaveBeenCalledWith(row);
     expect(onReply).not.toHaveBeenCalled();

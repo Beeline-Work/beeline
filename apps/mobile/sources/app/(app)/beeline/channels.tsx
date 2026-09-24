@@ -14,7 +14,7 @@ import {
 } from '@/buzz/community-storage';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { filterConversations, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
+import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -216,10 +216,11 @@ export default function BuzzChannels() {
     identity?.publicKey,
     activeCommunityId,
   );
+  const counts = useMemo(() => roomListCounts(chatList?.chats ?? [], pinned), [chatList?.chats, pinned]);
   const [filter, setFilter] = useRoomListFilter(
     activeCommunityId,
     pinsLoaded && Boolean(chatList),
-    Boolean(chatList?.chats.some((item) => !item.directMessage && pinned.includes(item.room.id))),
+    Boolean(chatList?.chats.some((item) => !item.closed && !item.directMessage && pinned.includes(item.room.id))),
   );
   const chatSections = useMemo(
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
@@ -811,11 +812,7 @@ export default function BuzzChannels() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            counts={{
-              all: chatList.chats.length,
-              unread: chatList.chats.filter((item) => item.unread).length,
-              pinned: pinned.length,
-            }}
+            counts={counts}
             onBookmarks={
               activeCommunityId
                 ? () =>

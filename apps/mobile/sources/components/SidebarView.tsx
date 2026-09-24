@@ -9,7 +9,7 @@ import { navigateToRoom } from '@/buzz/corner-navigation';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { filterConversations, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
+import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -297,10 +297,11 @@ export const SidebarView = React.memo(function SidebarView() {
   }, [client, pathname, workspaces]);
 
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
+  const counts = React.useMemo(() => roomListCounts(surface?.chats ?? [], pinned), [surface?.chats, pinned]);
   const [filter, setFilter] = useRoomListFilter(
     workspaceId,
     pinsLoaded && Boolean(surface),
-    Boolean(surface?.chats.some((item) => !item.directMessage && pinned.includes(item.room.id))),
+    Boolean(surface?.chats.some((item) => !item.closed && !item.directMessage && pinned.includes(item.room.id))),
   );
   const filteredChats = React.useMemo(
     () => filterConversations(surface?.chats ?? [], query, filter, pinned),
@@ -529,11 +530,7 @@ export const SidebarView = React.memo(function SidebarView() {
             query={query}
             onQuery={setQuery}
             bookmarksSelected={bookmarksSelected}
-            counts={{
-              all: surface?.chats.length ?? 0,
-              unread: surface?.chats.filter((item) => item.unread).length ?? 0,
-              pinned: pinned.length,
-            }}
+            counts={counts}
             onBookmarks={
               workspaceId
                 ? () =>

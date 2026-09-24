@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatListItem } from '@beeline/buzz-client';
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: {} }));
-import { filterConversations } from './room-list-preferences';
+import { filterConversations, roomListCounts } from './room-list-preferences';
 
 const rooms = [
   { room: { id: 'unread', name: 'Product' }, unread: true },
@@ -33,5 +33,16 @@ describe('conversation filters', () => {
   it('intersects search with pins and supports a separate Messages view', () => {
     expect(ids(filterConversations(rooms, 'arch', 'pinned', ['quiet', 'dm']))).toEqual(['quiet']);
     expect(ids(filterConversations(rooms, '', 'messages', []))).toEqual(['dm']);
+  });
+  it('counts only visible conversations and pins that still belong to them', () => {
+    const pins = ['closed', 'missing', 'quiet', 'dm'];
+    expect(roomListCounts(rooms, pins)).toEqual({ all: 4, unread: 2, pinned: 2 });
+    expect(ids(filterConversations(rooms, '', 'pinned', pins))).toEqual(['quiet', 'dm']);
+    expect(roomListCounts(rooms, ['closed', 'missing'])).toEqual({
+      all: 4,
+      unread: 2,
+      pinned: 0,
+    });
+    expect(filterConversations(rooms, '', 'pinned', ['closed', 'missing'])).toEqual([]);
   });
 });

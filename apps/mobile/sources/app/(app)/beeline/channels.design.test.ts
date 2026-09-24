@@ -49,4 +49,9 @@ describe('Approved Room list layout', () => {
     expect(source).toContain('canConnectAgent={!viewerIsAgent}');
     expect(source).toContain('label="SHOW ALL"');
   });
+  it('uses visible conversation counts for the phone toolbar and initial pin filter', () => {
+    expect(source).toContain('roomListCounts(chatList?.chats ?? [], pinned)');
+    expect(source).toContain('counts={counts}');
+    expect(source).toContain('!item.closed && !item.directMessage && pinned.includes(item.room.id)');
+  });
 });

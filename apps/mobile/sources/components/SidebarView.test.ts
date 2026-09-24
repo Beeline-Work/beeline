@@ -38,4 +38,9 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).not.toContain('presenceDot');
     expect(source).not.toContain('desktop-room-presence-');
   });
+  it('uses visible conversation counts for the desktop toolbar and initial pin filter', () => {
+    expect(source).toContain('roomListCounts(surface?.chats ?? [], pinned)');
+    expect(source).toContain('counts={counts}');
+    expect(source).toContain('!item.closed && !item.directMessage && pinned.includes(item.room.id)');
+  });
 });

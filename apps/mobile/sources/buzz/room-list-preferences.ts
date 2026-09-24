@@ -60,6 +60,16 @@ export function filterConversations(
   );
 }
 
+export function roomListCounts(chats: readonly ChatListItem[], pinned: readonly string[]) {
+  const visible = chats.filter((item) => !item.closed);
+  const pinnedIds = new Set(pinned);
+  return {
+    all: visible.length,
+    unread: visible.filter((item) => item.unread).length,
+    pinned: visible.filter((item) => pinnedIds.has(item.room.id)).length,
+  };
+}
+
 /** Device-local navigation preferences, scoped to the signed-in viewer and Workspace. */
 export function useRoomPins(
   viewer: string | null | undefined,

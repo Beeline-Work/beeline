@@ -1164,12 +1164,14 @@ export class PhoneService {
       this.optionalEnrichment(
         'chat-corner-counts',
         this.enrichmentDatabase.query<{
+          id: string;
+          name: string;
           parent_id: string;
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
           latest_turn_status: string | null;
         }>(
-          `SELECT c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
@@ -1178,7 +1180,8 @@ export class PhoneService {
          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
-         )`,
+         )
+         ORDER BY c.created_at DESC,c.id`,
           [roomIds, viewerId],
         ),
       ),

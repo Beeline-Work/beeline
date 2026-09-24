@@ -528,6 +528,12 @@ export type AgentHistoryEntry = {
   readonly provenance: 'relay-verified' | 'monolith-verified';
 };
 
+export type ChatListCorner = {
+  readonly id: string;
+  readonly name: string;
+  readonly state: Exclude<CornerState, 'archived'>;
+};
+
 export type ChatListItem = {
   readonly room: RoomViewHeader;
   /** Every current Room agent has a resolved presence fact and none is online.
@@ -553,6 +559,11 @@ export type ChatListItem = {
   readonly cornerCount?: number;
   /** Non-archived corners whose canonical state is waiting. */
   readonly waitingCornerCount?: number;
+  /**
+   * The viewer's unarchived corners on this Room, so the desktop deck lists
+   * them from the chat list alone, with no per-Room corners read.
+   */
+  readonly openCorners?: readonly ChatListCorner[];
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;

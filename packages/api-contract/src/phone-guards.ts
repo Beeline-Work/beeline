@@ -20,6 +20,7 @@ import {
   type AgentPairingClaimView,
   type AgentPairingClaimWireView,
   type AgentYoloView,
+  type ChatListCorner,
   type ChatListItem,
   type ChatListView,
   type ChatListWorkspace,
@@ -1074,6 +1075,13 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
   };
 }
 
+function readChatCorner(value: unknown): ChatListCorner | null {
+  const item = record(value);
+  const state = oneOf(item?.state, ['working', 'waiting', 'review']);
+  if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
+  return { id: item.id, name: item.name, state };
+}
+
 function readChat(value: unknown): ChatListItem | null {
   const item = record(value);
   const room = readHeader(item?.room);
@@ -1097,6 +1105,7 @@ function readChat(value: unknown): ChatListItem | null {
         ? item.waitingCornerCount
         : undefined,
     ),
+    ...field('openCorners', readList(item.openCorners, readChatCorner)),
     ...field(
       'agentsOffline',
       typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined,

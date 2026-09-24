@@ -2621,11 +2621,19 @@ describe('monolith integration', () => {
     );
     const chat = (
       (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-        chats: Array<{ room: { id: string }; cornerCount: number; waitingCornerCount: number }>;
+        chats: Array<{
+          room: { id: string };
+          cornerCount: number;
+          waitingCornerCount: number;
+          openCorners: Array<{ id: string; name: string; state: string }>;
+        }>;
       }
     ).chats.find((item) => item.room.id === ROOM);
     expect(chat?.cornerCount).toBe(1);
     expect(chat?.waitingCornerCount).toBe(1);
+    expect(chat?.openCorners).toEqual([
+      { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'waiting' },
+    ]);
   });
 
   it('keeps the Room list readable when corner enrichment fails', async () => {

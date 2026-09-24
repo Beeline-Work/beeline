@@ -16,6 +16,14 @@ import { filterConversations, type RoomListFilter } from '../sources/buzz/room-l
 import type { ChatListItem } from '@beeline/buzz-client';
 
 const now = Date.now();
+const states = ['waiting', 'waiting', 'working', 'review', 'working'] as const;
+const cornerNames = [
+  'Preview layout',
+  'Release copy',
+  'Navigation tests',
+  'Mobile polish',
+  'Next iteration',
+];
 const rooms = [
   [
     'product',
@@ -59,6 +67,9 @@ const rooms = [
   unread,
   cornerCount,
   waitingCornerCount,
+  openCorners: (id === 'launch' ? states.slice(2, 3) : states)
+    .slice(0, cornerCount as number)
+    .map((state, i) => ({ id: `corner-${i}`, name: cornerNames[i], state })),
   latestMessage: {
     text,
     createdAt: now / 1000 - (i + 1) * 120,
@@ -67,26 +78,7 @@ const rooms = [
   ...(id === 'mina'
     ? { directMessage: { peer: { pubkey: 'mina', name: 'Mina', kind: 'human' } } }
     : {}),
-})) as ChatListItem[];
-const states = ['waiting', 'waiting', 'working', 'review', 'idle'];
-const client = {
-  corners: async (roomId: string) => ({
-    corners: (roomId === 'launch' ? ['working'] : states).map((state, i) => ({
-      corner: {
-        id: `corner-${i}`,
-        name: [
-          'Preview layout',
-          'Release copy',
-          'Navigation tests',
-          'Mobile polish',
-          'Next iteration',
-        ][i],
-      },
-      state,
-      lifecycle: { lifecycle: 'open', checks: 'unknown' },
-    })),
-  }),
-};
+})) as unknown as ChatListItem[];
 function Proof() {
   const { theme } = useUnistyles();
   const t = theme.buzz;
@@ -190,8 +182,6 @@ function Proof() {
                 <DesktopRoomCorners
                   active={item.room.id === 'product'}
                   item={item}
-                  client={client as any}
-                  refreshKey="proof"
                   onOpen={(id) => action(`corner/${id}`)}
                   renderDrag={(_, children) => children}
                 />

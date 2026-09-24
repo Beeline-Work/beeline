@@ -49,6 +49,7 @@ export type ChannelReferenceRoomInput = {
   channelId: string;
   /** Stored display name, WITHOUT the `#` mark. */
   name: string;
+  aliases?: readonly string[];
 };
 
 export type ChannelReferenceCornerInput = {
@@ -162,25 +163,28 @@ function collectCandidates(index: ChannelReferenceIndex): Candidate[] {
   for (const room of index.rooms) {
     if (seenRooms.has(room.channelId)) continue;
     seenRooms.add(room.channelId);
-    candidates.push({
-      token: `#${fold(room.name)}`,
-      length: room.name.length + 1,
-      target: { kind: 'room', channelId: room.channelId },
-    });
+    for (const name of [room.name, ...(room.aliases ?? [])])
+      candidates.push({
+        token: `#${fold(name)}`,
+        length: name.length + 1,
+        target: { kind: 'room', channelId: room.channelId },
+      });
   }
   const seenCorners = new Set<string>();
   for (const corner of index.corners) {
     if (seenCorners.has(corner.channelId)) continue;
     seenCorners.add(corner.channelId);
-    candidates.push({
-      token: `#${fold(corner.roomName)}/${fold(corner.name)}`,
-      length: corner.roomName.length + corner.name.length + 2,
-      target: {
-        kind: 'corner',
-        channelId: corner.channelId,
-        parentChannelId: corner.parentChannelId,
-      },
-    });
+    const parent = index.rooms.find((room) => room.channelId === corner.parentChannelId);
+    for (const name of [corner.roomName, ...(parent?.aliases ?? [])])
+      candidates.push({
+        token: `#${fold(name)}/${fold(corner.name)}`,
+        length: name.length + corner.name.length + 2,
+        target: {
+          kind: 'corner',
+          channelId: corner.channelId,
+          parentChannelId: corner.parentChannelId,
+        },
+      });
   }
   return candidates;
 }
@@ -276,16 +280,17 @@ function pendingCornerMatch(
 ): ChannelReferenceMatch | undefined {
   let roomHit: ChannelReferenceRoomInput | undefined;
   let prefixLength = 0;
-  for (const room of index.rooms) {
-    const prefix = `#${fold(room.name)}/`;
-    if (!matchesAt(text, hash, prefix)) continue;
-    if (prefix.length < prefixLength) continue;
-    if (prefix.length === prefixLength && room.channelId !== roomHit?.channelId) {
-      return undefined;
+  for (const room of index.rooms)
+    for (const name of [room.name, ...(room.aliases ?? [])]) {
+      const prefix = `#${fold(name)}/`;
+      if (!matchesAt(text, hash, prefix)) continue;
+      if (prefix.length < prefixLength) continue;
+      if (prefix.length === prefixLength && room.channelId !== roomHit?.channelId) {
+        return undefined;
+      }
+      prefixLength = prefix.length;
+      roomHit = room;
     }
-    prefixLength = prefix.length;
-    roomHit = room;
-  }
   if (!roomHit) return undefined;
   const nameStart = hash + prefixLength;
   const ends = wordEnds(text, nameStart, CORNER_NAME_MAX_WORDS);
@@ -311,13 +316,13 @@ function pendingCornerMatch(
  */
 export function resolveCornerFromList(
   authored: string,
-  parent: { readonly id: string; readonly name: string },
+  parent: { readonly id: string; readonly name: string; readonly aliases?: readonly string[] },
   corners: readonly { readonly id: string; readonly name: string }[],
 ): Extract<ChannelReferenceTarget, { kind: 'corner' }> | undefined {
   const match = findChannelReferences(
     authored,
     buildChannelReferenceIndex(
-      [{ channelId: parent.id, name: parent.name }],
+      [{ channelId: parent.id, name: parent.name, aliases: parent.aliases }],
       corners.map((corner) => ({
         channelId: corner.id,
         parentChannelId: parent.id,

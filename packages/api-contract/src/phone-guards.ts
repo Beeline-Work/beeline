@@ -257,9 +257,7 @@ function readViewer(value: unknown): RoomViewer {
           firstUnreadMessageId: cursor.firstUnreadMessageId as string | null,
           ...field(
             'unreadCount',
-            integer(cursor.unreadCount) && cursor.unreadCount >= 0
-              ? cursor.unreadCount
-              : undefined,
+            integer(cursor.unreadCount) && cursor.unreadCount >= 0 ? cursor.unreadCount : undefined,
           ),
           ...field(
             'unreadAgentTurnCount',
@@ -1089,6 +1087,12 @@ function readChat(value: unknown): ChatListItem | null {
       : undefined;
   return {
     room,
+    ...field(
+      'nameAliases',
+      Array.isArray(item.nameAliases)
+        ? item.nameAliases.filter((name): name is string => typeof name === 'string')
+        : undefined,
+    ),
     unread: item.unread === true,
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),

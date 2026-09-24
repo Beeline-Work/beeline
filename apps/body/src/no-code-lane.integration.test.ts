@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { chmod, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
-import { AddressInfo } from 'node:net';
+import { AddressInfo, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -292,6 +292,7 @@ let database: PgliteDatabase;
 let objectStorage: MemoryObjectStorage;
 let origin: string;
 let server: ReturnType<typeof createBeelineServer>;
+const serverSockets = new Set<Socket>();
 let accessToken: string;
 let core: ThinDaemonCore;
 let abort: AbortController;
@@ -380,6 +381,10 @@ beforeEach(async () => {
     expiresAt: Date.now() + 60_000,
   }));
   server = createBeelineServer({ database, auth, phone, daemon, live, objectService });
+  server.on('connection', (socket) => {
+    serverSockets.add(socket);
+    socket.on('close', () => serverSockets.delete(socket));
+  });
   listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 50);
   void listener.run();
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -470,8 +475,11 @@ afterEach(async () => {
   await listener?.stop();
   await new Promise((r) => setTimeout(r, 150));
   if (server) {
+    const closed = new Promise<void>((done) => server.close(() => done()));
     server.closeAllConnections();
-    await new Promise<void>((done) => server.close(() => done()));
+    // Upgraded WebSocket connections are excluded from closeAllConnections.
+    for (const socket of serverSockets) socket.destroy();
+    await closed;
   }
   if (objectStorage) await objectStorage.close();
   if (database) await database.close();

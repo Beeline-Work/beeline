@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -922,6 +922,59 @@ describe('on-disk profile claim reclaim', () => {
     expect(isProcessAlive(holder.pid)).toBe(true);
     holder.kill();
     dir.cleanup();
+  });
+
+  it('releases a live child claim from this helper’s detached connect group on retry', async () => {
+    const dir = claimDir();
+    const childPidPath = join(dir.lockRoot, 'child-pid');
+    const line = reportLine({
+      sign_in_url: 'https://squire.test/vnc#p=1',
+      browser_location: { kind: 'virtual', url: 'https://squire.test/vnc#p=1' },
+    });
+    const first = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        "const { spawn } = require('node:child_process');",
+        'spawn(process.execPath, ["-e", [',
+        '  "const { writeFileSync } = require(\'node:fs\');",',
+        '  "process.on(\'SIGTERM\', () => {});",',
+        '  "writeFileSync(process.argv[1], String(process.pid));",',
+        '  "setInterval(() => {}, 30_000);",',
+        '].join("\\n"), process.argv[1]], { stdio: "ignore" });',
+        `process.stdout.write(${JSON.stringify(`${line}\n`)});`,
+        'setInterval(() => {}, 30_000);',
+      ].join('\n'),
+      childPidPath,
+    ]);
+    let childPid: number | undefined;
+    try {
+      await until(() => existsSync(childPidPath));
+      childPid = Number(readFileSync(childPidPath, 'utf8'));
+      writeLock(dir.lockPath, childPid);
+      const { run } = scriptedRunner([{ stdout: '1.1.16' }, { stdout: '1.1.16' }]);
+      const result = await installSquire({
+        workspaceId: 'ws-1',
+        profileDir: dir.profileDir,
+        lockRoot: dir.lockRoot,
+        run,
+        streamRun: fakeStreamRunner({
+          report: report({
+            state: 'needs-sign-in',
+            sign_in_url: 'https://squire.example/install?token=x',
+            browser_location: { kind: 'host_screen' },
+          }),
+        }),
+        mcp: mockSquire({ list_credentials: () => ({}) }).client,
+      });
+      expect(isProcessAlive(childPid)).toBe(true);
+      expect(result.status).not.toBe('error');
+      expect(existsSync(dir.lockPath)).toBe(false);
+      await until(() => !isProcessAlive(first.pid));
+    } finally {
+      if (childPid !== undefined && isProcessAlive(childPid)) process.kill(childPid, 'SIGKILL');
+      first.abort();
+      dir.cleanup();
+    }
   });
 
   it('clears a dead on-disk lock before connect runs', async () => {

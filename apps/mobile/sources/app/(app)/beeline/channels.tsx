@@ -83,6 +83,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
+const LOBBY_LIST_BOTTOM_SPACING = 24;
 const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 const ROW_HEIGHT = 64;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
@@ -942,7 +943,11 @@ export default function BuzzChannels() {
               setRefreshing(true);
               refreshNow();
             }}
-            contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
+            contentContainerStyle={
+              chatList.chats.length
+                ? [styles.list, { paddingBottom: LOBBY_LIST_BOTTOM_SPACING + insets.bottom }]
+                : styles.emptyList
+            }
             renderSectionHeader={({ section }) =>
               section.title ? <RoomListSectionHeader title={section.title} /> : null
             }
@@ -1116,8 +1121,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.danger,
     },
     error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
-    // Leave breathing room after the final conversation.
-    list: { paddingTop: hull.roomCard.gap, paddingBottom: 24 },
+    list: { paddingTop: hull.roomCard.gap },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

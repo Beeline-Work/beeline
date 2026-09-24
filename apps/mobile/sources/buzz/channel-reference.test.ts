@@ -178,6 +178,25 @@ describe('findChannelReferences — unknown tokens stay ordinary text', () => {
 });
 
 describe('findChannelReferences — ambiguity never guesses', () => {
+  it('leaves a duplicate legacy name unresolved after its Rooms get unique slugs', () => {
+    const migrated = buildChannelReferenceIndex(
+      [
+        { channelId: 'room-1', name: 'foo-2' },
+        { channelId: 'room-2', name: 'foo-3' },
+      ],
+      [],
+    );
+    expect(findChannelReferences('#foo', migrated)).toEqual([]);
+    expect(findChannelReferences('#foo-2', migrated)[0]?.target).toEqual({
+      kind: 'room',
+      channelId: 'room-1',
+    });
+    expect(findChannelReferences('#foo-3', migrated)[0]?.target).toEqual({
+      kind: 'room',
+      channelId: 'room-2',
+    });
+  });
+
   it('links nothing when duplicate display names map to two rooms', () => {
     const dupes = buildChannelReferenceIndex(
       [

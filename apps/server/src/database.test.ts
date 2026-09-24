@@ -19,7 +19,7 @@ import {
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
-import { normalizeRoomNames, requireRoomSlug } from './room-names.js';
+import { normalizeRoomNames, requireRoomSlug, reserveRoomName } from './room-names.js';
 
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
@@ -65,6 +65,51 @@ describe('Room slugs', () => {
       (await db.query('SELECT * FROM room_name_aliases WHERE workspace_id=$1', [workspace]))
         .rowCount,
     ).toBe(1);
+  });
+
+  it('keeps duplicate legacy names ambiguous and unavailable after migration', async () => {
+    const db = new PgliteDatabase();
+    await migrate(db);
+    await db.query('DROP INDEX rooms_workspace_slug_idx');
+    const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    const first = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000001';
+    const second = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000002';
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Ambiguous names')`, [workspace]);
+    for (const id of [first, second])
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'foo')`, [
+        id,
+        workspace,
+      ]);
+
+    await normalizeRoomNames(db);
+    expect(
+      (await db.query<{ name: string }>(
+        'SELECT name FROM rooms WHERE workspace_id=$1 ORDER BY id',
+        [workspace],
+      )).rows.map((row) => row.name),
+    ).toEqual(['foo-2', 'foo-3']);
+    expect(
+      (await db.query('SELECT 1 FROM room_name_aliases WHERE workspace_id=$1', [workspace]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await db.query<{ name: string }>(
+        'SELECT name FROM room_name_ambiguities WHERE workspace_id=$1',
+        [workspace],
+      )).rows,
+    ).toEqual([{ name: 'foo' }]);
+    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
+    await expect(reserveRoomName(db, workspace, 'foo', first)).rejects.toThrow(/conflict/);
+    await normalizeRoomNames(db);
+    expect(
+      (await db.query<{ name: string }>(
+        'SELECT name FROM rooms WHERE workspace_id=$1 ORDER BY id',
+        [workspace],
+      )).rows.map((row) => row.name),
+    ).toEqual(['foo-2', 'foo-3']);
+    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
+    await db.query('DELETE FROM rooms WHERE workspace_id=$1', [workspace]);
+    await expect(reserveRoomName(db, workspace, 'foo')).rejects.toThrow(/conflict/);
   });
 
   it('requires a bounded lowercase slug for new names', () => {

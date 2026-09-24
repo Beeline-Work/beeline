@@ -47,6 +47,9 @@ const shared = {
     inset: 12,
     gap: 10,
     padding: 14,
+    // Top padding when the preview is the card's last line: its baseline sits
+    // 5.8 above the bottom padding, the name's cap line 7.2 below the top.
+    previewCardTop: 13,
     nameSize: 19,
     nameLineHeight: 28,
     previewSize: 15,

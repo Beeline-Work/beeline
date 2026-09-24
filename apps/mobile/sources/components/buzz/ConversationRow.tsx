@@ -50,6 +50,7 @@ export function ConversationRow({
         desktop && styles.desktopRow,
         desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
         !desktop && styles.cardRow,
+        !desktop && (peer || !item.cornerCount) && styles.previewCardRow,
         desktop && item.unread && styles.unread,
         selected && styles.selected,
         pressed && styles.pressed,
@@ -117,6 +118,8 @@ const styles = StyleSheet.create((theme) => ({
   desktopRowWithCorners: { paddingBottom: theme.buzz.space.xs, minHeight: 94 },
   // Mobile rows sit inside the Room list card, which owns the fill and border.
   cardRow: { padding: theme.buzz.roomCard.padding, backgroundColor: 'transparent' },
+  // Without the corner summary below it, the preview is the card's last line.
+  previewCardRow: { paddingTop: theme.buzz.roomCard.previewCardTop },
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   name: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
   cardName: {

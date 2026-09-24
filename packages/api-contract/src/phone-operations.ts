@@ -38,6 +38,7 @@ export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   reactToMessage: { input: ReactToMessageInput; output: void };
+  deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
@@ -210,6 +211,7 @@ export type ReactToMessageInput = RoomInput & {
   readonly messageId: string;
   readonly emoji: MessageReactionEmoji;
 };
+export type DeleteRoomMessageInput = RoomInput & { readonly messageId: string };
 export type SetMessageBookmarkInput = RoomInput & {
   readonly messageId: string;
   readonly bookmarked: boolean;

@@ -265,6 +265,8 @@ export type ChatDisplayMessage = {
   pubkey?: string;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
+  /** A retained transcript row whose original contents were deleted. */
+  deleted?: boolean;
   /** The server-phrased event behind a system line or card header (`buzz/system-lines.ts`). */
   systemEvent?: SystemEvent;
   /** Every subject of a folded run of system lines, oldest first. */
@@ -410,6 +412,7 @@ export function displayRoomMessage(
       ? { isAgentAuthor: true }
       : {}),
     ...(message.presentation === 'system' ? { isSystemNotice: true } : {}),
+    ...(message.deleted ? { deleted: true } : {}),
     ...(message.systemEvent ? { systemEvent: message.systemEvent } : {}),
     ...(message.presentation === 'activity' ? { isAgentActivity: true } : {}),
     ...(message.activity ? { activity: activityItems(message) } : {}),

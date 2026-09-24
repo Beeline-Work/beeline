@@ -219,6 +219,7 @@ describe('Room and corner actions sheets', () => {
       'message-select-action',
       'message-reply-action',
       'message-forward-action',
+      'message-delete-action',
     ]) {
       expect(row(messageSheet, testID)).toContain('<HullActionSheetRow');
     }
@@ -226,6 +227,8 @@ describe('Room and corner actions sheets', () => {
     expect(row(messageSheet, 'message-select-action')).toContain('label="Select"');
     expect(row(messageSheet, 'message-reply-action')).toContain('label="Reply"');
     expect(row(messageSheet, 'message-forward-action')).toContain('label="Forward"');
+    expect(row(messageSheet, 'message-delete-action')).toContain('label="Delete message"');
+    expect(row(messageSheet, 'message-delete-action')).toContain('destructive');
     // Copy, Select, Reply and Forward are plain actions — no fifth mark.
     for (const testID of [
       'message-copy-action',
@@ -239,6 +242,8 @@ describe('Room and corner actions sheets', () => {
       expect(plain).not.toContain('metadata=');
     }
     expect(messageSheet).toContain('testID="message-actions-close"');
+    expect(chat).toContain("'The message text and attachments will be removed. A deleted-message record will remain in this Room.'");
+    expect(chat).toContain('if (message.isAgentDraft || message.deleted) return;');
   });
 
   it('stages the visible message text and opens the native selection screen', () => {

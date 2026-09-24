@@ -13,6 +13,7 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     ScrollView: host('ScrollView'),
     TextInput: host('TextInput'),
+    Switch: host('Switch'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
     Modal: host('Modal'),
@@ -43,6 +44,7 @@ function mount() {
   const submit = vi.fn();
   function Harness() {
     const [roomName, setRoomName] = useState('');
+    const [inviteOnly, setInviteOnly] = useState(false);
     const [pendingRepo, select] = useState<any>(null);
     const [showRepoPicker, show] = useState(false);
     return (
@@ -51,8 +53,10 @@ function mount() {
         workspaceName="Workshop"
         roomName={roomName}
         setRoomName={setRoomName}
+        inviteOnly={inviteOnly}
+        setInviteOnly={setInviteOnly}
         creatingRoom={false}
-        createRoom={() => submit(roomName.trim(), pendingRepo)}
+        createRoom={() => submit(roomName.trim(), pendingRepo, inviteOnly)}
         onClose={() => {}}
         pendingRepo={pendingRepo}
         showRepoPicker={showRepoPicker}
@@ -94,6 +98,7 @@ function mountWithInstallFlow() {
   const manageInstallation = vi.fn();
   function Harness() {
     const [roomName, setRoomName] = useState('');
+    const [inviteOnly, setInviteOnly] = useState(false);
     const [pendingRepo, select] = useState<any>(null);
     const [showRepoPicker, show] = useState(true);
     return (
@@ -102,6 +107,8 @@ function mountWithInstallFlow() {
         workspaceName="Workshop"
         roomName={roomName}
         setRoomName={setRoomName}
+        inviteOnly={inviteOnly}
+        setInviteOnly={setInviteOnly}
         creatingRoom={false}
         createRoom={() => submit(roomName.trim(), pendingRepo)}
         onClose={() => {}}
@@ -173,7 +180,7 @@ describe('New Room form', () => {
       act(() => host('create-room-no-repository').props.onPress());
       act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
       act(() => host('create-room-submit').props.onPress());
-      expect(submit).toHaveBeenCalledWith(`${viewport} room`, null);
+      expect(submit).toHaveBeenCalledWith(`${viewport} room`, null, false);
       act(() => renderer.unmount());
       windowHeight = 844;
     },
@@ -198,7 +205,7 @@ describe('New Room form', () => {
     expect(host('create-room-submit').props.disabled).toBe(false);
     expect(host('create-room-name-hint')).toBeUndefined();
     act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenCalledWith('kitchen', null);
+    expect(submit).toHaveBeenCalledWith('kitchen', null, false);
     act(() => renderer.unmount());
   });
 
@@ -215,11 +222,11 @@ describe('New Room form', () => {
     expect(host('create-room-submit').props.disabled).toBe(true);
     act(() => host('create-room-name').props.onChangeText('work'));
     act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenLastCalledWith('work', repo);
+    expect(submit).toHaveBeenLastCalledWith('work', repo, false);
     act(() => host('create-room-repo-row').props.onPress());
     act(() => host('create-room-no-repository').props.onPress());
     act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenLastCalledWith('work', null);
+    expect(submit).toHaveBeenLastCalledWith('work', null, false);
     act(() => renderer.unmount());
     windowHeight = 844;
   });
@@ -244,6 +251,16 @@ describe('New Room form', () => {
         .findAllByType('Text')
         .some((node: any) => textContent(node) === 'Refreshing repositories…'),
     ).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+  it('keeps Invite-only independent of the optional repository', () => {
+    const { renderer, host, submit } = mount();
+    expect(host('create-room-invite-only').props.value).toBe(false);
+    act(() => host('create-room-invite-only').props.onValueChange(true));
+    act(() => host('create-room-name').props.onChangeText('private room'));
+    act(() => host('create-room-submit').props.onPress());
+    expect(submit).toHaveBeenCalledWith('private room', null, true);
     act(() => renderer.unmount());
   });
 });

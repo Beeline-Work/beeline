@@ -947,6 +947,76 @@ export class GitHubOperations {
     }
   }
 
+  /** Recover merged corners when GitHub's closed PR webhook never arrived. */
+  async reconcileMergedCorners(): Promise<void> {
+    const candidates = await this.database.query<
+      CornerWebhookTarget & {
+        repository: string;
+        branch: string;
+        number: number;
+        title: string;
+        target_branch: string;
+      }
+    >(
+      `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
+              COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,
+              fact.objective summary,github.repository_id,github.installation_id,
+              github.full_name repository,fact.feature_branch branch,
+              (fact.lifecycle->'pr'->>'number')::integer number,
+              fact.lifecycle->'pr'->>'title' title,
+              fact.lifecycle->'pr'->>'targetBranch' target_branch
+       FROM rooms corner
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND parent.github_events_enabled
+         AND COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) IS NOT NULL
+         AND fact.feature_branch IS NOT NULL
+         AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
+    );
+    for (const candidate of candidates.rows) {
+      try {
+        const token = await this.app.installationToken(Number(candidate.installation_id), {
+          repositoryIds: [Number(candidate.repository_id)],
+        });
+        const pr = await this.app.readPullRequest(
+          token.token,
+          candidate.repository,
+          candidate.number,
+        );
+        if (!pr.merged || pr.headRef !== candidate.branch) continue;
+        await this.mergeCorner(
+          candidate,
+          {
+            repository: candidate.repository,
+            branch: candidate.branch,
+            title: pr.title ?? candidate.title ?? `Pull request #${candidate.number}`,
+            url: pr.url,
+            number: candidate.number,
+            targetBranch: pr.baseRef ?? candidate.target_branch,
+            headSha: pr.headSha,
+            ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
+            ...(pr.mergeCommitSha ? { mergeCommitSha: pr.mergeCommitSha } : {}),
+            ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
+            commits: 0,
+            files: 0,
+          },
+          this.database,
+          candidate.number,
+        );
+      } catch (error) {
+        console.error(
+          `[server] merged corner reconciliation failed for ${candidate.corner_id}:`,
+          error,
+        );
+      }
+    }
+  }
+
   private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {
     const repository = repositoryName(body);
     const branch = branchForEvent('push', body);
@@ -1234,6 +1304,8 @@ export class GitHubOperations {
         continue;
       }
       if (event === 'push') {
+        // Deleting a branch emits an all-zero after SHA. It is not a new head.
+        if (body.deleted === true || /^0+$/.test(text(body.after) ?? '')) continue;
         const compare = text(body.compare);
         const commits =
           integer(body.size) ?? (Array.isArray(body.commits) ? body.commits.length : 0);
@@ -1426,28 +1498,37 @@ export class GitHubOperations {
       files: number;
     },
     database: SqlDatabase = this.database,
+    expectedPrNumber?: number,
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
-    const currentLifecycle = await this.lifecycle(target.corner_id, database);
-    const currentPr = currentLifecycle.pr;
-    const mergedPr =
-      currentPr ??
-      (pullRequest.number && pullRequest.targetBranch && pullRequest.headSha
-        ? {
-            number: pullRequest.number,
-            url: pullRequest.url,
-            title: pullRequest.title,
-            targetBranch: pullRequest.targetBranch,
-            headSha: pullRequest.headSha,
-          }
-        : undefined);
+    let archived = false;
     await database.transaction(async (database) => {
+      const currentLifecycle = (
+        await database.query<{ lifecycle: CornerLifecycleView }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+          [target.corner_id],
+        )
+      ).rows[0]?.lifecycle;
+      if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
+      const currentPr = currentLifecycle?.pr;
+      const mergedPr =
+        currentPr ??
+        (pullRequest.number && pullRequest.targetBranch && pullRequest.headSha
+          ? {
+              number: pullRequest.number,
+              url: pullRequest.url,
+              title: pullRequest.title,
+              targetBranch: pullRequest.targetBranch,
+              headSha: pullRequest.headSha,
+            }
+          : undefined);
       const changed = await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
          WHERE id=$1 AND archived_at IS NULL`,
         [target.corner_id],
       );
       if (!changed.rowCount) return;
+      archived = true;
       await database.query(
         `UPDATE corner_facts SET close_requested=true,
            lifecycle=lifecycle||$2::jsonb,
@@ -1520,6 +1601,7 @@ export class GitHubOperations {
         target.corner_name,
       );
     });
+    if (!archived) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
     try {

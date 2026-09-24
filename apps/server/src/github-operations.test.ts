@@ -21,6 +21,129 @@ describe('GitHub phone operations', () => {
     vi.unstubAllGlobals();
     await database.close();
   });
+  it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const headSha = '1'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Recovery')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
+       VALUES($1,'Recover missed merge','feature/recovery',$2::jsonb)`,
+      [
+        corner,
+        JSON.stringify({
+          lifecycle: 'in-review',
+          checks: 'passing',
+          pr: {
+            number: 42,
+            url: 'https://github.com/owner/widgets/pull/42',
+            title: 'Recover missed merge',
+            targetBranch: 'main',
+            headSha,
+            mergeability: 'clean',
+          },
+        }),
+      ],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readPullRequest: vi.fn(async () => ({
+        number: 42,
+        url: 'https://github.com/owner/widgets/pull/42',
+        headSha,
+        headRef: 'feature/recovery',
+        baseRef: 'main',
+        title: 'Recover missed merge',
+        merged: false,
+        mergeability: 'clean',
+      })),
+      deleteBranch: vi.fn(async () => undefined),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const deletedPush = {
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/feature/recovery',
+      after: '0'.repeat(40),
+      deleted: true,
+    };
+    await operations.processWebhook('push', deletedPush);
+    expect(
+      (
+        await database.query<{ lifecycle: { pr: { headSha: string }; checks: string } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle,
+    ).toMatchObject({ checks: 'passing', pr: { headSha } });
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [corner])).rowCount,
+    ).toBe(0);
+
+    await operations.reconcileMergedCorners();
+    expect(
+      (await database.query(`SELECT archived_at FROM rooms WHERE id=$1`, [corner])).rows[0],
+    ).toMatchObject({ archived_at: null });
+    (app.readPullRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      number: 42,
+      url: 'https://github.com/owner/widgets/pull/42',
+      headSha,
+      headRef: 'feature/recovery',
+      baseRef: 'main',
+      title: 'Recover missed merge',
+      merged: true,
+      mergedAt: '2026-09-24T12:00:00Z',
+      mergeCommitSha: 'f'.repeat(40),
+      mergedBy: 'owner',
+      mergeability: 'unknown',
+    });
+    await operations.reconcileMergedCorners();
+    await operations.reconcileMergedCorners();
+    expect(
+      (
+        await database.query<{ lifecycle: { outcome: string; pr: { mergeCommitSha: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle,
+    ).toMatchObject({ outcome: 'landed', pr: { mergeCommitSha: 'f'.repeat(40) } });
+    expect(
+      (
+        await database.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [
+          corner,
+        ])
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact'`,
+          [room],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(app.deleteBranch).toHaveBeenCalledTimes(1);
+  });
   it('mints a token only for the exact active repository bound to a top-level Room', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

@@ -76,6 +76,7 @@ export default function ConnectTrustySquireScreen() {
   const offerCeremony = Boolean(offerId && pairedConnectorId && roomId);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[] | null>(null);
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
+  const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -166,6 +167,7 @@ export default function ConnectTrustySquireScreen() {
       stopPolling();
       setError(null);
       pairedHelperRef.current = helperId;
+      setSelectedHelperName(helpers?.find((helper) => helper.id === helperId)?.name ?? null);
       // The pair POST has no transport timeout; if it never settles, say so
       // while the await continues — a late resolve still starts the poll.
       let feedbackShown = false;
@@ -189,7 +191,7 @@ export default function ConnectTrustySquireScreen() {
         clearTimeout(feedback);
       }
     },
-    [connectorId, startPolling, stopPolling, workspaceId],
+    [connectorId, helpers, startPolling, stopPolling, workspaceId],
   );
 
   const retry = useCallback(() => {
@@ -207,6 +209,7 @@ export default function ConnectTrustySquireScreen() {
   }, [offerId, pair, startPolling]);
 
   const connectorName = connectorNameFor(connectorId);
+  const machineName = install?.helperName ?? selectedHelperName;
 
   const noHelpers = helpers !== null && helpers.length === 0;
   // The machine selector is explicit BEFORE any install: the user targets
@@ -231,6 +234,7 @@ export default function ConnectTrustySquireScreen() {
         </TouchableOpacity>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Connect {connectorName}</Text>
+          {machineName ? <Text style={styles.note} testID="connect-selected-machine">{machineName}</Text> : null}
         </View>
       </HullSurface>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
@@ -287,7 +291,7 @@ export default function ConnectTrustySquireScreen() {
         ) : null}
         {install !== null ? (
           <View testID="connect-install-progress">
-            <Text style={styles.note}>Installing on {install.helperName ?? 'your machine'}</Text>
+            <Text style={styles.note}>Installing on {machineName ?? 'your machine'}</Text>
             <View style={styles.steps}>
               {install.steps.map((step, index) => (
                 <View
@@ -356,6 +360,7 @@ export default function ConnectTrustySquireScreen() {
                         // machine's connector — not any row of the type.
                         connectorId: install.connectorId,
                         connectorName,
+                        ...(machineName ? { machineName } : {}),
                         url: signIn.url,
                         method: signIn.method,
                         ...(offerId ? { offerId } : {}),

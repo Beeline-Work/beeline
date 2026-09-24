@@ -246,8 +246,12 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   it('shows the machine’s step-by-step install progress and then the sign-in button', async () => {
     const renderer = await render();
     await pair(renderer);
+    expect(renderer.root.findByProps({ testID: 'connect-selected-machine' }).props.children)
+      .toBe('squire-box');
     await advancePolls(2);
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'connect-selected-machine' }).props.children)
+      .toBe('squire-box');
     const active = renderer.root.findAll(
       (node: any) => node.props?.testID === 'connect-step-1-active',
     );
@@ -288,6 +292,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(route.params.method).toBe('streamed');
     expect(route.params.url).toContain('https://');
     expect(route.params.connectorName).toBe('Trusty Squire');
+    expect(route.params.machineName).toBe('squire-box');
   });
 
   it('shows where the sign-in page opened, from the helper report', async () => {

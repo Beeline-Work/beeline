@@ -7,6 +7,7 @@ const searchParams = vi.hoisted(() => ({
   workspaceId: 'workspace-1',
   connectorId: 'connector-row-1',
   connectorName: 'Tailscale',
+  machineName: 'squire-box',
   url: 'https://login.tailscale.com/a/test',
   method: 'oauth',
 }));
@@ -99,6 +100,8 @@ describe('ConnectorSignInScreen', () => {
       'Sign in to ',
       'Tailscale',
     ]);
+    expect(renderer.root.findByProps({ testID: 'signin-machine' }).props.children)
+      .toBe('squire-box');
     await act(async () => renderer.unmount());
   });
 });

@@ -298,6 +298,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 
 import MembersScreen from './members';
+import { router } from 'expo-router';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /**
@@ -1014,6 +1015,19 @@ describe('Members workspace management', () => {
     await act(async () => retry.props.onPress());
     expect(roomView.agent).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+  });
+
+  it('opens the profile route from a roster identity without inline settings', async () => {
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/beeline/agent-profile',
+      params: { communityId: WORKSPACE, agentId: AGENT },
+    });
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeDefined();
   });
 
   it('separates profile reading from management', async () => {

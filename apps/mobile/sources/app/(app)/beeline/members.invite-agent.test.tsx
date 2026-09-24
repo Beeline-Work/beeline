@@ -61,6 +61,7 @@ vi.mock('react-native', async () => {
 });
 const unistylesTheme = vi.hoisted(() => ({
   buzz: {
+    agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
     type: {
       hero: { fontSize: 22 },
       body: { fontSize: 16 },

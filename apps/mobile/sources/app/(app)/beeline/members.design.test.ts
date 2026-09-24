@@ -64,52 +64,38 @@ describe('Members page layout contract', () => {
     expect(styleBlock(source, 'sectionAdd')).toContain("alignItems: 'flex-end'");
   });
 
-  it('expands agent settings under the tapped row and rotates that row’s chevron', () => {
+  it('opens an agent profile from the roster row instead of expanding settings inline', () => {
     const agentsStart = source.indexOf('testID="members-agents-section"');
     const agents = source.slice(agentsStart, source.indexOf('</KeyboardAwareScrollView>', agentsStart));
-    // The disclosure mark is the shared drawn chevron at the one row size,
-    // turned down when the row is open — not `⌄`/`›` set in the hero role.
     expect(agents).toContain('<ChevronGlyph');
-    expect(agents).toContain("direction={open ? 'down' : 'right'}");
-    expect(agents).toContain('size={CHEVRON_ROW_SIZE}');
-    expect(agents).toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
-    expect(agents).toContain('open &&');
-    expect(source.indexOf('testID="members-agents-section"')).toBeLessThan(
-      source.indexOf('agent-${selectedAgent.agent.identity.pubkey}-model-config'),
-    );
-    const afterAgents = source.slice(source.indexOf('</KeyboardAwareScrollView>'));
-    expect(afterAgents).not.toContain('model-config');
+    expect(agents).toContain('direction="right"');
+    expect(agents).toContain("pathname: '/beeline/agent-profile'");
+    expect(agents).not.toContain("direction={open ? 'down' : 'right'}");
+    expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
   });
 
-  it('shows only the handle in the expanded identity copy and has no close icon', () => {
+  it('shows the assigned animal and handle on the manage heading and has no close icon', () => {
     const headingStart = source.indexOf('<View style={styles.detailHeading}>');
     const heading = source.slice(
       headingStart,
       source.indexOf('{ownsSelectedAgent && (', headingStart),
     );
     expect(heading).toContain('testID="agent-handle"');
-    expect(heading).not.toContain('selectedAgent.agent.identity.name');
+    expect(heading).toContain('memberRosterTitle(selectedAgent.agent.identity)');
+    expect(heading).toContain('face={selectedAgent.agent.identity.face}');
     expect(source).not.toContain('testID="close-agent-settings"');
     expect(source).not.toContain('accessibilityLabel="Close agent settings"');
   });
 
-  it('removes an agent from one compact red control beside its identity copy', () => {
-    // The old danger zone — a red rule, a paragraph of warning copy and a
-    // full-width destructive button at the foot of the panel — is gone. The
-    // confirm dialog already states the whole consequence of removal, so the
-    // page keeps only the control, sat next to the handle and owner byline.
+  it('removes an agent from one compact red control with no danger-zone copy', () => {
     expect(source).not.toContain('dangerZone');
     expect(source).not.toContain('dangerCopy');
     expect(source).not.toContain('BAN AGENT');
     expect(source).not.toContain('Ban this agent from every Room');
-    const heading = source.slice(
-      source.indexOf('<View style={styles.detailHeading}>'),
-      source.indexOf('{ownsSelectedAgent && (', source.indexOf('testID="remove-agent"')),
-    );
-    expect(heading).toContain('testID="agent-handle"');
-    expect(heading).toContain('testID="agent-owner"');
-    expect(heading).toContain('testID="remove-agent"');
-    expect(heading).toContain('style={styles.removeAgentControl}');
+    expect(source).toContain('testID="remove-agent"');
+    expect(source).toContain('style={styles.removeAgentControl}');
+    expect(source).toContain('testID="agent-handle"');
+    expect(source).toContain('testID="agent-owner"');
   });
 
   it('keeps the compact control at the 44pt target and above the contrast floors', () => {

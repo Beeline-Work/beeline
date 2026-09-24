@@ -35,7 +35,10 @@ export async function reserveRoomName(
        AND parent_id IS NULL AND direct_participants IS NULL AND id IS DISTINCT FROM $3::uuid
      UNION ALL
      SELECT 1 FROM room_name_aliases WHERE workspace_id=$1 AND lower(name)=lower($2)
-       AND room_id IS DISTINCT FROM $3::uuid LIMIT 1`,
+       AND room_id IS DISTINCT FROM $3::uuid
+     UNION ALL
+     SELECT 1 FROM room_name_ambiguities WHERE workspace_id=$1 AND name=lower($2)
+     LIMIT 1`,
     [workspaceId, name, roomId ?? null],
   );
   if (occupied.rowCount) throw new Error('Room name conflict: already used in this Workspace');
@@ -57,6 +60,22 @@ export async function normalizeRoomNames(database: SqlDatabase): Promise<void> {
       const counts = new Map<string, number>();
       for (const row of rows)
         counts.set(row.name.toLowerCase(), (counts.get(row.name.toLowerCase()) ?? 0) + 1);
+      for (const [name, count] of counts) {
+        if (count > 1)
+          await db.query(
+            `INSERT INTO room_name_ambiguities(workspace_id,name) VALUES($1,$2)
+             ON CONFLICT DO NOTHING`,
+            [workspaceId, name],
+          );
+      }
+      const ambiguities = new Set(
+        (
+          await db.query<{ name: string }>(
+            'SELECT name FROM room_name_ambiguities WHERE workspace_id=$1',
+            [workspaceId],
+          )
+        ).rows.map((row) => row.name),
+      );
       const reserved = new Map(
         rows
           .filter((row) => counts.get(row.name.toLowerCase()) === 1)
@@ -68,7 +87,9 @@ export async function normalizeRoomNames(database: SqlDatabase): Promise<void> {
         let slug = base;
         for (
           let suffix = 2;
-          used.has(slug) || (reserved.has(slug) && reserved.get(slug) !== row.id);
+          used.has(slug) ||
+          ambiguities.has(slug) ||
+          (reserved.has(slug) && reserved.get(slug) !== row.id);
           suffix++
         ) {
           const ending = `-${suffix}`;
@@ -76,7 +97,7 @@ export async function normalizeRoomNames(database: SqlDatabase): Promise<void> {
         }
         used.add(slug);
         if (row.name !== slug) {
-          if (counts.get(row.name.toLowerCase()) === 1)
+          if (counts.get(row.name.toLowerCase()) === 1 && !ambiguities.has(row.name.toLowerCase()))
             await db.query(
               `INSERT INTO room_name_aliases(workspace_id,room_id,name) VALUES($1,$2,$3)
                ON CONFLICT DO NOTHING`,

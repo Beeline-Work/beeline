@@ -67,11 +67,11 @@ describe.skipIf(!existsSync(CHROME))('bookmark rows in a browser', () => {
     async ({ surface, width }) => {
       const mobile = process.cwd();
       const { result, status, stderr } = await runBrowserProof({
-        entry: path.join(mobile, 'scripts/bookmarks-row-proof.tsx'),
+        entry: path.join(mobile, 'scripts/bookmarks-empty-proof.tsx'),
         mobile,
         shims: dataShims(mobile, true),
         width,
-        query: `?surface=${surface}`,
+        query: `?surface=${surface}&mode=row`,
       });
       expect(status, stderr).toBe(0);
       expect(result).toContain('PASS');

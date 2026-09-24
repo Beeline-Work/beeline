@@ -61,6 +61,7 @@ export type CornerLifecycleView = {
     readonly baseSha?: string;
     readonly mergedAt?: string;
     readonly mergedBy?: string;
+    readonly mergeCommitSha?: string;
   };
   /** GitHub's authoritative check rollup for the PR head, refreshed after webhooks. */
   readonly checksSummary?: {

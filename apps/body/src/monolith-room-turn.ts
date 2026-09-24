@@ -1073,6 +1073,20 @@ export class MonolithRoomTurnLoop {
                         (corners.corners ?? []).filter((corner) => !corner.archived),
                       )}`
                     : '',
+                  (() => {
+                    const cutoff = Math.floor(Date.now() / 1_000) - 24 * 60 * 60;
+                    const recent = (corners.corners ?? [])
+                      .filter(
+                        (corner) =>
+                          corner.archived &&
+                          corner.closedAt !== undefined &&
+                          corner.closedAt >= cutoff,
+                      )
+                      .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+                    return recent.length
+                      ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${recent.map((corner) => `- ${corner.name ?? corner.cornerId} (${corner.cornerId}): PR ${corner.pullRequestNumber ? `#${corner.pullRequestNumber}` : 'unavailable'}, merge commit ${corner.mergeCommitSha ?? 'unavailable'}`).join('\n')}`
+                      : '';
+                  })(),
                   [
                     'Write only the substantive Room message you want the human to read.',
                     'Do not repeat or paraphrase these instructions.',

@@ -121,6 +121,18 @@ describe('monolith Room turn context', () => {
               name: 'Old work',
               objective: 'Already done',
               archived: true,
+              closedAt: Math.floor(Date.now() / 1_000) - 60,
+              pullRequestNumber: 42,
+              mergeCommitSha: 'f'.repeat(40),
+            },
+            {
+              cornerId: 'older-corner',
+              parentRoomId: 'room-id',
+              createdBy: agent.publicKey,
+              name: 'Older work',
+              objective: 'Long done',
+              archived: true,
+              closedAt: Math.floor(Date.now() / 1_000) - 25 * 60 * 60,
             },
           ],
         };
@@ -189,7 +201,8 @@ describe('monolith Room turn context', () => {
     for (const prompt of prompts) {
       expect(prompt).toContain('current-corner');
       expect(prompt).toContain('Update the endpoint');
-      expect(prompt).not.toContain('closed-corner');
+      expect(prompt).toContain('Old work (closed-corner): PR #42, merge commit ' + 'f'.repeat(40));
+      expect(prompt).not.toContain('older-corner');
     }
     expect(conversationReads.every((read) => read.window !== 'continuity')).toBe(true);
     const promptConversationRead = conversationReads.find((read) => !('window' in read));

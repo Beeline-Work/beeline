@@ -545,6 +545,8 @@ export type ChatListItem = {
    * Room header's brass mark stays the way into the corners list.
    */
   readonly cornerCount?: number;
+  /** Non-archived corners whose canonical state is waiting. */
+  readonly waitingCornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;

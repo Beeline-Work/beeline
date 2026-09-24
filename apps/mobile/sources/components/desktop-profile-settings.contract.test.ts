@@ -17,7 +17,7 @@ describe('desktop profile settings path', () => {
     expect(sidebar).toContain('accessibilityLabel={');
     expect(sidebar).toContain("`${viewerIdentity.name} — Settings`");
     expect(sidebar).toContain('testID="profile-settings-name"');
-    expect(sidebar).toContain('<IdentityMark\n                  seed={identityPubkey}');
+    expect(sidebar).toMatch(/<IdentityMark\s+seed=\{identityPubkey\}/);
     expect(sidebar).not.toContain('PROFILE & SETTINGS');
     // The identity screen IS the settings surface. `/settings` keeps a route
     // because `(app)/_layout.tsx` declares that screen and expo-router warns

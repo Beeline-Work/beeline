@@ -85,7 +85,6 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     workspace = vi.fn(async () => ({ workspace: { id: 'ws', name: 'Clover Workspace' } }));
   },
 }));
-vi.mock('@/buzz/bookmark-events', () => ({ publishBookmarkChange: vi.fn() }));
 vi.mock('@/components/DesktopRoomInspector', async () => {
   const ReactModule = await import('react');
   return {

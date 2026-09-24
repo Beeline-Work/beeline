@@ -30,7 +30,10 @@ vi.mock('react-native', async () => {
       },
     },
     Keyboard: { dismiss: () => undefined },
-    Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.ios ?? choices.default },
+    Platform: {
+      OS: 'ios',
+      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+    },
     Pressable: host('Pressable'),
     SectionList: host('SectionList'),
     Text: host('Text'),
@@ -42,10 +45,7 @@ vi.mock('react-native', async () => {
 
 function hostModule(...names: string[]) {
   return Object.fromEntries(
-    names.map((name) => [
-      name,
-      (props: any) => React.createElement(name, props, props?.children),
-    ]),
+    names.map((name) => [name, (props: any) => React.createElement(name, props, props?.children)]),
   );
 }
 vi.mock('@/components/buzz/BookmarksGlyph', () => hostModule('BookmarksGlyph'));
@@ -58,9 +58,7 @@ vi.mock('@/components/buzz/CommunityRail', () =>
 );
 vi.mock('@/components/buzz/CornerGlyph', () => ({ CORNER_META_SIZE: 12, CornerGlyph: () => null }));
 vi.mock('@/components/buzz/CornerWorkingPulse', () => hostModule('CornerWorkingPulse'));
-vi.mock('@/components/buzz/DirectMessagePickerSheet', () =>
-  hostModule('DirectMessagePickerSheet'),
-);
+vi.mock('@/components/buzz/DirectMessagePickerSheet', () => hostModule('DirectMessagePickerSheet'));
 vi.mock('@/components/buzz/ExitGlyph', () => hostModule('ExitGlyph'));
 vi.mock('@/components/buzz/MemberPickerSheet', () => hostModule('MemberPickerSheet'));
 vi.mock('@/components/buzz/MembersGlyph', () => hostModule('MembersGlyph'));
@@ -149,6 +147,9 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 
 import BuzzChannels from './channels';
+import { router } from 'expo-router';
+import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { RoomCornerSummary } from '@/components/buzz/RoomCornerSummary';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -219,6 +220,31 @@ afterEach(() => {
 });
 
 describe('Room deck live path', () => {
+  it('opens the existing Corners page on mobile without a selected conversation state', async () => {
+    const renderer = await mountDeck();
+    const list = renderer.root.find((node: any) => node.type === 'SectionList');
+    let row: ReactTestRenderer;
+    await act(async () => {
+      row = create(
+        list.props.renderItem({
+          item: { ...paintedRows(renderer)[0], cornerCount: 3, waitingCornerCount: 2 },
+        }),
+      );
+    });
+    expect(row!.root.findByType(ConversationRow).props.selected).toBeUndefined();
+    const summary = row!.root.findByType(RoomCornerSummary);
+    expect(summary.props).toMatchObject({ count: 3, waiting: 2 });
+    act(() => summary.props.onPress());
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/beeline/corners/[roomId]',
+      params: { roomId: 'room-a' },
+    });
+    act(() => {
+      row!.unmount();
+      renderer.unmount();
+    });
+  });
+
   it('paints a Room delta into the list without a chats read, and ignores drafts', async () => {
     const renderer = await mountDeck();
     const readsAtRest = deck.chatsReads;
@@ -300,7 +326,11 @@ describe('Room deck live path', () => {
   it('reconnects the socket when an unannounced message landed in the same second', async () => {
     const renderer = await mountDeck();
 
-    deck.chatsResponse = chatList({ id: 'm2', text: 'same second, never announced', createdAt: 10 });
+    deck.chatsResponse = chatList({
+      id: 'm2',
+      text: 'same second, never announced',
+      createdAt: 10,
+    });
     await act(async () => deck.blur?.());
     await act(async () => {
       deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
@@ -312,3 +342,10 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 });
+
+vi.mock('@/components/buzz/ConversationRow', () => hostModule('ConversationRow'));
+vi.mock('@/components/buzz/WorkspaceActionsMenu', () => hostModule('WorkspaceActionsMenu'));
+vi.mock('@/components/buzz/RoomListToolbar', () => hostModule('RoomListToolbar'));
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: { getItem: async () => null, setItem: async () => undefined },
+}));

@@ -109,6 +109,10 @@
     "types:apps/mobile/sources/text/translations/ru.ts:TranslationsRu",
     "types:apps/mobile/sources/theme.ts:BeelineAppTheme",
     "types:apps/mobile/sources/theme.ts:Theme",
+    "types:packages/api-contract/src/phone-types.ts:AgentHistoryEntry",
+    "types:packages/api-contract/src/phone-types.ts:WalletDelegationCardView",
+    "types:packages/api-contract/src/phone-types.ts:WalletInsufficientCardView",
+    "types:packages/api-contract/src/phone-types.ts:WalletTxCardView",
     "types:packages/buzz-client/src/identity-succession.ts:IdentitySuccessionChain",
     "types:packages/buzz-client/src/slash-command.ts:BeelineSlashCommand"
   ]

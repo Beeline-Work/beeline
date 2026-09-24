@@ -17,7 +17,6 @@ import type { RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -193,7 +192,6 @@ export default function BookmarksScreen() {
         messageId: bookmark.messageId,
         bookmarked: false,
       });
-      publishBookmarkChange({ workspaceId: bookmark.workspaceId, bookmarked: false });
     } catch (cause) {
       setRemoved(null);
       setBookmarks((current) => [bookmark, ...current]);
@@ -213,7 +211,6 @@ export default function BookmarksScreen() {
         messageId: bookmark.messageId,
         bookmarked: true,
       });
-      publishBookmarkChange({ workspaceId: bookmark.workspaceId, bookmarked: true });
     } catch (cause) {
       setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
       setError(cause instanceof Error ? cause.message : String(cause));

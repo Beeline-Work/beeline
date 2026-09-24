@@ -2535,12 +2535,40 @@ describe('monolith integration', () => {
         ('44444444-4444-4444-8444-444444444444',$1,$2,'Open corner',NULL)`,
       [WORKSPACE, ROOM],
     );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,id,$2,'member' FROM rooms WHERE parent_id=$1`,
+      [ROOM, HUMAN],
+    );
     const chat = (
       (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-        chats: Array<{ room: { id: string }; cornerCount: number }>;
+        chats: Array<{ room: { id: string }; cornerCount: number; waitingCornerCount: number }>;
       }
     ).chats.find((item) => item.room.id === ROOM);
     expect(chat?.cornerCount).toBe(1);
+    expect(chat?.waitingCornerCount).toBe(1);
+  });
+
+  it('keeps the Room list readable when corner enrichment fails', async () => {
+    const brokenEnrichment = {
+      query: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+      transaction: async () => {
+        throw new Error('enrichment pool unavailable');
+      },
+    };
+    const phone = new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      brokenEnrichment,
+    );
+    const chats = await phone.readChats(WORKSPACE, HUMAN);
+    expect(chats?.chats.some((chat) => chat.room.id === ROOM)).toBe(true);
   });
 
   it('keeps a Room view valid when live activity joins a full transcript', async () => {

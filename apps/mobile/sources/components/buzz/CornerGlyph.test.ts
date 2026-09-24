@@ -95,7 +95,6 @@ describe('CornerGlyph', () => {
     expect(headerSource).toContain('roomCornersGlyph: { color: groknight.accent }');
 
     const inlineSites = [
-      'app/(app)/beeline/channels.tsx',
       'app/(app)/beeline/bookmarks.tsx',
       'components/buzz/WritePermissionOutcome.tsx',
     ];

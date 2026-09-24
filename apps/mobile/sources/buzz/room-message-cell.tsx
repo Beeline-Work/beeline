@@ -14,6 +14,7 @@ import { messageContainsBoundary } from './room-new-message-boundary';
 import { arrivalFlashTiming } from './room-arrival-flash';
 import { ledgerDayCaption } from './message-dates';
 import { withLedgerDayCaption } from '@/components/buzz/Ledger';
+import { DECORATIVE_GLYPH_PROPS } from '@/components/buzz/decorative-glyph';
 import {
   createTranscriptCardMotionStore,
   TranscriptCardMotionBoundary,
@@ -200,7 +201,7 @@ function ArrivalFlashFill() {
  */
 function CatchUpDocumentGlyph({ color }: { color: string }) {
   return (
-    <Svg width={13} height={13} viewBox="0 0 13 13" accessibilityElementsHidden>
+    <Svg width={13} height={13} viewBox="0 0 13 13" {...DECORATIVE_GLYPH_PROPS}>
       <Path
         d="M3.25 1.5 H7.5 L10 4 V11.5 H3.25 Z"
         fill="none"
@@ -208,7 +209,13 @@ function CatchUpDocumentGlyph({ color }: { color: string }) {
         strokeWidth={1.2}
         strokeLinejoin="round"
       />
-      <Path d="M7.5 1.5 V4 H10" fill="none" stroke={color} strokeWidth={1.2} strokeLinejoin="round" />
+      <Path
+        d="M7.5 1.5 V4 H10"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
       <Path d="M5.2 6.9 H8.2" stroke={color} strokeWidth={1.2} strokeLinecap="round" />
       <Path d="M5.2 9.1 H7.2" stroke={color} strokeWidth={1.2} strokeLinecap="round" />
     </Svg>
@@ -263,7 +270,7 @@ export function NewMessagesDivider({
       testID="new-messages-divider"
     >
       <View style={styles.newMessagesRule} />
-      <Svg width={12} height={12} viewBox="0 0 12 12" accessibilityElementsHidden>
+      <Svg width={12} height={12} viewBox="0 0 12 12" {...DECORATIVE_GLYPH_PROPS}>
         <Path
           d="M6 1.5 10.5 6 6 10.5 1.5 6Z"
           fill="none"

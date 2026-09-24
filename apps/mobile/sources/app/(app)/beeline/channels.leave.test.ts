@@ -43,7 +43,8 @@ describe('Chat-list swipe-left actions', () => {
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?backgroundColor:/);
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?border(?:Color|Width):/);
 
-    expect(source).toContain('rowSurface: { backgroundColor: hull.bgBase }');
+    // The Room card stays opaque so the swipe reveal never shows through it.
+    expect(source).toMatch(/rowSurface: \{\s*backgroundColor: hull\.bgRaised,/);
 
     expect(glyphSource).toContain('height={21}');
     expect(glyphSource).toContain('width={21}');

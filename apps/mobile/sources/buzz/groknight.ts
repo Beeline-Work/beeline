@@ -40,6 +40,18 @@ const shared = {
     actionGap: 22,
     actionSize: 15,
   },
+  // Mobile Room list cards (approved Room list card mock). Desktop rows keep
+  // the body/meta roles.
+  roomCard: {
+    cornerRadius: 14,
+    inset: 12,
+    gap: 10,
+    padding: 14,
+    nameSize: 19,
+    nameLineHeight: 28,
+    previewSize: 15,
+    previewLineHeight: 22,
+  },
   agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
   agentOfflineHintTypography: {
     title: {

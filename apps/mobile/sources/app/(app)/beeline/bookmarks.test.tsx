@@ -206,6 +206,53 @@ async function renderBookmarks(): Promise<ReactTestRenderer> {
   return tree;
 }
 
+describe.each([
+  { surface: 'desktop', os: 'web', width: 1200, action: 'REMOVE' },
+  { surface: 'mobile', os: 'ios', width: 390, action: 'OPEN →' },
+])('Bookmarks $surface rows', ({ os, width, action }) => {
+  it('shows each save age once at the right and no footer time', async () => {
+    layout.os = os;
+    layout.width = width;
+    const now = 1_700_010_000_000;
+    const nowSeconds = now / 1000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    phoneOperation.mockResolvedValue({
+      bookmarks: [
+        bookmark({ messageCreatedAt: nowSeconds - 7200, bookmarkedAt: nowSeconds - 120 }),
+        bookmark({
+          messageId: 'gone',
+          messageCreatedAt: nowSeconds - 86400,
+          bookmarkedAt: nowSeconds - 3600,
+          available: false,
+          text: undefined,
+          author: undefined,
+        }),
+      ],
+    });
+    try {
+      const tree = await renderBookmarks();
+      for (const [id, age] of [
+        ['msg-1', '2m'],
+        ['gone', '1h'],
+      ]) {
+        const row = tree.root.findByProps({ testID: `bookmark-${id}` });
+        const line = row.findByProps({ testID: `bookmark-save-line-${id}` });
+        const texts = (node: any) =>
+          node
+            .findAllByType('Text' as any)
+            .map((textNode: any) => [textNode.props.children].flat(Infinity).join(''));
+        expect(texts(line)).toEqual(['Fix fixture', `SAVED ${age}`]);
+        const words = texts(row);
+        expect(words.filter((word: string) => word === `SAVED ${age}`)).toHaveLength(1);
+        expect(words).not.toContain(id === 'gone' ? '1d' : '2h');
+        expect(words).toContain(action);
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
 describe('Bookmarks desktop second pane', () => {
   it('shows the workspace above Bookmarks and the saved count at the right', async () => {
     const tree = await renderBookmarks();

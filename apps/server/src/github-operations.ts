@@ -492,7 +492,13 @@ export class GitHubOperations {
   async roomToken(roomId: string) {
     const row = (
       await this.database.query<{ github_installation_id: string; repository_id: string }>(
-        `SELECT r.github_installation_id,g.repository_id FROM rooms r JOIN github_repositories g ON lower(g.full_name)=lower(regexp_replace(r.repository_remote,'^(git://|https://)github.com/','','i')) JOIN github_installations i ON i.installation_id=g.installation_id WHERE r.id=$1 AND r.github_installation_id=i.installation_id AND g.active AND i.status='active'`,
+        `SELECT r.github_installation_id,g.repository_id FROM rooms r
+         JOIN github_repositories g ON g.installation_id=r.github_installation_id
+           AND g.active AND lower(g.full_name)=lower(regexp_replace(regexp_replace(
+             r.repository_remote,'^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+         JOIN github_installations i ON i.installation_id=g.installation_id
+         WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+           AND r.repository_resolution='repository' AND i.status='active'`,
         [roomId],
       )
     ).rows[0];

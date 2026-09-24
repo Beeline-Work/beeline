@@ -201,9 +201,12 @@ describe('corner-start transient clone against the real server', () => {
       token: 'gh-token',
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
     }));
-    const execute = vi.fn((name: string, input: Record<string, unknown>) =>
-      daemon.execute(name as never, input as never, AGENT),
-    );
+    let tokenFailures = 1;
+    const execute = vi.fn((name: string, input: Record<string, unknown>) => {
+      if (name === 'getRoomGitHubToken' && tokenFailures-- > 0)
+        throw new Error('temporary credential lookup failure');
+      return daemon.execute(name as never, input as never, AGENT);
+    });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const recoveredPath = resolve(root, 'recovered-worktree');
     const recoveredGit = resolve(root, 'recovered.git');
@@ -261,6 +264,17 @@ describe('corner-start transient clone against the real server', () => {
         ),
       )
       .mockResolvedValueOnce({ path: recoveredPath, gitCommonDir: recoveredGit });
+
+    await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
+    expect(materialize).not.toHaveBeenCalled();
+    expect(execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt')).toHaveLength(0);
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          command!.id,
+        ])
+      ).rows[0]?.state,
+    ).toBe('pending');
 
     await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
     expect(materialize).toHaveBeenCalledTimes(1);

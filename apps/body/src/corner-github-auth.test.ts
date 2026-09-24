@@ -102,6 +102,45 @@ console.log('ok');`,
     expect(lines.filter((line) => line === 'fresh-token')).toHaveLength(3);
   });
 
+  it('recovers from a transient token lookup using the same Room and refuses a persistent failure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-token-'));
+    const calls = join(root, 'calls');
+    const cli = join(root, 'cli.mjs');
+    const command = join(root, 'git.mjs');
+    await writeFile(
+      cli,
+      `#!/usr/bin/env node\nimport { appendFileSync, readFileSync } from 'node:fs';
+const path=${JSON.stringify(calls)}; let prior=''; try { prior=readFileSync(path,'utf8'); } catch {}
+appendFileSync(path, process.argv.slice(2).join(' ')+'\\n');
+if (prior.split('\\n').filter(Boolean).length < 2 || process.env.ALWAYS_FAIL === '1') process.exit(1);
+console.log('room-token');`,
+    );
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nif (process.env.GH_TOKEN !== 'room-token') process.exit(1); console.log('ok');`,
+    );
+    await Promise.all([chmod(cli, 0o700), chmod(command, 0o700)]);
+    const env = await installCornerGitHubWrappers({
+      root,
+      runtimeConfigPath: '/runtime.json',
+      roomId: 'exact-room',
+      cliEntrypoint: cli,
+      gitBinary: command,
+      featureBranch,
+      targetBranch,
+      inheritedPath: process.env.PATH,
+    });
+    const launcher = join(env.PATH!.split(':')[0]!, 'git');
+    expect((await execFileAsync(launcher, ['fetch'])).stdout).toBe('ok\n');
+    expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual(
+      Array(3).fill('corner-read-token --config /runtime.json --room exact-room'),
+    );
+    await expect(
+      execFileAsync(launcher, ['fetch'], { env: { ...process.env, ALWAYS_FAIL: '1' } }),
+    ).rejects.toMatchObject({ code: 1 });
+    expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(6);
+  });
+
   it('refuses a foreign destination before running git in a scratch repository', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-guard-'));
     const repo = join(root, 'repo');
@@ -118,7 +157,7 @@ console.log('ok');`,
     await execFileAsync('git', ['-C', repo, 'add', 'README.md']);
     await execFileAsync('git', ['-C', repo, 'commit', '-m', 'test']);
     await execFileAsync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
-    const gitBinary = (await execFileAsync('which', ['git'])).stdout.trim();
+    const gitBinary = '/usr/bin/git';
     const env = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',

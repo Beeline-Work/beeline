@@ -48,16 +48,22 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
     `+refs/heads/${input.featureBranch}:${remoteRef}`,
   ]).then(
     () => true,
-    () => false,
+    (error) => {
+      const text = error instanceof Error ? error.message : String(error);
+      if (
+        /remote ref does not exist|remote reference does not exist|couldn't find remote ref/i.test(
+          text,
+        )
+      )
+        return false;
+      throw error;
+    },
   );
   // Nothing has been pushed to this corner's branch yet: this worktree is the
   // whole of it, and there is nobody to be behind.
   if (!fetched) return 'unchanged';
-  const remote = await git(['rev-parse', remoteRef]).then(
-    (value) => value.trim(),
-    () => '',
-  );
-  if (!remote) return 'unchanged';
+  const remote = (await git(['rev-parse', remoteRef])).trim();
+  if (!remote) throw new Error(`fetched corner branch has no remote ref: ${remoteRef}`);
   const local = (await git(['rev-parse', 'HEAD'])).trim();
   if (local === remote) return 'unchanged';
   // The remote head is already an ancestor: this worktree is ahead, and its

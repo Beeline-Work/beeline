@@ -774,6 +774,7 @@ export class GitHubOperations {
     ) {
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
+      if (event === 'push') await this.processBaseBranchPush(body, install.id);
       return;
     }
     if (event === 'installation' && body.action === 'deleted') {
@@ -884,6 +885,7 @@ export class GitHubOperations {
             !current?.pr ||
             current.pr.number !== row.number ||
             current.pr.headSha !== pr.headSha ||
+            (current.pr.baseSha && current.pr.baseSha !== pr.baseSha) ||
             current.pr.mergeability !== 'unknown'
           )
             return;
@@ -915,6 +917,54 @@ export class GitHubOperations {
       } catch (error) {
         console.error(`[server] mergeability refresh failed for corner ${row.corner_id}:`, error);
       }
+    }
+  }
+
+  private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {
+    const repository = repositoryName(body);
+    const branch = branchForEvent('push', body);
+    const baseSha = text(body.after);
+    if (!repository || !branch || !baseSha || !/^[a-f0-9]{40,64}$/i.test(baseSha)) return;
+    const affected = await this.database.query<{ corner_id: string }>(
+      `SELECT fact.corner_id FROM corner_facts fact
+       JOIN rooms corner ON corner.id=fact.corner_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN github_repositories github ON github.installation_id=$1
+         AND lower(github.full_name)=lower($2) AND github.active
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND parent.github_events_enabled AND parent.github_installation_id=$1
+         AND lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)
+         AND fact.lifecycle->'pr'->>'targetBranch'=$3
+         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL`,
+      [installationId, repository, branch],
+    );
+    for (const row of affected.rows) {
+      let changed = false;
+      await this.database.transaction(async (tx) => {
+        const lifecycle = (
+          await tx.query<{ lifecycle: CornerLifecycleView }>(
+            `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            [row.corner_id],
+          )
+        ).rows[0]?.lifecycle;
+        if (
+          !lifecycle?.pr ||
+          lifecycle.pr.targetBranch !== branch ||
+          lifecycle.pr.baseSha === baseSha
+        )
+          return;
+        await this.updateLifecycle(
+          row.corner_id,
+          {
+            pr: { ...lifecycle.pr, baseSha, mergeability: 'unknown' },
+          },
+          tx,
+        );
+        changed = true;
+      });
+      if (changed) await this.refreshUnknownMergeability(row.corner_id);
     }
   }
 
@@ -1033,6 +1083,7 @@ export class GitHubOperations {
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
         const targetBranch = text(record(pullRequest?.base)?.ref);
+        const webhookBaseSha = text(record(pullRequest?.base)?.sha);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
         let mergeability = githubMergeability(mergeabilityValue);
@@ -1044,19 +1095,36 @@ export class GitHubOperations {
                 [target.corner_id],
               )
             ).rows[0]?.lifecycle;
+            const sameHead = previous?.pr?.headSha === headSha;
+            const staleBase = Boolean(
+              sameHead && previous?.pr?.baseSha && previous.pr.baseSha !== webhookBaseSha,
+            );
+            if (staleBase) mergeability = previous!.pr!.mergeability ?? 'unknown';
             if (
+              !staleBase &&
               mergeability === 'unknown' &&
-              previous?.pr?.headSha === headSha &&
+              sameHead &&
               previous.pr.mergeability &&
               previous.pr.mergeability !== 'unknown'
             )
               mergeability = previous.pr.mergeability;
+            const baseSha = staleBase
+              ? previous!.pr!.baseSha
+              : (webhookBaseSha ?? (sameHead ? previous?.pr?.baseSha : undefined));
             await this.updateLifecycle(
               target.corner_id,
               {
                 lifecycle: 'in-review',
                 branch,
-                pr: { number, url, title, targetBranch, headSha, mergeability },
+                pr: {
+                  number,
+                  url,
+                  title,
+                  targetBranch,
+                  headSha,
+                  mergeability,
+                  ...(baseSha ? { baseSha } : {}),
+                },
               },
               tx,
             );

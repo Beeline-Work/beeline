@@ -23,14 +23,15 @@ function corner(
   };
 }
 
-/** One corner the viewer commissioned, one that awaits them, one that is
- * someone else's. */
+/** One corner the viewer commissioned, one that awaits them, and two that are
+ * someone else's, one of which is waiting on someone else. */
 export const MINE_CORNERS_FIXTURE = {
   room: { id: MINE_CORNERS_ROOM_ID, name: 'alpha', workspaceId: WORKSPACE_ID },
   corners: [
     corner('corner-mine', 'working', VIEWER),
     corner('corner-waiting', 'waiting', SOMEONE, true),
     corner('corner-theirs', 'working', SOMEONE),
+    corner('corner-theirs-waiting', 'waiting', SOMEONE),
   ],
   apps: [],
   viewer: {

@@ -85,10 +85,12 @@ export function DesktopRoomCorners({
       <View style={styles.summary}>
         <View style={styles.summaryToggle}>
           <RoomCornerSummary
-            count={item.cornerCount ?? corners?.length ?? 0}
+            count={mine && visible ? visible.length : (item.cornerCount ?? corners?.length ?? 0)}
             waiting={
-              item.waitingCornerCount ??
-              corners?.filter((corner) => corner.state === 'waiting').length
+              mine && visible
+                ? visible.filter((corner) => corner.state === 'waiting').length
+                : (item.waitingCornerCount ??
+                  corners?.filter((corner) => corner.state === 'waiting').length)
             }
             expanded={expanded}
             onPress={() => {

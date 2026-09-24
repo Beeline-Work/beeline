@@ -77,6 +77,87 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('ConnectorSignInScreen', () => {
+  it('carries a Squire ceremony through connector state to sign-in dismissal', async () => {
+    // Load the helper implementation at runtime so the isolated mobile
+    // typecheck does not compile the helper's host-only dependency graph.
+    const bodyRoot = '../../../../../../../body/src/';
+    const { ConnectorAssignmentLoop } = await vi.importActual<any>(bodyRoot + 'connector-assignments.ts');
+    const { installSquire } = await vi.importActual<any>(bodyRoot + 'connector-squire.ts');
+    const noVncUrl = 'https://tunnel.test/#p=secret';
+    const row: { status: 'installing' | 'connected'; signIn: { url: string } | null } = {
+      status: 'installing', signIn: null,
+    };
+    const operations: string[] = [];
+    let claimed = false;
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        operations.push(`${op} ${String(input.errorMessage ?? JSON.stringify(input.signIn ?? input.steps ?? ''))}`);
+        if (op === 'getConnectorAssignments') {
+          return { assignments: [{ kind: 'install', connectorId: 'connector-row-1', connectorType: 'trusty-squire' }] };
+        }
+        if (op === 'postConnectorStatus') {
+          row.signIn = (input.signIn as { url: string } | null | undefined) ?? row.signIn;
+          return {};
+        }
+        if (op === 'installConnector') {
+          row.status = 'connected';
+          row.signIn = null;
+          return {};
+        }
+        if (op === 'postConnectorVault') return {};
+        throw new Error(`unexpected operation: ${op}`);
+      },
+    };
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'helper-1',
+      log: (message: string) => operations.push(`log: ${message}`),
+      readVault: async () => [],
+      install: (options: { [key: string]: unknown }) => installSquire({
+        ...options,
+        mcp: { async call() { return { credentials: [] }; } },
+        run: async () => ({ code: 0, stdout: '1.1.17', stderr: '' }),
+        streamRun: async () => ({
+          stdout: '', stderr: '', abort: () => {},
+          report: claimed
+            ? { state: 'connected', terminal: true, sign_in_url: null, browser_location: { kind: 'none' } }
+            : {
+                state: 'needs-sign-in', terminal: false,
+                sign_in_url: 'https://trustysquire.ai/install?token=secret',
+                browser_location: { kind: 'virtual', url: noVncUrl },
+              },
+        } as never),
+      }),
+    });
+    readInstallState.mockImplementation(async () => ({ connected: row.status === 'connected' }));
+    searchParams.method = 'streamed-page';
+    searchParams.url = noVncUrl;
+    let renderer!: ReactTestRenderer;
+    try {
+      await loop.runOnce();
+      await vi.waitFor(() => expect(row.signIn?.url).toBe(noVncUrl));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+      expect(renderer.root.findByProps({ testID: 'signin-webview' }).props.source.uri).toBe(row.signIn?.url);
+      expect(row.status).toBe('installing');
+      await vi.waitFor(() => expect(readInstallState).toHaveBeenCalled(), { timeout: 2500 });
+      expect(router.replace).not.toHaveBeenCalled();
+
+      claimed = true;
+      await loop.runOnce();
+      await vi.waitFor(() => expect(row.status, operations.join('\n')).toBe('connected'));
+      expect(operations.some((operation) => operation.startsWith('installConnector'))).toBe(true);
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1), { timeout: 2500 });
+      await act(async () => renderer.unmount());
+    } finally {
+      loop.stop();
+      vi.mocked(router.replace).mockClear();
+      readInstallState.mockReset();
+      searchParams.method = 'oauth';
+      searchParams.url = 'https://login.tailscale.com/a/test';
+    }
+  });
+
   it('dismisses the noVNC sign-in overlay when the helper settles connected', async () => {
     searchParams.method = 'streamed-page';
     searchParams.url = 'https://tunnel.test/#p=secret';

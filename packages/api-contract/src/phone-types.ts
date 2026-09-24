@@ -806,6 +806,9 @@ export type CornerListItem = {
   readonly closedAt?: number;
   /** Human whose request caused the agent to open this corner. */
   readonly initiator?: RoomViewIdentity;
+  /** Present when the corner is waiting or in review and its latest message
+   * tags the viewer. */
+  readonly awaitsViewer?: true;
   readonly agent?: RoomViewIdentity;
   readonly app?: CornerAppBindingView;
   readonly latestMessage?: {

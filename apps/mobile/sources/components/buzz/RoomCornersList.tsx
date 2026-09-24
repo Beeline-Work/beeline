@@ -48,6 +48,7 @@ export function RoomCornersList({
   bottomInset = 0,
   archived = { status: 'idle' },
   onShowArchived,
+  hiddenByMine = 0,
   nowMs,
 }: {
   corners: readonly CornerListItem[];
@@ -60,6 +61,8 @@ export function RoomCornersList({
   /** The archived fetch the footer reports and reveals. */
   archived?: ArchivedCornersState;
   onShowArchived?: () => void;
+  /** Open corners the "Mine" toggle is hiding, so an empty list says why. */
+  hiddenByMine?: number;
   /** Clock for the closure stamps; defaults to now at paint. */
   nowMs?: number;
 }) {
@@ -197,7 +200,14 @@ export function RoomCornersList({
       ListEmptyComponent={
         // A Room whose only work is closed is not an empty Room: once the
         // archived rows are on screen the invitation to start would be a lie.
-        archivedRows.length ? null : (
+        archivedRows.length ? null : hiddenByMine > 0 ? (
+          <View style={styles.empty} testID="room-corners-mine-empty">
+            <Text style={styles.emptyTitle}>No {CHANGES_LABEL} of yours</Text>
+            <Text style={styles.emptyText}>
+              Turn off Mine to see all {hiddenByMine} in {parentRoomName}.
+            </Text>
+          </View>
+        ) : (
           <View style={styles.empty} testID="room-corners-empty">
             <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
             <Text style={styles.emptyText}>

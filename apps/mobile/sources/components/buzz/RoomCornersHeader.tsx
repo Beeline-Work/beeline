@@ -5,6 +5,7 @@ import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import Svg, { Line } from 'react-native-svg';
+import { MineCornersToggle } from '@/components/buzz/MineCornersToggle';
 
 const BACK_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 
@@ -13,11 +14,15 @@ const SCREEN_TITLE = `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.sl
 export function RoomCornersHeader({
   title,
   count,
+  mine,
+  onMine,
   onBack,
   onAdd,
 }: {
   title: string;
   count: number;
+  mine: boolean;
+  onMine: (mine: boolean) => void;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -40,6 +45,7 @@ export function RoomCornersHeader({
           {SCREEN_TITLE}
         </Text>
       </View>
+      <MineCornersToggle mine={mine} onChange={onMine} testID="room-corners-mine" />
       <Text
         accessibilityLabel={`${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`}
         style={styles.count}

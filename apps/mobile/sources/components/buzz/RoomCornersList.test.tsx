@@ -479,7 +479,14 @@ describe('RoomCornersHeader', () => {
     let tree!: ReactTestRenderer;
     act(() => {
       tree = create(
-        <RoomCornersHeader title="#alpha" count={count} onBack={onBack} onAdd={onAdd} />,
+        <RoomCornersHeader
+          title="#alpha"
+          count={count}
+          mine={false}
+          onMine={() => undefined}
+          onBack={onBack}
+          onAdd={onAdd}
+        />,
       );
     });
     const hull = beelineThemes.obsidian;
@@ -491,8 +498,11 @@ describe('RoomCornersHeader', () => {
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
-    // Three written parts. The back mark is drawn, so it is not one of them.
-    const texts = tree.root.findAllByType('Text' as any);
+    // Three written parts plus the Mine switch. The back mark is drawn, so it
+    // is not one of them.
+    const texts = tree.root
+      .findAllByType('Text' as any)
+      .filter((node: any) => node.props.children !== 'Mine');
     expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners', count]);
     expect(tree.root.findAllByType('Polyline' as any)).toHaveLength(1);
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);

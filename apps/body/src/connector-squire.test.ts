@@ -617,7 +617,7 @@ describe('installSquire', () => {
     expect(result.errorMessage).toContain('Finish or close that Trusty Squire session');
   });
 
-  it('surfaces the signIn URL and browser location before the pairing probe', async () => {
+  it('opens the noVNC ceremony on the phone before the pairing probe', async () => {
     const failing: SquireMcpClient = {
       async call() {
         throw new Error('squire unreachable');
@@ -629,7 +629,7 @@ describe('installSquire', () => {
       streamRun: fakeStreamRunner({
         report: report({
           state: 'needs-sign-in',
-          sign_in_url: 'https://tunnel.example/vnc.html#p=x',
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
           browser_location: { kind: 'virtual', url: 'https://tunnel.example/vnc.html#p=x' },
         }),
       }),

@@ -43,6 +43,8 @@
  *   reclaimed, our previous connect is aborted, and a still-live owner that
  *   is not our connect (another Squire server, another agent system) is
  *   left alone with an actionable "close that session" line — never killed.
+ *   A claim from the shared broker's user-unit process tree is connected
+ *   when its vault answers, without restarting the browser.
  *   Closing the noVNC page and hitting Retry must never leave the next
  *   attempt staring at "another Trusty Squire session is already using the
  *   browser".
@@ -58,7 +60,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
+import { squireHostPaths, squireHostRewriteEnv, TRUSTY_SQUIRE_BROKER_UNIT_NAME } from './squire-host.js';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -223,6 +225,39 @@ function readLinuxProcessGroup(pid: number): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+function readLinuxParentPid(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const close = stat.lastIndexOf(')');
+    if (close < 0) return undefined;
+    const parent = Number(stat.slice(close + 2).split(' ')[1]);
+    return Number.isSafeInteger(parent) && parent > 0 ? parent : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Match the live lock owner to the user unit's broker process tree. */
+function brokerOwnsClaim(owner: SquireProfileLockOwner, brokerPid: number): boolean {
+  if (owner.host !== hostname() || !lockOwnerIsAlive(owner)) return false;
+  let pid: number | undefined = owner.pid;
+  const seen = new Set<number>();
+  while (pid !== undefined && !seen.has(pid)) {
+    if (pid === brokerPid) return true;
+    seen.add(pid);
+    pid = readLinuxParentPid(pid);
+  }
+  return false;
+}
+
+async function brokerMainPid(run: ShellRunner): Promise<number | undefined> {
+  const result = await run('systemctl', [
+    '--user', 'show', '--property=MainPID', '--value', TRUSTY_SQUIRE_BROKER_UNIT_NAME,
+  ]);
+  const pid = Number(result.stdout.trim());
+  return result.code === 0 && Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
 function lockOwnerIsAlive(owner: SquireProfileLockOwner): boolean {
@@ -831,6 +866,26 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     return { status: 'error', steps, errorMessage: reason };
   };
   emit();
+
+  // A broker claim is the shared Chrome, not a stale connect. The user unit
+  // owns that process tree; a working vault proves this helper can use it.
+  // Check before releasing our own ceremony so a second install cannot close
+  // a page another connector is still using.
+  const existingClaim = readLockFileOwner(squireProfileLockPath(profileDir, lockRoot));
+  const brokerPid = existingClaim ? await brokerMainPid(run) : undefined;
+  if (existingClaim && brokerPid !== undefined && brokerOwnsClaim(existingClaim, brokerPid)) {
+    const pair = await pairSquire(options.mcp, options.workspaceId);
+    if (pair.ok) {
+      push(step('trusty-squire installed', 'done'));
+      push(step('waiting for sign-in', 'done'));
+      push(step('paired to workspace', 'done'));
+      return { status: 'connected', steps };
+    }
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'done'));
+    push(step('paired to workspace', 'failed', pair.reason));
+    return { status: 'error', steps, errorMessage: pair.reason };
+  }
 
   // A fresh connect attempt owns the browser session: release whatever a
   // previous attempt still claims — aborting a live owner, clearing a dead

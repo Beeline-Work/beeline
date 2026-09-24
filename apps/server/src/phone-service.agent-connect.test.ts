@@ -607,6 +607,41 @@ describe('PhoneService machine grouping in readWorkbench', () => {
       .toBe('squire-box');
   });
 
+  it('keeps another owner’s machine name out of Squire install progress', async () => {
+    const foreignOwner = 'b'.repeat(64);
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_B, 'Codex', MACHINE_X);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other owner','other-owner')`,
+      [foreignOwner],
+    );
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other agent','other-agent')`,
+      [AGENT_C],
+    );
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name) VALUES($1,$2,$3,$4)`,
+      [AGENT_C, foreignOwner, MACHINE_X, 'zzz-foreign-machine'],
+    );
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`,
+      [ROOM, AGENT_B],
+    );
+
+    const paired = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+    const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(workbench.helpers).toEqual([
+      expect.objectContaining({ id: MACHINE_X, name: 'squire-box' }),
+    ]);
+    expect(workbench.connectors.find((row) => row.connectorId === paired.connectorId)?.status.helperName)
+      .toBe('squire-box');
+  });
+
   it('two agents on different machines show two rows in readWorkbench', async () => {
     await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
     await registerAgent(AGENT_C, 'Fathom', MACHINE_Y, 'workstation');

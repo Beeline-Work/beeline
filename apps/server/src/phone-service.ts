@@ -6155,7 +6155,8 @@ export class PhoneService {
         `SELECT c.id,c.connector_type,c.status,c.status_steps,c.status_error,
                 c.helper_agent_id,
                 COALESCE((SELECT MAX(sibling.machine_name) FROM agents sibling
-                          WHERE sibling.machine_id=c.machine_id),i.name) helper_name,
+                          WHERE sibling.machine_id=c.machine_id
+                            AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
                 c.signed_in_as,c.sign_in,c.connected_at,c.created_at
          FROM workspace_connectors c

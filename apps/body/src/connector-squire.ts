@@ -885,7 +885,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     isOutstandingSignIn(report) && report.sign_in_url
       ? {
           method: 'streamed-page',
-          url: report.sign_in_url,
+          url: location?.kind === 'virtual' ? location.url : report.sign_in_url,
           ...(location ? { browserLocation: location } : {}),
         }
       : undefined;
@@ -1084,4 +1084,3 @@ export async function readConnectionDetail(
     return { error: error instanceof Error ? error.message : String(error) };
   }
 }
-

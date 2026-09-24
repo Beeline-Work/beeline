@@ -374,9 +374,9 @@ describe('ConnectorAssignmentLoop', () => {
         return armed.length;
       },
       cancel: () => {},
-      install: async () => {
+      install: async (options) => {
         started += 1;
-        return { status: 'installing', steps: [] };
+        return connectedInstall()(options);
       },
     });
     try {
@@ -398,6 +398,10 @@ describe('ConnectorAssignmentLoop', () => {
       armed.pop()!();
       await settle();
       expect(started).toBe(1);
+      expect(
+        api.calls.some((call) =>
+          call.op === 'installConnector' && call.input.connectorId === 'conn-1'),
+      ).toBe(true);
     } finally {
       connect.abort();
       releaseSquireConnectSession();

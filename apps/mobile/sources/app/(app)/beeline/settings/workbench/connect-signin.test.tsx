@@ -10,6 +10,7 @@ const searchParams = vi.hoisted(() => ({
   url: 'https://login.tailscale.com/a/test',
   method: 'oauth',
 }));
+const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | { connected: boolean }));
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), replace: vi.fn() },
@@ -53,11 +54,12 @@ vi.mock('@/components/buzz/sandbox-webview', async () => {
 });
 
 vi.mock('@/buzz/workbench-source', () => ({
-  getWorkbenchSource: () => ({ readInstallState: vi.fn(async () => null) }),
+  getWorkbenchSource: () => ({ readInstallState }),
 }));
 
 import ConnectorSignInScreen from './connect-signin';
 import * as WebBrowser from 'expo-web-browser';
+import { router } from 'expo-router';
 
 const originalConsoleError = console.error;
 
@@ -75,6 +77,30 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('ConnectorSignInScreen', () => {
+  it('dismisses the noVNC sign-in overlay when the helper settles connected', async () => {
+    searchParams.method = 'streamed-page';
+    searchParams.url = 'https://tunnel.test/#p=secret&f=finish-token';
+    readInstallState.mockResolvedValue({ connected: true });
+    vi.useFakeTimers();
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+      expect(renderer.root.findByProps({ testID: 'signin-webview' }).props.source.uri).toBe(searchParams.url);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(readInstallState).toHaveBeenCalledWith({
+        workspaceId: 'workspace-1', connectorId: 'connector-row-1',
+      });
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      await act(async () => renderer.unmount());
+    } finally {
+      vi.useRealTimers();
+      vi.mocked(router.replace).mockClear();
+      readInstallState.mockReset();
+      searchParams.method = 'oauth';
+      searchParams.url = 'https://login.tailscale.com/a/test';
+    }
+  });
+
   it('opens Google OAuth in the system browser', async () => {
     searchParams.connectorName = 'Google Workspace';
     searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=test';

@@ -82,7 +82,7 @@ async function commissioned(roomId: string): Promise<AgentCommand> {
 
 async function open(
   roomId: string,
-  lane?: 'code' | 'no_code',
+  lane?: 'code' | 'no_code' | 'research',
   repository?: string,
 ): Promise<string> {
   const command = await commissioned(roomId);
@@ -130,6 +130,22 @@ it('leaves a repository Room on the code lane when the corner does not ask other
   });
 });
 
+it('restores a research worktree lane and refuses agent closure while allowing human closure', async () => {
+  const cornerId = await open(CODE_ROOM, 'research', 'owner/widgets');
+  expect(await lane(cornerId)).toBe('research');
+  expect(await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).toMatchObject({
+    lane: 'research',
+    closeRequested: false,
+  });
+  await expect(daemon.execute('archiveCorner', { cornerId }, AGENT)).rejects.toThrow(
+    'research corners require a human to close them',
+  );
+  await phone.execute('requestCornerClose', { roomId: cornerId }, HUMAN);
+  expect(await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).toMatchObject({
+    closeRequested: true,
+  });
+});
+
 it('records a Room with no repository as no-code however the corner asked', async () => {
   // Nothing to skip is still the no-code lane: the fact has to be truthful, or
   // a later reader of `corner_facts` would believe a commit was possible here.
@@ -138,9 +154,9 @@ it('records a Room with no repository as no-code however the corner asked', asyn
 
   expect(await lane(asked)).toBe('no_code');
   expect(await lane(silent)).toBe('no_code');
-  expect(
-    await daemon.execute('getCornerRestoreState', { cornerId: asked }, AGENT),
-  ).toMatchObject({ lane: 'no_code' });
+  expect(await daemon.execute('getCornerRestoreState', { cornerId: asked }, AGENT)).toMatchObject({
+    lane: 'no_code',
+  });
 });
 
 it('restores a corner opened before the lane column as code', async () => {

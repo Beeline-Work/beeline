@@ -704,8 +704,12 @@ export class DaemonService {
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
-          (input as Input<'getGoogleOAuthGrant'>).connectorId, authenticatedAgentId);
-        return (credentials ? { status: 'ready', credentials } : { status: 'pending' }) as Output<Name>;
+          (input as Input<'getGoogleOAuthGrant'>).connectorId,
+          authenticatedAgentId,
+        );
+        return (
+          credentials ? { status: 'ready', credentials } : { status: 'pending' }
+        ) as Output<Name>;
       }
       case 'installConnector':
         return (await this.connectorInstall(
@@ -1924,7 +1928,12 @@ export class DaemonService {
       closeRequested: row?.close_requested ?? false,
       // A row written before the lane existed reads back as its backfilled
       // default, never as an unknown third lane.
-      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
+      lane:
+        row?.lane === 'no_code'
+          ? ('no_code' as const)
+          : row?.lane === 'research'
+            ? ('research' as const)
+            : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -4050,10 +4059,14 @@ export class DaemonService {
         connectorType: entry.connectorType,
         name: entry.name,
         purpose: connectorPurpose(entry.connectorType),
-        available: entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
+        available:
+          entry.available &&
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
         offerable:
-          entry.available && (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth))
-            && !context.isCorner && isOfferableConnectorKind(entry.connectorType),
+          entry.available &&
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          !context.isCorner &&
+          isOfferableConnectorKind(entry.connectorType),
         ...(row
           ? {
               paired: {
@@ -4372,6 +4385,12 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
+      const fact = await database.query<{ lane: string }>(
+        `SELECT lane FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+        [cornerId],
+      );
+      if (fact.rows[0]?.lane === 'research')
+        throw new Error('research corners require a human to close them');
       return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });

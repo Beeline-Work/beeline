@@ -529,7 +529,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" in a repository Room when the objective produces no code change. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" for artifact work without a checkout, or lane="research" for writable repository investigation held open without automatic commit, pull request, merge, or agent closure. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -548,9 +548,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         lane: {
           type: 'string',
-          enum: ['code', 'no_code'],
+          enum: ['code', 'no_code', 'research'],
           description:
-            'Defaults to "code". Use "no_code" for an objective that produces no code change: the corner skips the worktree, the commit, the pull request and the merge, and delivers artifacts plus a reply tagging you.',
+            'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
         },
       },
       additionalProperties: false,
@@ -1544,10 +1544,20 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is available only in a top-level Room');
   }
   const { name, objective } = cornerCallText(args);
-  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
-    throw new Error('lane must be "code" or "no_code"');
+  if (
+    args.lane !== undefined &&
+    args.lane !== 'code' &&
+    args.lane !== 'no_code' &&
+    args.lane !== 'research'
+  ) {
+    throw new Error('lane must be "code", "no_code", or "research"');
   }
-  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
+  const lane =
+    args.lane === 'no_code'
+      ? ('no_code' as const)
+      : args.lane === 'research'
+        ? ('research' as const)
+        : ('code' as const);
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {
@@ -1601,7 +1611,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   if (process.env.BEELINE_CORNER_AGENT_CLOSE !== '1') {
-    throw new Error('no-code corners stay open until a human closes them');
+    throw new Error('this corner stays open until a human closes it');
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
@@ -1659,7 +1669,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       : [],
   );
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
-  let held = false;
+  let held = restore.lane === 'research';
   let pullRequest: unknown = args.pullRequest ?? lifecycle?.pr?.url;
   // An objective URL is a target hint only, never a check verdict.
   if (pullRequest === undefined && typeof restore.objective === 'string')
@@ -1675,7 +1685,11 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     if (url && args.pullRequest === undefined && !lifecycle?.pr?.url) pullRequest = url;
     if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
       if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
-      if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
+      if (
+        restore.lane !== 'research' &&
+        /\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)
+      )
+        held = false;
     }
   }
   const verdict =
@@ -1722,7 +1736,9 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     reviewerExists,
   });
   const mergeConditionsRule =
-    "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+    restore.lane === 'research'
+      ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
+      : "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
   return JSON.stringify({
     checks,
     reason,
@@ -1741,7 +1757,10 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next:
+            restore.lane === 'research'
+              ? 'Keep investigating in the writable worktree. Do not commit, push, or open a pull request until a human explicitly directs it.'
+              : 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
     rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),

@@ -1564,6 +1564,20 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   return {
     workspaceId: item.workspaceId,
     agent,
+    recentWork:
+      readList(
+        item.recentWork,
+        (value) => {
+          const work = record(value);
+          return work &&
+            nonempty(work.title) &&
+            httpUrl(work.url) &&
+            /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(work.url)
+            ? { title: work.title, url: work.url }
+            : null;
+        },
+        20,
+      ) ?? [],
     catalog,
     commands,
     watchFilters: readWatchFilters(item.watchFilters),

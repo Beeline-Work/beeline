@@ -1,3 +1,4 @@
+import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
   loadActiveCommunityId,
@@ -9,7 +10,12 @@ import { navigateToRoom } from '@/buzz/corner-navigation';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter } from '@/buzz/room-list-preferences';
+import {
+  filterConversations,
+  roomListCounts,
+  useRoomPins,
+  useRoomListFilter,
+} from '@/buzz/room-list-preferences';
 import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -114,6 +120,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   workspaceTextSelected: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
+  unreadSurface: { backgroundColor: theme.buzz.bgUnread },
   conversationCell: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
@@ -125,11 +132,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 24,
     color: theme.colors.textSecondary,
   },
-  pinnedEmpty: { padding: 18, gap: 8 },
-  pinnedEmptyTitle: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
-  pinnedEmptyCopy: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
-  pinnedEmptyAction: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  pinnedEmptyActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   loading: {
     alignItems: 'center',
     paddingHorizontal: 18,
@@ -297,11 +299,18 @@ export const SidebarView = React.memo(function SidebarView() {
   }, [client, pathname, workspaces]);
 
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
-  const counts = React.useMemo(() => roomListCounts(surface?.chats ?? [], pinned), [surface?.chats, pinned]);
+  const counts = React.useMemo(
+    () => roomListCounts(surface?.chats ?? [], pinned),
+    [surface?.chats, pinned],
+  );
   const [filter, setFilter] = useRoomListFilter(
     workspaceId,
     pinsLoaded && Boolean(surface),
-    Boolean(surface?.chats.some((item) => !item.closed && !item.directMessage && pinned.includes(item.room.id))),
+    Boolean(
+      surface?.chats.some(
+        (item) => !item.closed && !item.directMessage && pinned.includes(item.room.id),
+      ),
+    ),
   );
   const filteredChats = React.useMemo(
     () => filterConversations(surface?.chats ?? [], query, filter, pinned),
@@ -557,18 +566,7 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : !filteredChats.length ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (
-                  <View style={styles.pinnedEmpty} testID="desktop-pinned-empty">
-                    <Text style={styles.pinnedEmptyTitle}>No pinned conversations</Text>
-                    <Text style={styles.pinnedEmptyCopy}>Long press a Room to pin it here.</Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => setFilter('all')}
-                      style={styles.pinnedEmptyAction}
-                      testID="desktop-show-all-conversations"
-                    >
-                      <Text style={styles.pinnedEmptyActionText}>Show all conversations</Text>
-                    </Pressable>
-                  </View>
+                  <PinnedConversationsEmpty desktop onShowAll={() => setFilter('all')} />
                 ) : (
                   <Text style={styles.empty}>
                     {query.trim() || filter !== 'all'
@@ -617,7 +615,10 @@ export const SidebarView = React.memo(function SidebarView() {
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (
-                      <View key={item.room.id} style={styles.conversationCell}>
+                      <View
+                        key={item.room.id}
+                        style={[styles.conversationCell, item.unread && styles.unreadSurface]}
+                      >
                         <ConversationRow
                           item={item}
                           viewer={identityPubkey ?? undefined}

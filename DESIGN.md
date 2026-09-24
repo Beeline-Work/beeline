@@ -738,3 +738,10 @@ check), never as a page or Room/Corner load gate.
    `groknight.test.ts` pins their contrast and luminance order. Hue is the redundant
    channel. It lives only inside a fenced block and the sheet that opens one;
    it does not authorize a fifth exception.
+
+
+## Conversation navigation and agent profiles
+
+Pinned’s empty state has a single pin glyph, a two-line 22px heading, explanatory copy, and a quiet outlined Show all conversations action. Both Room indexes use the same component. Unread rows use `bgUnread`, stronger name weight, a bright preview and the existing dot; the corner summary shares the row ground.
+
+Agent bylines and roster identities open Profile. Mentions retain DM navigation. Profile uses the assigned 72px animal mark, a centered name (`agentProfileTypography.name`, 28/36 from the consolidated mock), handle, outlined Message action, two model/effort facts, expandable soul and linked merged work. A phone uses a page; a desktop transcript uses an adjacent pane. Manage is a separate permission-gated tab with existing controls and the destructive action below them. Its field labels are readable body text, explanatory copy uses `ledgerQuiet`, and web/native switches share the brass track and canvas thumb. See [agent profiles](docs/agent-profiles.md) for authorization and verification scope.

@@ -1675,6 +1675,7 @@ export interface OrdinaryLedgerMessageProps {
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
   onMention?(participantId: string): void;
+  onOpenProfile?(participantId: string): void;
   /** A tap on the row — the composer's "outside" — puts the keyboard away. */
   onTapOutsideComposer?(): void;
   onReply(message: ChatDisplayMessage): void;
@@ -1777,6 +1778,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   codeRoomId,
   onOpenCode,
   onMention,
+  onOpenProfile,
   onTapOutsideComposer,
   onReply,
   onCopy,
@@ -1847,6 +1849,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           // them; a "You" caption beside it says the same thing twice and
           // breaks the run of names down the left edge.
           name: voiceName,
+          onOpenProfile:
+            isAgent && message.pubkey && onOpenProfile
+              ? () => onOpenProfile(message.pubkey!)
+              : undefined,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,
           isViewer: isSelfSteer,

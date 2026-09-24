@@ -3,7 +3,11 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkspaceListView } from '@beeline/buzz-client';
 import { DESKTOP_WORKSPACE_STRIP_WIDTH } from '@/buzz/desktop-workbench-state';
+import { WORKSPACE_RAIL_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { IdentityMark } from './IdentityMark';
+
+const tile = WORKSPACE_RAIL_TILE;
+const seat = workspacePictureSeat(tile);
 
 export function DesktopWorkspaceStrip({
   workspaces,
@@ -36,16 +40,18 @@ export function DesktopWorkspaceStrip({
             accessibilityRole="button"
             accessibilityState={{ selected: workspace.id === activeWorkspaceId }}
             onPress={() => onSelect(workspace.id)}
-            style={[styles.tile, workspace.id === activeWorkspaceId && styles.active]}
+            style={[styles.workspaceTile, workspace.id === activeWorkspaceId && styles.active]}
             testID={`desktop-strip-workspace-${workspace.id}`}
           >
-            <IdentityMark
-              avatarUrl={workspace.avatar}
-              kind="workspace"
-              name={workspace.name}
-              seed={workspace.id}
-              size={48}
-            />
+            <View style={styles.pictureSeat}>
+              <IdentityMark
+                avatarUrl={workspace.avatar}
+                kind="workspace"
+                name={workspace.name}
+                seed={workspace.id}
+                size={seat.pictureSize}
+              />
+            </View>
           </Pressable>
         ))}
         <Pressable
@@ -87,9 +93,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   list: { alignItems: 'center', paddingTop: 16, gap: 12 },
   tile: { width: 56, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
-  active: {
-    borderLeftWidth: 2,
-    borderLeftColor: theme.buzz.accent,
+  workspaceTile: {
+    width: tile.size,
+    height: tile.size,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: tile.radius,
+    borderWidth: tile.borderWidth,
+    borderColor: theme.buzz.border,
   },
+  pictureSeat: {
+    width: seat.pictureSize,
+    height: seat.pictureSize,
+    borderRadius: seat.pictureRadius,
+    overflow: 'hidden',
+  },
+  active: { borderColor: theme.buzz.accent },
   add: { ...theme.buzz.type.hero, color: theme.buzz.accent },
 }));

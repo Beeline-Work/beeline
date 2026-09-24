@@ -1,8 +1,10 @@
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
 // so a screen beside its route is a second URL for the same screen.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -37,7 +39,7 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
-import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
+import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -252,18 +254,25 @@ function modelSelectionInput(
     : { model, effort: null };
 }
 
-export default function BuzzMembers() {
+export default function BuzzMembers({
+  profileAgentId,
+  workspaceIdOverride,
+  onClose,
+}: {
+  profileAgentId?: string;
+  workspaceIdOverride?: string;
+  onClose?: () => void;
+} = {}) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
     action?: string | string[];
   }>();
-  const workspaceId = first(params.communityId);
+  const workspaceId = workspaceIdOverride ?? first(params.communityId);
   const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
   const [agentNameDraft, setAgentNameDraft] = useState('');
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
@@ -280,6 +289,7 @@ export default function BuzzMembers() {
   const [yoloError, setYoloError] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [profileRetryGeneration, setProfileRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [memberQuery, setMemberQuery] = useState('');
@@ -368,10 +378,7 @@ export default function BuzzMembers() {
     offset?: number;
   }) => {
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    return new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(
-      workspaceId,
-      input,
-    );
+    return new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(workspaceId, input);
   };
 
   useEffect(() => {
@@ -459,7 +466,6 @@ export default function BuzzMembers() {
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
     setSelectedAgent(null);
-    setSelectedAgentId(null);
     setEditingAgentSoul(false);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
@@ -469,12 +475,7 @@ export default function BuzzMembers() {
 
   const openAgent = async (agentPubkey: string) => {
     if (!identity || !relayUrl || !workspaceId) return;
-    if (selectedAgentId === agentPubkey) {
-      closeAgentSettings();
-      return;
-    }
     const generation = ++agentRequestGenerationRef.current;
-    setSelectedAgentId(agentPubkey);
     setOpenPersonPubkey(null);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
@@ -499,6 +500,14 @@ export default function BuzzMembers() {
       if (generation === agentRequestGenerationRef.current) setError(String(reason));
     }
   };
+
+  useEffect(() => {
+    if (!profileAgentId || !identity || !relayUrl || !workspaceId) return;
+    void openAgent(profileAgentId);
+    return () => {
+      agentRequestGenerationRef.current += 1;
+    };
+  }, [profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
 
   const invitePerson = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId || !relayUrl) return;
@@ -528,7 +537,6 @@ export default function BuzzMembers() {
     if (!surface || !workspaceId) return;
     setPickerOpen(true);
     setSelectedAgent(null);
-    setSelectedAgentId(null);
     setPairCommand(null);
     setError(null);
     setWorking('pair-agent');
@@ -631,9 +639,12 @@ export default function BuzzMembers() {
       const client = await writeClient();
       await client.addMember(workspaceId, pubkey, role);
       await client.waitUntilMemberRole(workspaceId, pubkey, role);
-      await waitForIndexedSurface(readWorkspace, (value) =>
-        value.members.some((member) => member.identity.pubkey === pubkey && member.role === role) ||
-        !value.members.some((member) => member.identity.pubkey === pubkey),
+      await waitForIndexedSurface(
+        readWorkspace,
+        (value) =>
+          value.members.some(
+            (member) => member.identity.pubkey === pubkey && member.role === role,
+          ) || !value.members.some((member) => member.identity.pubkey === pubkey),
       );
       setRosterPeople((current) =>
         current
@@ -743,10 +754,12 @@ export default function BuzzMembers() {
           () => readAgent(pubkey),
           (value) => value.agent.identity.name === name && value.soul?.name === name,
         ),
-        waitForIndexedSurface(readWorkspace, (value) =>
-          value.agents.some(
-            (member) => member.identity.pubkey === pubkey && member.identity.name === name,
-          ) || !value.agents.some((member) => member.identity.pubkey === pubkey),
+        waitForIndexedSurface(
+          readWorkspace,
+          (value) =>
+            value.agents.some(
+              (member) => member.identity.pubkey === pubkey && member.identity.name === name,
+            ) || !value.agents.some((member) => member.identity.pubkey === pubkey),
         ),
       ]);
       setRosterAgents((current) =>
@@ -836,7 +849,9 @@ export default function BuzzMembers() {
         (value) => {
           const selectedModel = value.selected?.model ?? value.runtimeSelection?.model;
           const catalogModel = value.catalog.find((candidate) => candidate.category === 'model');
-          return Boolean(catalogModel && (!selectedModel || catalogModel.currentValue === selectedModel));
+          return Boolean(
+            catalogModel && (!selectedModel || catalogModel.currentValue === selectedModel),
+          );
         },
         MODEL_CATALOG_CONFIRM_ATTEMPTS,
       );
@@ -939,6 +954,7 @@ export default function BuzzMembers() {
       );
       setRosterAgentTotal((current) => (current === null ? current : Math.max(0, current - 1)));
       closeAgentSettings();
+      if (profileAgentId) (onClose ?? (() => router.back()))();
       setOpenModelAxis(null);
       setModelSearchQuery('');
     } catch (reason) {
@@ -970,6 +986,300 @@ export default function BuzzMembers() {
     };
   }, [selectedAgent]);
 
+  const busy = working !== null;
+  if (profileAgentId) {
+    return (
+      <AgentProfileView
+        detail={selectedAgent}
+        loading={!selectedAgent && !error}
+        error={error}
+        onRetry={() => {
+          setError(null);
+          if (!identity || !relayUrl) setRetryGeneration((value) => value + 1);
+          else setProfileRetryGeneration((value) => value + 1);
+        }}
+        onClose={onClose ?? (() => router.back())}
+        onMessage={() => void messagePerson(profileAgentId)}
+        canManage={Boolean(selectedAgent && canRemoveSelectedAgent)}
+        soul={selectedAgent ? agentSoulCopy(selectedAgent) : ''}
+        management={
+          selectedAgent ? (
+            <View
+              style={styles.detailPanel}
+              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}
+            >
+              <View style={styles.detailHeading}>
+                <View style={styles.rowCopy}>
+                  <Text style={styles.profileSettingLabel}>
+                    {ownsSelectedAgent ? 'Name & avatar' : 'Agent'}
+                  </Text>
+                  <View style={styles.agentTitleRow}>
+                    <IdentityMark
+                      kind="agent"
+                      seed={selectedAgent.agent.identity.pubkey}
+                      face={selectedAgent.agent.identity.face}
+                      name={selectedAgent.agent.identity.name}
+                      size={44}
+                    />
+                    <Text numberOfLines={1} style={styles.profileSettingCopy} testID="agent-handle">
+                      {memberRosterTitle(selectedAgent.agent.identity)}
+                    </Text>
+                    {ownsSelectedAgent && (
+                      <TouchableOpacity
+                        accessibilityLabel="Edit agent settings"
+                        disabled={busy}
+                        onPress={beginAgentSoulEdit}
+                        style={styles.glyphControl}
+                        testID="edit-agent-soul"
+                      >
+                        <Text style={styles.glyphControlText}>✎</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {selectedAgentOwnerByline && (
+                    <Text style={styles.profileSettingCopy} testID="agent-owner">
+                      {selectedAgentOwnerByline}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              {ownsSelectedAgent && (
+                <View style={styles.soulSection}>
+                  <Text style={styles.profileSettingLabel}>Soul</Text>
+                  {editingAgentSoul ? (
+                    <>
+                      <Text style={styles.fieldLabel}>Name</Text>
+                      <TextInput
+                        autoCapitalize="words"
+                        editable={!busy}
+                        maxLength={AGENT_NAME_MAX_LENGTH}
+                        onChangeText={setAgentNameDraft}
+                        placeholder="Agent name"
+                        placeholderTextColor={theme.buzz.textMuted}
+                        style={styles.textInput}
+                        testID="agent-soul-name"
+                        value={agentNameDraft}
+                      />
+                      <Text style={styles.fieldLabel}>Persona / instructions</Text>
+                      <TextInput
+                        editable={!busy}
+                        maxLength={1000}
+                        multiline
+                        onChangeText={setAgentSoulDraft}
+                        placeholder="How this agent should work"
+                        placeholderTextColor={theme.buzz.textMuted}
+                        style={styles.soulInput}
+                        testID="agent-soul-instructions"
+                        value={agentSoulDraft}
+                      />
+                      <View style={styles.soulActions}>
+                        <MonoButton
+                          label="CANCEL"
+                          disabled={busy}
+                          onPress={() => setEditingAgentSoul(false)}
+                          variant="secondary"
+                        />
+                        <MonoButton
+                          label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
+                          loading={working === 'save-agent-soul'}
+                          disabled={busy}
+                          onPress={() => void saveAgentSoul()}
+                          testID="save-agent-soul"
+                        />
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={styles.soulCopy} testID="agent-soul-copy">
+                      {agentSoulCopy(selectedAgent)}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.modelSection}>
+                  <Text style={styles.profileSettingLabel}>Model / effort</Text>
+                  {(['model', 'effort'] as const).map((kind) => {
+                    const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
+                    const current = axisValue(selectedAgent, kind, axis);
+                    const open = openModelAxis === kind;
+                    const choices = axis?.options ?? [];
+                    const visibleChoices =
+                      kind === 'model'
+                        ? filterAgentModelOptions(choices, modelSearchQuery)
+                        : choices;
+                    return (
+                      <View key={kind} style={styles.axisBlock}>
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            busy: working === 'model-catalog' && kind === 'effort',
+                            disabled: busy || (kind === 'model' && !axis),
+                            expanded: open,
+                          }}
+                          disabled={busy || (kind === 'model' && !axis)}
+                          onPress={() => void toggleModelAxis(kind, open, axis)}
+                          style={styles.axisRow}
+                          testID={`model-axis-${kind}`}
+                        >
+                          <Text style={styles.axisLabel}>
+                            {kind === 'model' ? 'Model' : 'Effort'}
+                          </Text>
+                          <Text style={styles.axisValue} numberOfLines={1}>
+                            {working === 'model-catalog' && kind === 'effort'
+                              ? 'Refreshing…'
+                              : (current ?? UNSET_VALUE)}
+                          </Text>
+                          {(selectedAgent.modelUnavailable === kind ||
+                            selectedAgent.modelUnavailable === 'selection') && (
+                            <Text
+                              accessibilityLabel={`${kind} unavailable`}
+                              style={styles.axisValue}
+                              testID={`model-unavailable-${kind}`}
+                            >
+                              !
+                            </Text>
+                          )}
+                          <ChevronGlyph
+                            color={styles.chevron.color}
+                            direction={open ? 'down' : 'right'}
+                            size={CHEVRON_ROW_SIZE}
+                          />
+                        </TouchableOpacity>
+                        {open && kind === 'model' && axis && (
+                          <TextInput
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            editable={!busy}
+                            onChangeText={setModelSearchQuery}
+                            placeholder="Search models"
+                            returnKeyType="search"
+                            style={styles.modelSearchInput}
+                            testID="model-search-model"
+                            value={modelSearchQuery}
+                          />
+                        )}
+                        {open &&
+                          visibleChoices.map((choice) => (
+                            <TouchableOpacity
+                              key={choice.id}
+                              disabled={busy}
+                              onPress={() => void setModelOption(kind, choice.id)}
+                              style={[styles.choice, choice.id === current && styles.choiceActive]}
+                              testID={`model-option-${kind}-${choice.id}`}
+                            >
+                              <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
+                              {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
+                            </TouchableOpacity>
+                          ))}
+                        {modelAppliesNote === kind && (
+                          <Text style={styles.profileSettingCopy} testID={`model-applies-${kind}`}>
+                            Applies at the next session
+                          </Text>
+                        )}
+                        {modelAxisError === kind && (
+                          <Text style={styles.axisError} testID={`model-axis-error-${kind}`}>
+                            {axis
+                              ? 'Could not open these choices. Try again.'
+                              : 'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.'}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.switchSection} testID="agent-access">
+                  <View style={styles.switchRow}>
+                    <Text style={styles.profileSettingLabel} testID="agent-access-label">
+                      Answers everyone
+                    </Text>
+                    <Switch
+                      accessibilityLabel="Answers everyone"
+                      disabled={!selectedAgent.access?.canChange || busy}
+                      onValueChange={(everyone) => void toggleAnswersEveryone(everyone)}
+                      testID="agent-access-switch"
+                      thumbColor={theme.buzz.bgBase}
+                      {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
+                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                      value={selectedAgent.access?.policy === 'everyone'}
+                    />
+                  </View>
+                  <Text style={styles.profileSettingCopy} testID="agent-access-caption">
+                    {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
+                  </Text>
+                  {accessError && (
+                    <Text style={styles.switchError} testID="agent-access-error">
+                      {accessError}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.switchSection} testID="agent-yolo">
+                  <View style={styles.switchRow}>
+                    <Text
+                      style={[
+                        styles.profileSettingLabel,
+                        selectedAgent.yolo?.enabled && styles.switchLabelOn,
+                      ]}
+                      testID="agent-yolo-label"
+                    >
+                      Yolo
+                    </Text>
+                    <Switch
+                      accessibilityLabel="Yolo"
+                      disabled={
+                        !selectedAgent.yolo?.canChange || selectedAgent.yolo?.forcedOff || busy
+                      }
+                      onValueChange={(enabled) => void toggleYolo(enabled)}
+                      testID="agent-yolo-switch"
+                      thumbColor={theme.buzz.bgBase}
+                      {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
+                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                      value={selectedAgent.yolo?.enabled ?? false}
+                    />
+                  </View>
+                  <Text style={styles.profileSettingCopy} testID="agent-yolo-caption">
+                    {yoloCaption(selectedAgent.agent.identity.name, selectedAgent.yolo?.forcedOff)}
+                  </Text>
+                  {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
+                    <Text style={styles.profileSettingCopy} testID="agent-yolo-set-by">
+                      {yoloSetByLine(selectedAgent.yolo)}
+                    </Text>
+                  )}
+                  {yoloError && (
+                    <Text style={styles.switchError} testID="agent-yolo-error">
+                      {yoloError}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {canRemoveSelectedAgent && (
+                <TouchableOpacity
+                  accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
+                  accessibilityRole="button"
+                  disabled={busy}
+                  onPress={() => void removeSelectedAgent()}
+                  style={styles.removeAgentControl}
+                  testID="remove-agent"
+                >
+                  <Text style={styles.removeAgentText}>
+                    {working === 'remove-agent'
+                      ? 'Removing…'
+                      : ownsSelectedAgent
+                        ? 'Remove'
+                        : 'Ban'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : null
+        }
+      />
+    );
+  }
+
   if (!surface && !error) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -987,7 +1297,6 @@ export default function BuzzMembers() {
     );
   }
 
-  const busy = working !== null;
   const canManage = surface.viewer.permissions.manage;
   const people = rosterPeople ?? surface.members;
   const agents = rosterAgents ?? surface.agents;
@@ -1187,9 +1496,7 @@ export default function BuzzMembers() {
                 style={styles.loadMore}
                 testID="members-load-more-people"
               >
-                <Text style={styles.loadMoreText}>
-                  {rosterLoading ? 'Loading…' : 'Show more'}
-                </Text>
+                <Text style={styles.loadMoreText}>{rosterLoading ? 'Loading…' : 'Show more'}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1210,301 +1517,38 @@ export default function BuzzMembers() {
               </TouchableOpacity>
             </View>
             {agents.map((member) => {
-              const agentDetail = canManage;
-              const open = selectedAgentId === member.identity.pubkey;
+              const agentDetail = true;
+
               return (
                 <View key={member.identity.pubkey}>
-                <MemberRosterRow
-                  avatarUrl={member.identity.avatar}
-                  disabled={!agentDetail || busy}
-                  divider="bottom"
-                  face={member.identity.face}
-                  handle={member.identity.handle}
-                  kind="agent"
-                  model={member.model}
-                  name={member.identity.name}
-                  onPress={
-                    agentDetail ? () => void openAgent(member.identity.pubkey) : undefined
-                  }
-                  ownerHandle={member.owner?.handle}
-                  pubkey={member.identity.pubkey}
-                  testID={`agent-${member.identity.pubkey}-identity`}
-                  trailing={
-                    agentDetail ? (
+                  <MemberRosterRow
+                    avatarUrl={member.identity.avatar}
+                    disabled={!agentDetail || busy}
+                    divider="bottom"
+                    face={member.identity.face}
+                    handle={member.identity.handle}
+                    kind="agent"
+                    model={member.model}
+                    name={member.identity.name}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/beeline/agent-profile',
+                        params: { communityId: workspaceId, agentId: member.identity.pubkey },
+                      } as Href)
+                    }
+                    ownerHandle={member.owner?.handle}
+                    pubkey={member.identity.pubkey}
+                    testID={`agent-${member.identity.pubkey}-identity`}
+                    trailing={
+                      agentDetail ? (
                         <ChevronGlyph
                           color={styles.chevron.color}
-                          direction={open ? 'down' : 'right'}
+                          direction="right"
                           size={CHEVRON_ROW_SIZE}
                         />
-                    ) : undefined
-                  }
-                />
-                {open &&
-                selectedAgent &&
-                selectedAgent.agent.identity.pubkey === member.identity.pubkey ? (
-            <HullSurface
-              strength="raised"
-              style={styles.detailPanel}
-              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}
-            >
-              <View style={styles.detailHeading}>
-                <View style={styles.rowCopy}>
-                  <Text style={styles.sectionLabel}>
-                    {ownsSelectedAgent ? 'Agent settings' : 'Agent'}
-                  </Text>
-                  <View style={styles.agentTitleRow}>
-                    <Text numberOfLines={1} style={styles.detail} testID="agent-handle">
-                      {memberRosterTitle(selectedAgent.agent.identity)}
-                    </Text>
-                    {ownsSelectedAgent && (
-                      <TouchableOpacity
-                        accessibilityLabel="Edit agent settings"
-                        disabled={busy}
-                        onPress={beginAgentSoulEdit}
-                        style={styles.glyphControl}
-                        testID="edit-agent-soul"
-                      >
-                        <Text style={styles.glyphControlText}>✎</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  {selectedAgentOwnerByline && (
-                    <Text style={styles.detail} testID="agent-owner">
-                      {selectedAgentOwnerByline}
-                    </Text>
-                  )}
-                </View>
-                {canRemoveSelectedAgent && (
-                  <TouchableOpacity
-                    accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
-                    accessibilityRole="button"
-                    disabled={busy}
-                    onPress={() => void removeSelectedAgent()}
-                    style={styles.removeAgentControl}
-                    testID="remove-agent"
-                  >
-                    <Text style={styles.removeAgentText}>
-                      {working === 'remove-agent'
-                        ? 'Removing…'
-                        : ownsSelectedAgent
-                          ? 'Remove'
-                          : 'Ban'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              {ownsSelectedAgent && (
-                <View style={styles.soulSection}>
-                  <Text style={styles.sectionLabel}>Soul</Text>
-                  {editingAgentSoul ? (
-                    <>
-                      <Text style={styles.fieldLabel}>Name</Text>
-                      <TextInput
-                        autoCapitalize="words"
-                        editable={!busy}
-                        maxLength={AGENT_NAME_MAX_LENGTH}
-                        onChangeText={setAgentNameDraft}
-                        placeholder="Agent name"
-                        placeholderTextColor={theme.buzz.textMuted}
-                        style={styles.textInput}
-                        testID="agent-soul-name"
-                        value={agentNameDraft}
-                      />
-                      <Text style={styles.fieldLabel}>Persona / instructions</Text>
-                      <TextInput
-                        editable={!busy}
-                        maxLength={1000}
-                        multiline
-                        onChangeText={setAgentSoulDraft}
-                        placeholder="How this agent should work"
-                        placeholderTextColor={theme.buzz.textMuted}
-                        style={styles.soulInput}
-                        testID="agent-soul-instructions"
-                        value={agentSoulDraft}
-                      />
-                      <View style={styles.soulActions}>
-                        <MonoButton
-                          label="CANCEL"
-                          disabled={busy}
-                          onPress={() => setEditingAgentSoul(false)}
-                          variant="secondary"
-                        />
-                        <MonoButton
-                          label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
-                          loading={working === 'save-agent-soul'}
-                          disabled={busy}
-                          onPress={() => void saveAgentSoul()}
-                          testID="save-agent-soul"
-                        />
-                      </View>
-                    </>
-                  ) : (
-                    <Text style={styles.soulCopy} testID="agent-soul-copy">
-                      {agentSoulCopy(selectedAgent)}
-                    </Text>
-                  )}
-                </View>
-              )}
-              {ownsSelectedAgent && (
-                <View style={styles.modelSection}>
-                  <Text style={styles.sectionLabel}>Model / effort</Text>
-                  {(['model', 'effort'] as const).map((kind) => {
-                    const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
-                    const current = axisValue(selectedAgent, kind, axis);
-                    const open = openModelAxis === kind;
-                    const choices = axis?.options ?? [];
-                    const visibleChoices =
-                      kind === 'model'
-                        ? filterAgentModelOptions(choices, modelSearchQuery)
-                        : choices;
-                    return (
-                      <View key={kind} style={styles.axisBlock}>
-                        <TouchableOpacity
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            busy: working === 'model-catalog' && kind === 'effort',
-                            disabled: busy || (kind === 'model' && !axis),
-                            expanded: open,
-                          }}
-                          disabled={busy || (kind === 'model' && !axis)}
-                          onPress={() => void toggleModelAxis(kind, open, axis)}
-                          style={styles.axisRow}
-                          testID={`model-axis-${kind}`}
-                        >
-                          <Text style={styles.axisLabel}>
-                            {kind === 'model' ? 'Model' : 'Effort'}
-                          </Text>
-                          <Text style={styles.axisValue} numberOfLines={1}>
-                            {working === 'model-catalog' && kind === 'effort'
-                              ? 'Refreshing…'
-                              : (current ?? UNSET_VALUE)}
-                          </Text>
-                          {(selectedAgent.modelUnavailable === kind ||
-                            selectedAgent.modelUnavailable === 'selection') && (
-                            <Text
-                              accessibilityLabel={`${kind} unavailable`}
-                              style={styles.axisValue}
-                              testID={`model-unavailable-${kind}`}
-                            >
-                              !
-                            </Text>
-                          )}
-                                  <ChevronGlyph
-                                    color={styles.chevron.color}
-                                    direction={open ? 'down' : 'right'}
-                                    size={CHEVRON_ROW_SIZE}
-                                  />
-                        </TouchableOpacity>
-                        {open && kind === 'model' && axis && (
-                          <TextInput
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            editable={!busy}
-                            onChangeText={setModelSearchQuery}
-                            placeholder="Search models"
-                            returnKeyType="search"
-                            style={styles.modelSearchInput}
-                            testID="model-search-model"
-                            value={modelSearchQuery}
-                          />
-                        )}
-                        {open &&
-                          visibleChoices.map((choice) => (
-                            <TouchableOpacity
-                              key={choice.id}
-                              disabled={busy}
-                              onPress={() => void setModelOption(kind, choice.id)}
-                              style={[styles.choice, choice.id === current && styles.choiceActive]}
-                              testID={`model-option-${kind}-${choice.id}`}
-                            >
-                              <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
-                              {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
-                            </TouchableOpacity>
-                          ))}
-                        {modelAppliesNote === kind && (
-                          <Text style={styles.detail} testID={`model-applies-${kind}`}>
-                            Applies at the next session
-                          </Text>
-                        )}
-                        {modelAxisError === kind && (
-                          <Text style={styles.axisError} testID={`model-axis-error-${kind}`}>
-                            {axis
-                              ? 'Could not open these choices. Try again.'
-                              : 'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.'}
-                          </Text>
-                        )}
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-              {ownsSelectedAgent && (
-                <View style={styles.switchSection} testID="agent-access">
-                  <View style={styles.switchRow}>
-                    <Text style={styles.sectionLabel} testID="agent-access-label">
-                      Answers everyone
-                    </Text>
-                    <Switch
-                      accessibilityLabel="Answers everyone"
-                      disabled={!selectedAgent.access?.canChange || busy}
-                      onValueChange={(everyone) => void toggleAnswersEveryone(everyone)}
-                      testID="agent-access-switch"
-                      thumbColor={theme.buzz.textPrimary}
-                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-                      value={selectedAgent.access?.policy === 'everyone'}
-                    />
-                  </View>
-                  <Text style={styles.detail} testID="agent-access-caption">
-                    {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
-                  </Text>
-                  {accessError && (
-                    <Text style={styles.switchError} testID="agent-access-error">
-                      {accessError}
-                    </Text>
-                  )}
-                </View>
-              )}
-              {ownsSelectedAgent && (
-                <View style={styles.switchSection} testID="agent-yolo">
-                  <View style={styles.switchRow}>
-                    <Text
-                      style={[
-                        styles.sectionLabel,
-                        selectedAgent.yolo?.enabled && styles.switchLabelOn,
-                      ]}
-                      testID="agent-yolo-label"
-                    >
-                      Yolo
-                    </Text>
-                    <Switch
-                      accessibilityLabel="Yolo"
-                      disabled={
-                        !selectedAgent.yolo?.canChange || selectedAgent.yolo?.forcedOff || busy
-                      }
-                      onValueChange={(enabled) => void toggleYolo(enabled)}
-                      testID="agent-yolo-switch"
-                      thumbColor={theme.buzz.textPrimary}
-                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-                      value={selectedAgent.yolo?.enabled ?? false}
-                    />
-                  </View>
-                  <Text style={styles.detail} testID="agent-yolo-caption">
-                    {yoloCaption(selectedAgent.agent.identity.name, selectedAgent.yolo?.forcedOff)}
-                  </Text>
-                  {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
-                    <Text style={styles.detail} testID="agent-yolo-set-by">
-                      {yoloSetByLine(selectedAgent.yolo)}
-                    </Text>
-                  )}
-                  {yoloError && (
-                    <Text style={styles.switchError} testID="agent-yolo-error">
-                      {yoloError}
-                    </Text>
-                  )}
-                </View>
-              )}
-            </HullSurface>
-                ) : null}
+                      ) : undefined
+                    }
+                  />
                 </View>
               );
             })}
@@ -1516,9 +1560,7 @@ export default function BuzzMembers() {
                 style={styles.loadMore}
                 testID="members-load-more-agents"
               >
-                <Text style={styles.loadMoreText}>
-                  {rosterLoading ? 'Loading…' : 'Show more'}
-                </Text>
+                <Text style={styles.loadMoreText}>{rosterLoading ? 'Loading…' : 'Show more'}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1631,6 +1673,8 @@ const styles = StyleSheet.create((theme) => {
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
+    profileSettingLabel: { ...hull.type.bodyStrong, color: hull.textPrimary },
+    profileSettingCopy: { ...hull.type.meta, color: hull.ledgerQuiet },
     detailPanel: { padding: hull.space.md, gap: hull.space.md },
     detailHeading: { flexDirection: 'row', alignItems: 'center', gap: hull.space.md },
     agentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
@@ -1703,7 +1747,7 @@ const styles = StyleSheet.create((theme) => {
     },
     switchLabelOn: { color: hull.accent },
     switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
-    // Compact next to the identity copy, but still a full 44pt target. The
+    // The destructive action is a full 44pt target below configuration. The
     // red is the border: `dialogDanger` clears the 3:1 non-text floor on both
     // canvases, where the same value as small ink would sit at 4.36:1 on
     // Obsidian and 3.81:1 on Bone — under the 4.5:1 text floor. The word

@@ -2115,6 +2115,41 @@ describe('Room message variant components', () => {
     );
   });
 
+  it('opens an agent profile from the byline while keeping mentions on the DM callback', () => {
+    const onOpenProfile = vi.fn();
+    const onMention = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          text: 'Ask @BeeBee',
+          mentionPubkeys: ['member-id'],
+        })}
+        agent={{ pubkey: 'agent', displayName: 'Emberus' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'member-id', handle: 'beebee' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={onMention}
+        onOpenProfile={onOpenProfile}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    act(() => ledgerEntryRender.mock.lastCall?.[0].byline.onOpenProfile());
+    expect(onOpenProfile).toHaveBeenCalledWith('agent');
+    expect(onMention).not.toHaveBeenCalled();
+    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('beebee'));
+    expect(onMention).toHaveBeenCalledWith('member-id');
+  });
+
   it('maps a pressed resolved mention back to the tagged member identity', () => {
     const onMention = vi.fn();
     render(

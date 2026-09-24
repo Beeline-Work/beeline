@@ -250,36 +250,19 @@ describe('Workspace drawer', () => {
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
-  it('shows a scoped settings gear only to Workspace admins', () => {
-    const onOpen = vi.fn();
-    const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
-      canManage: true,
-      onOpen,
-    });
-
-    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
-    expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
-    const gear = renderer.root.findByProps({ testID: 'workspace-settings-community-1' });
-    expect(gear.props.accessibilityLabel).toBe('Night Shift Workspace');
-    expect(
-      renderer.root
-        .findAllByType('Text' as any)
-        .some((node) => node.props.children === 'WORKSPACE'),
-    ).toBe(true);
-    act(() => gear.props.onPress());
-    expect(onOpen).toHaveBeenCalledWith('community-1');
-    expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
-
-    const memberRenderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
-      canManage: false,
-      onOpen,
-    });
-    act(() =>
-      memberRenderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress(),
-    );
-    expect(
-      memberRenderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
-    ).toHaveLength(0);
+  it('keeps Workspace settings in the header menu, including for managers', () => {
+    for (const canManage of [false, true]) {
+      const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
+        canManage,
+        onOpen: vi.fn(),
+      });
+      act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+      expect(
+        renderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
+      ).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'community-rail-add' })).toBeDefined();
+      expect(renderer.root.findByProps({ testID: 'community-rail-settings' })).toBeDefined();
+    }
   });
 
   it('closes after selecting or adding a Workspace', () => {
@@ -310,9 +293,7 @@ describe('Workspace drawer', () => {
       .find((node) => node.props.testID === 'community-rail-settings');
     expect(mySettings?.props.accessibilityLabel).toBe('Settings');
     expect(
-      renderer.root
-        .findAllByType('Text' as any)
-        .some((node) => node.props.children === 'SETTINGS'),
+      renderer.root.findAllByType('Text' as any).some((node) => node.props.children === 'SETTINGS'),
     ).toBe(true);
     act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());
 

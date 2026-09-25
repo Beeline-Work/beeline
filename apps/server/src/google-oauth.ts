@@ -31,6 +31,8 @@ export class GoogleOAuth {
 
   async begin(connectorId: string, database: SqlDatabase = this.database): Promise<string> {
     const state = randomUUID() + randomUUID();
+    // A retry supersedes the earlier browser page for this connector.
+    await database.query(`DELETE FROM google_oauth_attempts WHERE connector_id=$1`, [connectorId]);
     await database.query(
       `INSERT INTO google_oauth_attempts(state,connector_id,expires_at)
        VALUES ($1,$2,now()+interval '10 minutes')`,
@@ -86,8 +88,9 @@ export class GoogleOAuth {
   private async fail(connectorId: string, reason: string): Promise<void> {
     await this.database.query(
       `UPDATE workspace_connectors SET status='error',status_error=$2,
-         sign_in=NULL,updated_at=now()
-       WHERE id=$1 AND status='installing'`, [connectorId, reason]);
+         status_steps=$3::jsonb,sign_in=NULL,updated_at=now()
+       WHERE id=$1 AND status='installing'`,
+      [connectorId, reason, JSON.stringify([{ label: 'Google sign-in', status: 'failed', reason }])]);
   }
 
   async complete(state: string, code: string): Promise<boolean> {

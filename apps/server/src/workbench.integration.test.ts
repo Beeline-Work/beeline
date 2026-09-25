@@ -927,6 +927,37 @@ describe('workbench connectors', () => {
     expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
   });
 
+  it('keeps a Google retry error until the helper confirms the tool install', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await database.query(
+      `UPDATE workspace_connectors SET status='error',status_error='Gmail permission denied',
+         status_steps='[{"label":"tools enabled","status":"failed","reason":"Gmail permission denied"}]'::jsonb
+       WHERE id=$1`, [paired.connectorId]);
+
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    });
+    const read = async () => (await database.query<{ status: string; status_error: string | null }>(
+      `SELECT status,status_error FROM workspace_connectors WHERE id=$1`, [paired.connectorId]
+    )).rows[0]!;
+    expect(await read()).toEqual({ status: 'installing', status_error: 'Gmail permission denied' });
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    const assignment = (queue.body.assignments as { connectorId: string;
+      pairingGeneration: number }[]).find((row) => row.connectorId === paired.connectorId)!;
+    await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
+      steps: [{ label: 'authorized with Google', status: 'done' }],
+    });
+    expect(await read()).toEqual({ status: 'installing', status_error: 'Gmail permission denied' });
+    const installed = await daemonOperation('installConnector', {
+      connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
+    });
+    expect(installed.status).toBe(200);
+    expect(await read()).toEqual({ status: 'connected', status_error: null });
+  });
+
   it('re-pairing one Google tool leaves a connected sibling alone', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,

@@ -48,16 +48,22 @@ it('pairs one product with its own OAuth sign-in and leaves siblings uninstalled
   expect(new URL(rows.rows[0]!.sign_in.url).host).toBe('accounts.google.com');
   const state = new URL(rows.rows[0]!.sign_in.url).searchParams.get('state')!;
   expect(await oauth.cancel(state)).toBe(true);
-  const denied = await database.query<{ status: string; status_error: string; sign_in: unknown }>(
-    `SELECT status,status_error,sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+  const denied = await database.query<{ status: string; status_error: string; sign_in: unknown;
+    status_steps: { label: string; status: string; reason: string }[] }>(
+    `SELECT status,status_error,sign_in,status_steps FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
   expect(denied.rows[0]).toMatchObject({ status: 'error',
     status_error: 'Google authorization was denied', sign_in: null });
+  expect(denied.rows[0]!.status_steps).toEqual([{ label: 'Google sign-in',
+    status: 'failed', reason: 'Google authorization was denied' }]);
   await phone.pairConnector({ workspaceId: WORKSPACE,
     connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
   const retry = await database.query<{ sign_in: { url: string }; status: string }>(
     `SELECT sign_in,status FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
   expect(retry.rows[0]!.status).toBe('installing');
   expect(new URL(retry.rows[0]!.sign_in.url).searchParams.get('state')).not.toBe(state);
+  const pending = await database.query<{ status_error: string }>(
+    `SELECT status_error FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+  expect(pending.rows[0]!.status_error).toBe('Google authorization was denied');
 });
 afterEach(async () => database.close());
 
@@ -102,4 +108,22 @@ it('exchanges one exact state, seals the grant, and returns it only to the paire
   expect(await oauth.hasGrant(WORKSPACE, OWNER, HELPER)).toBe(true);
   await phone.unpairConnector({ workspaceId: WORKSPACE, connectorId: calendar.connectorId }, OWNER);
   expect(await oauth.hasGrant(WORKSPACE, OWNER, HELPER)).toBe(false);
+});
+
+it('only the newest retry state can finish Google sign-in', async () => {
+  const transport = vi.fn(async () => new Response(JSON.stringify({
+    access_token: 'fresh', refresh_token: 'refresh',
+    scope: 'openid email https://www.googleapis.com/auth/gmail.readonly',
+  }), { status: 200 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const first = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  const second = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  expect(second).not.toBe(first);
+  expect(await oauth.cancel(first)).toBe(false);
+  expect(await oauth.complete(first, 'old-code')).toBe(false);
+  expect(transport).not.toHaveBeenCalled();
+  const current = await database.query<{ status: string }>(
+    `SELECT status FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+  expect(current.rows[0]!.status).toBe('installing');
 });

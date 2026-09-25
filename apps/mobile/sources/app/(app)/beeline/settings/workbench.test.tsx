@@ -56,6 +56,7 @@ vi.mock('react-native', async () => {
     },
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     Image: host('Image'),
+    Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -210,16 +211,20 @@ describe('Workbench settings screen', () => {
     ).toHaveLength(0);
   });
 
-  it('draws the shared page header on desktop and leaves the stack header to phones', async () => {
+  it('draws the shared page header on every surface: small Settings over large Workbench', async () => {
     layout.desktop = true;
     const desktopRenderer = await render();
-    expect(desktopRenderer.root.findByProps({ testID: 'workbench-header' }).props.title).toBe(
-      'Workbench',
-    );
+    const desktopHeader = desktopRenderer.root.findByProps({ testID: 'workbench-header' });
+    expect(desktopHeader.props.title).toBe('Workbench');
+    expect(desktopHeader.props.eyebrow).toBe('Settings');
+    expect(desktopHeader.props.onBack).toBeUndefined();
 
     layout.desktop = false;
     const phoneRenderer = await render();
-    expect(phoneRenderer.root.findAllByProps({ testID: 'workbench-header' })).toHaveLength(0);
+    const phoneHeader = phoneRenderer.root.findByProps({ testID: 'workbench-header' });
+    expect(phoneHeader.props.title).toBe('Workbench');
+    expect(phoneHeader.props.eyebrow).toBe('Settings');
+    expect(phoneHeader.props.onBack).toBeTypeOf('function');
   });
 
   it('renders one state or action for each tool row', async () => {
@@ -271,8 +276,13 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
+    expect(entry.props.leading.props.company).toBe('google');
+    expect(entry.props.leading.props.domain).toBe('google.com');
     expect(entry.props.value).toBeUndefined();
-    expect(entry.props.action).toBeUndefined();
+    expect(entry.props.action).toBe('Connect');
+    expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
+    act(() => entry.props.trailingPress.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google-gmail');
     act(() => entry.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
     expect(gmail.props.action).toBe('Connect');
@@ -387,7 +397,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.action).toBe('Connect');
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
-    expect(google.props.action).toBeUndefined();
+    expect(google.props.action).toBe('Connect');
     expect(google.props.descriptionTone).toBe('danger');
     expect(google.props.description).toContain(
       'another Trusty Squire session is already using the browser',

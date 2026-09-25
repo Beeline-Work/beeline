@@ -3,12 +3,16 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
+  GOOGLE_ENTRY_FAVICON_DOMAIN,
+  GOOGLE_ENTRY_ID,
   googleEntryConnector,
   googleToolRows,
   connectorExpandedActions,
   connectorInstrument,
+  resolveGoogleConnectTarget,
   type WorkbenchConnector,
 } from '@/buzz/workbench';
 
@@ -16,8 +20,9 @@ import {
  * One Google account with four separately installed tools. The disclosure
  * shows each tool's status and its own Connect action.
  *
- * The row has one state and one valid action. Its disclosure has no glyph and
- * contains only the catalog's existing one-line capability copy.
+ * The row wears the same company mark and trailing status as every other
+ * tool. Its disclosure has no extra glyph and contains only the catalog's
+ * existing one-line capability copy.
  */
 export function GoogleEntryRow({
   connectors,
@@ -31,18 +36,46 @@ export function GoogleEntryRow({
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const instrument = connectorInstrument(entry.status, entry.id);
+  const tools = googleToolRows(connectors);
+  const targetId = resolveGoogleConnectTarget(connectors);
+  const target = tools.find((tool) => tool.id === targetId) ?? tools[0];
+  // The parent row is not a connector — never pass the folded "google" id.
+  // Status comes from the real google-* tools; soon only when every listed
+  // tool is itself unavailable (Google Workspace is not offered here).
+  const instrument = connectorInstrument(
+    tools.some((tool) => tool.available) ? entry.status : 'soon',
+    target?.id,
+  );
+  const canConnect =
+    instrument.connect && tools.some((tool) => tool.available);
   const errorText =
     entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined;
 
   return (
     <View testID="google-entry">
       <SettingsRow
+        action={canConnect ? 'Connect' : undefined}
         description={errorText}
         descriptionTone={entry.status === 'error' ? 'danger' : undefined}
+        leading={
+          <ServiceMark
+            company={GOOGLE_ENTRY_ID}
+            domain={GOOGLE_ENTRY_FAVICON_DOMAIN}
+            testID="google-entry-mark"
+          />
+        }
         onPress={() => setExpanded((value) => !value)}
         testID="google-entry-row"
         title={entry.name}
+        trailingPress={
+          canConnect
+            ? {
+                accessibilityLabel: 'Connect Google Workspace',
+                onPress: () => onPressConnect(targetId),
+                testID: 'google-entry-connect',
+              }
+            : undefined
+        }
         value={instrument.value}
         valueTone={instrument.valueTone}
       />

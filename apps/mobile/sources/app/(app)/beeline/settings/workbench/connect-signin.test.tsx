@@ -52,6 +52,13 @@ vi.mock('@/components/AnimatedOverlay', async () => {
   };
 });
 
+vi.mock('@/components/buzz/PageHeader', async () => {
+  const ReactModule = await import('react');
+  return {
+    PageHeader: (props: any) => ReactModule.createElement('PageHeader', props),
+  };
+});
+
 vi.mock('@/components/buzz/sandbox-webview', async () => {
   const ReactModule = await import('react');
   return { useSandboxWebView: () => (props: any) => ReactModule.createElement('WebView', props) };
@@ -232,12 +239,10 @@ describe('ConnectorSignInScreen', () => {
       await Promise.resolve();
     });
 
-    expect(renderer.root.findByProps({ testID: 'signin-title' }).props.children).toEqual([
-      'Sign in to ',
-      'Tailscale',
-    ]);
-    expect(renderer.root.findByProps({ testID: 'signin-machine' }).props.children)
-      .toBe('squire-box');
+    const header = renderer.root.findByProps({ testID: 'signin-header' });
+    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.title).toBe('Sign in to Tailscale');
+    expect(header.props.meta).toBe('squire-box · login.tailscale.com');
     await act(async () => renderer.unmount());
   });
 });

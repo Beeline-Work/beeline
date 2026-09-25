@@ -6,6 +6,7 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
@@ -95,24 +96,14 @@ export default function ConnectorSignInScreen() {
           a close — the sign-in must settle on its own terms. */}
       <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
       <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
-      <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Close sign-in"
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="signin-close"
-        >
-          <Text style={styles.backButtonText}>✕</Text>
-        </TouchableOpacity>
-        <View style={styles.titleBlock}>
-          <Text style={styles.title} testID="signin-title">
-            Sign in to {connectorName}
-          </Text>
-          {machineName ? <Text style={styles.subtitle} testID="signin-machine">{machineName}</Text> : null}
-          {host ? <Text style={styles.subtitle}>{host}</Text> : null}
-        </View>
-      </View>
+      <PageHeader
+        backAccessibilityLabel="Close sign-in"
+        eyebrow="Workbench"
+        meta={[machineName, host].filter(Boolean).join(' · ') || undefined}
+        onBack={() => router.back()}
+        testID="signin-header"
+        title={`Sign in to ${connectorName}`}
+      />
       {currentSignIn.method === 'oauth' ? (
         <View style={styles.centered} testID="signin-oauth-browser">
           <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
@@ -183,21 +174,6 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: hull.radius,
       overflow: 'hidden',
     },
-    container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    titleBlock: { flex: 1, gap: 2 },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    subtitle: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
     webView: { flex: 1, backgroundColor: hull.bgTerminal },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: hull.space.md, padding: hull.space.xl },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },

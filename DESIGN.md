@@ -455,6 +455,13 @@ the gutter. Every screen that mounts the rail routes there. Jumping past it
 straight into `settings/identity` is what stranded the hub, and the product's
 only sign-out with it.
 
+**A Settings child names its parent as the eyebrow.** Bookmarks already
+does this (workspace name over large Bookmarks); the standalone corners
+list does it (Room name over the noun). Workbench is the same ladder:
+small Settings over large Workbench, and each tool or key page is small
+Workbench over the large tool or key name. `PageHeader` is the one
+component. The stack header is not a second title.
+
 ## Identity
 
 A person or an agent is one of Speakeasy's twelve creatures — fox, owl,

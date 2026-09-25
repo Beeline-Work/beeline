@@ -202,6 +202,10 @@ export function connectorExpandedActions(
  */
 export const GOOGLE_ENTRY_ID = 'google';
 
+/** Brand domain the Workbench Google row hands `ServiceMark` — the same
+ *  favicon lookup the Keys list already uses for a vault company. */
+export const GOOGLE_ENTRY_FAVICON_DOMAIN = 'google.com';
+
 /** Canonical order of the tool entries the single Google entry folds. */
 export const GOOGLE_CONNECTOR_ORDER: readonly (
   'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube'

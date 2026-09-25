@@ -702,6 +702,9 @@ describe('workbench connectors', () => {
     const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`);
     expect(systemLogo.status).toBe(200);
     expect(await systemLogo.text()).toContain('aria-label="System"');
+    const googleLogo = await fetch(`${origin}/v1/connectors/logo/google.svg`);
+    expect(googleLogo.status).toBe(200);
+    expect(await googleLogo.text()).toContain('aria-label="Google Workspace"');
   });
 
   it('DMs exactly one receipt card for an approval-class event', async () => {

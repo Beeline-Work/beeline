@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { StateDot } from '@/components/buzz/StateDot';
@@ -19,6 +20,7 @@ import {
   connectionGrantPending,
   connectionHostsLine,
   connectionRevokeOffered,
+  connectionTitle,
   type ConnectionDetailView,
 } from '@/buzz/workbench';
 
@@ -103,6 +105,9 @@ export default function ConnectionDetailScreen() {
   }, [detail, ref, workspaceId]);
 
   const company = detail ? connectionCompany(detail.connection) : '';
+  const headerTitle = detail
+    ? connectionTitle(detail.connection, [detail.connection])
+    : 'Key';
   const label = detail ? connectionDetailLabel(detail.connection) : undefined;
   const state = detail ? connectionDetailState(detail.connection) : undefined;
   const fieldNames = detail?.connection.fieldNames ?? [];
@@ -123,9 +128,16 @@ export default function ConnectionDetailScreen() {
 
   return (
     <View
-      style={[styles.container, { paddingBottom: insets.bottom }]}
+      style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="connection-detail-screen"
     >
+      <PageHeader
+        backAccessibilityLabel="Back to Workbench"
+        eyebrow="Workbench"
+        onBack={() => router.back()}
+        testID="connection-header"
+        title={headerTitle}
+      />
       <ScrollView
         style={styles.content}
         contentContainerStyle={styles.contentInner}
@@ -144,9 +156,6 @@ export default function ConnectionDetailScreen() {
               testID="connection-service-mark"
             />
             <View style={styles.identityCopy}>
-              <Text numberOfLines={1} style={styles.identityTitle} testID="connection-service-name">
-                {company}
-              </Text>
               {label ? (
                 <Text numberOfLines={1} style={styles.identityLabel} testID="connection-key-label">
                   {label}
@@ -352,7 +361,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     identityCopy: { flex: 1, minWidth: 0 },
-    identityTitle: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     identityLabel: { ...Typography.mono(), ...hull.type.meta, color: hull.ledgerQuiet },
     state: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
     stateText: { ...Typography.mono(), ...hull.type.meta, color: hull.textSecondary },

@@ -57,12 +57,10 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
   };
 });
 
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/PageHeader', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
   return {
-    HullSurface: host('HullSurface'),
+    PageHeader: (props: any) => ReactModule.createElement('PageHeader', props),
   };
 });
 
@@ -148,13 +146,11 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
 
   it('carries the Wallet heading the other Workbench screens draw', async () => {
     const renderer = await render(WalletScreen);
-    expect(renderer.root.findByProps({ testID: 'wallet-header-title' }).props.children).toBe(
-      'Wallets',
-    );
-    expect(renderer.root.findByProps({ testID: 'wallet-header-subtitle' }).props.children).toBe(
-      'Coinbase CDP Server Wallet',
-    );
-    expect(renderer.root.findByProps({ testID: 'wallet-back' })).toBeTruthy();
+    const header = renderer.root.findByProps({ testID: 'wallet-header' });
+    expect(header.props.title).toBe('Wallet');
+    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.meta).toBe('Coinbase CDP Server Wallet');
+    expect(header.props.onBack).toBeTypeOf('function');
   });
 
   it('paints a total, then coins with their marks, and no chains', async () => {

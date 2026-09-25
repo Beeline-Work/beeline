@@ -340,7 +340,9 @@ export class ConnectorAssignmentLoop {
       } else {
         await this.runInstall(assignment.connectorId, pairingGeneration);
       }
-    } else if (assignment.kind === 'sync' && assignment.connectorType !== 'tailscale') {
+    } else if (assignment.kind === 'sync' && assignment.connectorType === 'tailscale') {
+      await this.runTailscaleInstall(assignment.connectorId);
+    } else if (assignment.kind === 'sync') {
       await this.runSync();
     } else if (assignment.kind === 'refresh-google-grant') {
       const grant = await this.resolveGoogleCredentials(assignment.connectorId);

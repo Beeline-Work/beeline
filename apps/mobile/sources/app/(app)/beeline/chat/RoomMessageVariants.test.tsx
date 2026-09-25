@@ -169,6 +169,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  SquireApprovalCard,
   ConnectorOfferCard,
   ConnectorReceiptCard,
   ChoiceCard,
@@ -2539,6 +2540,33 @@ describe('Room message variant components', () => {
     expect(onDecision).toHaveBeenCalledWith('squire-grant', 'once');
   });
 
+  it('opens a relayed Squire approval in Squire and preserves the source request link', () => {
+    const onOpenSource = vi.fn();
+    const approval = message({
+      squireApproval: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
+        tool: 'inject_card',
+        title: 'Purchase approval',
+        detail: 'Headphones · at Acme · 199.00 USD',
+        approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
+        approvalId: 'purchase-1',
+        linkKind: 'approval',
+        sourceRoomId: 'source-room',
+        sourceMessageId: 'source-message',
+      },
+    });
+    const view = render(<SquireApprovalCard message={approval} onOpenSource={onOpenSource} />);
+    expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain(
+      'Headphones · at Acme · 199.00 USD',
+    );
+    act(() => view.root.findByProps({ testID: 'squire-approval-open' }).props.onPress());
+    expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
+      'https://approve.trustysquire.test/approval/purchase-1',
+    );
+    act(() => view.root.findByProps({ testID: 'squire-approval-source' }).props.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
+  });
+
   describe('connector-offer card (R5)', () => {
     const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
     const zeke = { pubkey: 'zeke', kind: 'human' as const, name: 'Zeke', handle: 'zeke' };
@@ -3058,6 +3086,47 @@ describe('Room message variant components', () => {
     expect(onMessageActions).toHaveBeenCalledTimes(1);
     expect(onMessageActions.mock.calls[0][0].id).toBe('tapped');
     expect(onCopy).not.toHaveBeenCalled();
+  });
+
+  it('claims a profile-byline long press for message actions instead of profile navigation', () => {
+    const onMessageActions = vi.fn();
+    const onOpenProfile = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'agent-byline',
+          pubkey: 'agent-pubkey',
+          isAgentAuthor: true,
+          authorIdentity: {
+            pubkey: 'agent-pubkey',
+            kind: 'agent',
+            name: 'Proofbot',
+            handle: 'proofbot',
+          },
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onOpenProfile={onOpenProfile}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onMessageActions={onMessageActions}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const byline = ledgerEntryRender.mock.lastCall?.[0].byline;
+    expect(byline.onLongPress).toBeTypeOf('function');
+    act(() => byline.onLongPress());
+    expect(onMessageActions).toHaveBeenCalledTimes(1);
+    expect(onMessageActions.mock.calls[0][0].id).toBe('agent-byline');
+    expect(onOpenProfile).not.toHaveBeenCalled();
   });
 
   it('opens the exact reply source from the quoted reply strip', () => {

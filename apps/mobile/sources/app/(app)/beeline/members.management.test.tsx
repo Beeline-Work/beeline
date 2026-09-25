@@ -1,4 +1,5 @@
 import { HumanProfile } from './human-profile';
+import AgentProfileRoute from './agent-profile';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -26,6 +27,10 @@ const navigation = vi.hoisted(() => ({
   dispatch: vi.fn(),
 }));
 const platform = vi.hoisted(() => ({ OS: 'ios' }));
+const routeParams = vi.hoisted(() => ({
+  communityId: '11111111-1111-4111-8111-111111111111',
+  agentId: 'd'.repeat(64),
+}));
 const client = vi.hoisted(() => ({
   composeMessage: vi.fn(async (input: any, options: any) => ({
     ...input,
@@ -137,7 +142,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn(), navigate: vi.fn() },
-  useLocalSearchParams: () => ({ communityId: WORKSPACE }),
+  useLocalSearchParams: () => routeParams,
   useNavigation: () => ({
     addListener: (_event: string, callback: (event: any) => void) => {
       navigation.beforeRemove = callback;
@@ -682,8 +687,10 @@ describe('Members workspace management', () => {
     platform.OS = 'android';
     vi.stubGlobal('window', {});
     try {
-      const renderer = await render();
-      await openAgentProfile(renderer);
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(<AgentProfileRoute />);
+      });
       expect(renderer.root.findByProps({ testID: 'agent-profile' })).toBeDefined();
     } finally {
       vi.unstubAllGlobals();

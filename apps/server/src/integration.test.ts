@@ -281,6 +281,7 @@ describe('monolith integration', () => {
       'postAgentAttachment',
       'postAgentTurnReceipt',
       'retractAgentLiveOutput',
+      'postSquireApproval',
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
@@ -8926,6 +8927,7 @@ describe('monolith integration', () => {
       await daemonOperation('readAgentWorkbench', { roomId: ROOM })
     ).json()) as {
       addressee: { identityId: string; name: string; handle?: string };
+      owner: { identityId: string; name: string; handle?: string };
       catalog: Array<{
         connectorType: string;
         offerable: boolean;
@@ -8937,6 +8939,7 @@ describe('monolith integration', () => {
       machine: { machineId: string; name: string };
     };
     expect(status.addressee).toEqual({ identityId: zeke.id, name: 'Zeke', handle: 'zeke' });
+    expect(status.owner).toEqual({ identityId: HUMAN, name: 'Owner', handle: 'owner' });
     expect(status.machine).toEqual({ machineId: 'machine-otter-1', name: 'otter-laptop' });
     expect(status.connections).toEqual([]);
     const squire = status.catalog.find((entry) => entry.connectorType === 'trusty-squire');
@@ -9301,6 +9304,50 @@ describe('monolith integration', () => {
     );
   });
 
+  it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {
+    const zekeToken = await phoneToken('zeke');
+    const zekeId = createHash('sha256').update('github:zeke').digest('hex');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: zekeId, role: 'member' });
+    await operation('addRoomMember', { roomId: ROOM, memberId: zekeId });
+    expect(
+      (
+        await daemonOperation('postAgentMachineReport', {
+          machineId: 'machine-chode-1',
+          machineName: 'chode',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(
+      `INSERT INTO workspace_connectors(
+         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
+       ) VALUES
+         (gen_random_uuid(),$1,$2,'tailscale',$3,'machine-chode-1','connected'),
+         (gen_random_uuid(),$1,$4,'trusty-squire',$3,'machine-chode-1','connected')`,
+      [WORKSPACE, HUMAN, AGENT, zekeId],
+    );
+    await operation(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@bee can you reach the tailnet?', mentions: [AGENT] },
+      zekeToken,
+    );
+
+    const status = (await (
+      await daemonOperation('readAgentWorkbench', { roomId: ROOM })
+    ).json()) as {
+      addressee: { identityId: string };
+      owner?: { identityId: string; handle?: string };
+      catalog: Array<{ connectorType: string; paired?: { status: string; onThisMachine: boolean } }>;
+    };
+    expect(status.addressee.identityId).toBe(zekeId);
+    expect(status.owner).toEqual({ identityId: HUMAN, name: 'Owner', handle: 'owner' });
+    expect(status.catalog.find((entry) => entry.connectorType === 'tailscale')?.paired).toEqual({
+      status: 'connected',
+      helperName: 'chode',
+      onThisMachine: true,
+    });
+    expect(status.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toBeUndefined();
+  });
+
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
@@ -9368,7 +9415,53 @@ describe('monolith integration', () => {
     expect(mcp).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
   });
 
-  it('routes Squire approval to its owner without changing shared agent access', async () => {
+  it('relays Squire-owned approval pages into the owner connector DM exactly once', async () => {
+    const requestId = createHash('sha256').update('squire-purchase-approval').digest('hex');
+    const payload = {
+      roomId: ROOM,
+      requestId,
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'Noise-cancelling headphones · at Acme · 199.00 USD',
+      approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
+      approvalId: 'purchase-1',
+      linkKind: 'approval',
+    };
+    const first = await daemonOperation('postSquireApproval', payload);
+    expect(first.status).toBe(200);
+    const duplicate = await daemonOperation('postSquireApproval', payload);
+    expect(duplicate.status).toBe(200);
+    expect((await duplicate.json()).id).toBe((await first.json()).id);
+
+    const rows = await database.query<{
+      room_id: string;
+      author_id: string;
+      card: {
+        approvalUrl: string;
+        title: string;
+        detail: string;
+        sourceRoomId: string;
+        sourceMessageId: string;
+      };
+    }>(`SELECT room_id,author_id,card FROM messages WHERE card_type='squire-approval'`);
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    expect(row.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(row.room_id).not.toBe(ROOM);
+    expect(row.card).toMatchObject({
+      approvalUrl: payload.approvalUrl,
+      title: payload.title,
+      detail: payload.detail,
+      sourceRoomId: ROOM,
+      sourceMessageId: requestId,
+    });
+    const view = await phone.readRoom(row.room_id, HUMAN);
+    expect(view?.messages.find((message) => message.squireApproval)?.squireApproval).toEqual(
+      expect.objectContaining({ approvalUrl: payload.approvalUrl, detail: payload.detail }),
+    );
+  });
+
+  it('routes the Squire host grant to its owner without changing shared agent access', async () => {
     const adminToken = await phoneToken('mcp-grant-admin');
     const adminId = createHash('sha256').update('github:mcp-grant-admin').digest('hex');
     await operation('addWorkspaceMember', {

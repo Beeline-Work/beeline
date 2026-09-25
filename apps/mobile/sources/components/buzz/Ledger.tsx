@@ -74,6 +74,8 @@ export type LedgerBylineMark = {
 /** The author byline; human continuations may omit it. */
 export type LedgerByline = {
   onOpenProfile?: () => void;
+  /** Claims a long press before the nested profile control can turn it into a tap. */
+  onLongPress?: () => void;
   /** The voice's display name. */
   name?: string;
   /** Quiet agent metadata, e.g. `claude-opus-4-1` (or the `AGENT` fallback). */
@@ -336,6 +338,8 @@ function Byline({ byline }: { byline: LedgerByline }) {
     <Container
       style={styles.byline}
       onPress={byline.onOpenProfile}
+      onLongPress={byline.onLongPress}
+      delayLongPress={byline.onLongPress ? 450 : undefined}
       hitSlop={byline.onOpenProfile ? { top: 9, bottom: 9 } : undefined}
       accessibilityRole={byline.onOpenProfile ? 'button' : undefined}
       accessibilityLabel={

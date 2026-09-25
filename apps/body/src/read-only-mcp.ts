@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 /**
- * Deliberately narrow MCP server for repository inspection and private-memory
- * persistence in Room sessions.
+ * Deliberately narrow MCP server for repository and approved-skill inspection
+ * in Room sessions.
  *
  * Security properties:
- *   - exposes exactly one mutation: replacing this agent's daemon-pinned
- *     Workspace MEMORY.md through a bounded, non-symlink file descriptor;
  *   - exposes no shell, generic process, or raw git-argument tool;
  *   - resolves every requested path through the configured repository root;
  *   - never follows a symlink outside that root and never exposes `.git`;
@@ -18,15 +16,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  closeSync,
-  constants,
   existsSync,
-  fstatSync,
-  fsyncSync,
-  ftruncateSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -103,6 +95,7 @@ import {
   fetchBoundedBytes,
 } from './attachment-delivery.js';
 import { computePatchId } from './patch-identity.js';
+import { describeTailscaleReach } from './connector-tailscale.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -120,7 +113,6 @@ interface ToolDefinition {
 }
 
 const MAX_READ_BYTES = 2 * 1024 * 1024;
-const MAX_MEMORY_BYTES = 2 * 1024 * 1024;
 const MAX_GIT_BYTES = 2 * 1024 * 1024;
 const MAX_SEARCH_FILE_BYTES = 1024 * 1024;
 const MAX_SEARCH_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -168,32 +160,15 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
   {
     name: 'read_agent_file',
     description:
-      "Read one text file from this agent's approved materialized skills or Workspace memory. It cannot access harness config, credentials, repositories, other agents, or execute content.",
+      "Read one text file from this agent's approved materialized skills. It cannot access harness config, credentials, repositories, other agents, or execute content.",
     inputSchema: {
       type: 'object',
       required: ['area', 'path'],
       properties: {
-        area: { type: 'string', enum: ['skills', 'memory'] },
+        area: { type: 'string', enum: ['skills'] },
         path: { type: 'string', description: 'Path relative to the selected approved area.' },
         start_line: { type: 'integer', minimum: 1 },
         end_line: { type: 'integer', minimum: 1 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'write_memory',
-    description:
-      "Replace this agent's private Workspace MEMORY.md. This is the only supported memory-write path in a read-only Room; shell writes to memory are always denied.",
-    inputSchema: {
-      type: 'object',
-      required: ['content'],
-      properties: {
-        content: {
-          type: 'string',
-          description: 'The complete new UTF-8 contents of MEMORY.md.',
-          maxLength: MAX_MEMORY_BYTES,
-        },
       },
       additionalProperties: false,
     },
@@ -886,7 +861,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'workbench_status',
     description:
-      'Read the Workbench as it stands for the person you are answering: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this person already has and on which machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. Free to call; it changes nothing.',
+      "Read the Workbench of the machine and owner you actually run on: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this owner already has on this machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. When you cannot use a tool, answer in one sentence: I can/can't reach X on this machine because Y; to fix it, Z. Free to call; it changes nothing.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1124,10 +1099,7 @@ const EXTRA_ROOTS: string[] = (process.env.BEELINE_READONLY_EXTRA_ROOTS?.trim() 
 
 const repositoryRoot = configuredRoot();
 const approvedAgentRoots = Object.fromEntries(
-  [
-    ['skills', process.env.BEELINE_READONLY_AGENT_SKILLS_ROOT],
-    ['memory', process.env.BEELINE_READONLY_AGENT_MEMORY_ROOT],
-  ].flatMap(([area, value]) => {
+  [['skills', process.env.BEELINE_READONLY_AGENT_SKILLS_ROOT]].flatMap(([area, value]) => {
     if (!value?.trim()) return [];
     try {
       const candidate = resolve(value);
@@ -1139,7 +1111,7 @@ const approvedAgentRoots = Object.fromEntries(
       return [];
     }
   }),
-) as Partial<Record<'skills' | 'memory', string>>;
+) as Partial<Record<'skills', string>>;
 const gitBinary = ['/usr/bin/git', '/bin/git'].find((candidate) => existsSync(candidate));
 
 function asObject(value: unknown): JsonObject {
@@ -1288,7 +1260,7 @@ function readFile(args: JsonObject): string {
 
 function readAgentFile(args: JsonObject): string {
   const area = stringArg(args, 'area');
-  if (area !== 'skills' && area !== 'memory') throw new Error('area must be skills or memory');
+  if (area !== 'skills') throw new Error('area must be skills');
   const root = approvedAgentRoots[area];
   if (!root) throw new Error(`approved ${area} material is unavailable`);
   const input = stringArg(args, 'path') ?? '';
@@ -1331,35 +1303,6 @@ function readAgentFile(args: JsonObject): string {
     .slice(startLine - 1, endLine)
     .map((line, index) => `${startLine + index}: ${line}`)
     .join('\n')}${requestedEnd > endLine ? '\n[truncated at 1000 lines]' : ''}`;
-}
-
-function writeMemory(args: JsonObject): string {
-  if (Object.keys(args).some((key) => key !== 'content')) {
-    throw new Error('write_memory accepts only content');
-  }
-  const content = stringArg(args, 'content');
-  if (content === undefined) throw new Error('content must be a string');
-  if (content.includes('\0')) throw new Error('memory content must be UTF-8 text');
-  if (Buffer.byteLength(content, 'utf8') > MAX_MEMORY_BYTES) {
-    throw new Error(`memory content exceeds the ${MAX_MEMORY_BYTES}-byte limit`);
-  }
-  const root = approvedAgentRoots.memory;
-  if (!root) throw new Error('approved memory material is unavailable');
-  const candidate = resolve(root, 'MEMORY.md');
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(candidate, constants.O_WRONLY | constants.O_NOFOLLOW);
-    const details = fstatSync(descriptor);
-    if (!details.isFile() || details.nlink !== 1) {
-      throw new Error('memory writes require an ordinary private MEMORY.md');
-    }
-    ftruncateSync(descriptor, 0);
-    writeFileSync(descriptor, content, { encoding: 'utf8' });
-    fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-  return `memory/MEMORY.md updated (${Buffer.byteLength(content, 'utf8')} bytes)`;
 }
 
 function searchableFiles(start: string): string[] {
@@ -1540,8 +1483,6 @@ function callTool(name: string, args: JsonObject): string {
       return readFile(args);
     case 'read_agent_file':
       return readAgentFile(args);
-    case 'write_memory':
-      return writeMemory(args);
     case 'search_text':
       return searchText(args);
     case 'git_log':
@@ -2587,22 +2528,30 @@ export async function requestGrant(
 export interface ConnectorOfferDeps {
   roomId: string;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+  /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
+  tailscaleReach?: (enabled: boolean) => Promise<string>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
-  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+  return {
+    roomId: agentScheduleRoomId(),
+    execute: daemonExecute,
+    tailscaleReach: (enabled) =>
+      describeTailscaleReach({ enabled, installIfMissing: enabled }),
+  };
 }
 
 /**
- * workbench_status: the Workbench as it stands for the person this turn
- * answers, rendered as text the model reads line by line — a tool it may
- * offer, a tool already paired (and where), a connection by name.
+ * workbench_status: the Workbench of the machine and owner this helper
+ * actually runs on, rendered as text the model reads line by line — a tool
+ * it may offer, a tool already paired (and where), a connection by name.
  */
 export async function workbenchStatus(
   deps: ConnectorOfferDeps = connectorOfferDepsFromEnv(),
 ): Promise<string> {
   const view = (await deps.execute('readAgentWorkbench', { roomId: deps.roomId })) as {
     addressee?: { name?: string; handle?: string };
+    owner?: { name?: string; handle?: string };
     catalog?: Array<{
       connectorType: string;
       name: string;
@@ -2619,11 +2568,13 @@ export async function workbenchStatus(
     }>;
     machine?: { machineId: string; name: string };
   };
-  const who = view.addressee?.handle
-    ? `@${view.addressee.handle}`
-    : (view.addressee?.name ?? 'the person you are answering');
+  const who = view.owner?.handle
+    ? `@${view.owner.handle}`
+    : (view.owner?.name ??
+      (view.addressee?.handle ? `@${view.addressee.handle}` : (view.addressee?.name ?? 'the owner of this machine')));
+  const machine = view.machine?.name ?? 'this machine';
   const lines = [
-    `Workbench for ${who} (an accepted offer installs on your machine, ${view.machine?.name ?? 'this machine'}).`,
+    `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
     '',
     'Catalog:',
   ];
@@ -2644,6 +2595,18 @@ export async function workbenchStatus(
     lines.push(
       `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
     );
+  if (deps.tailscaleReach) {
+    const enabled = Boolean(
+      view.catalog?.some(
+        (entry) =>
+          entry.connectorType === 'tailscale' &&
+          entry.paired &&
+          entry.paired.onThisMachine &&
+          entry.paired.status !== 'disconnected',
+      ),
+    );
+    lines.push('', await deps.tailscaleReach(enabled));
+  }
   return lines.join('\n');
 }
 

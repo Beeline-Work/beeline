@@ -1,8 +1,8 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, AcpRequestTimeoutError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -28,6 +28,7 @@ async function runTurn(options: {
   advertisedModel?: string;
   /** Daemon operation the server refuses, so a test can fail one write. */
   rejectWrite?: string;
+  beforeRun?: (paths: { agentHomeRoot: string; operatorHome: string }) => Promise<void>;
   prompt: (input: {
     agentHomeRoot: string;
     attempt: number;
@@ -80,6 +81,7 @@ async function runTurn(options: {
     operatorHome: join(root, 'operator-home'),
     ...options.configOverrides,
   } as BodyConfig;
+  await options.beforeRun?.({ agentHomeRoot, operatorHome: config.operatorHome! });
   let inboxReads = 0;
   const receipts: Array<Record<string, unknown>> = [];
   let cornerOpens = 0;
@@ -203,6 +205,71 @@ const laneWrites = (writes: readonly string[]): string[] =>
   );
 
 describe('Room turn failure receipt', () => {
+  it('re-links a credential replaced by the harness and retries the turn once', async () => {
+    let operatorCredential = '';
+    const { receipts, posted, attempts, agentHomeRoot } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      beforeRun: async ({ operatorHome }) => {
+        operatorCredential = join(operatorHome, '.claude/.credentials.json');
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(operatorCredential, '{"token":"current-operator-login"}');
+      },
+      prompt: async ({ agentHomeRoot: activeHome, attempt }) => {
+        const isolatedCredential = join(activeHome, 'claude/.credentials.json');
+        if (attempt === 1) {
+          expect(lstatSync(isolatedCredential).isSymbolicLink()).toBe(true);
+          const replacement = `${isolatedCredential}.next`;
+          await writeFile(replacement, '{"token":"detached-refresh"}');
+          await rename(replacement, isolatedCredential);
+          throw new Error('OAuth session expired and could not be refreshed');
+        }
+        expect(lstatSync(isolatedCredential).isSymbolicLink()).toBe(true);
+        expect(realpathSync(isolatedCredential)).toBe(realpathSync(operatorCredential));
+        expect(await readFile(isolatedCredential, 'utf8')).toBe(
+          '{"token":"current-operator-login"}',
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Recovered without another login.',
+          toolCalls: [],
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(posted.map((message) => message.text)).toEqual(['Recovered without another login.']);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(
+      readdirSync(join(agentHomeRoot, 'claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-quarantine-'),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('names the harness and machine only after the repaired operator login also fails', async () => {
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      beforeRun: async ({ operatorHome }) => {
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(join(operatorHome, '.claude/.credentials.json'), '{"token":"expired"}');
+      },
+      prompt: async () => {
+        throw new Error('OAuth session expired and could not be refreshed');
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(posted.map((message) => message.text)).toEqual([
+      `Claude on ${hostname()} needs a fresh login.`,
+    ]);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+  });
+
   it('excuses an inactivity timeout after the turn opened a corner: complete, no failure line', async () => {
     // The production shape (2026-09-15, #ai-study): Charles's turn opened the
     // corner, the Room session then went quiet, and the timeout reported

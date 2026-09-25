@@ -227,6 +227,32 @@ describe('the ledger — an agent turn', () => {
     expect(dots.every((style) => style.backgroundColor !== '#b08a4a')).toBe(true);
   });
 
+  it('lets the nested profile control claim the row long press', () => {
+    const onOpenProfile = vi.fn();
+    const onLongPress = vi.fn();
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'profile-message',
+        byline: {
+          name: 'Proofbot',
+          role: 'agent',
+          stamp: '17:22',
+          onOpenProfile,
+          onLongPress,
+        },
+        bodyText: 'A settled reply.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const byline = renderer.root.findByProps({ testID: 'chat-byline-profile' });
+    expect(byline.props.onLongPress).toBe(onLongPress);
+    expect(byline.props.delayLongPress).toBe(450);
+    act(() => byline.props.onLongPress());
+    expect(onLongPress).toHaveBeenCalledOnce();
+    expect(onOpenProfile).not.toHaveBeenCalled();
+  });
+
   it('never prints a repeat byline for a continued run', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {

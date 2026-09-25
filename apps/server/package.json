@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "import": "node --import tsx src/import-cli.ts",
-    "measure": "node --import tsx src/measure-cli.ts"
+    "measure": "node --import tsx src/measure-cli.ts",
+    "memory:audit": "node --import tsx src/institutional-memory-audit.ts"
   },
   "dependencies": {
     "@beeline/api-contract": "*",

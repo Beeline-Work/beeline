@@ -22,8 +22,9 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 /**
  * The Room's dedicated corners index, in three folding sections: Mine (the
  * viewer's corners and any waiting on them) starts open and uncapped, Others
- * starts folded behind its count, and Archived starts folded and pages ten at
- * a time from the server. Fold state lives only as long as the screen does.
+ * starts open when Mine is empty and otherwise folded, and Archived starts
+ * folded and pages ten at a time from the server. Fold state lives only as
+ * long as the screen does.
  * The desktop work pane's corner list keeps its own five-row window
  * (`inspectorCornerWindow`); this screen does not share that cap.
  *
@@ -80,7 +81,9 @@ export function RoomCornersList({
   nowMs?: number;
 }) {
   const [mineOpen, setMineOpen] = useState(true);
-  const [othersOpen, setOthersOpen] = useState(false);
+  // Until the viewer folds Others, derive its default from the current list.
+  // This also handles corners arriving after the initial empty render.
+  const [othersOpen, setOthersOpen] = useState<boolean | undefined>();
   const [archivedOpen, setArchivedOpen] = useState(false);
   // FlatList compares `data` by identity, so it is rebuilt only when the
   // corners or a fold change, not on every parent render.
@@ -101,7 +104,7 @@ export function RoomCornersList({
         : [];
     return [
       ...section('mine', 'Mine', mine, mineOpen),
-      ...section('others', 'Others', others, othersOpen),
+      ...section('others', 'Others', others, othersOpen ?? mine.length === 0),
     ];
   }, [corners, viewerPubkey, mineOpen, othersOpen]);
   const stampedAt = nowMs ?? Date.now();

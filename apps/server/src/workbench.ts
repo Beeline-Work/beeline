@@ -48,6 +48,7 @@ const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'google-calendar', name: 'Google Calendar', available: true },
   { connectorType: 'google-drive', name: 'Google Drive', available: true },
   { connectorType: 'google-youtube', name: 'YouTube', available: true },
+  { connectorType: 'composio', name: 'Composio', available: true },
 ];
 
 export function connectorCatalog(): readonly ConnectorCatalogEntry[] {

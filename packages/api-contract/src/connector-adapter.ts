@@ -133,9 +133,35 @@ export const YOUTUBE_CONNECTOR_ADAPTER: ConnectorAdapter = {
   },
 };
 
+const COMPOSIO_ACTIONS = ['connect', 'reconnect', 'disconnect'] as const satisfies readonly ConnectorAdapterAction[];
+
+export const COMPOSIO_CONNECTOR_ADAPTER: ConnectorAdapter = {
+  kind: 'composio',
+  actions: COMPOSIO_ACTIONS,
+  authorize: (action, requester) => ownerOnly(COMPOSIO_ACTIONS, action, requester),
+  workbenchActions: (status) => {
+    switch (status) {
+      case 'installing':
+        return ['disconnect'];
+      case 'connected':
+        return ['reconnect', 'disconnect'];
+      case 'error':
+        return ['connect', 'reconnect', 'disconnect'];
+      default:
+        return ['connect'];
+    }
+  },
+  assignmentKinds: (status) => {
+    if (status === 'installing') return ['install'];
+    if (status === 'disconnected') return ['uninstall'];
+    return [];
+  },
+};
+
 const ADAPTERS: Readonly<Partial<Record<ConnectorKind, ConnectorAdapter>>> = {
   'trusty-squire': SQUIRE_CONNECTOR_ADAPTER,
   'google-youtube': YOUTUBE_CONNECTOR_ADAPTER,
+  composio: COMPOSIO_CONNECTOR_ADAPTER,
 };
 
 export function connectorAdapter(kind: string): ConnectorAdapter | undefined {
@@ -143,5 +169,5 @@ export function connectorAdapter(kind: string): ConnectorAdapter | undefined {
 }
 
 export function adaptedConnectorKinds(): readonly ConnectorKind[] {
-  return ['trusty-squire', 'google-youtube'];
+  return ['trusty-squire', 'google-youtube', 'composio'];
 }

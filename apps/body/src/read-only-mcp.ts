@@ -881,6 +881,25 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'composio_tools',
+    description: 'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'composio_execute',
+    description: 'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
+    inputSchema: {
+      type: 'object',
+      required: ['toolkit', 'tool', 'arguments'],
+      properties: {
+        toolkit: { type: 'string' },
+        tool: { type: 'string' },
+        arguments: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'offer_connector',
     description:
       'Offer to add ONE Workbench tool (connector) you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate.',
@@ -3067,6 +3086,22 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
+    case 'composio_tools': {
+      const context = await activeCommandContext();
+      return JSON.stringify(await daemonExecute('getComposioTools', context));
+    }
+    case 'composio_execute': {
+      const context = await activeCommandContext();
+      if (typeof args.toolkit !== 'string' || typeof args.tool !== 'string' ||
+          !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+        throw new Error('Composio toolkit, tool and arguments are required');
+      return JSON.stringify(await daemonExecute('executeComposioTool', {
+        ...context,
+        toolkit: args.toolkit,
+        tool: args.tool,
+        arguments: args.arguments,
+      }));
+    }
     case 'offer_connector':
       return offerConnector(args);
     case 'ask_choice':

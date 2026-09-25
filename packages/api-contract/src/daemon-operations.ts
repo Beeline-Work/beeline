@@ -237,6 +237,22 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
+  getComposioLink: Operation<
+    AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
+    { readonly status: 'connected' } | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
+  >;
+  getComposioTools: Operation<RoomInput & { readonly requestId: string; readonly generationId: string }, {
+    readonly connectorId: string;
+    readonly toolkits: readonly string[];
+    readonly tools: Readonly<Record<string, readonly string[]>>;
+  }>;
+  executeComposioTool: Operation<RoomInput & {
+    readonly requestId: string;
+    readonly generationId: string;
+    readonly toolkit: string;
+    readonly tool: string;
+    readonly arguments: Record<string, unknown>;
+  }, { readonly data: unknown; readonly logId?: string }>;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {
@@ -1010,7 +1026,8 @@ export type ConnectorKind =
   | 'google-gmail'
   | 'google-calendar'
   | 'google-drive'
-  | 'google-youtube';
+  | 'google-youtube'
+  | 'composio';
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =

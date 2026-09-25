@@ -128,6 +128,27 @@ describe('MonolithWorkbenchSource connections', () => {
     expect(view.connections[2].faviconDomain).toBe('resend.com');
     expect(view.connections[0].faviconDomain).toBeUndefined();
   });
+
+  it('shows the paired Composio scope even after the server catalog changes', async () => {
+    const dto = workbenchDto([]);
+    state.readWorkbenchOutput = {
+      ...dto,
+      catalog: [...dto.catalog, {
+        connectorType: 'composio', name: 'Composio', available: true,
+        approvedTools: ['GITHUB_DELETE_REPO'],
+      }],
+      connectors: [{
+        connectorId: 'composio-row', connectorType: 'composio',
+        status: { status: 'connected', steps: [] },
+        approvedTools: ['GITHUB_GET_AN_ISSUE'],
+      }],
+    };
+    const view = await new MonolithWorkbenchSource().readWorkbench({
+      workspaceId: 'ws1', viewerId: 'human-dani',
+    });
+    expect(view.connectors.find((connector) => connector.id === 'composio')?.description)
+      .toContain('Approved tools: GITHUB_GET_AN_ISSUE.');
+  });
 });
 
 describe('MonolithWorkbenchSource disconnectConnector', () => {

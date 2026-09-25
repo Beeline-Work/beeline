@@ -17,24 +17,16 @@ import {
 import { squireHostRewriteEnv } from './squire-host.js';
 
 describe('granted MCP host routes', () => {
-  it('leaves Once Squire to its per-call gate and claims other Once routes at activation', async () => {
-    const claimed: string[] = [];
-    const names = await claimGrantedHostRoutes(
-      {
-        grants: [
-          { grantId: 'one', kind: 'mcp', target: 'squire', status: 'once' },
-          { grantId: 'other', kind: 'mcp', target: 'browser', status: 'once' },
-          { grantId: 'bad', kind: 'mcp', target: 'vault', status: 'once' },
-          { grantId: 'standing', kind: 'mcp', target: 'files', status: 'approved' },
-        ],
-      },
-      async (grantId) => {
-        if (grantId === 'bad') throw new Error('already used');
-        claimed.push(grantId);
-      },
-    );
-    expect(names).toEqual(['squire', 'browser', 'files']);
-    expect(claimed).toEqual(['other']);
+  it('mounts Once routes without consuming them before a call', async () => {
+    const names = await claimGrantedHostRoutes({
+      grants: [
+        { grantId: 'one', kind: 'mcp', target: 'squire', status: 'once' },
+        { grantId: 'other', kind: 'mcp', target: 'browser', status: 'once' },
+        { grantId: 'bad', kind: 'mcp', target: 'vault', status: 'once' },
+        { grantId: 'standing', kind: 'mcp', target: 'files', status: 'approved' },
+      ],
+    });
+    expect(names).toEqual(['squire', 'browser', 'vault', 'files']);
   });
   it('collects mcp grant targets and drops them from the host gate', () => {
     expect(

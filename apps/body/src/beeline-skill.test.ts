@@ -103,7 +103,7 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).toContain(
       'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening.',
     );
-    expect(context.sessionPrompt).toContain('the read-only filesystem sandbox is the boundary');
+    expect(context.sessionPrompt).toContain('each resource call checks the original requester');
     expect(context.sessionPrompt).toContain('web search is enabled');
     expect(context.sessionPrompt).toContain(
       'Tag the user only when you need a decision or input, or when the task they asked for is finished.',
@@ -320,7 +320,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
 
   it('holds the key-sovereignty rule', () => {
     expect(markdown).toContain(
-      "they belong to the human who provisioned them. You cannot use another member's key and must not ask a member to share one.",
+      "the agent owner cannot authorize someone else’s resources.",
     );
   });
 });

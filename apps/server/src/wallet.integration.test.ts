@@ -1,3 +1,4 @@
+import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,6 +18,8 @@ import type { FakeWalletState } from './cdp-fake.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const HELPER = 'b'.repeat(64);
+const ROOM = '22222222-2222-4222-8222-222222222222';
+const WALLET_REQUEST = 'e'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 
 /**
@@ -47,6 +50,25 @@ describe('wallet over the fake CDP seam', () => {
        VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
       [WORKSPACE, HUMAN, HELPER],
     );
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Wallet tests')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, ROOM, HUMAN, HELPER],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'use my wallet')`,
+      [WALLET_REQUEST, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: HELPER,
+      sourceMessageId: WALLET_REQUEST,
+      reason: 'human_mention',
+    });
+    await claimAgentCommand(database, ROOM, HELPER, command!.id, 'wallet-generation');
     auth = new TokenAuth(database, async (proof) => {
       const login = proof === 'proof' ? 'owner' : proof;
       return { subject: login, login, name: login };
@@ -85,10 +107,22 @@ describe('wallet over the fake CDP seam', () => {
   };
 
   const daemonOperation = async (name: string, payload: unknown) => {
+    const pending = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 ORDER BY created_at DESC LIMIT 1`,
+        [ROOM, HELPER, WALLET_REQUEST],
+      )
+    ).rows[0];
+    if (pending) await claimAgentCommand(database, ROOM, HELPER, pending.id, 'wallet-generation');
     const response = await fetch(`${origin}/v1/daemon/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${helperToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...(payload as object),
+        roomId: ROOM,
+        requestId: WALLET_REQUEST,
+        generationId: 'wallet-generation',
+      }),
     });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
@@ -169,6 +203,48 @@ describe('wallet over the fake CDP seam', () => {
     } finally {
       source.history = originalHistory;
     }
+  });
+
+  it('holds third-party paid calls for the wallet owner and sends only after scoped approval', async () => {
+    await createdWallet();
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    const requester = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Requester')`, [
+      requester,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, requester, ROOM],
+    );
+    await database.query(`UPDATE messages SET author_id=$2 WHERE id=$1`, [
+      WALLET_REQUEST,
+      requester,
+    ]);
+    const payment = { agentId: HELPER, chain: 'base', asset: 'usdc', amount: '120', to: '0xabc' };
+    const before = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+      totalUsd: string;
+    };
+    const pending = await daemonOperation('walletPay', payment);
+    expect(pending.body.status).toBe('permission-required');
+    const unchanged = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+      totalUsd: string;
+    };
+    expect(unchanged.totalUsd).toBe(before.totalUsd);
+    const grant = (
+      await database.query<{ requested_by: string; command_id: string }>(
+        `SELECT requested_by,command_id FROM agent_grants WHERE id=$1`,
+        [pending.body.grantId],
+      )
+    ).rows[0]!;
+    expect(grant.requested_by).toBe(requester);
+    expect(grant.command_id).toBeTruthy();
+    await phoneOperation('decideAgentGrant', { grantId: pending.body.grantId, decision: 'once' });
+    expect((await daemonOperation('walletPay', payment)).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletPay', payment)).body.status).toBe('permission-required');
+    expect((await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows).toEqual(
+      [],
+    );
   });
 
   it('an agent pay is refused without a live delegation, then lands and posts one ledger card', async () => {

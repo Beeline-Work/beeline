@@ -225,7 +225,10 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-        revision: { type: 'string', description: 'HEAD or a fetched origin/branch; defaults to HEAD.' },
+        revision: {
+          type: 'string',
+          description: 'HEAD or a fetched origin/branch; defaults to HEAD.',
+        },
         path: { type: 'string', description: 'Optional repository-relative path.' },
       },
       additionalProperties: false,
@@ -254,8 +257,14 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.' },
-        to: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD.' },
+        from: {
+          type: 'string',
+          description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.',
+        },
+        to: {
+          type: 'string',
+          description: 'Restricted local revision, including origin/branch; defaults to HEAD.',
+        },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
       additionalProperties: false,
@@ -374,7 +383,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_pay',
     description:
-      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. The only other refusal is insufficient funds. Every send is written to the @wallet ledger.",
+      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. Resource access is checked for the original requester; approval includes paid calls within that scope. Insufficient funds still refuses the send. Every send is written to the @wallet ledger.",
     inputSchema: {
       type: 'object',
       required: ['asset', 'amount', 'to'],
@@ -846,7 +855,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      "Raise your hand for reach outside the sandbox: kind path|host|secret|device|command|mcp with one target and the reason. Under yolo a path, host, secret, device or command is approved at once, but mcp always waits for a person. Otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
+      "Raise your hand for reach outside the sandbox: kind repository|path|host|secret|device|command|mcp with one target and the reason. Under yolo repository permissions skip prompts; personal resources skip prompts only for their owner as the original requester. Repository cards go to the Room for a Workspace admin or master; personal resource cards go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget prompt. Otherwise a card goes to the authorized approver and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -857,7 +866,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
           minLength: 1,
           maxLength: AGENT_GRANT_TARGET_MAX_LENGTH,
           description:
-            'What you need: a path, a host, a secret name, a device, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
+            'What you need: a repository, a path, a host, a secret name, a device, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
         },
         reason: {
           type: 'string',
@@ -1558,7 +1567,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      !name.startsWith('get') &&
+      (!name.startsWith('get') || name.startsWith('getWallet')) &&
       !name.startsWith('list')
         ? await activeCommandContext()
         : {}),
@@ -2818,15 +2827,31 @@ async function daemonUploadArtifact(
 async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
     case 'wallet_address':
-      return JSON.stringify(await daemonExecute('getWalletToolState', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolState', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_balance':
-      return JSON.stringify(await daemonExecute('getWalletToolBalance', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolBalance', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_chains':
-      return JSON.stringify(await daemonExecute('getWalletToolChains', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolChains', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_history':
       return JSON.stringify(
         await daemonExecute('getWalletToolHistory', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
         }),
       );
@@ -2834,6 +2859,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('getWalletToolQuote', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -2843,6 +2869,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('walletPay', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -2853,6 +2880,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('walletSwap', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           fromAsset: String(args.fromAsset ?? 'usdc'),
           toAsset: String(args.toAsset ?? 'eth'),

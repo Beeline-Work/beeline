@@ -5,7 +5,16 @@
  * a status, a decision line, or a command rule means exactly one thing.
  */
 
-export const AGENT_GRANT_KINDS = ['path', 'host', 'secret', 'device', 'budget', 'command', 'mcp'] as const;
+export const AGENT_GRANT_KINDS = [
+  'path',
+  'host',
+  'secret',
+  'device',
+  'budget',
+  'command',
+  'mcp',
+  'repository',
+] as const;
 export type AgentGrantKind = (typeof AGENT_GRANT_KINDS)[number];
 
 /** Budget is retained for historical records, but cannot create a new prompt. */
@@ -45,6 +54,7 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
   budget: 'spend',
   command: 'run',
   mcp: 'route',
+  repository: 'edit',
 };
 
 /**
@@ -393,15 +403,16 @@ export type SquireCallGrant = {
 
 /**
  * Whether this turn's requester may call a mounted Squire. The owner's turns
- * pass. Anyone else needs a live mcp/squire grant whose `requestedBy` is them
+ * bypass prompts only while yolo is enabled. Anyone else needs a live mcp/squire grant whose `requestedBy` is them
  * — Always is requester-specific, never agent+workspace alone.
  */
 export function squireCallAllowed(input: {
   requesterId: string;
   ownerId: string;
+  yoloMode?: boolean;
   grants: readonly SquireCallGrant[];
 }): { allowed: true; grantId?: string; consume?: boolean } | { allowed: false } {
-  if (input.requesterId === input.ownerId) return { allowed: true };
+  if (input.yoloMode && input.requesterId === input.ownerId) return { allowed: true };
   const live = input.grants.filter(
     (grant) =>
       isSquireMcpGrant(grant) &&

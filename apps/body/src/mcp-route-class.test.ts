@@ -28,8 +28,8 @@ describe('imported MCP host/local classification', () => {
     ).toBe('host');
   });
 
-  it('treats everything else as local unless the operator marks the one host key', () => {
-    expect(classifyImportedMcpServer({ name: 'files', command: 'files-mcp' })).toBe('local');
+  it('requires resource authority even for locally launched tools', () => {
+    expect(classifyImportedMcpServer({ name: 'files', command: 'files-mcp' })).toBe('host');
     expect(
       classifyImportedMcpServer({
         name: 'browser',
@@ -48,7 +48,7 @@ describe('imported MCP host/local classification', () => {
         name: 'browser',
         declaration: { command: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: 'local' },
       }),
-    ).toBe('local');
+    ).toBe('host');
   });
 
   it('matches host identities across harness permission spellings', () => {

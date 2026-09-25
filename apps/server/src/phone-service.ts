@@ -1001,7 +1001,10 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: row.role,
-        permissions: { send: row.role !== 'spectator', manage: row.role === 'owner' || row.role === 'admin' },
+        permissions: {
+          send: row.role !== 'spectator',
+          manage: row.role === 'owner' || row.role === 'admin',
+        },
       },
       watchFilters: [],
     };
@@ -1701,7 +1704,10 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
-        permissions: { send: room.workspace_role !== 'spectator' && !room.archived_at, manage: room.workspace_role === 'owner' || room.workspace_role === 'admin' },
+        permissions: {
+          send: room.workspace_role !== 'spectator' && !room.archived_at,
+          manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
+        },
       },
       watchFilters: [],
     };
@@ -2206,7 +2212,9 @@ export class PhoneService {
           : {}),
         canChange: config?.can_change_yolo ?? false,
       },
-      grants: await this.agentGrants(workspaceId, agentId),
+      grants: (await this.agentGrants(workspaceId, agentId)).filter(
+        (grant) => grant.kind === 'repository' || config?.owner_id === viewerId,
+      ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
       watchFilters: [],
@@ -2762,7 +2770,8 @@ export class PhoneService {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
-        [viewerId, scope.workspaceId ?? null, scope.roomId ?? null]);
+        [viewerId, scope.workspaceId ?? null, scope.roomId ?? null],
+      );
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
@@ -5161,9 +5170,8 @@ export class PhoneService {
     });
   }
   /**
-   * The owner's tap on a grant card. Authorization is the yolo axis: the agent's
-   * owner or a Workspace manager (owner alone for host MCP), decided here and
-   * never on the phone. The
+   * Repository grants require a Workspace manager; personal resources require
+   * their owner. Authority is checked here, never entrusted to the phone. The
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
@@ -5356,7 +5364,7 @@ export class PhoneService {
       )
     ).rows[0];
     if (!grant) throw new Error('grant not found');
-    if (grant.kind === 'mcp') {
+    if (grant.kind !== 'repository') {
       if (grant.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
       const member = await this.database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
@@ -5366,13 +5374,13 @@ export class PhoneService {
       if (!member.rowCount) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
       return grant;
     }
-    if (grant.owner_id !== viewerId) {
-      const manager = await this.database.query(
-        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
-        [grant.workspace_id, viewerId],
-      );
-      if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
-    }
+    const manager = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2
+       AND role IN ('owner','admin') AND removed_at IS NULL`,
+      [grant.workspace_id, viewerId],
+    );
+    if (!manager.rowCount)
+      throw new Error('repository approval access denied: requires a workspace owner or admin');
     return grant;
   }
   /**
@@ -6587,13 +6595,15 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
-    return this.database.transaction((database) => this.armConnectorPairing(database, {
-      workspaceId: ws.workspace_id,
-      ownerIdentityId: viewerId,
-      connectorType: input.connectorType,
-      helperAgentId: matched.agent_id,
-      machineId,
-    }));
+    return this.database.transaction((database) =>
+      this.armConnectorPairing(database, {
+        workspaceId: ws.workspace_id,
+        ownerIdentityId: viewerId,
+        connectorType: input.connectorType,
+        helperAgentId: matched.agent_id,
+        machineId,
+      }),
+    );
   }
 
   /**
@@ -7169,7 +7179,13 @@ export class PhoneService {
         ? this.workspaceRosterPage(workspaceId, 'human', needle, kind === 'human' ? offset : 0)
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
       loadAgents
-        ? this.workspaceRosterPage(workspaceId, 'agent', needle, kind === 'agent' ? offset : 0, query.ownerId)
+        ? this.workspaceRosterPage(
+            workspaceId,
+            'agent',
+            needle,
+            kind === 'agent' ? offset : 0,
+            query.ownerId,
+          )
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
     ]);
     const pageRows = [...peoplePage.rows, ...agentPage.rows];

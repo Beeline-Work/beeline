@@ -14,6 +14,7 @@ const VERBS: Readonly<Record<AgentGrantView['kind'], string>> = {
   budget: 'spend',
   command: 'run',
   mcp: 'route',
+  repository: 'edit',
 };
 
 export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target'>): string {

@@ -6,6 +6,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import { YOUTUBE_MCP_SERVER_NAME, YOUTUBE_MCP_SURFACE } from './youtube-mcp.js';
+import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -119,9 +120,10 @@ export function readOnlyMcpServer(
 export function youtubeMcpServer(
   config: BodyConfig,
   accessToken: string | undefined,
+  resourceAuthFile?: string,
 ): McpServerWire | undefined {
   if (!accessToken || !config.readonlyMcpCommand) return undefined;
-  return {
+  const server: McpServerWire = {
     name: YOUTUBE_MCP_SERVER_NAME,
     command: config.readonlyMcpCommand,
     args: [...(config.readonlyMcpArgs ?? [])],
@@ -132,4 +134,11 @@ export function youtubeMcpServer(
         value: resolve(process.env.BEELINE_AGENT_HOME ?? process.cwd(), 'google-credentials.json') },
     ],
   };
+  if (!resourceAuthFile) return server;
+  const route = rewriteHostMcpDeclaration(server.name, {
+    command: server.command, args: server.args,
+    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
+  }, config.operatorHome ?? '', resourceAuthFile);
+  return { name: server.name, command: String(route.command), args: route.args as string[],
+    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
 }

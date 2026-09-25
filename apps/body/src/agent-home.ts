@@ -325,6 +325,7 @@ export interface RoomAgentHomeInput {
    * next prepare so the session fingerprint changes.
    */
   grantedHostRoutes?: readonly string[];
+  resourceAuthFile?: string;
 }
 
 /**
@@ -351,7 +352,7 @@ export async function prepareRoomAgentHome(
       await assertRealContainedDirectory(path, root);
     }
   } catch (error) {
-    if (input.failClosed || error instanceof AgentHomeSecurityError) throw error;
+    if (input.failClosed || input.resourceAuthFile || error instanceof AgentHomeSecurityError) throw error;
     console.error(`[body] per-room agent home unavailable at ${root}; using daemon state:`, error);
     return {};
   }
@@ -375,13 +376,14 @@ export async function prepareRoomAgentHome(
         root,
         operatorHome,
         input.skillReleaseId ?? runningBeelineReleaseId(),
-        input.failClosed ?? false,
+        input.failClosed === true || Boolean(input.resourceAuthFile),
         input.sharedSkills ?? [],
         agentSkillDir(input.agentKind),
         input.openRouterRouting,
         input.isReviewer ?? false,
         input.grantedHostRoutes ?? [],
         input.agentKind,
+        input.resourceAuthFile,
       ),
     );
   agentHomeProvisionQueues.set(root, provision);
@@ -415,6 +417,7 @@ async function provisionAgentSkillsAndMcp(
   isReviewer: boolean,
   grantedHostRoutes: readonly string[],
   agentKind: AgentKind | undefined,
+  resourceAuthFile?: string,
 ): Promise<void> {
   const managedSkills = [
     { name: DRAW_AVATAR_SKILL_NAME, content: drawAvatarSkillMarkdown(skillReleaseId) },
@@ -532,7 +535,14 @@ async function provisionAgentSkillsAndMcp(
     console.warn('[body] claude web-search settings provisioning failed:', error);
   }
 
-  await applyGrantedHostRoutes(root, operatorHome, grantedHostRoutes, agentKind, failClosed);
+  await applyGrantedHostRoutes(
+    root,
+    operatorHome,
+    grantedHostRoutes,
+    agentKind,
+    failClosed,
+    resourceAuthFile,
+  );
   await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
 }
 
@@ -546,6 +556,7 @@ async function applyGrantedHostRoutes(
   granted: readonly string[],
   agentKind: AgentKind | undefined,
   failClosed: boolean,
+  resourceAuthFile?: string,
 ): Promise<void> {
   if (granted.length === 0) return;
   try {
@@ -556,6 +567,7 @@ async function applyGrantedHostRoutes(
         hostImportedMcpDeclarations({ operatorHome, agentKind: kind }),
         granted,
         operatorHome,
+        resourceAuthFile,
       );
     for (const config of HARNESS_MCP_CONFIGS) {
       if (!appliesToHarness(agentKind, config.dir)) continue;

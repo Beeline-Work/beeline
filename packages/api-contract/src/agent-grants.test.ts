@@ -50,7 +50,9 @@ describe('command grant targets', () => {
       expect(() => parseCommandGrantTarget(target)).toThrow('shell metacharacters');
     }
     expect(() => parseCommandGrantTarget('fly deploy --with')).toThrow('--with must name');
-    expect(() => parseCommandGrantTarget('fly deploy --with fly_token')).toThrow('--with must name');
+    expect(() => parseCommandGrantTarget('fly deploy --with fly_token')).toThrow(
+      '--with must name',
+    );
     expect(() => parseCommandGrantTarget('fly --with TOKEN deploy')).toThrow('must come after');
     expect(() => parseCommandGrantTarget(' fly deploy')).toThrow('single spaces');
     expect(() => parseCommandGrantTarget('fly  deploy')).toThrow('single spaces');
@@ -62,7 +64,14 @@ describe('command grant targets', () => {
     const rule = parseCommandGrantTarget('fly deploy -a beeline-preview --with FLY_TOKEN');
     expect(commandGrantMatches(rule, ['fly', 'deploy', '-a', 'beeline-preview'])).toBe(true);
     expect(
-      commandGrantMatches(rule, ['fly', 'deploy', '-a', 'beeline-preview', '--strategy', 'rolling']),
+      commandGrantMatches(rule, [
+        'fly',
+        'deploy',
+        '-a',
+        'beeline-preview',
+        '--strategy',
+        'rolling',
+      ]),
     ).toBe(true);
     expect(commandGrantMatches(rule, ['fly', 'deploy', '-a', 'beeline-prod'])).toBe(false);
     expect(commandGrantMatches(rule, ['fly', 'deploy'])).toBe(false);
@@ -105,7 +114,9 @@ describe('grant decision lines', () => {
   });
 
   it('does not mistake ordinary system lines for decisions', () => {
-    expect(parseGrantDecisionLine('Beeline Scheduler ran a schedule for Bee · check the deploy')).toBeUndefined();
+    expect(
+      parseGrantDecisionLine('Beeline Scheduler ran a schedule for Bee · check the deploy'),
+    ).toBeUndefined();
     expect(parseGrantDecisionLine('Owner turned yolo on for Bee')).toBeUndefined();
     expect(parseGrantDecisionLine('Charles approved nothing here')).toBeUndefined();
     expect(
@@ -195,10 +206,12 @@ describe('an interpreter grant is bound to its script', () => {
   });
 
   it('accepts only a whole binding, and refuses rather than truncating an unreadable one', () => {
-    expect(isCommandGrantScript({ path: 'x.py', sha256: 'a'.repeat(64), bytes: 3, contents: 'a' })).toBe(
-      true,
+    expect(
+      isCommandGrantScript({ path: 'x.py', sha256: 'a'.repeat(64), bytes: 3, contents: 'a' }),
+    ).toBe(true);
+    expect(isCommandGrantScript({ path: 'x.py', sha256: 'nope', bytes: 3, contents: 'a' })).toBe(
+      false,
     );
-    expect(isCommandGrantScript({ path: 'x.py', sha256: 'nope', bytes: 3, contents: 'a' })).toBe(false);
     expect(isCommandGrantScript(undefined)).toBe(false);
     expect(GRANT_SCRIPT_MAX_BYTES).toBe(4_096);
     expect(GRANT_SCRIPT_MAX_LINES).toBe(120);
@@ -226,10 +239,26 @@ describe('squireCallAllowed', () => {
     requestedBy: requester,
   };
 
-  it('lets the owner through even when the only live grant is theirs', () => {
-    expect(squireCallAllowed({ requesterId: owner, ownerId: owner, grants: [ownerGrant] })).toEqual({
+  it('lets the owner bypass only when yolo is enabled', () => {
+    expect(
+      squireCallAllowed({
+        requesterId: owner,
+        ownerId: owner,
+        yoloMode: true,
+        grants: [ownerGrant],
+      }),
+    ).toEqual({
       allowed: true,
     });
+  });
+
+  it('requires explicit resource approval for the owner when yolo is off', () => {
+    expect(squireCallAllowed({ requesterId: owner, ownerId: owner, grants: [] })).toEqual({
+      allowed: false,
+    });
+    expect(squireCallAllowed({ requesterId: owner, ownerId: owner, grants: [ownerGrant] })).toEqual(
+      { allowed: true, grantId: 'g-owner' },
+    );
   });
 
   it('refuses a non-owner when the only live grant is the owner Always', () => {
@@ -262,7 +291,13 @@ describe('squireCallAllowed', () => {
         ownerId: owner,
         grants: [
           ownerGrant,
-          { grantId: 'g-once', kind: 'mcp', target: 'squire', status: 'once', requestedBy: requester },
+          {
+            grantId: 'g-once',
+            kind: 'mcp',
+            target: 'squire',
+            status: 'once',
+            requestedBy: requester,
+          },
         ],
       }),
     ).toEqual({ allowed: true, grantId: 'g-once', consume: true });

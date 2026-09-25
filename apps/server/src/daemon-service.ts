@@ -71,6 +71,7 @@ import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from
 import {
   directMessageRoomId,
   restateSystemLine,
+  ensureSystemDirectMessageRoom,
   systemIdentityMention,
   systemLine,
   type SystemPhrase,
@@ -193,6 +194,16 @@ export class DaemonService {
         : typeof candidate.cornerId === 'string'
           ? candidate.cornerId
           : undefined;
+    const walletCall = [
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+    ].includes(name);
+    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
     let cornerReviewer = false;
     let isCorner = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
@@ -212,6 +223,18 @@ export class DaemonService {
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
+      'authorizeResourceCall',
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
+      'listTurnAgentGrants',
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
@@ -350,8 +373,24 @@ export class DaemonService {
           );
         }
         if (
-          name === 'authorizeSquireCall' &&
-          (result as { status?: string }).status === 'pending' &&
+          [
+            'authorizeSquireCall',
+            'authorizeResourceCall',
+            'authorizeRepositoryCall',
+            'authorizeHostCall',
+            ...[
+              'getWalletToolState',
+              'getWalletToolBalance',
+              'getWalletToolChains',
+              'getWalletToolHistory',
+              'getWalletToolQuote',
+              'walletPay',
+              'walletSwap',
+            ],
+          ].includes(name) &&
+          ['pending', 'permission-required'].includes(
+            (result as { status?: string }).status ?? '',
+          ) &&
           (result as { grantId?: string }).grantId
         ) {
           await db.query(
@@ -447,6 +486,16 @@ export class DaemonService {
         );
       }
       return output;
+    }
+    if (walletCall && this.commandTransaction) {
+      const permission = await this.authorizeScopedGrant(
+        input as Input<'authorizeSquireCall'>,
+        authenticatedAgentId,
+        'mcp',
+        'wallet',
+      );
+      if (!permission.allowed)
+        return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
       case 'getAgentCommands':
@@ -826,6 +875,43 @@ export class DaemonService {
           input as Input<'consumeAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listTurnAgentGrants': {
+        const requester = await this.grantRequester();
+        const roomId = (input as Input<'listTurnAgentGrants'>).roomId;
+        const listed = await this.listAgentGrants(authenticatedAgentId, roomId);
+        return {
+          grants: listed.grants.filter(
+            (grant) => grant.roomId === roomId && grant.requestedBy === requester.id,
+          ),
+        } as Output<Name>;
+      }
+      case 'authorizeResourceCall':
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeResourceCall'>,
+          authenticatedAgentId,
+          'mcp',
+          (input as Input<'authorizeResourceCall'>).target,
+        )) as Output<Name>;
+      case 'authorizeHostCall':
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeHostCall'>, authenticatedAgentId, 'host', authenticatedAgentId,
+        )) as Output<Name>;
+      case 'authorizeRepositoryCall': {
+        const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
+        const room = (
+          await this.database.query<{ repository_key: string | null }>(
+            `SELECT COALESCE(parent.repository_key,room.repository_key) repository_key
+           FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$1`,
+            [roomId],
+          )
+        ).rows[0];
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeRepositoryCall'>,
+          authenticatedAgentId,
+          'repository',
+          room?.repository_key ?? `scratch:${roomId}`,
+        )) as Output<Name>;
+      }
       case 'authorizeSquireCall':
         return (await this.authorizeSquireCall(
           input as Input<'authorizeSquireCall'>,
@@ -3399,10 +3485,16 @@ export class DaemonService {
     const command = this.authorizedCommand;
     if (!this.commandTransaction || !command) throw new Error('avatar requires an active command');
     // Soul edits lock the agent before its identity; use the same order.
-    await this.database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR UPDATE', [agentId]);
-    const ownerRequest = await this.database.query(`SELECT 1 FROM agents a JOIN messages m ON m.author_id=a.owner_id
-      WHERE a.agent_id=$1 AND m.id=$2`, [agentId, command.root_source_message_id]);
-    if (!ownerRequest.rowCount) throw new Error('only the agent owner may generate its avatar (access denied)');
+    await this.database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR UPDATE', [
+      agentId,
+    ]);
+    const ownerRequest = await this.database.query(
+      `SELECT 1 FROM agents a JOIN messages m ON m.author_id=a.owner_id
+      WHERE a.agent_id=$1 AND m.id=$2`,
+      [agentId, command.root_source_message_id],
+    );
+    if (!ownerRequest.rowCount)
+      throw new Error('only the agent owner may generate its avatar (access denied)');
     const bytes = await renderAgentAvatar(input.drawing);
     const id = randomUUID();
     const avatar = `/v1/agent-avatars/${id}`;
@@ -3425,17 +3517,23 @@ export class DaemonService {
        JOIN identities i ON i.id=m.author_id AND i.kind='human'
        JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.identity_id=m.author_id
          AND wm.room_id IS NULL AND wm.removed_at IS NULL
-       WHERE m.id=$1`, [command.source_message_id])).rows[0];
+       WHERE m.id=$1`,
+        [command.source_message_id],
+      )
+    ).rows[0];
     if (request) {
       const participants = [agentId, request.author_id].sort() as [string, string];
       const roomId = directMessageRoomId(request.workspace_id, participants);
       await this.database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
         VALUES($1,$2,$3,'Direct message','invite-only',$4::jsonb) ON CONFLICT DO NOTHING`,
-        [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)]);
-      for (const participant of participants) await this.database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+        [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)],
+      );
+      for (const participant of participants)
+        await this.database.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
          ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL`,
-        [request.workspace_id, roomId, participant]);
+          [request.workspace_id, roomId, participant],
+        );
       await systemLine(this.database, {
         roomId, subject: { kind: 'agent', id: agentId, name: 'Your agent' },
         verb: 'saved its avatar', consequence: 'Your avatar is ready.',
@@ -3618,9 +3716,9 @@ export class DaemonService {
   /**
    * request_grant: the agent raises its hand. Under yolo the grant is approved
    * on the spot (auto=true) and one quiet system line records it; otherwise a
-   * pending grant is stored and joins (or opens) this agent's one open card in
-   * the Room, addressed to the owner. Squire's host route asks in the owner's
-   * connector DM. Generic budget requests are no longer accepted.
+   * repository grant asks a Workspace manager in the Room. Personal resources
+   * ask only their owner in a private system or connector DM. Every bypass and
+   * approval is scoped to the active command's original requester. Budget asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -3682,35 +3780,8 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    // The requester is whoever addressed the agent last in this Room: the
-    // identity whose message triggered the turn that is asking now. With no
-    // such message (a fresh corner objective), the owner asked.
-    //
-    // Read from the command that woke this agent rather than by searching the
-    // transcript for an address. The command IS the trigger, so it names the
-    // right message even when nothing in that message's text spells a handle —
-    // a scheduled prompt wakes the agent by subscription, and a search for a
-    // written tag would walk straight past it to some older line.
-    const sourceMessageId = this.authorizedCommand?.source_message_id;
-    const requesterRow = (
-      await this.database.query<{
-        id: string;
-        kind: 'human' | 'agent';
-        name: string;
-        handle: string | null;
-        avatar: string | null;
-      }>(
-        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
-         FROM agent_commands command
-         JOIN messages message ON message.id=command.source_message_id
-         JOIN identities identity ON identity.id=message.author_id
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
-           AND message.presentation<>'activity'
-           AND ($3::text IS NULL OR command.source_message_id=$3)
-         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [input.roomId, agentId, squireRoute ? (sourceMessageId ?? null) : null],
-      )
-    ).rows[0];
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const requesterRow = await this.grantRequester();
     const owner = {
       pubkey: context.owner_id,
       kind: 'human' as const,
@@ -3725,18 +3796,18 @@ export class DaemonService {
       ...(context.agent_handle ? { handle: context.agent_handle } : {}),
       ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
     };
-    const requester = requesterRow
-      ? {
-          pubkey: requesterRow.id,
-          kind: requesterRow.kind,
-          name: requesterRow.name,
-          ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
-          ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
-        }
-      : owner;
+    const requester = {
+      pubkey: requesterRow.id,
+      kind: requesterRow.kind,
+      name: requesterRow.name,
+      ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
+      ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
+    };
     const grantId = randomUUID();
     const auto =
-      context.yolo_mode && kind !== 'mcp' && escalations.length === 0;
+      context.yolo_mode &&
+      (kind === 'repository' || requesterRow.id === context.owner_id) &&
+      escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -3777,9 +3848,33 @@ export class DaemonService {
         auto,
         ...(script ? { script } : {}),
       };
+      let resourceRoomId: string | undefined;
+      if (kind !== 'repository') {
+        const member = await database.query(
+          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+           AND identity_id=$2 AND removed_at IS NULL`,
+          [context.workspace_id, context.owner_id],
+        );
+        if (!member.rowCount) throw new Error('resource owner access denied');
+        resourceRoomId = squireRoute
+          ? await ensureConnectorDirectMessageRoom(
+              database,
+              context.workspace_id,
+              'trusty-squire',
+              context.owner_id,
+            )
+          : kind === 'mcp' && target === 'wallet'
+            ? await ensureConnectorDirectMessageRoom(
+                database,
+                context.workspace_id,
+                'wallet',
+                context.owner_id,
+              )
+            : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
+      }
       if (auto) {
         await systemLine(database, {
-          roomId: input.roomId,
+          roomId: resourceRoomId ?? input.roomId,
           subject: { kind: 'agent', id: agentId, name: agent.name },
           verb: 'was granted',
           object: `${kind} ${target}`,
@@ -3787,26 +3882,38 @@ export class DaemonService {
           cardType: 'grant-auto',
           card: { grantId },
         });
-        return { messageId: undefined };
+        return { messageId: undefined, cardRoomId: resourceRoomId };
       }
-      if (squireRoute) {
-        const ownerMember = await database.query(
-          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL`,
-          [context.workspace_id, context.owner_id],
-        );
-        if (!ownerMember.rowCount) throw new Error('Squire owner is no longer a workspace member');
-        const dmRoomId = await ensureConnectorDirectMessageRoom(
-          database,
-          context.workspace_id,
-          'trusty-squire',
-          context.owner_id,
-        );
+      if (resourceRoomId) {
+        const dmRoomId = resourceRoomId;
+        const open = (
+          await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
+            `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
+           AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
+           AND card->'requester'->>'pubkey'=$4 AND created_at>now()-interval '2 minutes'
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
+             JOIN agent_grants g ON g.id=(entry->>'grantId')::uuid WHERE g.status<>'pending')
+           ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+            [dmRoomId, agentId, input.roomId, requester.pubkey],
+          )
+        ).rows[0];
+        if (open) {
+          const grants = [...open.card.grants, grantView];
+          await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
+            agent,
+            owner,
+            requester,
+            grants,
+            sourceRoomId: input.roomId,
+            ...(sourceMessageId ? { sourceMessageId } : {}),
+          });
+          return { messageId: open.id, cardRoomId: dmRoomId };
+        }
         const messageId = id();
         await systemLine(database, {
           id: messageId,
           roomId: dmRoomId,
-          authorId: connectorIdentityId('trusty-squire'),
+          authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
           ...grantCardPhrase(agent, owner, [grantView]),
           presentation: 'card',
           cardType: 'grant-request',
@@ -3928,6 +4035,14 @@ export class DaemonService {
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
        WHERE g.agent_id=$1 AND g.status IN ('approved','once')
          AND (g.expires_at IS NULL OR g.expires_at>now())
+         AND (NOT g.auto OR EXISTS (
+           SELECT 1 FROM agents a JOIN workspaces w ON w.id=g.workspace_id
+           WHERE a.agent_id=g.agent_id AND a.yolo_mode AND w.visibility<>'public'
+             AND (g.kind='repository' OR g.requested_by=a.owner_id)
+         ))
+         AND (g.kind='repository' OR g.auto OR g.decided_by=(
+           SELECT owner_id FROM agents WHERE agent_id=g.agent_id
+         ))
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
       [agentId, roomId ?? null],
@@ -3959,98 +4074,114 @@ export class DaemonService {
     return this.writeResult();
   }
 
-  /**
-   * Squire is mounted per session, not per speaker. Each call still checks who
-   * triggered the turn: the owner passes; anyone else needs a live mcp/squire
-   * grant keyed to them. A miss posts the existing Once/Always/No card in the
-   * owner's Trusty Squire DM.
-   */
-  private async authorizeSquireCall(input: Input<'authorizeSquireCall'>, agentId: string) {
-    await this.access(input.roomId, agentId);
-    const context = (
+  /** Root command provenance is the authority even after delegation and resumes. */
+  private async grantRequester() {
+    const command = this.authorizedCommand;
+    if (!command) throw new Error('resource access requires an active command');
+    const requester = (
       await this.database.query<{
-        workspace_id: string;
-        owner_id: string;
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
       }>(
-        `SELECT room.workspace_id,a.owner_id
-         FROM rooms room
-         JOIN agents a ON a.agent_id=$2
-         WHERE room.id=$1`,
+        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
+        FROM messages message JOIN identities identity ON identity.id=message.author_id
+        WHERE message.id=$1`,
+        [command.root_source_message_id],
+      )
+    ).rows[0];
+    if (!requester) throw new Error('resource requester not found');
+    return requester;
+  }
+
+  private async authorizeSquireCall(input: Input<'authorizeSquireCall'>, agentId: string) {
+    return this.authorizeScopedGrant(input, agentId, 'mcp', 'squire');
+  }
+
+  /** Resource access includes paid calls within the same target and requester scope. */
+  private async authorizeScopedGrant(
+    input: Input<'authorizeSquireCall'>,
+    agentId: string,
+    kind: 'mcp' | 'repository' | 'host',
+    target: string,
+  ) {
+    if (
+      typeof target !== 'string' ||
+      !target.trim() ||
+      target.length > AGENT_GRANT_TARGET_MAX_LENGTH
+    )
+      throw new Error('grant target is invalid');
+    target = target.trim();
+    const requester = await this.grantRequester();
+    const context = (
+      await this.database.query<{ owner_id: string; yolo_mode: boolean; owner_present: boolean }>(
+        `SELECT a.owner_id,EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
+         AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
+       (a.yolo_mode AND w.visibility<>'public') yolo_mode
+       FROM agents a JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
+       WHERE a.agent_id=$2`,
         [input.roomId, agentId],
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    const sourceMessageId = this.authorizedCommand?.source_message_id;
-    const requesterRow = (
-      await this.database.query<{ id: string }>(
-        `SELECT identity.id
-         FROM agent_commands command
-         JOIN messages message ON message.id=command.source_message_id
-         JOIN identities identity ON identity.id=message.author_id
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
-           AND message.presentation<>'activity'
-           AND ($3::text IS NULL OR command.source_message_id=$3)
-         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [input.roomId, agentId, sourceMessageId ?? null],
-      )
-    ).rows[0];
-    const requesterId = requesterRow?.id ?? context.owner_id;
+    if (kind !== 'repository' && !context.owner_present)
+      throw new Error('resource owner access denied');
+    if (context.yolo_mode && (kind === 'repository' || requester.id === context.owner_id))
+      return { allowed: true };
     const listed = await this.listAgentGrants(agentId, input.roomId);
-    const verdict = squireCallAllowed({
-      requesterId,
-      ownerId: context.owner_id,
-      grants: listed.grants,
-    });
-    if (verdict.allowed) {
-      if (verdict.consume && verdict.grantId)
-        await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
-      return {
-        allowed: true as const,
-        ...(verdict.grantId ? { grantId: verdict.grantId } : {}),
-      };
+    const scopedGrants = listed.grants.filter((g) => g.roomId === input.roomId);
+    if (kind === 'mcp' && target === 'squire') {
+      const verdict = squireCallAllowed({
+        requesterId: requester.id,
+        ownerId: context.owner_id,
+        yoloMode: context.yolo_mode,
+        grants: scopedGrants,
+      });
+      if (verdict.allowed) {
+        if (verdict.consume && verdict.grantId)
+          await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
+        return verdict;
+      }
+    }
+    const grant = scopedGrants.find(
+      (g) =>
+        g.kind === kind &&
+        g.target === target &&
+        g.roomId === input.roomId &&
+        g.requestedBy === requester.id,
+    );
+    if (grant) {
+      if (grant.status === 'once')
+        await this.consumeAgentGrant({ grantId: grant.grantId }, agentId);
+      return { allowed: true, grantId: grant.grantId };
     }
     const pending = (
       await this.database.query<{ id: string }>(
-        `SELECT id FROM agent_grants
-         WHERE agent_id=$1 AND workspace_id=$2 AND kind='mcp' AND target='squire'
-           AND requested_by=$3 AND status='pending'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [agentId, context.workspace_id, requesterId],
+        `SELECT id FROM agent_grants WHERE agent_id=$1 AND room_id=$2 AND kind=$3 AND target=$4
+       AND requested_by=$5 AND status='pending' AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) {
-      const card = (
-        await this.database.query<{ id: string }>(
-          `SELECT id FROM messages
-           WHERE card_type='grant-request'
-             AND EXISTS (
-               SELECT 1 FROM jsonb_array_elements(card->'grants') entry
-               WHERE entry->>'grantId'=$1
-             )
-           ORDER BY created_at DESC,id DESC LIMIT 1`,
-          [pending.id],
-        )
-      ).rows[0];
-      return {
-        allowed: false as const,
-        grantId: pending.id,
-        status: 'pending' as const,
-        ...(card ? { messageId: card.id } : {}),
-      };
-    }
+    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
     const asked = await this.requestAgentGrant(
       {
-        roomId: input.roomId,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'use Trusty Squire on this turn',
-        ...(input.requestId ? { requestId: input.requestId } : {}),
-        ...(input.generationId ? { generationId: input.generationId } : {}),
+        ...input,
+        kind,
+        target,
+        reason:
+          kind === 'repository'
+            ? 'edit this repository'
+            : kind === 'host'
+              ? 'run this corner on your machine with host filesystem and command access'
+            : 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
     return {
-      allowed: false as const,
+      allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
@@ -4743,12 +4874,14 @@ function grantCardPhrase(
 ): SystemPhrase {
   return {
     subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
-    verb: `asked ${systemIdentityMention({
-      id: owner.pubkey,
-      kind: owner.kind,
-      name: owner.name,
-      handle: owner.handle ?? null,
-    })} for`,
+    verb: grants.every((grant) => grant.kind === 'repository')
+      ? 'asked a Workspace admin for'
+      : `asked ${systemIdentityMention({
+          id: owner.pubkey,
+          kind: owner.kind,
+          name: owner.name,
+          handle: owner.handle ?? null,
+        })} for`,
     object: grants.map((grant) => `${grant.kind} ${grant.target}`).join(' and '),
     ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
   };
@@ -4865,6 +4998,10 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentGrants: true,
   consumeAgentGrant: true,
   authorizeSquireCall: true,
+  authorizeResourceCall: true,
+  authorizeRepositoryCall: true,
+  authorizeHostCall: true,
+  listTurnAgentGrants: true,
   readAgentWorkbench: true,
   offerConnector: true,
   createCorner: true,

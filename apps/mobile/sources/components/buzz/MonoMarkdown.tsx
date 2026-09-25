@@ -112,6 +112,8 @@ type MonoMarkdownProps = {
    * longer carries canned tones of its own.
    */
   textStyle: TextStyle;
+  /** Give full-page attachments a reading rhythm without changing chat rows. */
+  document?: boolean;
   /**
    * A node set as the very first inline child of the first text block — the
    * ledger's speaker handle, so an entry reads as one log line (handle, then
@@ -313,6 +315,7 @@ export function monoMarkdownPropsAreEqual(
   return (
     previous.markdown === next.markdown &&
     previous.textStyle === next.textStyle &&
+    previous.document === next.document &&
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
@@ -340,17 +343,9 @@ function markdownTableCellText(cell: MarkdownSpan[]): string {
  * wraps inside its column. No horizontal scroll — a table fits the tile or
  * its cells wrap.
  */
-function MarkdownTable({ headers, rows }: { headers: MarkdownSpan[][]; rows: MarkdownSpan[][][] }) {
-  const { weights, grid } = useMemo(() => {
-    const cells = [headers, ...rows].map((row) => row.map(markdownTableCellText));
-    const columnWeights = tableColumnWeights(cells);
-    return {
-      weights: columnWeights,
-      grid: cells.map((row) =>
-        Array.from({ length: columnWeights.length }, (_, column) => row[column] ?? ''),
-      ),
-    };
-  }, [headers, rows]);
+function MarkdownTable({ headers, rows, onLink }: { headers: MarkdownSpan[][]; rows: MarkdownSpan[][][]; onLink: (url: string) => void }) {
+  const grid = [headers, ...rows];
+  const weights = useMemo(() => tableColumnWeights(grid.map((row) => row.map(markdownTableCellText))), [headers, rows]);
   return (
     <View style={styles.table}>
       {grid.map((row, rowIndex) => (
@@ -358,10 +353,17 @@ function MarkdownTable({ headers, rows }: { headers: MarkdownSpan[][]; rows: Mar
           key={rowIndex}
           style={[styles.tableRow, rowIndex === grid.length - 1 && styles.tableLastRow]}
         >
-          {row.map((cell, column) => (
+          {Array.from({ length: weights.length }, (_, column) => (
             <View key={column} style={[styles.tableCell, { flex: weights[column] ?? 1 }]}>
               <Text selectable style={[styles.codeBlock, rowIndex === 0 && styles.tableHeadText]}>
-                {cell}
+                {(row[column] ?? []).map((span, spanIndex) => (
+                  <Text
+                    key={spanIndex}
+                    accessibilityRole={span.url ? 'link' : undefined}
+                    onPress={span.url ? () => onLink(span.url!) : undefined}
+                    style={[span.styles.includes('bold') && styles.bold, span.styles.includes('italic') && styles.italic, span.url && styles.link]}
+                  >{span.text}</Text>
+                ))}
               </Text>
             </View>
           ))}
@@ -374,6 +376,7 @@ function MarkdownTable({ headers, rows }: { headers: MarkdownSpan[][]; rows: Mar
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
   textStyle,
+  document = false,
   leadingInline,
   mentionHandles,
   onMention,
@@ -384,7 +387,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   tail,
   testID,
 }: MonoMarkdownProps) {
-  const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+  const blocks = useMemo(() => parseMarkdown(markdown, document), [markdown, document]);
   const liveMentionHandles = useMemo(
     () =>
       new Set((mentionHandles ?? []).map((handle) => handle.normalize('NFKC').toLocaleLowerCase())),
@@ -410,7 +413,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
       ) : null}
       {blocks.map((block, index) => {
         const last = index === blocks.length - 1;
-        const blockStyle = [styles.block, last && styles.lastBlock];
+        const blockStyle = [styles.block, document && styles.documentBlock, last && styles.lastBlock];
         const lead = inlineHosted && index === 0 ? leadingInline : null;
         // The stream is always writing at the end of the message.
         const trail = last ? tail : undefined;
@@ -433,12 +436,13 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           );
         }
         if (block.type === 'header') {
+          const headingBase = { ...base, ...styles.heading, ...(document ? styles[`documentHeading${block.level}`] : {}) };
           return (
-            <Text key={index} selectable style={[base, styles.heading, blockStyle]}>
+            <Text key={index} selectable style={[base, styles.heading, document && styles[`documentHeading${block.level}`], blockStyle, document && styles.documentHeadingSpace, document && index === 0 && styles.documentFirstHeading]}>
               {lead}
               <InlineMarkdown
                 spans={block.content}
-                base={base}
+                base={headingBase}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
                 onMention={onMention}
@@ -449,14 +453,23 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
             </Text>
           );
         }
+        if (block.type === 'quote') {
+          return (
+            <View key={index} style={[styles.quote, document && styles.documentQuote, blockStyle]}>
+              <Text selectable style={[base, styles.quoteText]}>
+                <InlineMarkdown spans={block.content} base={{ ...base, ...styles.quoteText }} onLink={onLink} liveMentionHandles={liveMentionHandles} onMention={onMention} channelIndex={channelIndex} onChannelReference={onChannelReference} tail={trail} />
+              </Text>
+            </View>
+          );
+        }
         if (block.type === 'list' || block.type === 'numbered-list') {
           return (
-            <View key={index} style={[styles.list, blockStyle]}>
+            <View key={index} style={[styles.list, document && styles.documentList, blockStyle]}>
               {block.items.map((item, itemIndex) => (
                 <Text
                   key={itemIndex}
                   selectable
-                  style={[base, styles.listItem, { paddingLeft: Math.max(0, item.depth) * 12 }]}
+                  style={[base, styles.listItem, document && styles.documentListItem, { paddingLeft: Math.max(0, item.depth) * 16 }]}
                 >
                   {itemIndex === 0 ? lead : null}
                   <Text style={styles.listGlyph}>
@@ -504,7 +517,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         if (block.type === 'table') {
           return (
             <View key={index} style={[styles.codeFrame, blockStyle]}>
-              <MarkdownTable headers={block.headers} rows={block.rows} />
+              <MarkdownTable headers={block.headers} rows={block.rows} onLink={onLink} />
             </View>
           );
         }
@@ -535,6 +548,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
 const styles = StyleSheet.create((theme) => ({
   root: { width: '100%', minWidth: 0 },
   block: { marginBottom: 8 },
+  documentBlock: { marginBottom: theme.buzz.space.md },
   lastBlock: { marginBottom: 0 },
   /**
    * Emphasis is a luminance step, never a heavier cut.
@@ -558,9 +572,22 @@ const styles = StyleSheet.create((theme) => ({
     letterSpacing: 0.6,
     marginTop: 3,
   },
+  documentHeading1: { ...theme.buzz.type.hero, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.textPrimary },
+  documentHeading2: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  documentHeading3: { ...theme.buzz.type.bodyStrong, color: theme.buzz.ledgerQuiet },
+  documentHeading4: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  documentHeading5: { ...theme.buzz.type.meta, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.ledgerQuiet },
+  documentHeading6: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  documentHeadingSpace: { marginTop: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },
+  documentFirstHeading: { marginTop: 0 },
   list: { width: '100%', gap: 3 },
+  documentList: { gap: theme.buzz.space.sm },
   listItem: { width: '100%' },
+  documentListItem: { paddingLeft: theme.buzz.space.sm },
   listGlyph: { color: theme.buzz.ledgerQuiet },
+  quote: { borderLeftWidth: 2, borderLeftColor: theme.buzz.border, paddingLeft: theme.buzz.space.md },
+  documentQuote: { paddingVertical: theme.buzz.space.sm },
+  quoteText: { color: theme.buzz.ledgerQuiet },
   /**
    * Tables share the 2px left-rule vocabulary. Fenced code owns its own frame
    * in CodeBlock.tsx (Two Inks structure, inscribed-and-opened).

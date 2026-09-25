@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
@@ -15,11 +15,12 @@ export function SoulPortraitControls({
   detail: AgentDetailView;
   soul: string;
   disabled: boolean;
-  generate: (soul: string) => Promise<void>;
+  generate: (soul: string, direction?: string) => Promise<void>;
   refresh: () => Promise<AgentDetailView>;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [direction, setDirection] = useState('');
   const generation = useRef(0);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
@@ -37,7 +38,7 @@ export function SoulPortraitControls({
     setPending(true);
     setError(null);
     try {
-      await generate(soul.trim());
+      await generate(soul.trim(), direction.trim() || undefined);
       // Slow model turns and offline agents get a bounded wait, with a retry.
       for (let i = 0; i < 90 && attempt === generation.current; i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -47,10 +48,10 @@ export function SoulPortraitControls({
       }
       if (attempt === generation.current)
         setError('The agent has not saved a new avatar yet. Check its DM or retry.');
-    } catch {
+    } catch (reason) {
       if (attempt === generation.current)
         setError(
-          'Could not confirm a new avatar. Check the agent’s DM or retry when it is available.',
+          `Could not request or confirm the avatar: ${reason instanceof Error ? reason.message : String(reason)}`,
         );
     } finally {
       if (attempt === generation.current) setPending(false);
@@ -59,6 +60,17 @@ export function SoulPortraitControls({
   const handle = detail.agent.identity.handle?.replace(/^@/, '');
   return (
     <View style={styles.container} testID="soul-avatar-generator">
+      <TextInput
+        accessibilityLabel="Avatar direction (optional)"
+        editable={!disabled && !pending}
+        maxLength={300}
+        onChangeText={setDirection}
+        placeholder="Optional direction, e.g. make the eyes brighter"
+        placeholderTextColor={styles.placeholder.color}
+        style={styles.direction}
+        testID="avatar-direction"
+        value={direction}
+      />
       <MonoButton
         label={
           pending
@@ -96,4 +108,15 @@ const styles = StyleSheet.create((theme) => ({
   container: { gap: theme.buzz.space.md, marginTop: theme.buzz.space.md },
   title: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   copy: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  placeholder: { color: theme.buzz.textMuted },
+  direction: {
+    ...Typography.default(),
+    ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
+    borderWidth: 1,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
+    minHeight: 44,
+    paddingHorizontal: 12,
+  },
 }));

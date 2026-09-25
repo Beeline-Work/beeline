@@ -43,7 +43,7 @@ export function AgentProfileView({
   canManage: boolean;
   canEdit: boolean;
   avatarDisabled: boolean;
-  onGenerateAvatar: (soul: string) => Promise<void>;
+  onGenerateAvatar: (soul: string, direction?: string) => Promise<void>;
   refreshAgent: () => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;

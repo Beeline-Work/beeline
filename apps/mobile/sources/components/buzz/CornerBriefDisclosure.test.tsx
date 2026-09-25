@@ -62,7 +62,14 @@ describe('CornerBriefDisclosure', () => {
             },
           ],
         }}
-        validation={[{ stage: 'tests', status: 'pending', evidence: '' }]}
+        validation={[
+          { stage: 'tests', status: 'pending', evidence: '' },
+          {
+            stage: 'final_authorization',
+            status: 'passed',
+            evidence: 'Agent claimed an all-clear.',
+          },
+        ]}
         onOpenFile={onOpenFile}
       />,
     );
@@ -70,6 +77,26 @@ describe('CornerBriefDisclosure', () => {
     act(() => renderer.root.findByProps({ testID: 'corner-brief-toggle' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'corner-brief-detail' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'corner-validation' })).toBeDefined();
+    expect(
+      renderer.root
+        .findByProps({ testID: 'corner-validation' })
+        .findAllByType('Text')
+        .some(
+          (node: any) =>
+            typeof node.props.children === 'string' &&
+            node.props.children.includes('Merge permission comes from the current PR checks'),
+        ),
+    ).toBe(true);
+    expect(
+      renderer.root
+        .findByProps({ testID: 'corner-validation' })
+        .findAllByType('Text')
+        .some(
+          (node: any) =>
+            JSON.stringify(node.props.children).includes('reported passed') &&
+            JSON.stringify(node.props.children).includes('final authorization'),
+        ),
+    ).toBe(true);
     const link = renderer.root
       .findAllByProps({ accessibilityRole: 'link' })
       .find((node: any) => node.type === 'Pressable');

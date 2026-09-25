@@ -2,7 +2,7 @@
  * The acceptance path for the cursor ACP bridge delivering session MCP.
  *
  * A real cursor-agent, in a real Room on a real monolith server, is told to
- * open a corner. It must reach `beeline-agent open_corner` through the
+ * open a corner with a settled requirement in its brief. It must reach `beeline-agent open_corner` through the
  * isolated `mcp.json` the bridge writes — the field `session/new` used to
  * drop. A hermetic test that only asserts a file was written cannot catch
  * cursor-agent silently skipping that file.
@@ -135,7 +135,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
   }, 30_000);
 
   it.skipIf(!enabled)(
-    'reaches open_corner from a cursor turn and the Room carries the corner',
+    'carries a settled Room requirement into the corner brief through open_corner',
     { timeout: 600_000 },
     async () => {
       // cursor-agent spawns this from the Room cwd, so the command must be
@@ -240,7 +240,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
             roomId: ROOM,
             messageId: createHash('sha256').update('cursor-open-corner-proof').digest('hex'),
             wakes: [AGENT],
-            text: '@nerd Open a corner named Proof Corner whose objective is prove cursor can call open_corner. Use the beeline-agent open_corner tool. Do not describe the tool; call it.',
+            text: '@nerd Open a corner named Proof Corner whose objective is prove cursor can call open_corner. Its assigned brief must include this settled requirement: preserve the amber label even if blue is the usual default. Use the beeline-agent open_corner tool and include that requirement in brief.content. Do not describe the tool; call it.',
           },
           HUMAN,
         );
@@ -269,6 +269,11 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
           );
           if (corners.rows.length > 0) {
             expect(corners.rows[0]?.name.toLowerCase()).toMatch(/proof/);
+            const brief = await database.query<{ content: string }>(
+              `SELECT content FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
+              [corners.rows[0]!.id],
+            );
+            expect(brief.rows[0]?.content.toLowerCase()).toContain('amber');
             break;
           }
           const settled = await database.query<{ status: string; text: string | null }>(

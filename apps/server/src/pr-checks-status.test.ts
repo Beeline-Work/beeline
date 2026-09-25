@@ -85,7 +85,8 @@ beforeEach(async () => {
   head = SHA;
   rollupState = 'SUCCESS';
   requests = [];
-  diffBody = 'diff --git a/button.txt b/button.txt\nindex 1111111..2222222 100644\n--- a/button.txt\n+++ b/button.txt\n@@ -1 +1 @@\n-Remove\n+Delete\n';
+  diffBody =
+    'diff --git a/button.txt b/button.txt\nindex 1111111..2222222 100644\n--- a/button.txt\n+++ b/button.txt\n@@ -1 +1 @@\n-Remove\n+Delete\n';
   app = new GitHubAppClient({
     appId: '1',
     privateKey: 'unused',
@@ -351,7 +352,9 @@ describe('PR-scoped check gate', () => {
       REVIEWER,
     );
     head = '9'.repeat(40);
-    diffBody = diffBody.replace('1111111..2222222', 'aaaaaaa..bbbbbbb').replace('@@ -1 +1 @@', '@@ -10 +10 @@');
+    diffBody = diffBody
+      .replace('1111111..2222222', 'aaaaaaa..bbbbbbb')
+      .replace('@@ -1 +1 @@', '@@ -10 +10 @@');
     expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approvalPending: false });
     diffBody = diffBody.replace('+Delete', '+Discard');
     expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
@@ -494,9 +497,16 @@ describe('PR-scoped check gate', () => {
     };
 
     await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
+    await db.query(
+      `INSERT INTO corner_validation_stages
+        (corner_id,brief_revision,head_sha,stage,status,evidence,actor_id)
+       VALUES($1,0,$2,'final_authorization','passed','Agent claimed an all-clear',$3)`,
+      [C, SHA, A],
+    );
     await expect(callGate(1)).resolves.toMatchObject({
       checks: 'passed',
       approvalPending: true,
+      mergeAllowed: false,
       reviewerExists: false,
       reviewFailed: false,
       isWorkerYolo: true,
@@ -519,6 +529,7 @@ describe('PR-scoped check gate', () => {
     await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
     await expect(callGate(3)).resolves.toMatchObject({
       approvalPending: true,
+      mergeAllowed: false,
       reviewerExists: true,
       reviewFailed: false,
       isWorkerYolo: false,
@@ -532,6 +543,7 @@ describe('PR-scoped check gate', () => {
     );
     await expect(callGate(4)).resolves.toMatchObject({
       approvalPending: true,
+      mergeAllowed: false,
       didHumanSayDontMerge: true,
     });
     child.kill();

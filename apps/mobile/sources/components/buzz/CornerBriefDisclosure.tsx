@@ -57,10 +57,17 @@ export function CornerBriefDisclosure({
           {validation?.length ? (
             <View testID="corner-validation" style={styles.validation}>
               <Text style={styles.fileTitle}>Validation</Text>
+              <Text style={styles.filePurpose}>
+                Agent-recorded evidence. Merge permission comes from the current PR checks and
+                Beeline merge gate.
+              </Text>
               {validation.map((entry) => (
                 <View key={entry.stage}>
                   <Text style={styles.fileTitle}>
-                    {entry.stage.replaceAll('_', ' ')} · {entry.status.replaceAll('_', ' ')}
+                    {entry.stage.replaceAll('_', ' ')} ·{' '}
+                    {entry.status === 'passed'
+                      ? 'reported passed'
+                      : entry.status.replaceAll('_', ' ')}
                   </Text>
                   <Text style={styles.filePurpose}>{entry.evidence}</Text>
                 </View>

@@ -205,6 +205,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 
 Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty CI rollup is not proof of passing checks. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
 Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head. A reviewer records the review stage; the author records repairs and publication. The record informs the verdict but never replaces approve_merge or pr_checks_status.
+Only the author may report final_authorization as passed, after pr_checks_status reports checks passed and mergeAllowed true for the current head. A reviewer's approval or a passed stage row alone is not the composite gate.
 
 - Run the repository typecheck and tests touched by the diff.
 - If the objective names a user path, exercise that path.

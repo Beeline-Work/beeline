@@ -55,6 +55,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readlink,
   readdir,
   realpath,
   rename,
@@ -206,6 +207,53 @@ export function isSharedSkillName(value: unknown): value is string {
 class AgentHomeSecurityError extends Error {}
 const agentHomeProvisionQueues = new Map<string, Promise<void>>();
 
+const EXPIRED_LOGIN_PATTERNS = [
+  /\boauth session expired\b/i,
+  /\b(?:oauth|login|session|token)\b.{0,80}\bcould not be refreshed\b/i,
+  /\b(?:failed|unable) to refresh\b.{0,80}\b(?:oauth|login|session|token)\b/i,
+  /\brefresh token\b.{0,80}\b(?:expired|invalid|revoked)\b/i,
+] as const;
+
+/** A harness login failed in the one shape a credential re-link can repair. */
+export function isExpiredHarnessLoginError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; depth < 4 && current != null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const text =
+      current instanceof Error
+        ? current.message
+        : typeof current === 'string'
+          ? current
+          : typeof current === 'object' && 'message' in current
+            ? String((current as { message: unknown }).message)
+            : String(current);
+    if (EXPIRED_LOGIN_PATTERNS.some((pattern) => pattern.test(text))) return true;
+    current =
+      current instanceof Error
+        ? current.cause
+        : typeof current === 'object' && current && 'cause' in current
+          ? (current as { cause: unknown }).cause
+          : undefined;
+  }
+  return false;
+}
+
+const HARNESS_LOGIN_NAMES: Partial<Record<AgentKind, string>> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  grok: 'Grok',
+  pi: 'Pi',
+  cursor: 'Cursor',
+  opencode: 'OpenCode',
+};
+
+/** The only user-visible answer after a repaired link proves the source login is stale too. */
+export function freshHarnessLoginLine(kind: AgentKind | undefined, machine: string): string {
+  const harness = (kind && HARNESS_LOGIN_NAMES[kind]) || 'The agent provider';
+  return `${harness} on ${machine.trim() || 'this machine'} needs a fresh login.`;
+}
+
 /**
  * Harness MCP declarations copied from the operator's real home into the
  * isolated home, per that harness's own layout:
@@ -329,6 +377,41 @@ export interface RoomAgentHomeInput {
 }
 
 /**
+ * Restore every shared login as a direct link to the operator credential.
+ *
+ * Harnesses commonly persist refreshed tokens with rename(2). When they do
+ * that through an isolated path, the rename replaces the symlink itself and
+ * leaves one Room holding a detached regular file. Preserve that file beside
+ * the repaired path for diagnosis/recovery; credentials are never deleted.
+ */
+export async function repairRoomAgentCredentialLinks(input: {
+  root: string;
+  operatorHome?: string;
+}): Promise<void> {
+  const root = resolve(input.root);
+  const operatorHome = input.operatorHome ?? homedir();
+  for (const credential of SHARED_CREDENTIALS) {
+    const source = resolve(operatorHome, credential.source);
+    if (!existsSync(source)) continue;
+    const target = resolve(root, credential.dir, credential.target);
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    const stats = await lstat(target).catch((error: unknown) => {
+      if (isMissingPathError(error)) return undefined;
+      throw error;
+    });
+    if (stats?.isSymbolicLink()) {
+      const linked = await readlink(target);
+      if (resolve(dirname(target), linked) === source) continue;
+    }
+    if (stats) {
+      const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
+      await rename(target, quarantine);
+    }
+    await symlink(source, target);
+  }
+}
+
+/**
  * Create the room-instance's harness state directories, share the operator's
  * harness login into them, and return the env overlay that points the harness at
  * them. Normally an unwritable or already-populated path degrades to the
@@ -357,15 +440,11 @@ export async function prepareRoomAgentHome(
     return {};
   }
 
-  for (const credential of SHARED_CREDENTIALS) {
-    const source = resolve(operatorHome, credential.source);
-    const target = resolve(root, credential.dir, credential.target);
-    if (!existsSync(source) || existsSync(target)) continue;
-    // Nested targets (Cursor's XDG login) need their parent created first.
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 }).catch(() => undefined);
-    // Symlink, not copy: a refreshed token written through the link stays
-    // shared with every other room-instance and with the operator's own CLI.
-    await symlink(source, target).catch(() => undefined);
+  try {
+    await repairRoomAgentCredentialLinks({ root, operatorHome });
+  } catch (error) {
+    if (input.failClosed || input.resourceAuthFile) throw error;
+    console.error(`[body] could not repair shared credentials under ${root}:`, error);
   }
 
   const prior = agentHomeProvisionQueues.get(root) ?? Promise.resolve();

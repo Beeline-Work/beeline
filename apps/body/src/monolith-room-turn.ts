@@ -1,6 +1,6 @@
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
@@ -25,8 +25,11 @@ import {
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
   hostImportedMcpServerNames,
+  freshHarnessLoginLine,
+  isExpiredHarnessLoginError,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
+  repairRoomAgentCredentialLinks,
 } from './agent-home.js';
 import {
   claimGrantedHostRoutes,
@@ -615,7 +618,15 @@ export class MonolithRoomTurnLoop {
 
   private async activate(trace?: TurnTrace): Promise<string> {
     await this.refreshTurnCheckout();
-    if (this.client?.isAlive && this.sessionId) return this.sessionId;
+    if (this.client?.isAlive && this.sessionId) {
+      if (this.options.config.agentHomeRoot) {
+        await repairRoomAgentCredentialLinks({
+          root: this.options.config.agentHomeRoot,
+          operatorHome: this.options.config.operatorHome,
+        });
+      }
+      return this.sessionId;
+    }
     trace?.noteActivation('cold');
     const [configuration, roster, repositoryState, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
@@ -1172,6 +1183,7 @@ export class MonolithRoomTurnLoop {
               // One prompt run, steers and all. It is a closure because an empty
               // completion re-pins the session to another provider and runs it
               // again (C92) — against the NEW client and session id.
+              let loginRetryUsed = false;
               const runPrompt = async (): Promise<PromptResult> => {
                 let nextPrompt = promptWithImages(
                   buildPrompt(),
@@ -1203,6 +1215,25 @@ export class MonolithRoomTurnLoop {
                   const settledSteerTail = active.steerTail;
                   await settledSteerTail;
                   if (settledSteerTail !== active.steerTail) continue;
+                  if (promptError && isExpiredHarnessLoginError(promptError)) {
+                    if (!loginRetryUsed) {
+                      loginRetryUsed = true;
+                      console.warn(
+                        `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+                          'harness login expired; repairing the shared credential and retrying once',
+                      );
+                      trace.retry({ reason: 'expired harness login' });
+                      await this.discardSession();
+                      await trace.measure('activation', () => this.activate(trace));
+                      continue;
+                    }
+                    return {
+                      stopReason: 'login-required',
+                      updates: [],
+                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
+                      toolCalls: [],
+                    };
+                  }
                   if (!active.resumeRequested) {
                     if (promptError) throw promptError;
                     break;

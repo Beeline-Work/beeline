@@ -44,7 +44,7 @@ import {
   commandRuleEscalations,
   grantScriptTooLongMessage,
   interpreterScriptArgument,
-  isAgentGrantKind,
+  isRequestableAgentGrantKind,
   isCommandGrantScript,
   parseCommandGrantTarget,
   squireCallAllowed,
@@ -3620,10 +3620,10 @@ export class DaemonService {
    * on the spot (auto=true) and one quiet system line records it; otherwise a
    * pending grant is stored and joins (or opens) this agent's one open card in
    * the Room, addressed to the owner. Squire's host route asks in the owner's
-   * connector DM. Budget always asks (the cap is out of scope), even under yolo.
+   * connector DM. Generic budget requests are no longer accepted.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
-    if (!isAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
+    if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
     if (typeof input.target !== 'string' || !input.target.trim())
       throw new Error('grant target is required');
     if (input.target.length > AGENT_GRANT_TARGET_MAX_LENGTH)
@@ -3736,7 +3736,7 @@ export class DaemonService {
       : owner;
     const grantId = randomUUID();
     const auto =
-      context.yolo_mode && kind !== 'budget' && kind !== 'mcp' && escalations.length === 0;
+      context.yolo_mode && kind !== 'mcp' && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(

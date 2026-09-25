@@ -11,10 +11,22 @@ import {
   grantScriptTooLongMessage,
   interpreterScriptArgument,
   isCommandGrantScript,
+  isAgentGrantKind,
+  isRequestableAgentGrantKind,
   parseCommandGrantTarget,
   parseGrantDecisionLine,
   squireCallAllowed,
 } from './agent-grants.js';
+
+describe('requestable grant kinds', () => {
+  it('retains budget history without accepting new budget requests', () => {
+    expect(isAgentGrantKind('budget')).toBe(true);
+    expect(isRequestableAgentGrantKind('budget')).toBe(false);
+    expect(isRequestableAgentGrantKind('mcp')).toBe(true);
+    expect(isRequestableAgentGrantKind('command')).toBe(true);
+    expect(isRequestableAgentGrantKind('unknown')).toBe(false);
+  });
+});
 
 describe('command grant targets', () => {
   it('splits the approved line into an argv prefix and its named secrets', () => {

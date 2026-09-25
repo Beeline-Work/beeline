@@ -8938,7 +8938,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('approves grants on the spot under yolo with auto=true and no card, except budget and mcp which always ask', async () => {
+  it('approves grants on the spot under yolo with auto=true and no card, except mcp; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
       await daemonOperation('requestAgentGrant', {
@@ -8984,18 +8984,16 @@ describe('monolith integration', () => {
     ).json()) as { grants: Array<{ auto: boolean; status: string; decidedBy?: unknown }> };
     expect(profile.grants).toEqual([expect.objectContaining({ auto: true, status: 'approved' })]);
     expect(profile.grants[0]!.decidedBy).toBeUndefined();
-    // Budget still asks: a pending card, not an auto approval.
-    const budget = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        kind: 'budget',
-        target: '$10 of API spend',
-        reason: 'more tokens',
-      })
-    ).json()) as Record<string, unknown>;
-    expect(budget).toEqual(
-      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
-    );
+    const budget = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      kind: 'budget',
+      target: '$10 of API spend',
+      reason: 'more tokens',
+    });
+    expect(budget.status).toBe(400);
+    expect(
+      (await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows,
+    ).toEqual([]);
     const mcp = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,

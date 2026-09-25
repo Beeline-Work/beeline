@@ -8,6 +8,17 @@
 export const AGENT_GRANT_KINDS = ['path', 'host', 'secret', 'device', 'budget', 'command', 'mcp'] as const;
 export type AgentGrantKind = (typeof AGENT_GRANT_KINDS)[number];
 
+/** Budget is retained for historical records, but cannot create a new prompt. */
+export const REQUESTABLE_AGENT_GRANT_KINDS = AGENT_GRANT_KINDS.filter((kind) => kind !== 'budget');
+export function isRequestableAgentGrantKind(
+  value: unknown,
+): value is (typeof REQUESTABLE_AGENT_GRANT_KINDS)[number] {
+  return (
+    typeof value === 'string' &&
+    (REQUESTABLE_AGENT_GRANT_KINDS as readonly string[]).includes(value)
+  );
+}
+
 export const AGENT_GRANT_STATUSES = ['pending', 'approved', 'once', 'denied', 'revoked'] as const;
 export type AgentGrantStatus = (typeof AGENT_GRANT_STATUSES)[number];
 

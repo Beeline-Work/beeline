@@ -22,6 +22,15 @@ vi.mock('@/utils/responsive', () => ({
   useIsDesktop: () => layout.desktop,
 }));
 
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example.test' }),
+}));
+
+vi.mock('@/components/buzz/IdentityMark', async () => {
+  const ReactModule = await import('react');
+  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
+});
+
 vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 vi.mock('react-native', async () => {
@@ -124,12 +133,16 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     expect(squire.props.title).toBe('Trusty Squire');
+    expect(squire.props.leading.props.avatarUrl).toBe(
+      'https://server.example.test/v1/connectors/logo/trusty-squire.svg',
+    );
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe(
-      'workbench-connector-trusty-squire-connect',
-    );
+    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
+    expect(wallet.props.leading.props.avatarUrl).toBe(
+      'https://server.example.test/v1/connectors/logo/wallet.svg',
+    );
     expect(wallet.props.action).toBe('Connect');
     expect(wallet.props.value).toBeUndefined();
     const tailscale = renderer.root.findByProps({ testID: 'workbench-connector-tailscale-head' });
@@ -336,9 +349,11 @@ describe('Workbench settings screen', () => {
         .title,
     ).toBe('Disconnect');
     await act(async () => {
-      renderer.root.findByProps({
-        testID: 'workbench-connector-trusty-squire-disconnect',
-      }).props.onPress();
+      renderer.root
+        .findByProps({
+          testID: 'workbench-connector-trusty-squire-disconnect',
+        })
+        .props.onPress();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

@@ -38,15 +38,6 @@ export function GoogleEntryRow({
   return (
     <View testID="google-entry">
       <SettingsRow
-        leading={
-          <IdentityMark
-            kind="human"
-            seed={entry.id}
-            name={entry.name}
-            avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${entry.id}.svg`}
-            size={26}
-          />
-        }
         description={errorText}
         descriptionTone={entry.status === 'error' ? 'danger' : undefined}
         onPress={() => setExpanded((value) => !value)}

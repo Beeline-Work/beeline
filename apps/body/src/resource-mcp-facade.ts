@@ -23,6 +23,18 @@ export function resourceFacadeArgs(): string[] {
 }
 
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list']);
+const NON_CONSUMING = new Set([
+  ...DISCOVERY,
+  'notifications/initialized',
+  'notifications/cancelled',
+  'notifications/progress',
+  'notifications/roots/list_changed',
+]);
+
+function messageIdKey(id: unknown): string | undefined {
+  if (id === undefined) return undefined;
+  return JSON.stringify(id);
+}
 
 type SquireApprovalLink = {
   readonly approvalUrl: string;
@@ -276,17 +288,7 @@ export async function authorizeResourceMessage(
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
   if (!message || Array.isArray(message) || typeof message !== 'object') return false;
-  if (typeof message.method !== 'string') return 'result' in message || 'error' in message;
-  if (
-    [
-      'notifications/initialized',
-      'notifications/cancelled',
-      'notifications/progress',
-      'notifications/roots/list_changed',
-    ].includes(message.method) ||
-    DISCOVERY.has(message.method)
-  )
-    return true;
+  if (typeof message.method !== 'string') return false;
   const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
     baseUrl: string;
     daemonToken: string;
@@ -307,7 +309,11 @@ export async function authorizeResourceMessage(
     {
       method: 'POST',
       headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...context, target }),
+      body: JSON.stringify({
+        ...context,
+        target,
+        ...(NON_CONSUMING.has(message.method) ? { consume: false } : {}),
+      }),
       signal: AbortSignal.timeout(20_000),
     },
   );
@@ -332,10 +338,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   delete childEnv.BEELINE_RESOURCE_LAUNCH;
   delete childEnv.BEELINE_RESOURCE_AUTH_FILE;
   const command = launch.command ?? launch.cmd;
-  const child = command
-    ? spawn(command, launch.args ?? [], { env: childEnv, stdio: ['pipe', 'pipe', 'inherit'] })
-    : undefined;
-  if (!child && !launch.url) throw new Error('resource transport is unavailable');
+  if (!command && !launch.url) throw new Error('resource transport is unavailable');
   const squireRequests = new Map<string, Record<string, unknown>>();
   const observeSquireResponse = async (message: Record<string, unknown>) => {
     if (target !== 'squire' || message.id === undefined) return;
@@ -345,30 +348,40 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
     const approval = squireApprovalFromMcp(request, message);
     if (approval) await postSquireApproval(approval, authFile).catch(() => {});
   };
-  if (child && target === 'squire') {
-    const replies = createInterface({ input: child.stdout });
-    let responsePending = Promise.resolve();
-    replies.on('line', (line) => {
+  const authorizedResponseIds = new Set<string>();
+  let child: ReturnType<typeof spawn> | undefined;
+  let responsePending = Promise.resolve();
+  const resourceChild = () => {
+    if (child) return child;
+    const started = spawn(command!, launch.args ?? [], {
+      env: childEnv,
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    child = started;
+    const output = createInterface({ input: started.stdout });
+    output.on('line', (line) => {
       responsePending = responsePending.then(async () => {
         try {
-          await observeSquireResponse(JSON.parse(line) as Record<string, unknown>);
+          const message = JSON.parse(line) as Record<string, unknown>;
+          const key = messageIdKey(message.id);
+          if (!key || !authorizedResponseIds.delete(key)) return;
+          await observeSquireResponse(message);
+          process.stdout.write(`${line}\n`);
         } catch {
-          // Preserve non-JSON upstream output unchanged.
+          // Personal-resource output is visible only as a correlated JSON-RPC response.
         }
-        process.stdout.write(`${line}\n`);
       });
     });
-  } else {
-    child?.stdout.pipe(process.stdout);
-  }
-  child?.on('error', () => {
-    process.exitCode = 1;
-    process.stdin.destroy();
-  });
-  child?.on('exit', (code) => {
-    process.exitCode = code ?? 1;
-    process.stdin.destroy();
-  });
+    started.on('error', () => {
+      process.exitCode = 1;
+      process.stdin.destroy();
+    });
+    started.on('exit', (code) => {
+      process.exitCode = code ?? 1;
+      process.stdin.destroy();
+    });
+    return started;
+  };
   let session: string | undefined;
   const lines = createInterface({ input: process.stdin });
   // Serialize calls so Once cannot be used by two requests before consumption.
@@ -386,8 +399,11 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call' && message.id !== undefined)
           squireRequests.set(JSON.stringify(message.id), message);
-        if (child) {
-          child.stdin.write(`${line}\n`);
+        if (command) {
+          const started = resourceChild();
+          const key = messageIdKey(message.id);
+          if (key) authorizedResponseIds.add(key);
+          started.stdin!.write(`${line}\n`);
           return;
         }
         const response = await fetch(launch.url!, {
@@ -405,6 +421,8 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         session = response.headers.get('mcp-session-id') ?? session;
         if (response.status === 202 || response.status === 204) return;
         if (response.headers.get('content-type')?.includes('text/event-stream')) {
+          const expectedId = messageIdKey(message.id);
+          if (!expectedId) return;
           const reader = response.body?.getReader();
           if (!reader) return;
           let buffer = '';
@@ -421,9 +439,10 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
                 if (!row.startsWith('data:')) continue;
                 const data = row.slice(5).trim();
                 const result = JSON.parse(data) as { id?: unknown };
+                if (messageIdKey(result.id) !== expectedId) continue;
                 await observeSquireResponse(result as Record<string, unknown>);
                 process.stdout.write(`${data}\n`);
-                if (result.id === message.id) return;
+                return;
               }
             }
           } finally {
@@ -432,11 +451,11 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         } else {
           const body = await response.text();
           if (body) {
-            try {
-              await observeSquireResponse(JSON.parse(body) as Record<string, unknown>);
-            } catch {
-              // The upstream body is still forwarded unchanged.
-            }
+            const result = JSON.parse(body) as { id?: unknown };
+            const expectedId = messageIdKey(message.id);
+            if (!expectedId || messageIdKey(result.id) !== expectedId)
+              throw new Error('resource transport returned an unrelated response');
+            await observeSquireResponse(result as Record<string, unknown>);
             process.stdout.write(`${body}\n`);
           }
         }
@@ -449,7 +468,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
     });
   });
   lines.on('close', () => {
-    void pending.finally(() => child?.stdin.end());
+    void pending.finally(() => child?.stdin?.end());
   });
   process.on('SIGTERM', () => {
     child?.kill();

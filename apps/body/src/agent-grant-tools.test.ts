@@ -63,7 +63,13 @@ describe('beeline-agent request_grant', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await requestGrant(
       { kind: 'mcp', target: ' squire ', reason: 'vault the provider key' },
-      deps({ grantId: 'g-9', status: 'pending', auto: false, messageId: 'm-9' }, ops),
+      deps({
+        grantId: 'g-9',
+        status: 'pending',
+        auto: false,
+        messageId: 'm-9',
+        approval: { destination: 'trusty-squire-dm', authority: 'resource-owner' },
+      }, ops),
     );
     expect(ops).toEqual([
       {
@@ -78,6 +84,7 @@ describe('beeline-agent request_grant', () => {
     ]);
     expect(reply).toMatch(/^pending, card posted: route squire \[grant g-9\]/);
     expect(reply).toContain('paused');
+    expect(reply).toContain("The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private Trusty Squire DM");
     expect(reply).toContain('approval wake starts the fresh session with that route mounted');
     expect(reply).toContain('without restarting or scheduling another turn');
   });
@@ -91,7 +98,13 @@ describe('beeline-agent request_grant', () => {
         reason: 'publish the preview build',
         ttl: 3600,
       },
-      deps({ grantId: 'g-1', status: 'pending', auto: false, messageId: 'm-1' }, ops),
+      deps({
+        grantId: 'g-1',
+        status: 'pending',
+        auto: false,
+        messageId: 'm-1',
+        approval: { destination: 'system-dm', authority: 'resource-owner' },
+      }, ops),
     );
     expect(ops).toEqual([
       {
@@ -108,6 +121,25 @@ describe('beeline-agent request_grant', () => {
     expect(reply).toMatch(/^pending, card posted: run fly deploy -a beeline-preview --with FLY_TOKEN \[grant g-1\]/);
     expect(reply).toContain('paused');
     expect(reply).toContain('ALWAYS, ONCE, or NO');
+    expect(reply).toContain("The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private @system DM");
+    expect(reply).not.toContain('in this Room');
+  });
+
+  it('names the Room and Workspace managers for a repository approval', async () => {
+    const reply = await requestGrant(
+      { kind: 'repository', target: 'acme/widgets', reason: 'edit the repository' },
+      deps({
+        grantId: 'g-repo',
+        status: 'pending',
+        auto: false,
+        messageId: 'm-repo',
+        approval: { destination: 'room', authority: 'workspace-manager' },
+      }),
+    );
+    expect(reply).toContain(
+      'A Workspace owner or admin must answer ALWAYS, ONCE, or NO on the card in this Room',
+    );
+    expect(reply).not.toContain('Your owner');
   });
 
   it('returns "approved (yolo)" and, for a command, points at run_granted_command', async () => {

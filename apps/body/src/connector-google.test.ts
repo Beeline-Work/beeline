@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { GOOGLE_TOOL_SCOPES, installGoogleTool, outputTail } from './connector-google.js';
 import type { GoogleWorkspaceClient } from './google-workspace-client.js';
 
-const client = (ok = true) => ({
+const client = (ok = true, calls: string[] = [], failingTool?: string) => ({
   verify: async () => ok
     ? { ok: true, account: 'dana@gmail.test' }
     : { ok: false, reason: 'Google refused the token' },
+  gmail: { listMessages: async () => { calls.push('gmail'); if (failingTool === 'gmail') throw new Error('Gmail permission denied'); return []; } },
+  calendar: { listEvents: async () => { calls.push('calendar'); if (failingTool === 'calendar') throw new Error('Calendar permission denied'); return []; } },
+  drive: { searchFiles: async () => { calls.push('drive'); if (failingTool === 'drive') throw new Error('Drive permission denied'); return []; } },
+  youtube: { listVideos: async () => { calls.push('youtube'); if (failingTool === 'youtube') throw new Error('YouTube permission denied'); return []; } },
 }) as GoogleWorkspaceClient;
 
 function credentials(kind: string, granted = true) {
@@ -78,6 +82,32 @@ describe('Beeline Google install', () => {
     });
     expect(result.status).toBe('error');
     expect(result.errorMessage).toContain('Google refused');
+  });
+
+  it.each([
+    ['google-gmail', 'gmail'],
+    ['google-calendar', 'calendar'],
+    ['google-drive', 'drive'],
+    ['google-youtube', 'youtube'],
+  ])('verifies %s through its own read-only tool call', async (kind, tool) => {
+    const calls: string[] = [];
+    const home = mkdtempSync(join(tmpdir(), 'beeline-google-verify-'));
+    const result = await installGoogleTool({
+      connectorType: kind as keyof typeof GOOGLE_TOOL_SCOPES, home,
+      client: client(true, calls), resolveCredentials: async () => credentials(kind),
+    });
+    expect(result.status).toBe('connected');
+    expect(calls).toEqual([tool]);
+  });
+
+  it('keeps the install failed when user-info passes but the tool rejects access', async () => {
+    const result = await installGoogleTool({
+      connectorType: 'google-gmail', home: '/tmp/unused',
+      client: client(true, [], 'gmail'),
+      resolveCredentials: async () => credentials('google-gmail'),
+    });
+    expect(result.status).toBe('error');
+    expect(result.steps.at(-1)).toMatchObject({ status: 'failed', reason: 'Gmail permission denied' });
   });
 
   it('keeps the requested scopes product-specific', () => {

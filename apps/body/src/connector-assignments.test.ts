@@ -598,14 +598,14 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
-  it('runs Google tool installs as ONE sequential batch sharing ONE grant resolution', async () => {
+  it('runs Google tool installs sequentially with a grant lookup for each connector', async () => {
     const api = apiMock([
       { kind: 'install', connectorId: 'g1', connectorType: 'google-gmail' },
       { kind: 'install', connectorId: 'g2', connectorType: 'google-calendar' },
     ]);
     const events: string[] = [];
     const sharedFactories: (() => Promise<unknown>)[] = [];
-    const resolveSpy = vi.fn(() =>
+    const resolveSpy = vi.fn((_connectorId: string) =>
       Promise.resolve({ source: 'manual', credentials: { accessToken: 't' } }),
     );
     const loop = new ConnectorAssignmentLoop({
@@ -622,7 +622,7 @@ describe('ConnectorAssignmentLoop', () => {
       googleHome: '/tmp/google-home',
     });
     (
-      loop as unknown as { resolveGoogleCredentials: () => Promise<unknown> }
+      loop as unknown as { resolveGoogleCredentials: (connectorId: string) => Promise<unknown> }
     ).resolveGoogleCredentials = resolveSpy;
     await loop.runOnce();
     await settle();
@@ -633,10 +633,42 @@ describe('ConnectorAssignmentLoop', () => {
       'start:google-calendar',
       'end:google-calendar',
     ]);
-    // ONE grant resolution: every tool of the drain rode the same promise.
-    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy.mock.calls.map(([connectorId]) => connectorId)).toEqual(['g1', 'g2']);
     expect(sharedFactories).toHaveLength(2);
-    expect(sharedFactories[0]()).toBe(sharedFactories[1]());
+    loop.stop();
+  });
+
+  it('does not reuse a sibling grant for a tool waiting on fresh OAuth', async () => {
+    const assignments: ConnectorAssignment[] = [
+      { kind: 'install', connectorId: 'ready', connectorType: 'google-calendar' },
+      { kind: 'install', connectorId: 'retry', connectorType: 'google-gmail' },
+    ];
+    const calls: ExecuteCall[] = [];
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        calls.push({ op, input });
+        if (op === 'getConnectorAssignments') return { assignments };
+        if (op === 'getGoogleOAuthGrant') return input.connectorId === 'ready'
+          ? { status: 'ready', credentials: { accessToken: 'old-token' } }
+          : { status: 'pending' };
+        return {};
+      },
+    };
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never, agentId: 'agent-1', mcp,
+      installGoogle: async (_kind, _onProgress, resolve) => {
+        const grant = await resolve!();
+        return grant.source === 'pending'
+          ? { status: 'installing', steps: [] }
+          : { status: 'connected', steps: [] };
+      },
+    });
+    await loop.runOnce();
+    await settle();
+    expect(calls.filter((call) => call.op === 'getGoogleOAuthGrant').map((call) =>
+      call.input.connectorId)).toEqual(['ready', 'retry']);
+    expect(calls.filter((call) => call.op === 'installConnector').map((call) =>
+      call.input.connectorId)).toEqual(['ready']);
     loop.stop();
   });
 

@@ -102,9 +102,8 @@ export type InstallGoogleToolOptions = {
   /** Override credential resolution (tests). */
   readonly resolveCredentials?: () => Promise<ResolvedGoogleCredentials>;
   /**
-   * An already-resolved (or in-flight) grant shared across this drain's
-   * Google tool installs: the single Google consent resolves ONCE and every
-   * tool's install rides the same result. Takes precedence over
+   * An already-resolved (or in-flight) grant for this connector. The helper
+   * checks each connector's OAuth readiness. Takes precedence over
    * `resolveCredentials` when both are given.
    */
   readonly resolvedCredentials?:
@@ -192,9 +191,34 @@ export async function installGoogleTool(
   });
   emit();
 
-  push(step('tools enabled', 'done', {
-    output: `${GOOGLE_TOOL_SCOPES[options.connectorType]!.length} Google scopes granted`,
-  }));
+  // User-info proves the token, but it cannot prove access to this tool.
+  // Exercise a read-only capability before the server clears an old error.
+  push(step('tools enabled', 'running', { output: 'verifying this Google tool…' }));
+  try {
+    switch (options.connectorType) {
+      case 'google-gmail':
+        await client.gmail.listMessages();
+        break;
+      case 'google-calendar':
+        await client.calendar.listEvents({ maxResults: 1 });
+        break;
+      case 'google-drive':
+        await client.drive.searchFiles('');
+        break;
+      case 'google-youtube':
+        await client.youtube.listVideos();
+        break;
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    steps[3] = step('tools enabled', 'failed', { reason, output: outputTail(reason) });
+    emit();
+    return { status: 'error', steps, errorMessage: reason };
+  }
+  steps[3] = step('tools enabled', 'done', {
+    output: `${GOOGLE_TOOL_SCOPES[options.connectorType]!.length} Google scopes granted; tool verified`,
+  });
+  emit();
   if (options.connectorType === 'google-youtube')
     persistManualGoogleCredentials(options.home, resolved.credentials);
   return {

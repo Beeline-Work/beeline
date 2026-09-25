@@ -744,7 +744,7 @@ async function route(
       'x-content-type-options': 'nosniff',
     });
     response.end(code && completed
-      ? '<p>Google Workspace connected. Return to Beeline.</p>'
+      ? '<p>Google sign-in completed. Return to Beeline while the helper verifies the tool.</p>'
       : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>');
     return;
   }

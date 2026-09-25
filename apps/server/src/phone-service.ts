@@ -6464,13 +6464,13 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
-    return this.armConnectorPairing(this.database, {
+    return this.database.transaction((database) => this.armConnectorPairing(database, {
       workspaceId: ws.workspace_id,
       ownerIdentityId: viewerId,
       connectorType: input.connectorType,
       helperAgentId: matched.agent_id,
       machineId,
-    });
+    }));
   }
 
   /**
@@ -6529,7 +6529,8 @@ export class PhoneService {
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
            status_steps=EXCLUDED.status_steps,
-           status_error=NULL,
+           status_error=CASE WHEN EXCLUDED.connector_type LIKE 'google-%'
+             THEN workspace_connectors.status_error ELSE NULL END,
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,

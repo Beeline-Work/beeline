@@ -51,3 +51,14 @@ test('release images copy clean-dist before building workspace packages', () => 
     );
   }
 });
+
+test('server image includes fixed bot logo assets in its build context and runtime', () => {
+  const dockerignore = readFileSync(join(repositoryRoot, '.dockerignore'), 'utf8');
+  const dockerfile = readFileSync(join(repositoryRoot, 'apps/server/Dockerfile'), 'utf8');
+  assert.match(dockerignore, /^!apps\/server\/assets\/connectors\/\*\.svg$/m);
+  assert.match(dockerfile, /^COPY apps\/server\/assets \.\/apps\/server\/assets$/m);
+  assert.match(
+    dockerfile,
+    /^COPY --from=build \/app\/apps\/server\/assets \.\/apps\/server\/assets$/m,
+  );
+});

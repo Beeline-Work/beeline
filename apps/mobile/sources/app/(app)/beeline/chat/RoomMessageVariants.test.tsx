@@ -169,6 +169,7 @@ import {
   NotificationLifecycleCard,
   GrantRequestCard,
   ConnectorOfferCard,
+  ConnectorReceiptCard,
   ChoiceCard,
   agentBylineLabel,
   OrdinaryLedgerMessage,
@@ -3140,6 +3141,29 @@ describe('Connector receipt cards', () => {
     // The receipt line itself never double-prints as ledger prose.
     const ledgerProps = ledgerEntryRender.mock.lastCall?.[0];
     expect(ledgerProps.bodyText).toBe('Vercel deploy finished.');
+  });
+
+  it('uses the connector identity logo in its receipt card', () => {
+    const row = receiptMessage('receipt: Vercel · deploy · via Trusty Squire on squire-box');
+    row.authorIdentity = {
+      pubkey: 'squire-id',
+      kind: 'human',
+      name: 'Trusty Squire',
+      avatar: 'https://api.example.test/v1/connectors/logo/trusty-squire.svg',
+    };
+    const renderer = render(
+      <ConnectorReceiptCard
+        receipt={{
+          connection: 'Vercel',
+          operation: 'deploy',
+          helper: 'squire-box',
+        }}
+        identity={row.authorIdentity}
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'connector-receipt-logo' }).props.avatarUrl).toBe(
+      row.authorIdentity.avatar,
+    );
   });
 
   it('renders an ordinary message with no receipt line untouched', () => {

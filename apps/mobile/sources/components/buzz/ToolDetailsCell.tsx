@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from './SettingsRow';
+import { IdentityMark } from './IdentityMark';
 
 /**
  * ToolDetailsCell — the ONE expandable/collapsible tool row for the
@@ -22,6 +23,7 @@ export type ToolDetailsCellProps = {
   actionDisabled?: boolean;
   actionTestID?: string;
   detailText: string;
+  logoUrl?: string;
   errorText?: string;
   extraActions?: readonly {
     label: string;
@@ -46,6 +48,7 @@ export function ToolDetailsCell({
   actionDisabled,
   actionTestID,
   detailText,
+  logoUrl,
   errorText,
   extraActions,
   onAction,
@@ -66,6 +69,11 @@ export function ToolDetailsCell({
   return (
     <View testID={testID}>
       <SettingsRow
+        leading={
+          logoUrl ? (
+            <IdentityMark kind="human" seed={testID} name={title} avatarUrl={logoUrl} size={26} />
+          ) : undefined
+        }
         action={action}
         description={errorText}
         descriptionTone={errorText ? 'danger' : undefined}

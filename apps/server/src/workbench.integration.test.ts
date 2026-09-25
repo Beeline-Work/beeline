@@ -56,13 +56,7 @@ describe('workbench connectors', () => {
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member')`,
-      [
-        WORKSPACE,
-        HUMAN,
-        RECIPIENT,
-        HELPER,
-        OTHER_HELPER,
-      ],
+      [WORKSPACE, HUMAN, RECIPIENT, HELPER, OTHER_HELPER],
     );
     auth = new TokenAuth(database, async (proof) => {
       const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
@@ -74,13 +68,37 @@ describe('workbench connectors', () => {
       {} as unknown as GitHubAppClient,
       'github-client-secret',
     );
-    const googleOAuth = new GoogleOAuth(database, 'client', 'secret',
-      'http://placeholder', Buffer.alloc(32, 1).toString('base64'));
-    phone = new PhoneService(database, 'http://placeholder', githubOperations,
-      undefined, undefined, false, database, undefined, googleOAuth);
+    const googleOAuth = new GoogleOAuth(
+      database,
+      'client',
+      'secret',
+      'http://placeholder',
+      Buffer.alloc(32, 1).toString('base64'),
+    );
+    phone = new PhoneService(
+      database,
+      'http://placeholder',
+      githubOperations,
+      undefined,
+      undefined,
+      false,
+      database,
+      undefined,
+      googleOAuth,
+    );
     const live = new LiveHub();
-    daemon = new DaemonService(database, live, undefined, undefined, false,
-      undefined, false, undefined, undefined, googleOAuth);
+    daemon = new DaemonService(
+      database,
+      live,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      googleOAuth,
+    );
     server = createBeelineServer({ database, auth, phone, daemon, live, googleOAuth });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -178,10 +196,11 @@ describe('workbench connectors', () => {
       [SIBLING],
     );
     await database.query(`UPDATE agents SET machine_id=$2 WHERE agent_id=$1`, [HELPER, MACHINE]);
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`,
-      [SIBLING, HUMAN, MACHINE],
-    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,$3)`, [
+      SIBLING,
+      HUMAN,
+      MACHINE,
+    ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
       [WORKSPACE, SIBLING],
@@ -458,12 +477,13 @@ describe('workbench connectors', () => {
       avatar: 'http://placeholder/v1/connectors/logo/trusty-squire.svg',
     });
 
-    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
+    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`);
     expect(logo.status).toBe(200);
     expect(logo.headers.get('content-type')).toBe('image/svg+xml');
     expect(await logo.text()).toContain('aria-label="Trusty Squire"');
+    const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`);
+    expect(systemLogo.status).toBe(200);
+    expect(await systemLogo.text()).toContain('aria-label="System"');
   });
 
   it('DMs exactly one receipt card for an approval-class event', async () => {
@@ -966,7 +986,9 @@ describe('workbench connectors', () => {
     })) as { connectorId: string };
 
     await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-youtube', helperAgentId: HELPER,
+      workspaceId: WORKSPACE,
+      connectorType: 'google-youtube',
+      helperAgentId: HELPER,
     });
     await database.query(
       `UPDATE workspace_connectors SET status='connected', connected_at=now()
@@ -1054,8 +1076,13 @@ describe('workbench connectors', () => {
       connectorType: 'google-youtube',
     });
     expect(
-      (await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId: paired.connectorId }, recipientToken))
-        .status,
+      (
+        await operation(
+          'unpairConnector',
+          { workspaceId: WORKSPACE, connectorId: paired.connectorId },
+          recipientToken,
+        )
+      ).status,
     ).toBe(403);
     await phoneOperation('unpairConnector', {
       workspaceId: WORKSPACE,
@@ -1237,7 +1264,9 @@ describe('workbench connectors', () => {
       [paired.connectorId],
     );
     expect(row.rows[0]!.status).toBe('installing');
-    expect(row.rows[0]!.status_steps).toEqual([{ label: 'waiting for sign-in', status: 'pending' }]);
+    expect(row.rows[0]!.status_steps).toEqual([
+      { label: 'waiting for sign-in', status: 'pending' },
+    ]);
     expect(row.rows[0]!.pairing_generation).toBe(1);
   });
 

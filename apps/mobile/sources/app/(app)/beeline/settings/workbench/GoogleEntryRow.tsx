@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
   googleEntryConnector,
   googleToolRows,
@@ -31,9 +33,7 @@ export function GoogleEntryRow({
   if (!entry) return null;
   const instrument = connectorInstrument(entry.status, entry.id);
   const errorText =
-    entry.status === 'error'
-      ? (entry.errorMessage ?? 'Connection failed')
-      : undefined;
+    entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined;
 
   return (
     <View testID="google-entry">
@@ -55,6 +55,15 @@ export function GoogleEntryRow({
             const extras = connectorExpandedActions(toolInstrument);
             return [
               <SettingsRow
+                leading={
+                  <IdentityMark
+                    kind="human"
+                    seed={tool.id}
+                    name={tool.name}
+                    avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${tool.id}.svg`}
+                    size={26}
+                  />
+                }
                 key={tool.id}
                 testID={`google-tool-${tool.id}`}
                 title={tool.name}
@@ -63,11 +72,15 @@ export function GoogleEntryRow({
                 action={canConnect ? 'Connect' : undefined}
                 description={tool.status === 'error' ? tool.errorMessage : undefined}
                 descriptionTone={tool.status === 'error' ? 'danger' : undefined}
-                trailingPress={canConnect ? {
-                  accessibilityLabel: `Connect ${tool.name}`,
-                  onPress: () => onPressConnect(tool.id),
-                  testID: `google-tool-${tool.id}-connect`,
-                } : undefined}
+                trailingPress={
+                  canConnect
+                    ? {
+                        accessibilityLabel: `Connect ${tool.name}`,
+                        onPress: () => onPressConnect(tool.id),
+                        testID: `google-tool-${tool.id}-connect`,
+                      }
+                    : undefined
+                }
               />,
               ...extras.map((control) => (
                 <SettingsRow

@@ -3,6 +3,14 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example.test' }),
+}));
+vi.mock('@/components/buzz/IdentityMark', async () => {
+  const ReactModule = await import('react');
+  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
+});
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -49,9 +57,12 @@ it('shows four independent Google install actions and statuses', async () => {
   await act(async () => { renderer = create(<GoogleEntryRow connectors={connectors}
     onPressConnect={onPressConnect} onPressDisconnect={onPressDisconnect} />); });
   const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
+  expect(parent.props.leading).toBeUndefined();
   expect(parent.props.action).toBeUndefined();
   await act(async () => parent.props.onPress());
   expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe('connected');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.leading.props.avatarUrl)
+    .toBe('https://server.example.test/v1/connectors/logo/google-drive.svg');
   expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.value).toBe('installing');
   expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube' }).props.description).toBe('Scope refused');
   expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube-reconnect' }).props.title).toBe('Reconnect');

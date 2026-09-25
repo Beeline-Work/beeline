@@ -945,7 +945,6 @@ async function route(
     return;
   }
 
-  const identityId = await phoneIdentity(request, options);
   if (method === 'GET' && url.pathname.startsWith('/v1/connectors/logo/')) {
     const type = url.pathname.slice('/v1/connectors/logo/'.length).replace(/\.svg$/, '');
     const logo = connectorLogo(type);
@@ -962,6 +961,7 @@ async function route(
     response.end(logo);
     return;
   }
+  const identityId = await phoneIdentity(request, options);
   if (
     method === 'GET' &&
     (url.pathname.startsWith('/v1/avatars/') || url.pathname.startsWith('/v1/agent-avatars/'))

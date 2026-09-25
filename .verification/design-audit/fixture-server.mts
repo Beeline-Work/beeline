@@ -28,6 +28,12 @@ import { createBeelineServer } from '../../apps/server/src/server.js';
 import { GitHubOperations } from '../../apps/server/src/github-operations.js';
 import { createMonolithAuth } from '../../apps/server/src/monolith-auth.js';
 import { ReviewAccess } from '../../apps/server/src/review-access.js';
+import {
+  ensureConnectorDirectMessageRoom,
+  connectorIdentityId,
+} from '../../apps/server/src/workbench.js';
+import { ensureSystemDirectMessageRoom } from '../../apps/server/src/system-line.js';
+import { SYSTEM_IDENTITY_ID } from '../../packages/api-contract/src/system-identity.js';
 
 const WEB_ORIGIN = process.env.AUDIT_WEB_ORIGIN ?? 'http://localhost:8081';
 const PORT = Number(process.env.AUDIT_SERVER_PORT ?? 4310);
@@ -293,7 +299,8 @@ const rows: Row[] = [
         title: 'npx vitest run sources/buzz/calm-lint --reporter=verbose --coverage',
         operation: 'ran',
         command: 'npx vitest run sources/buzz/calm-lint --reporter=verbose --coverage',
-        output: 'FAIL  sources/buzz/calm-lint.design.test.ts\nbaseline count grew for _chat-surface.tsx',
+        output:
+          'FAIL  sources/buzz/calm-lint.design.test.ts\nbaseline count grew for _chat-surface.tsx',
         status: 'error',
       },
     ],
@@ -365,12 +372,48 @@ await database.query(
   ],
 );
 
+const botRooms: Record<string, string> = {};
+for (const kind of [
+  'trusty-squire',
+  'wallet',
+  'tailscale',
+  'google-gmail',
+  'google-calendar',
+  'google-drive',
+  'google-youtube',
+] as const) {
+  const roomId = await ensureConnectorDirectMessageRoom(database, WORKSPACE, kind, VIEWER);
+  botRooms[kind] = roomId;
+  await database.query(
+    `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+     VALUES($1,$2,$3,$4,'message',now() - interval '1 minute')`,
+    [
+      messageId(`bot-${kind}`),
+      roomId,
+      connectorIdentityId(kind),
+      kind === 'trusty-squire'
+        ? 'Deployment finished.\nreceipt: Vercel · deploy · via Trusty Squire on squire-box · grant audit · 2 calls · 2.1 kB'
+        : kind === 'wallet'
+          ? 'Wallet is connected.\nreceipt: Coinbase Wallet · connect · via Wallet · 1 call'
+          : `${kind} connection is ready.\nreceipt: ${kind} · connect · 1 call`,
+    ],
+  );
+}
+botRooms.system = await ensureSystemDirectMessageRoom(database, WORKSPACE, VIEWER);
+await database.query(
+  `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+   VALUES($1,$2,$3,$4,'message',now())`,
+  [messageId('bot-system'), botRooms.system, SYSTEM_IDENTITY_ID, 'Workspace setup is complete.'],
+);
+
 const session = JSON.stringify(
   {
     origin,
     webOrigin: WEB_ORIGIN,
     identityId: VIEWER,
-    viewerNsec: process.env.AUDIT_VIEWER_NSEC ?? 'nsec1444s5f36tte8gh457erxwr427kcwh3uqphrvhp4llmv4cgpglwysx7unnq',
+    viewerNsec:
+      process.env.AUDIT_VIEWER_NSEC ??
+      'nsec1444s5f36tte8gh457erxwr427kcwh3uqphrvhp4llmv4cgpglwysx7unnq',
     refreshToken: tokens.refreshToken,
     reviewSecret: REVIEW_SECRET,
     workspaceId: WORKSPACE,
@@ -378,6 +421,7 @@ const session = JSON.stringify(
     quietRoomId: ROOM_QUIET,
     cornerId: CORNER,
     dmId: DM,
+    botRooms,
     agents: { niglet: AGENT_NIGLET, sol: AGENT_SOL },
   },
   null,

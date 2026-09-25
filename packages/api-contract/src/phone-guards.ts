@@ -578,7 +578,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     !isChoiceMode(item.mode) ||
     !isChoiceStatus(item.status) ||
     !agent ||
-    agent.kind !== 'agent' ||
+    (agent.kind !== 'agent' && !(item.mode === 'poll' && agent.kind === 'human')) ||
     typeof item.prompt !== 'string' ||
     !options ||
     options.length < 2 ||

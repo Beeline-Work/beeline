@@ -1887,6 +1887,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               ? () =>
                   isAgent ? onOpenProfile(message.pubkey!) : onOpenProfile(message.pubkey!, 'human')
               : undefined,
+          // The byline is a nested profile Pressable. Giving that Pressable
+          // the row's long-press action makes React Native cancel its onPress
+          // on release instead of navigating behind the actions sheet.
+          onLongPress: onMessageActions ? () => onMessageActions(message) : undefined,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,
           isViewer: isSelfSteer,

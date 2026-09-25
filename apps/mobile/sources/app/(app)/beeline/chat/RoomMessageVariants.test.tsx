@@ -3060,6 +3060,47 @@ describe('Room message variant components', () => {
     expect(onCopy).not.toHaveBeenCalled();
   });
 
+  it('claims a profile-byline long press for message actions instead of profile navigation', () => {
+    const onMessageActions = vi.fn();
+    const onOpenProfile = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'agent-byline',
+          pubkey: 'agent-pubkey',
+          isAgentAuthor: true,
+          authorIdentity: {
+            pubkey: 'agent-pubkey',
+            kind: 'agent',
+            name: 'Proofbot',
+            handle: 'proofbot',
+          },
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onOpenProfile={onOpenProfile}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onMessageActions={onMessageActions}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const byline = ledgerEntryRender.mock.lastCall?.[0].byline;
+    expect(byline.onLongPress).toBeTypeOf('function');
+    act(() => byline.onLongPress());
+    expect(onMessageActions).toHaveBeenCalledTimes(1);
+    expect(onMessageActions.mock.calls[0][0].id).toBe('agent-byline');
+    expect(onOpenProfile).not.toHaveBeenCalled();
+  });
+
   it('opens the exact reply source from the quoted reply strip', () => {
     const onOpenSource = vi.fn();
     const renderer = render(

@@ -170,6 +170,47 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])('does not start an autonomous harness while %s is pending', async (gate) => {
+    const agent = stored('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) =>
+      name === gate
+        ? { allowed: false, status: 'pending' }
+        : { allowed: true, id: 'write', createdAt: 1 },
+    );
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+    const schedule = vi.spyOn(scheduler, 'run');
+    const createAcpClient = vi.fn();
+    const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
+    roots.push(root);
+    const loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Edit the repository',
+      worktreePath: root,
+      runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
+      config: { agentHomeRoot: root } as BodyConfig,
+      api: { execute } as unknown as DaemonApiClient,
+      scheduler,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(),
+      createAcpClient,
+    });
+    await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
+      'request',
+      'work',
+    );
+    expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
+    expect(schedule).not.toHaveBeenCalled();
+    expect(createAcpClient).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith(
+      'postAgentTurnReceipt',
+      expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
+    );
+    await scheduler.dispose();
+  });
+
   it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);
@@ -199,6 +240,7 @@ describe('corner merge instructions', () => {
     } as unknown as AgentRuntimeRecord;
     const api = {
       execute: vi.fn(async (name: string) => {
+        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall') return { allowed: true };
         if (name === 'getAgentConfiguration')
           return { commands: [], yoloMode: true, reviewerHandle: 'echo' };
         if (name === 'getWorkspaceRoster')

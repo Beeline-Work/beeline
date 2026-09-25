@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGENT_GRANT_KINDS } from '@beeline/api-contract/agent-grants';
+import { REQUESTABLE_AGENT_GRANT_KINDS } from '@beeline/api-contract/agent-grants';
 import {
   agentToolsFor,
   requestGrant,
@@ -26,6 +26,14 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
+  it('rejects generic budget prompts before calling the server', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await expect(
+      requestGrant({ kind: 'budget', target: '$10', reason: 'more tokens' }, deps({}, ops)),
+    ).rejects.toThrow('kind must be one of');
+    expect(ops).toEqual([]);
+  });
+
   it('is mounted in Rooms, corners, and direct messages next to run_granted_command', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
@@ -45,7 +53,7 @@ describe('beeline-agent request_grant', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'request_grant');
     const kinds = (tool?.inputSchema as { properties: { kind: { enum: string[] } } }).properties.kind
       .enum;
-    expect([...kinds].sort()).toEqual([...AGENT_GRANT_KINDS].sort());
+    expect([...kinds].sort()).toEqual([...REQUESTABLE_AGENT_GRANT_KINDS].sort());
     // The description is the interface the model reads to pick a kind: a kind
     // the schema offers but the prose never names is one nobody asks for.
     for (const kind of kinds) expect(tool?.description).toContain(kind);

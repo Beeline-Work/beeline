@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { RESOURCE_FACADE_FLAG, runResourceFacade } from './resource-mcp-facade.js';
 /**
  * Beeline body CLI — run a body against a TLC channel.
  *
@@ -582,6 +583,10 @@ async function main(): Promise<void> {
   const command = args[0];
   if (command === CURSOR_ACP_BRIDGE_FLAG) {
     await runCursorAcpStdioServer();
+    return;
+  }
+  if (command === RESOURCE_FACADE_FLAG) {
+    runResourceFacade();
     return;
   }
   if (command === SQUIRE_FACADE_FLAG) {

@@ -245,8 +245,12 @@ export class GrantCommandRunner {
     const room = this.rooms.get(input.roomId);
     if (!room) throw new Error('this daemon is not serving that Room');
     const argv = validateGrantArgv(input.argv);
-    const live = await this.options.api.execute('listAgentGrants', {
-      agentId: this.options.agentId,
+    const turn = room.turn();
+    if (!turn?.requestId || !turn.generationId) throw new Error('command requires an active turn');
+    const live = await this.options.api.execute('listTurnAgentGrants', {
+      roomId: input.roomId,
+      requestId: turn.requestId,
+      generationId: turn.generationId,
     });
     const match = matchCommandGrant(live.grants, room.workspaceId, argv);
     if (!match) {
@@ -351,8 +355,7 @@ export class GrantCommandRunner {
       ),
       cap,
     );
-    const turn = room.turn();
-    const requester = turn?.requester ?? {
+    const requester = {
       pubkey: grant.requestedBy,
       ...(grant.requestedByName ? { name: grant.requestedByName } : {}),
     };

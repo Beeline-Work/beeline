@@ -126,7 +126,7 @@ export type RoomViewIdentity = {
 
 export type RoomViewMember = {
   readonly identity: RoomViewIdentity;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: 'owner' | 'admin' | 'member' | 'spectator';
   readonly presence?: {
     readonly status: 'online' | 'offline';
     readonly observedAt: number;
@@ -437,7 +437,7 @@ export type RoomViewer = {
     readonly unreadAgentTurnCount?: number;
   };
   readonly identity: RoomViewIdentity;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: 'owner' | 'admin' | 'member' | 'spectator';
   readonly permissions: {
     readonly send: boolean;
     readonly manage: boolean;
@@ -599,7 +599,7 @@ export type ChatListWorkspace = {
   readonly avatar?: string;
   /** Absent when the server omitted it or named a value this bundle does not know. */
   readonly visibility?: 'public' | 'invite-only';
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: 'owner' | 'admin' | 'member' | 'spectator';
   readonly updatedAt: number;
 };
 
@@ -681,6 +681,8 @@ export type WorkspaceMemberListView = {
 };
 
 export type WorkspaceMemberListQuery = {
+  readonly memberId?: string;
+  readonly ownerId?: string;
   readonly q?: string;
   readonly kind?: 'human' | 'agent';
   readonly offset?: number;
@@ -696,8 +698,10 @@ export type AgentComposerCommand = {
 export type AgentDetailView = {
   /** Present only after a generated portrait has committed successfully. */
   readonly avatarGenerationId?: string;
+  readonly avatarGenerationPending?: boolean;
   /** Merged PRs opened by this agent in corners the viewer may read. */
   readonly recentWork?: readonly { readonly title: string; readonly url: string }[];
+  readonly recentWorkCursor?: string;
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
   /** The person who connected and owns this agent's configuration. */

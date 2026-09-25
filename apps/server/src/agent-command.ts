@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS agent_commands (
  result_message_id text REFERENCES messages(id),
  UNIQUE(room_id,source_message_id,agent_id,action)
 );
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS avatar_job boolean NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_commands_one_avatar_job ON agent_commands(agent_id)
+  WHERE avatar_job AND state IN ('pending','claimed');
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
@@ -196,6 +199,7 @@ export async function createAgentCommand(
     parent?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
+    avatarJob?: boolean;
   },
 ): Promise<CommandRow | undefined> {
   const depth = input.parent
@@ -216,8 +220,8 @@ export async function createAgentCommand(
   const id = randomBytes(32).toString('hex');
   const result = await db.query<CommandRow>(
     `INSERT INTO agent_commands
- (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
  ON CONFLICT(room_id,source_message_id,agent_id,action) DO UPDATE SET id=agent_commands.id RETURNING *`,
     [
       id,
@@ -231,6 +235,7 @@ export async function createAgentCommand(
       input.parent?.id ?? null,
       input.parent?.root_source_message_id ?? input.sourceMessageId,
       depth,
+      input.avatarJob ?? false,
     ],
   );
   return result.rows[0];
@@ -539,6 +544,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   // A human message reaches an agent only when it addresses that agent: a
   // typed tag, or membership of a direct conversation. Nothing routes on
   // transcript adjacency — an untagged top-level message starts no turn.
+  const avatarJob = /^(?:@[^\s]+\s+)?\/draw-avatar(?:\s|$)/i.test(source.text.trim());
   const targets = new Set([...source.tagged_ids, ...(source.direct_participants ?? [])]);
   targets.delete(source.author_id);
   for (const target of targets) {
@@ -546,7 +552,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       await db.query<{ owner_id: string; access_policy: unknown }>(
         `SELECT a.owner_id,a.access_policy FROM agents a
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=$3 AND m.removed_at IS NULL
-   WHERE a.agent_id=$1 FOR SHARE OF a,m`,
+   WHERE a.agent_id=$1 FOR ${avatarJob ? 'UPDATE' : 'SHARE'} OF a,m`,
         [target, source.author_id, source.room_id],
       )
     ).rows[0];
@@ -559,9 +565,15 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       )
     )
       continue;
+    if (avatarJob) {
+      if (agent.owner_id !== source.author_id) throw new Error('only the agent owner may generate its avatar (access denied)');
+      const active = await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND avatar_job AND state IN ('pending','claimed')`, [target]);
+      if (active.rowCount) throw new Error('avatar generation already active (conflict)');
+    }
     await createAgentCommand(db, {
       roomId: source.room_id,
       agentId: target,
+      avatarJob,
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });

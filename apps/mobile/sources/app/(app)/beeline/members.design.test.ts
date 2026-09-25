@@ -9,6 +9,10 @@ const profile = readFileSync(
   new URL('../../../components/buzz/AgentProfileView.tsx', import.meta.url),
   'utf8',
 );
+const profileIdentity = readFileSync(
+  new URL('../../../components/buzz/ProfileIdentity.tsx', import.meta.url),
+  'utf8',
+);
 const memberRow = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',
@@ -81,9 +85,11 @@ describe('Members page layout contract', () => {
     expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
   });
 
-  it('shows the assigned animal and handle in the inline profile editor', () => {
-    expect(profile).toContain('testID="agent-handle"');
-    expect(profile).toContain('face={identity.face}');
+  it('shows the assigned animal and handle through the shared Settings identity', () => {
+    expect(profile).toContain('<ProfileIdentity identity={identity}');
+    expect(profileIdentity).toContain('testID="profile-handle"');
+    expect(profileIdentity).toContain('face={identity.face}');
+    expect(profileIdentity).toContain('IDENTITY_SETTINGS_TILE');
     expect(profile).toContain('testID="edit-agent-soul"');
     expect(profile).toContain('testID="save-agent-soul"');
     expect(profile).toContain('testID="cancel-agent-edit"');
@@ -99,8 +105,10 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('Ban this agent from every Room');
     expect(source).toContain('testID="remove-agent"');
     expect(source).toContain('style={styles.removeAgentControl}');
-    expect(profile).toContain('testID="agent-handle"');
-    expect(source).toContain('testID="agent-owner"');
+    expect(profile).toContain('<ProfileIdentity identity={identity}');
+    expect(profileIdentity).toContain('testID="profile-handle"');
+    expect(profile).toContain('ownerHandle={detail.owner?.handle}');
+    expect(profileIdentity).toContain('testID="profile-owner"');
   });
 
   it('keeps the compact control at the 44pt target and above the contrast floors', () => {

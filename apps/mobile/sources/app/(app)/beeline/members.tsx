@@ -1,3 +1,4 @@
+import { WorkspaceBans } from '@/components/buzz/WorkspaceBans';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
@@ -30,13 +31,8 @@ import {
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
+import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
-import {
-  HullActionSheetCancel,
-  HullActionSheetModal,
-  HullActionSheetRow,
-} from '@/components/buzz/HullActionSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -59,7 +55,6 @@ async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
 }
 
-type WorkspaceRole = 'owner' | 'admin' | 'member';
 type MembersAction =
   | 'invite-person'
   | 'pair-agent'
@@ -110,45 +105,11 @@ async function waitForIndexedSurface<T>(
   throw new Error('The change was published, but the indexed Workspace view did not confirm it.');
 }
 
-function canChangeRole(
-  viewerRole: WorkspaceRole,
-  viewerPubkey: string,
-  targetPubkey: string,
-  targetRole: WorkspaceRole,
-): boolean {
-  if (viewerPubkey === targetPubkey) return false;
-  if (viewerRole === 'owner') return true;
-  return viewerRole === 'admin' && targetRole === 'member';
-}
-
-function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean {
-  return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
-}
-
-function canRemovePerson(
-  viewerRole: WorkspaceRole,
-  viewerPubkey: string,
-  targetPubkey: string,
-  targetRole: WorkspaceRole,
-): boolean {
-  return (
-    viewerPubkey !== targetPubkey &&
-    targetRole !== 'owner' &&
-    (viewerRole === 'owner' || viewerRole === 'admin')
-  );
-}
-
 function ownerByline(
   owner: NonNullable<WorkspaceView['agents'][number]['owner']>,
 ): string | undefined {
   return owner.handle ? `by @${owner.handle}` : undefined;
 }
-
-const ROLE_LABELS: Record<WorkspaceRole, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  member: 'Member',
-};
 
 type ModelAxisKind = 'model' | 'effort';
 
@@ -276,7 +237,6 @@ export default function BuzzMembers({
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
   const [agentNameDraft, setAgentNameDraft] = useState('');
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
-  const [openPersonPubkey, setOpenPersonPubkey] = useState<string | null>(null);
   const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
@@ -306,6 +266,12 @@ export default function BuzzMembers({
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
+  const canBanSelectedAgent = Boolean(
+    surface?.viewer.permissions.manage &&
+    selectedAgent &&
+    selectedAgent.agent.role !== 'owner' &&
+    (surface.viewer.role === 'owner' || ['member','spectator'].includes(selectedAgent.agent.role)),
+  );
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const selectedAgentOwnerByline = selectedAgent?.owner
     ? ownerByline(selectedAgent.owner)
@@ -480,7 +446,6 @@ export default function BuzzMembers({
   const openAgent = async (agentPubkey: string) => {
     if (!identity || !relayUrl || !workspaceId) return;
     const generation = ++agentRequestGenerationRef.current;
-    setOpenPersonPubkey(null);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
     setEditingAgentSoul(false);
@@ -625,98 +590,15 @@ export default function BuzzMembers({
     }
   };
 
-  const setPersonRole = async (pubkey: string, role: WorkspaceRole) => {
-    if (!surface || !workspaceId) return;
-    const target = (rosterPeople ?? surface.members).find(
-      (member) => member.identity.pubkey === pubkey,
-    );
-    if (
-      !target ||
-      !surface.viewer.permissions.manage ||
-      !canChangeRole(surface.viewer.role, surface.viewer.identity.pubkey, pubkey, target.role) ||
-      !canAssignRole(surface.viewer.role, role)
-    )
-      return;
-    setWorking('person-role');
-    setError(null);
-    try {
-      const client = await writeClient();
-      await client.addMember(workspaceId, pubkey, role);
-      await client.waitUntilMemberRole(workspaceId, pubkey, role);
-      await waitForIndexedSurface(
-        readWorkspace,
-        (value) =>
-          value.members.some(
-            (member) => member.identity.pubkey === pubkey && member.role === role,
-          ) || !value.members.some((member) => member.identity.pubkey === pubkey),
-      );
-      setRosterPeople((current) =>
-        current
-          ? current.map((member) =>
-              member.identity.pubkey === pubkey ? { ...member, role } : member,
-            )
-          : current,
-      );
-      setOpenPersonPubkey(null);
-    } catch (reason) {
-      setError(`Could not change person role: ${String(reason)}`);
-      setOpenPersonPubkey(null);
-    } finally {
-      setWorking(null);
-    }
-  };
-
-  /** Removal from the Workspace takes the person out of every live Room with it. */
-  const removePerson = async (pubkey: string) => {
-    if (!surface || !workspaceId || !surface.viewer.permissions.manage) return;
-    const target = (rosterPeople ?? surface.members).find(
-      (member) => member.identity.pubkey === pubkey,
-    );
-    if (
-      !target ||
-      !canRemovePerson(surface.viewer.role, surface.viewer.identity.pubkey, pubkey, target.role)
-    )
-      return;
-    const name = target.identity.name;
-    const confirmed = await Modal.confirm(
-      `Remove ${name}?`,
-      `They leave this ${WORKSPACE_LABEL} and every Room in it. A new invite brings them back.`,
-      { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
-    );
-    if (!confirmed) return;
-    setWorking('remove-person');
-    setError(null);
-    try {
-      const client = await writeClient();
-      await client.removeMember(workspaceId, pubkey);
-      await waitForIndexedSurface(
-        readWorkspace,
-        (value) => !value.members.some((member) => member.identity.pubkey === pubkey),
-      );
-      setRosterPeople((current) =>
-        current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
-      );
-      setRosterPeopleTotal((current) => (current === null ? current : Math.max(0, current - 1)));
-      setOpenPersonPubkey(null);
-    } catch (reason) {
-      setError(`Could not remove ${name}: ${String(reason)}`);
-      setOpenPersonPubkey(null);
-    } finally {
-      setWorking(null);
-    }
-  };
-
   const messagePerson = async (pubkey: string) => {
     if (!identity || !workspaceId || pubkey === identity.publicKey) return;
     setWorking('message-person');
     setError(null);
     try {
       const room = await new BuzzRigTransport(identity).resolveDirectMessage(workspaceId, pubkey);
-      setOpenPersonPubkey(null);
       navigateToRoom(router, room.channelId);
     } catch (reason) {
       setError(`Could not open message: ${String(reason)}`);
-      setOpenPersonPubkey(null);
     } finally {
       setWorking(null);
     }
@@ -786,6 +668,18 @@ export default function BuzzMembers({
       });
     });
   }, [navigation, profileAgentId, agentEditDirty]);
+
+  useEffect(() => {
+    if (!profileAgentId || typeof window === 'undefined') return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void closeAgentProfile();
+    };
+    window.addEventListener('keydown', escape, true);
+    return () => window.removeEventListener('keydown', escape, true);
+  }, [profileAgentId, agentEditDirty, onClose]);
 
   const saveAgentSoul = async () => {
     if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return;
@@ -991,21 +885,30 @@ export default function BuzzMembers({
     }
   };
 
-  const removeSelectedAgent = async () => {
+  const removeSelectedAgent = async (banning = !ownsSelectedAgent) => {
     if (!selectedAgent || !canRemoveSelectedAgent || !workspaceId) return;
+    if (banning && !canBanSelectedAgent) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
     const name = selectedAgent.agent.identity.name;
     const confirmed = await Modal.confirm(
-      `Remove ${name}?`,
-      'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
-      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true },
+      banning ? `Ban ${name}?` : `Remove ${name}?`,
+      banning
+        ? 'This agent loses access to this Workspace and every Room in it. Rejoining is blocked until a manager lifts the ban.'
+        : 'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
+      {
+        cancelText: 'Cancel',
+        confirmText: banning ? 'Ban agent' : 'Remove agent',
+        destructive: true,
+      },
     );
     if (!confirmed) return;
     setWorking('remove-agent');
     setError(null);
     try {
       const client = await writeClient();
-      await client.removeAgent(workspaceId, pubkey);
+      if (banning)
+        await monolithPhoneOperation('banWorkspaceMember', { workspaceId, memberId: pubkey });
+      else await client.removeAgent(workspaceId, pubkey);
       await waitForIndexedSurface(
         readWorkspace,
         (value) => !value.agents.some((member) => member.identity.pubkey === pubkey),
@@ -1069,6 +972,15 @@ export default function BuzzMembers({
         avatarDisabled={busy}
         onGenerateAvatar={requestSoulAvatar}
         refreshAgent={() => readAgent(profileAgentId)}
+        loadMoreWork={async (cursor) => {
+          if (!identity || !relayUrl || !workspaceId)
+            throw new Error('Workspace connection unavailable');
+          return new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
+            workspaceId,
+            profileAgentId,
+            cursor,
+          );
+        }}
         editing={editingAgentSoul}
         saving={working === 'save-agent-soul'}
         nameDraft={agentNameDraft}
@@ -1255,7 +1167,16 @@ export default function BuzzMembers({
                   )}
                 </View>
               )}
-              {canRemoveSelectedAgent && (
+              {ownsSelectedAgent && canBanSelectedAgent && (
+                <MonoButton
+                  label="Ban from Workspace"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => void removeSelectedAgent(true)}
+                  testID="ban-owned-agent"
+                />
+              )}
+              {(ownsSelectedAgent || canBanSelectedAgent) && (
                 <TouchableOpacity
                   accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
                   accessibilityRole="button"
@@ -1308,61 +1229,32 @@ export default function BuzzMembers({
     (rosterAgents !== null ? agentsHasMore : surface.agentsTruncated) && !rosterLoading;
 
   const personRow = (member: (typeof people)[number]) => {
-    const editable = canChangeRole(
-      surface.viewer.role,
-      surface.viewer.identity.pubkey,
-      member.identity.pubkey,
-      member.role,
-    );
-    const hasActions =
-      member.identity.pubkey !== surface.viewer.identity.pubkey || (canManage && editable);
     return (
       <View key={member.identity.pubkey}>
         <MemberRosterRow
           avatarUrl={member.identity.avatar}
-          disabled={!hasActions || busy}
+          disabled={busy}
           divider="bottom"
           face={member.identity.face}
           handle={member.identity.handle}
           kind="human"
           name={member.identity.name}
-          onPress={() => setOpenPersonPubkey(member.identity.pubkey)}
+          onPress={() =>
+            router.push({
+              pathname: member.identity.pubkey === surface.viewer.identity.pubkey ? '/beeline/settings' : '/beeline/human-profile',
+              params: { communityId: workspaceId, memberId: member.identity.pubkey },
+            } as Href)
+          }
           pubkey={member.identity.pubkey}
           role={member.role}
           testID={`member-${member.identity.pubkey}-identity`}
           trailing={
-            hasActions ? (
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction="right"
-                size={CHEVRON_ROW_SIZE}
-              />
-            ) : undefined
+            <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
           }
         />
       </View>
     );
   };
-
-  const selectedPerson = people.find((member) => member.identity.pubkey === openPersonPubkey);
-  const selectedPersonEditable =
-    selectedPerson &&
-    canManage &&
-    canChangeRole(
-      surface.viewer.role,
-      surface.viewer.identity.pubkey,
-      selectedPerson.identity.pubkey,
-      selectedPerson.role,
-    );
-  const selectedPersonRemovable =
-    selectedPerson &&
-    canManage &&
-    canRemovePerson(
-      surface.viewer.role,
-      surface.viewer.identity.pubkey,
-      selectedPerson.identity.pubkey,
-      selectedPerson.role,
-    );
 
   return (
     <BuzzCommunityShell
@@ -1378,53 +1270,6 @@ export default function BuzzMembers({
       viewerAvatarUrl={surface.viewer.identity.avatar}
       viewerFace={surface.viewer.identity.face}
     >
-      <HullActionSheetModal
-        accessibilityLabel="Close member actions"
-        onClose={() => setOpenPersonPubkey(null)}
-        testID="member-actions"
-        title={selectedPerson ? memberRosterTitle(selectedPerson.identity) : 'Member'}
-        subtitle={selectedPerson ? ROLE_LABELS[selectedPerson.role] : undefined}
-        visible={Boolean(selectedPerson)}
-      >
-        {selectedPerson && selectedPerson.identity.pubkey !== surface.viewer.identity.pubkey && (
-          <HullActionSheetRow
-            disabled={busy}
-            label="Message"
-            onPress={() => void messagePerson(selectedPerson.identity.pubkey)}
-            testID={`message-person-${selectedPerson.identity.pubkey}`}
-          />
-        )}
-        {selectedPersonEditable && (
-          <View testID={`member-${selectedPerson.identity.pubkey}-roles`}>
-            {(['member', 'admin', 'owner'] as const).map((role) => (
-              <HullActionSheetRow
-                disabled={
-                  !canAssignRole(surface.viewer.role, role) || selectedPerson.role === role || busy
-                }
-                key={role}
-                label={ROLE_LABELS[role]}
-                onPress={() => void setPersonRole(selectedPerson.identity.pubkey, role)}
-                selected={selectedPerson.role === role}
-                testID={`member-${selectedPerson.identity.pubkey}-${role}`}
-              />
-            ))}
-          </View>
-        )}
-        {selectedPersonRemovable && (
-          <HullActionSheetRow
-            accessibilityLabel={`Remove ${selectedPerson.identity.name} from ${WORKSPACE_LABEL}`}
-            destructive
-            disabled={busy}
-            label="Remove"
-            onPress={() => void removePerson(selectedPerson.identity.pubkey)}
-            testID={`remove-person-${selectedPerson.identity.pubkey}`}
-          />
-        )}
-        <HullActionSheetCancel
-          onPress={() => setOpenPersonPubkey(null)}
-          testID="member-actions-close"
-        />
-      </HullActionSheetModal>
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID="workspace-members-surface"
@@ -1456,6 +1301,9 @@ export default function BuzzMembers({
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
+          {canManage && workspaceId && (
+            <WorkspaceBans key={workspaceId} workspaceId={workspaceId} />
+          )}
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}

@@ -36,7 +36,7 @@ export type TurnProgressInput = {
   activeTurnRequestedBy?: string;
   /** The identity reading this Room. */
   viewerPubkey?: string;
-  viewerRole?: 'owner' | 'admin' | 'member';
+  viewerRole?: 'owner' | 'admin' | 'member' | 'spectator';
 };
 
 /**
@@ -131,7 +131,7 @@ export type ComposerAckPresentation = {
 export function viewerMayStopTurn(
   viewerPubkey: string | undefined,
   requestedBy: string | undefined,
-  viewerRole?: 'owner' | 'admin' | 'member',
+  viewerRole?: 'owner' | 'admin' | 'member' | 'spectator',
 ): boolean {
   return Boolean(
     viewerPubkey &&

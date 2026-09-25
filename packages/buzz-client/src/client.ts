@@ -297,7 +297,7 @@ export class BuzzClient {
   async addMember(
     channelId: string,
     targetPubkey: string,
-    role: 'owner' | 'admin' | 'member' = 'member',
+    role: 'owner' | 'admin' | 'member' | 'spectator' = 'member',
   ): Promise<PublishResult> {
     const dm = await getDirectMessage(this.ctx, channelId);
     if (dm && !dm.participants.includes(targetPubkey)) {

@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
-import { IdentityMark } from './IdentityMark';
+import { ProfileIdentity } from './ProfileIdentity';
 import { ChevronGlyph } from './ChevronGlyph';
 import { MonoButton } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
+import { SettingsRow } from './SettingsRow';
+import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
 
 export function AgentProfileView({
@@ -22,6 +24,7 @@ export function AgentProfileView({
   avatarDisabled,
   onGenerateAvatar,
   refreshAgent,
+  loadMoreWork,
   editing,
   saving,
   nameDraft,
@@ -45,6 +48,7 @@ export function AgentProfileView({
   avatarDisabled: boolean;
   onGenerateAvatar: (soul: string, direction?: string) => Promise<void>;
   refreshAgent: () => Promise<AgentDetailView>;
+  loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;
   nameDraft: string;
@@ -60,7 +64,50 @@ export function AgentProfileView({
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
   const [linkError, setLinkError] = useState(false);
+  const [olderWork, setOlderWork] = useState<NonNullable<AgentDetailView['recentWork']>>([]);
+  const [nextCursor, setNextCursor] = useState<string | null | undefined>();
+  const [workLoading, setWorkLoading] = useState(false);
+  const [workError, setWorkError] = useState(false);
+  const workRequest = useRef(0);
+  const workBusy = useRef(false);
   const identity = detail?.agent.identity;
+  useEffect(() => {
+    workRequest.current += 1;
+    workBusy.current = false;
+    setOlderWork([]);
+    setNextCursor(undefined);
+    setWorkError(false);
+    setWorkLoading(false);
+    return () => {
+      workRequest.current += 1;
+    };
+  }, [identity?.pubkey]);
+  const cursor = nextCursor === undefined ? detail?.recentWorkCursor : nextCursor;
+  const allWork = [
+    ...new Map(
+      [...(detail?.recentWork ?? []), ...olderWork].map((work) => [work.url, work]),
+    ).values(),
+  ];
+  const moreWork = async () => {
+    if (!cursor || !loadMoreWork || workBusy.current) return;
+    const request = workRequest.current;
+    workBusy.current = true;
+    setWorkLoading(true);
+    setWorkError(false);
+    try {
+      const page = await loadMoreWork(cursor);
+      if (request !== workRequest.current) return;
+      setOlderWork((current) => [...current, ...(page.recentWork ?? [])]);
+      setNextCursor(page.recentWorkCursor ?? null);
+    } catch {
+      if (request === workRequest.current) setWorkError(true);
+    } finally {
+      if (request === workRequest.current) {
+        workBusy.current = false;
+        setWorkLoading(false);
+      }
+    }
+  };
   const modelAxis = detail?.catalog.find((axis) => axis.category === 'model');
   const effortAxis = detail?.catalog.find(
     (axis) => axis.category === 'thought_level' || axis.category === 'reasoning_effort',
@@ -84,34 +131,6 @@ export function AgentProfileView({
           <ChevronGlyph direction="left" size={22} color={styles.accent.color} />
         </Pressable>
         <Text style={styles.heading}>Profile</Text>
-        <View style={styles.headerActions}>
-          {canEdit &&
-            (editing ? (
-              <>
-                <MonoButton
-                  label="Cancel"
-                  disabled={saving}
-                  onPress={onCancel}
-                  testID="cancel-agent-edit"
-                  variant="secondary"
-                />
-                <MonoButton
-                  label={saving ? 'Saving' : 'Save'}
-                  loading={saving}
-                  disabled={saving}
-                  onPress={onSave}
-                  testID="save-agent-soul"
-                />
-              </>
-            ) : (
-              <MonoButton
-                label="Edit"
-                onPress={onEdit}
-                testID="edit-agent-soul"
-                variant="secondary"
-              />
-            ))}
-        </View>
       </View>
       <KeyboardAwareScrollView contentContainerStyle={styles.content}>
         {loading && <SurfaceGlyphLoader testID="agent-profile-loader" />}
@@ -125,52 +144,58 @@ export function AgentProfileView({
         )}
         {identity && (
           <>
-            <View style={styles.identity}>
-              <IdentityMark
-                kind="agent"
-                seed={identity.pubkey}
-                name={identity.name}
-                face={identity.face}
-                avatarUrl={identity.avatar}
-                size={72}
-              />
-              {editing ? (
-                <TextInput
-                  accessibilityLabel="Agent name"
-                  editable={!saving}
-                  maxLength={AGENT_NAME_MAX_LENGTH}
-                  onChangeText={onNameChange}
-                  style={styles.nameInput}
-                  testID="agent-soul-name"
-                  value={nameDraft}
-                />
-              ) : (
-                <Text style={styles.name}>{identity.name}</Text>
-              )}
-              {identity.handle && (
-                <Text style={styles.copy} testID="agent-handle">{`@${identity.handle}`}</Text>
-              )}
-              <Pressable
-                accessibilityRole="button"
+            <ProfileIdentity identity={identity} ownerHandle={detail.owner?.handle} />
+            <SettingsRow
+              title="Model / difficulty"
+              value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
+            />
+            <View style={styles.headerActions}>
+              <MonoButton
+                label="Message"
                 onPress={onMessage}
-                style={({ pressed }) => [styles.message, pressed && styles.pressed]}
+                variant="secondary"
                 testID="agent-profile-message"
-              >
-                <Text style={styles.accent}>Message</Text>
-              </Pressable>
+              />
+              {canEdit &&
+                (editing ? (
+                  <>
+                    <MonoButton
+                      label="Cancel"
+                      disabled={saving}
+                      onPress={onCancel}
+                      variant="secondary"
+                      testID="cancel-agent-edit"
+                    />
+                    <MonoButton
+                      label={saving ? 'Saving' : 'Save'}
+                      disabled={saving}
+                      loading={saving}
+                      onPress={onSave}
+                      testID="save-agent-soul"
+                    />
+                  </>
+                ) : (
+                  <MonoButton
+                    label="Edit"
+                    onPress={onEdit}
+                    variant="secondary"
+                    testID="edit-agent-soul"
+                  />
+                ))}
             </View>
-            <View style={styles.facts}>
-              <View style={styles.fact}>
-                <Text style={styles.meta}>Model</Text>
-                <Text style={styles.copy}>{label(model, modelAxis)}</Text>
-              </View>
-              <View style={styles.fact}>
-                <Text style={styles.meta}>Effort</Text>
-                <Text style={styles.copy}>{label(effort, effortAxis)}</Text>
-              </View>
-            </View>
+            {editing && (
+              <TextInput
+                accessibilityLabel="Agent name"
+                editable={!saving}
+                maxLength={AGENT_NAME_MAX_LENGTH}
+                onChangeText={onNameChange}
+                style={styles.nameInput}
+                testID="agent-soul-name"
+                value={nameDraft}
+              />
+            )}
             <View style={styles.section}>
-              <Text style={styles.strong}>Soul</Text>
+              <Text style={styles.strong}>SOUL</Text>
               {editing ? (
                 <TextInput
                   accessibilityLabel="Persona / instructions"
@@ -214,31 +239,53 @@ export function AgentProfileView({
                 />
               )}
             </View>
+            <SettingsRow
+              title="Permission mode"
+              value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
+            />
+            <SettingsRow
+              title="Answer scope"
+              value={detail.access?.policy === 'everyone' ? 'Everyone' : 'Owner only'}
+            />
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
                 <Text style={styles.strong}>Recent work</Text>
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
-              {detail.recentWork?.length ? (
-                detail.recentWork.map((work) => (
-                  <Pressable
+              {allWork.length ? (
+                allWork.map((work) => (
+                  <SettingsRow
                     key={work.url}
+                    title={work.title}
+                    description="Merged pull request"
                     accessibilityRole="link"
                     accessibilityLabel={work.title}
+                    chevron="right"
                     onPress={() => {
                       setLinkError(false);
                       void Linking.openURL(work.url).catch(() => setLinkError(true));
                     }}
-                    style={styles.work}
-                  >
-                    <Text style={[styles.copy, styles.workTitle]}>{work.title}</Text>
-                    <ChevronGlyph direction="right" size={18} color={styles.accent.color} />
-                  </Pressable>
+                  />
                 ))
               ) : (
                 <Text style={styles.copy} testID="agent-profile-no-work">
                   No merged work to show yet.
+                </Text>
+              )}
+              {cursor && loadMoreWork && (
+                <MonoButton
+                  label={workLoading ? 'Loading…' : workError ? 'Retry recent work' : 'More'}
+                  loading={workLoading}
+                  disabled={workLoading}
+                  onPress={() => void moreWork()}
+                  variant="secondary"
+                  testID="load-more-agent-work"
+                />
+              )}
+              {workError && (
+                <Text style={styles.copy} accessibilityRole="alert">
+                  Could not load older work. Your current list is still available.
                 </Text>
               )}
               {linkError && (
@@ -263,17 +310,34 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   close: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-  heading: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary, flex: 1 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 16 },
-  content: { paddingBottom: 32 },
-  identity: { padding: 24, alignItems: 'center', gap: 16 },
-  name: {
+  heading: {
+    ...Typography.default(),
     ...theme.buzz.type.bodyStrong,
-    ...theme.buzz.agentProfileTypography.name,
+    color: theme.buzz.textPrimary,
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.md,
+  },
+  content: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.xxl },
+  identity: {
+    paddingVertical: theme.buzz.space.lg,
+    alignItems: 'center',
+    gap: theme.buzz.space.md,
+  },
+  name: {
+    ...Typography.default(),
+    ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
     textAlign: 'center',
   },
   nameInput: {
+    ...Typography.default(),
     ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
     minWidth: 200,
@@ -283,6 +347,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.accent,
   },
   soulInput: {
+    ...Typography.default(),
     ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
     minHeight: 120,
@@ -303,31 +368,11 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
   },
   pressed: { backgroundColor: theme.buzz.bgPressed },
-  facts: {
-    marginHorizontal: 24,
-    paddingVertical: 18,
-    flexDirection: 'row',
-    gap: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.buzz.border,
-  },
-  fact: { flex: 1, gap: 6 },
-  copy: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
-  meta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  strong: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  accent: { ...theme.buzz.type.meta, color: theme.buzz.accent },
-  section: { paddingHorizontal: 24, paddingTop: 24, gap: 12 },
+  copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
+  meta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },
+  section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
   readMore: { minHeight: 44, justifyContent: 'center' },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
-  work: {
-    minHeight: 52,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  workTitle: { flex: 1 },
 }));

@@ -312,7 +312,7 @@ interface AgentTurnRow {
   requested_by: string | null;
 }
 interface MemberRow extends IdentityRow {
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member' | 'spectator';
   presence_body: { status: 'online' | 'offline'; observedAt: number } | null;
   presence_updated_at: Date | null;
 }
@@ -345,8 +345,8 @@ interface CornerRow extends RoomRow {
 }
 interface TopLevelRoomReadRow {
   room: RoomRow & {
-    viewer_role: 'owner' | 'admin' | 'member';
-    workspace_role: 'owner' | 'admin' | 'member';
+    viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
+    workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
     read_cursor: RoomView['viewer']['readCursor'] | null;
   };
   members: MemberRow[];
@@ -888,7 +888,7 @@ export class PhoneService {
       name: string;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member';
+      role: 'owner' | 'admin' | 'member' | 'spectator';
       updated_at: Date;
     }>(
       `SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at
@@ -938,7 +938,7 @@ export class PhoneService {
       visibility: 'public' | 'invite-only';
       created_at: Date;
       updated_at: Date;
-      role: 'owner' | 'admin' | 'member';
+      role: 'owner' | 'admin' | 'member' | 'spectator';
     }>(
       `SELECT w.*, m.role FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
        WHERE w.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
@@ -1001,7 +1001,7 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: row.role,
-        permissions: { send: true, manage: row.role !== 'member' },
+        permissions: { send: row.role !== 'spectator', manage: row.role === 'owner' || row.role === 'admin' },
       },
       watchFilters: [],
     };
@@ -1018,6 +1018,15 @@ export class PhoneService {
       [workspaceId, viewerId],
     );
     if (!access.rowCount) return null;
+    if (query.memberId) {
+      const members = await this.members(workspaceId, null, query.memberId);
+      return {
+        members: members.filter((m) => m.identity.kind === 'human'),
+        agents: [],
+        membersTruncated: false,
+        agentsTruncated: false,
+      };
+    }
     return this.workspaceRoster(workspaceId, query);
   }
 
@@ -1027,7 +1036,7 @@ export class PhoneService {
       name: string;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member';
+      role: 'owner' | 'admin' | 'member' | 'spectator';
       updated_at: Date;
     }>(
       `SELECT w.id,w.name,w.avatar,w.visibility,w.updated_at,wm.role FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
@@ -1249,20 +1258,20 @@ export class PhoneService {
                 createdAt: unix(row.latest_created_at),
                 ...(row.latest_attachments?.length
                   ? {
-                      attachments: (row.latest_attachments as NonNullable<RoomViewMessage['attachments']>).map(
-                        (attachment) => ({
-                          ...attachment,
-                          url: attachment.url.startsWith('/')
-                            ? `${this.publicOrigin}${attachment.url}`
-                            : attachment.url,
-                          ...(attachment.previewUrl?.startsWith('/')
-                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                            : {}),
-                          ...(attachment.thumbnailUrl?.startsWith('/')
-                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                            : {}),
-                        }),
-                      ),
+                      attachments: (
+                        row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
+                      ).map((attachment) => ({
+                        ...attachment,
+                        url: attachment.url.startsWith('/')
+                          ? `${this.publicOrigin}${attachment.url}`
+                          : attachment.url,
+                        ...(attachment.previewUrl?.startsWith('/')
+                          ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                          : {}),
+                        ...(attachment.thumbnailUrl?.startsWith('/')
+                          ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                          : {}),
+                      })),
                     }
                   : {}),
                 author: identity(
@@ -1546,8 +1555,8 @@ export class PhoneService {
         },
         role: room.viewer_role,
         permissions: {
-          send: !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
-          manage: room.workspace_role !== 'member',
+          send: room.workspace_role !== 'spectator' && !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
+          manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
         },
       },
       ...(room.direct_participants?.length === 2
@@ -1653,8 +1662,8 @@ export class PhoneService {
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
       RoomRow & {
-        viewer_role: 'owner' | 'admin' | 'member';
-        workspace_role: 'owner' | 'admin' | 'member';
+        viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
+        workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
       }
     >(
       `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
@@ -1692,7 +1701,7 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
-        permissions: { send: !room.archived_at, manage: room.workspace_role !== 'member' },
+        permissions: { send: room.workspace_role !== 'spectator' && !room.archived_at, manage: room.workspace_role === 'owner' || room.workspace_role === 'admin' },
       },
       watchFilters: [],
     };
@@ -1708,8 +1717,8 @@ export class PhoneService {
     return (
       await this.database.query<
         RoomRow & {
-          viewer_role: 'owner' | 'admin' | 'member';
-          workspace_role: 'owner' | 'admin' | 'member';
+          viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
+          workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
           read_cursor: RoomView['viewer']['readCursor'] | null;
         }
       >(
@@ -2045,13 +2054,14 @@ export class PhoneService {
     workspaceId: string,
     agentId: string,
     viewerId: string,
+    workCursor?: string,
   ): Promise<AgentDetailView | null> {
     const viewer = await this.database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [workspaceId, viewerId],
     );
     if (!viewer.rowCount) return null;
-    const member = (await this.members(workspaceId, null)).find(
+    const member = (await this.members(workspaceId, null, agentId)).find(
       (entry) => entry.identity.pubkey === agentId,
     );
     if (!member || member.identity.kind !== 'agent') return null;
@@ -2068,6 +2078,7 @@ export class PhoneService {
         yolo_set_by_name: string | null;
         yolo_set_at: Date | null;
         avatar_generation_id: string | null;
+        avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
         access_policy: unknown;
@@ -2077,6 +2088,7 @@ export class PhoneService {
       }>(
         `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
+                EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
@@ -2097,9 +2109,24 @@ export class PhoneService {
         [agentId, workspaceId, viewerId],
       )
     ).rows[0];
-    const recentWork = await this.database.query<{ title: string; url: string }>(
-      `SELECT DISTINCT f.lifecycle->'pr'->>'title' title, f.lifecycle->'pr'->>'url' url,
-              f.lifecycle->'pr'->>'mergedAt' merged_at
+    let cursor: [string, string] | null = null;
+    if (workCursor) {
+      try {
+        const value: unknown = JSON.parse(workCursor);
+        if (
+          !Array.isArray(value) ||
+          value.length !== 2 ||
+          !value.every((part) => typeof part === 'string' && part.length <= 2048)
+        )
+          throw new Error('invalid cursor');
+        cursor = value as [string, string];
+      } catch {
+        throw new Error('invalid recent work cursor');
+      }
+    }
+    const recentWork = await this.database.query<{ title: string; url: string; merged_at: string }>(
+      `SELECT max(f.lifecycle->'pr'->>'title') title, f.lifecycle->'pr'->>'url' url,
+              max(f.lifecycle->'pr'->>'mergedAt') merged_at
        FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
        WHERE r.workspace_id=$1 AND f.owner_agent_id=$2
          AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
@@ -2107,13 +2134,21 @@ export class PhoneService {
          AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
          AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
            AND m.identity_id=$3 AND m.removed_at IS NULL)
-       ORDER BY merged_at DESC LIMIT 20`,
-      [workspaceId, agentId, viewerId],
+       GROUP BY f.lifecycle->'pr'->>'url'
+       HAVING $4::text IS NULL OR (max(f.lifecycle->'pr'->>'mergedAt'), f.lifecycle->'pr'->>'url') < ($4,$5)
+       ORDER BY merged_at DESC, url DESC LIMIT 6`,
+      [workspaceId, agentId, viewerId, cursor?.[0] ?? null, cursor?.[1] ?? null],
     );
+    const workPage = recentWork.rows.slice(0, 5);
+    const lastWork = workPage.at(-1);
     return {
       workspaceId,
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
-      recentWork: recentWork.rows.map(({ title, url }) => ({ title, url })),
+      avatarGenerationPending: config?.avatar_generation_pending ?? false,
+      recentWork: workPage.map(({ title, url }) => ({ title, url })),
+      ...(recentWork.rows.length > 5 && lastWork
+        ? { recentWorkCursor: JSON.stringify([lastWork.merged_at, lastWork.url]) }
+        : {}),
       agent: member,
       ...(config?.soul
         ? {
@@ -2722,6 +2757,14 @@ export class PhoneService {
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
+    const scope = input as { workspaceId?: string; roomId?: string };
+    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name)) {
+      const spectator = await this.database.query(
+        `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
+        [viewerId, scope.workspaceId ?? null, scope.roomId ?? null]);
+      if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
+    }
     switch (name) {
       case 'sendRoomMessage':
         return (await this.sendMessage(
@@ -2818,6 +2861,38 @@ export class PhoneService {
           input as Input<'addWorkspaceMember'>,
           viewerId,
         )) as Output<Name>;
+      case 'banWorkspaceMember':
+      case 'unbanWorkspaceMember':
+        await this.setWorkspaceBan(
+          input as Input<'banWorkspaceMember'>,
+          viewerId,
+          name === 'banWorkspaceMember',
+        );
+        return undefined as Output<Name>;
+      case 'listWorkspaceBans': {
+        const request = input as Input<'listWorkspaceBans'>;
+        await this.requireWorkspaceManager(request.workspaceId, viewerId);
+        const offset =
+          Number.isSafeInteger(request.offset) && (request.offset ?? 0) >= 0 ? request.offset! : 0;
+        const result = await this.database.query<{
+          pubkey: string;
+          name: string;
+          kind: 'human' | 'agent';
+          canLift: boolean;
+        }>(
+          `SELECT i.id pubkey,i.name,i.kind,
+             (actor.role='owner' OR target.role IN ('member','spectator')) "canLift"
+           FROM workspace_bans b JOIN identities i ON i.id=b.identity_id
+           JOIN memberships target ON target.workspace_id=b.workspace_id AND target.identity_id=b.identity_id AND target.room_id IS NULL
+           JOIN memberships actor ON actor.workspace_id=b.workspace_id AND actor.identity_id=$3 AND actor.room_id IS NULL AND actor.removed_at IS NULL
+           WHERE b.workspace_id=$1 ORDER BY b.created_at DESC,i.id LIMIT 51 OFFSET $2`,
+          [request.workspaceId, offset, viewerId],
+        );
+        return {
+          members: result.rows.slice(0, 50),
+          hasMore: result.rows.length > 50,
+        } as Output<Name>;
+      }
       case 'removeWorkspaceMember':
         await this.removeWorkspaceMember(input as Input<'removeWorkspaceMember'>, viewerId);
         return undefined as Output<Name>;
@@ -4149,7 +4224,7 @@ export class PhoneService {
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const current = (
-        await database.query<{ role: 'owner' | 'admin' | 'member' }>(
+        await database.query<{ role: 'owner' | 'admin' | 'member' | 'spectator' }>(
           `SELECT role FROM memberships
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL FOR UPDATE`,
           [input.workspaceId, viewerId],
@@ -4500,7 +4575,7 @@ export class PhoneService {
     const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
       const membership = (
-        await database.query<{ workspace_role: 'owner' | 'admin' | 'member' }>(
+        await database.query<{ workspace_role: 'owner' | 'admin' | 'member' | 'spectator' }>(
           `SELECT workspace_member.role workspace_role
            FROM memberships room_member
            JOIN memberships workspace_member
@@ -4620,7 +4695,7 @@ export class PhoneService {
       if (!targetIdentity) throw new Error('identity not found');
       const roles = await database.query<{
         identity_id: string;
-        role: 'owner' | 'admin' | 'member';
+        role: 'owner' | 'admin' | 'member' | 'spectator';
         removed_at: Date | null;
       }>(
         `SELECT identity_id,role,removed_at FROM memberships
@@ -4633,8 +4708,8 @@ export class PhoneService {
         throw new Error('workspace manager required');
       }
       if (
-        actor.role === 'admin' &&
-        (input.role === 'owner' || target?.role === 'owner' || target?.role === 'admin')
+        target?.role === 'owner' ||
+        (actor.role === 'admin' && (input.role === 'owner' || target?.role === 'admin'))
       ) {
         throw new Error('workspace manager cannot change a member with equal or greater authority');
       }
@@ -4713,6 +4788,54 @@ export class PhoneService {
       return { joined: inserted.rowCount > 0 };
     });
   }
+  private async setWorkspaceBan(
+    input: Input<'banWorkspaceMember'>,
+    viewerId: string,
+    banned: boolean,
+  ) {
+    if (input.memberId === viewerId) throw new Error('workspace managers cannot ban themselves');
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      await database.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text || $2::text, 0))`,
+        [input.workspaceId, input.memberId],
+      );
+      const roles = await database.query<{
+        identity_id: string;
+        role: string;
+        removed_at: Date | null;
+      }>(
+        `SELECT identity_id,role,removed_at FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) FOR UPDATE`,
+        [input.workspaceId, viewerId, input.memberId],
+      );
+      const actor = roles.rows.find((row) => row.identity_id === viewerId);
+      const target = roles.rows.find((row) => row.identity_id === input.memberId);
+      if (!actor || actor.removed_at || !['owner', 'admin'].includes(actor.role))
+        throw new Error('workspace manager required');
+      if (!target) throw new Error('workspace membership required');
+      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin'))
+        throw new Error('workspace manager cannot ban a member with equal or greater authority');
+      if (banned) {
+        await database.query(
+          `INSERT INTO workspace_bans(workspace_id,identity_id,banned_by)
+          VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+          [input.workspaceId, input.memberId, viewerId],
+        );
+        await database.query(
+          `UPDATE memberships SET removed_at=COALESCE(removed_at,now())
+          WHERE workspace_id=$1 AND identity_id=$2`,
+          [input.workspaceId, input.memberId],
+        );
+      } else {
+        await database.query(
+          `DELETE FROM workspace_bans WHERE workspace_id=$1 AND identity_id=$2`,
+          [input.workspaceId, input.memberId],
+        );
+      }
+    });
+  }
+
   /**
    * A manager removes a person from the Workspace. Admins may remove peers;
    * owners remain protected. Every live Room membership goes with the
@@ -4730,7 +4853,7 @@ export class PhoneService {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const roles = await database.query<{
         identity_id: string;
-        role: 'owner' | 'admin' | 'member';
+        role: 'owner' | 'admin' | 'member' | 'spectator';
       }>(
         `SELECT identity_id,role FROM memberships
          WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) AND removed_at IS NULL
@@ -6513,10 +6636,10 @@ export class PhoneService {
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
       ? (
           await database.query<{ status: string }>(
-          `SELECT status FROM workspace_connectors
+            `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
+            [ws.workspace_id, viewerId, input.connectorType, machineId],
           )
         ).rows[0]?.status
       : undefined;
@@ -6938,6 +7061,7 @@ export class PhoneService {
     kind: 'human' | 'agent',
     needle: string | null,
     offset: number,
+    ownerId?: string,
   ): Promise<{ rows: MemberRow[]; total: number; truncated: boolean }> {
     const rows = await this.database.query<MemberRow & { kind_total: string }>(
       `SELECT i.id,
@@ -6948,6 +7072,7 @@ export class PhoneService {
        FROM memberships m JOIN identities i ON i.id=m.identity_id
        WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND i.hidden_from_roster=false AND i.kind=$2
+         AND ($6::text IS NULL OR EXISTS(SELECT 1 FROM agents owned WHERE owned.agent_id=i.id AND owned.owner_id=$6))
          AND (
            $3::text IS NULL
            OR position($3 in lower(i.name)) > 0
@@ -6956,7 +7081,7 @@ export class PhoneService {
        ORDER BY CASE WHEN $2='human' AND m.role='owner' THEN 0 ELSE 1 END,
          lower(i.name), i.id
        LIMIT $4 OFFSET $5`,
-      [workspaceId, kind, needle, WORKSPACE_MEMBER_PAGE_SIZE + 1, offset],
+      [workspaceId, kind, needle, WORKSPACE_MEMBER_PAGE_SIZE + 1, offset, ownerId ?? null],
     );
     const truncated = rows.rows.length > WORKSPACE_MEMBER_PAGE_SIZE;
     const page = rows.rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
@@ -7044,7 +7169,7 @@ export class PhoneService {
         ? this.workspaceRosterPage(workspaceId, 'human', needle, kind === 'human' ? offset : 0)
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
       loadAgents
-        ? this.workspaceRosterPage(workspaceId, 'agent', needle, kind === 'agent' ? offset : 0)
+        ? this.workspaceRosterPage(workspaceId, 'agent', needle, kind === 'agent' ? offset : 0, query.ownerId)
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
     ]);
     const pageRows = [...peoplePage.rows, ...agentPage.rows];
@@ -7097,16 +7222,21 @@ export class PhoneService {
     };
   }
 
-  private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
+  private async members(
+    workspaceId: string,
+    roomId: string | null,
+    memberId?: string,
+  ): Promise<RoomViewMember[]> {
     const rows = await this.database.query<MemberRow>(
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
          i.face_id,
          m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
-       WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'}
-         AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
-      roomId ? [workspaceId, roomId] : [workspaceId],
+       WHERE m.workspace_id=$1 AND ($2::uuid IS NULL AND m.room_id IS NULL OR m.room_id=$2)
+         AND m.removed_at IS NULL AND i.hidden_from_roster=false
+         AND ($3::text IS NULL OR i.id=$3)`,
+      [workspaceId, roomId, memberId ?? null],
     );
     const presence = await this.optionalEnrichment(
       'member-presence',
@@ -7123,9 +7253,9 @@ export class PhoneService {
            WHERE agent_id=member.identity_id AND kind='presence'
            ORDER BY updated_at DESC LIMIT 1
          ) presence ON true
-         WHERE member.workspace_id=$1 AND ${roomId ? 'member.room_id=$2' : 'member.room_id IS NULL'}
-           AND member.removed_at IS NULL`,
-        roomId ? [workspaceId, roomId] : [workspaceId],
+         WHERE member.workspace_id=$1 AND ($2::uuid IS NULL AND member.room_id IS NULL OR member.room_id=$2)
+           AND member.removed_at IS NULL AND ($3::text IS NULL OR member.identity_id=$3)`,
+        [workspaceId, roomId, memberId ?? null],
       ),
     );
     const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
@@ -7529,6 +7659,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteWorkspace',
   'addWorkspaceMember',
   'removeWorkspaceMember',
+  'banWorkspaceMember',
+  'unbanWorkspaceMember',
+  'listWorkspaceBans',
   'createRoom',
   'updateRoom',
   'deleteRoom',
@@ -7587,4 +7720,10 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'grantWalletDelegation',
   'readWalletHistory',
   'deleteAccount',
+]);
+
+const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
+  'leaveWorkspace', 'leaveRoom', 'closeChat', 'reopenChat', 'listMessageBookmarks', 'setMessageBookmark',
+  'readWorkbench', 'readConnectionDetail', 'readWallet', 'readWalletHistory',
+ 'getGitHubRepositoryAccess', 'listRoomWorkflows', 'listRoomSchedules',
 ]);

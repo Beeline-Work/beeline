@@ -104,7 +104,7 @@ export interface WritePermissionCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   actionId: string | null;
   targetBranch?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
@@ -230,7 +230,7 @@ export interface GrantRequestCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   /** The grant whose decision is in flight. */
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
@@ -365,7 +365,7 @@ export interface ConnectorOfferCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
   onAccept(
@@ -1696,7 +1696,7 @@ export interface OrdinaryLedgerMessageProps {
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
   onMention?(participantId: string): void;
-  onOpenProfile?(participantId: string): void;
+  onOpenProfile?(participantId: string, kind?: 'human' | 'agent'): void;
   /** A tap on the row — the composer's "outside" — puts the keyboard away. */
   onTapOutsideComposer?(): void;
   onReply(message: ChatDisplayMessage): void;
@@ -1874,8 +1874,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           // breaks the run of names down the left edge.
           name: voiceName,
           onOpenProfile:
-            isAgent && message.pubkey && onOpenProfile
-              ? () => onOpenProfile(message.pubkey!)
+            !announcementFeed && message.pubkey && onOpenProfile
+              ? () =>
+                  isAgent ? onOpenProfile(message.pubkey!) : onOpenProfile(message.pubkey!, 'human')
               : undefined,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,

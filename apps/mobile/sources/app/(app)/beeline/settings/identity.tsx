@@ -92,6 +92,7 @@ export default function BuzzIdentitySettings() {
   const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
   const [keyCount, setKeyCount] = useState<number | null>(null);
+  const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
@@ -207,6 +208,7 @@ export default function BuzzIdentitySettings() {
         const communityId = workspaceList.workspaces.some((item) => item.id === activeCommunityId)
           ? (activeCommunityId ?? undefined)
           : workspaceList.workspaces[0]?.id;
+        if (!cancelled) setWorkspaceRole(workspaceList.workspaces.find((workspace) => workspace.id === communityId)?.role ?? null);
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
           : await client.getGlobalPersonProfile(identity.publicKey);
@@ -445,6 +447,7 @@ export default function BuzzIdentitySettings() {
               </Text>
             </TouchableOpacity>
           ) : null}
+          {workspaceRole && <Text style={styles.workspaceRole} testID="settings-workspace-role">{workspaceRole}</Text>}
         </View>
 
         {monolithEnabled && (
@@ -667,6 +670,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       textAlign: 'center',
     },
+    workspaceRole: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
     handleAt: {
       ...Typography.default(),
       ...hull.type.bodyStrong,

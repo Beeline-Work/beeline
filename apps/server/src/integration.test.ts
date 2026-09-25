@@ -391,10 +391,16 @@ describe('monolith integration', () => {
     expect((await call({ ...input, agentId: 'c'.repeat(64) })).status).not.toBe(200);
     expect((await call({ ...input, drawing: [] })).status).not.toBe(200);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBeUndefined();
+    const completionMessages = () => database.query(
+      `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
+       WHERE r.workspace_id=$1 AND r.direct_participants @> $2::jsonb
+         AND m.text LIKE '%Your avatar is ready.%'`, [WORKSPACE, JSON.stringify([HUMAN, AGENT])]);
+    expect((await completionMessages()).rowCount).toBe(0);
     const saved = await call(input);
     expect(saved.status).toBe(200);
     const first = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
     expect(first?.avatarGenerationId).toBeTruthy();
+    expect((await completionMessages()).rowCount).toBe(1);
     expect(isAgentDetailView(first)).toBe(true);
     const url = first!.agent.identity.avatar!;
     expect(url).toContain('/v1/agent-avatars/');
@@ -411,6 +417,7 @@ describe('monolith integration', () => {
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBe(
       first?.avatarGenerationId,
     );
+    expect((await completionMessages()).rowCount).toBe(1);
     const soulSave = await operation('updateAgentSoul', {
       workspaceId: WORKSPACE, agentId: AGENT, name: 'Bee', instructions: 'A star god',
       avatarSeed: AGENT, avatar: 'https://example.com/old-avatar.png',

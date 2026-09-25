@@ -800,7 +800,7 @@ export async function repairCommunityRoomMemberships(
   return assertCommunityMemberInChannels(ctx, communityId, pubkey);
 }
 
-const ROLE_RANK: Record<'member' | 'admin' | 'owner', number> = { member: 0, admin: 1, owner: 2 };
+const ROLE_RANK: Record<'spectator' | 'member' | 'admin' | 'owner', number> = { spectator: -1, member: 0, admin: 1, owner: 2 };
 
 /**
  * Key-succession membership migration: make THIS key (the successor) a member
@@ -875,7 +875,7 @@ export async function migrateSuccessorMemberships(
     // self-join but never projects kind:39002 for it) is skipped without
     // re-asserting the full projection wait every launch.
     if (isRoomUnmigratable(channelId, pubkey)) continue;
-    let role: 'member' | 'admin' | 'owner' = 'member';
+    let role: 'spectator' | 'member' | 'admin' | 'owner' = 'member';
     for (const predecessor of chain) {
       const predecessorRole = await getChannelRole(ctx, channelId, predecessor).catch(() => null);
       if (predecessorRole && ROLE_RANK[predecessorRole] > ROLE_RANK[role]) role = predecessorRole;

@@ -298,7 +298,7 @@ export interface DirectMessage {
   raw: NostrEvent;
 }
 
-export type CommunityRole = 'owner' | 'admin' | 'member';
+export type CommunityRole = 'owner' | 'admin' | 'member' | 'spectator';
 
 /** A community is a self-linked NIP-29 group whose membership projects on 39002. */
 export interface Community {

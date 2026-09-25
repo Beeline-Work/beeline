@@ -51,7 +51,7 @@ export type PermissionFreshReader = {
   isRegisteredAgent(pubkey: string): Promise<boolean>;
   isRoomMember(roomId: string, pubkey: string): Promise<boolean>;
   isWorkspaceMember(workspaceId: string, pubkey: string): Promise<boolean>;
-  roleForRoom(roomId: string, pubkey: string): Promise<'owner' | 'admin' | 'member' | null>;
+  roleForRoom(roomId: string, pubkey: string): Promise<'owner' | 'admin' | 'member' | 'spectator' | null>;
   hasDeviceCustody(pubkey: string): Promise<boolean>;
   permissionHistory(roomId: string, permissionId: string): Promise<readonly NostrEvent[]>;
   /** Direct grant-indexed revocation read; mission stop checks must not depend on a capped mixed history. */
@@ -96,7 +96,7 @@ export type PermissionVerificationResult =
     };
 
 function roleSatisfies(
-  role: 'owner' | 'admin' | 'member' | null,
+  role: 'owner' | 'admin' | 'member' | 'spectator' | null,
   minimum: PermissionRole,
 ): boolean {
   return role === 'owner' || (minimum === 'admin' && role === 'admin');

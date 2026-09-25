@@ -1,3 +1,4 @@
+import { HumanProfile } from '../sources/app/(app)/beeline/human-profile';
 import BuzzMembers from '../sources/app/(app)/beeline/members';
 import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
@@ -69,6 +70,7 @@ const item = (id: string, unread: boolean): ChatListItem =>
 const viewer = { pubkey: 'b'.repeat(64), kind: 'human', name: 'Viewer' };
 const owner = params.get('role') !== 'admin';
 Object.assign(agent, {
+  owner: { id: viewer.pubkey, name: 'Owner', handle: 'owner' },
   access: {
     policy: 'everyone',
     canChange: owner,
@@ -84,7 +86,18 @@ Object.assign(globalThis, {
     workspace: {
       workspace: { id: agent.workspaceId, name: 'Tubing Crew' },
       viewer: { identity: viewer, role: 'admin', permissions: { manage: true } },
-      members: [],
+      members: [
+        {
+          identity: {
+            pubkey: 'h'.repeat(64),
+            kind: 'human',
+            name: 'River',
+            handle: 'river',
+            face: 'fox',
+          },
+          role: 'member',
+        },
+      ],
       agents: [agent.agent],
       watchFilters: [],
     },
@@ -95,7 +108,7 @@ function App() {
     mode === 'pinned' ? 'pinned' : 'all',
   );
   const [unread, setUnread] = useState(true);
-  const [profile, setProfile] = useState(mode === 'profile');
+  const [profile, setProfile] = useState(mode === 'profile' || mode === 'human');
   const [query, setQuery] = useState('');
   const rows = (
     <>
@@ -134,7 +147,7 @@ function App() {
       onClose={() => setProfile(false)}
       onMessage={() => setProfile(false)}
       canManage={false}
-      canEdit={false}
+      canEdit={owner}
       avatarDisabled={false}
       onGenerateAvatar={async () => undefined}
       refreshAgent={async () => agent}
@@ -205,7 +218,15 @@ function App() {
       )}
       {profile && (
         <View style={{ width: desktop ? 380 : undefined, flex: desktop ? undefined : 1 }}>
-          {profileView}
+          {mode === 'human' ? (
+            <HumanProfile
+              workspaceId={agent.workspaceId}
+              memberId={'h'.repeat(64)}
+              onClose={() => setProfile(false)}
+            />
+          ) : (
+            profileView
+          )}
         </View>
       )}
     </View>

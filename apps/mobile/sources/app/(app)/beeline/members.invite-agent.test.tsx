@@ -93,7 +93,7 @@ vi.mock('react-native-unistyles', () => ({
   useUnistyles: () => ({ theme: unistylesTheme }),
 }));
 vi.mock('@/constants/Typography', () => ({
-  Typography: { mono: () => ({ fontFamily: 'mono' }), default: () => ({}) },
+  Typography: { mono: () => ({ fontFamily: 'mono' }), ledger: () => ({}), default: () => ({}) },
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),

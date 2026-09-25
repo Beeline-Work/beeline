@@ -1852,3 +1852,17 @@ describe('heartbeat authority across a lapsed lease', () => {
     expect(age).toBeLessThan(5);
   });
 });
+
+
+it('excludes concurrent avatar jobs across rooms and refuses non-owner generation', async () => {
+  const outcomes = await Promise.allSettled([
+    send('@hoots /draw-avatar', R), send('@hoots /draw-avatar brighter eyes', C),
+  ]);
+  expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+  expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
+  expect((await phone.readAgent(W, A, H))?.avatarGenerationPending).toBe(true);
+  await expect(phone.execute('sendRoomMessage', { roomId: R, text: '@hoots /draw-avatar' }, P)).rejects.toThrow();
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND avatar_job`, [A]);
+  expect((await phone.readAgent(W, A, H))?.avatarGenerationPending).toBe(false);
+  await expect(send('@hoots /draw-avatar', R)).resolves.toBeDefined();
+});

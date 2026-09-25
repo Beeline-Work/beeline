@@ -1047,7 +1047,7 @@ function readWorkspace(value: unknown): ChatListWorkspace | null {
   return {
     id: item.id,
     name: typeof item.name === 'string' ? item.name : '',
-    role: oneOf(item.role, ['owner', 'admin', 'member']) ?? 'member',
+    role: oneOf(item.role, ['owner', 'admin', 'member', 'spectator']) ?? 'member',
     updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
     ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
@@ -1586,6 +1586,11 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   return {
     workspaceId: item.workspaceId,
     agent,
+    ...field(
+      'recentWorkCursor',
+      nonempty(item.recentWorkCursor) ? item.recentWorkCursor : undefined,
+    ),
+    ...field('avatarGenerationPending', typeof item.avatarGenerationPending === 'boolean' ? item.avatarGenerationPending : undefined),
     recentWork:
       readList(
         item.recentWork,

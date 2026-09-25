@@ -69,6 +69,7 @@ import {
 } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import {
+  directMessageRoomId,
   restateSystemLine,
   systemIdentityMention,
   systemLine,
@@ -3399,6 +3400,9 @@ export class DaemonService {
     if (!this.commandTransaction || !command) throw new Error('avatar requires an active command');
     // Soul edits lock the agent before its identity; use the same order.
     await this.database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR UPDATE', [agentId]);
+    const ownerRequest = await this.database.query(`SELECT 1 FROM agents a JOIN messages m ON m.author_id=a.owner_id
+      WHERE a.agent_id=$1 AND m.id=$2`, [agentId, command.root_source_message_id]);
+    if (!ownerRequest.rowCount) throw new Error('only the agent owner may generate its avatar (access denied)');
     const bytes = await renderAgentAvatar(input.drawing);
     const id = randomUUID();
     const avatar = `/v1/agent-avatars/${id}`;
@@ -3416,6 +3420,28 @@ export class DaemonService {
       `UPDATE agents SET soul=CASE WHEN soul IS NULL THEN NULL ELSE soul - 'avatar' END,updated_at=now() WHERE agent_id=$1`,
       [agentId],
     );
+    const request = (await this.database.query<{ workspace_id: string; author_id: string }>(
+      `SELECT r.workspace_id,m.author_id FROM messages m JOIN rooms r ON r.id=m.room_id
+       JOIN identities i ON i.id=m.author_id AND i.kind='human'
+       JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.identity_id=m.author_id
+         AND wm.room_id IS NULL AND wm.removed_at IS NULL
+       WHERE m.id=$1`, [command.source_message_id])).rows[0];
+    if (request) {
+      const participants = [agentId, request.author_id].sort() as [string, string];
+      const roomId = directMessageRoomId(request.workspace_id, participants);
+      await this.database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
+        VALUES($1,$2,$3,'Direct message','invite-only',$4::jsonb) ON CONFLICT DO NOTHING`,
+        [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)]);
+      for (const participant of participants) await this.database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL`,
+        [request.workspace_id, roomId, participant]);
+      await systemLine(this.database, {
+        roomId, subject: { kind: 'agent', id: agentId, name: 'Your agent' },
+        verb: 'saved its avatar', consequence: 'Your avatar is ready.',
+      });
+      this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+    }
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return { id, createdAt: Math.floor(Date.now() / 1000) };
   }

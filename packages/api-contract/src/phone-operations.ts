@@ -63,6 +63,20 @@ export type PhoneOperationMap = {
    *  without effect. */
   deleteWorkspace: { input: WorkspaceInput; output: void };
   addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
+  banWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
+  unbanWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
+  listWorkspaceBans: {
+    input: WorkspaceInput & { readonly offset?: number };
+    output: {
+      readonly members: readonly {
+        readonly pubkey: string;
+        readonly name: string;
+        readonly kind: 'human' | 'agent';
+        readonly canLift: boolean;
+      }[];
+      readonly hasMore: boolean;
+    };
+  };
   removeWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };
@@ -163,7 +177,7 @@ export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
 export type WorkspaceMemberInput = WorkspaceInput & {
   readonly memberId: string;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: 'owner' | 'admin' | 'member' | 'spectator';
 };
 /** A manager removes a person from the Workspace and every live Room in it; agents use removeAgent. */
 export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };

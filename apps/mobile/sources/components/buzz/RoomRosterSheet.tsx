@@ -75,6 +75,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onAddMembers,
   onClose,
   onRemove,
+  onOpenProfile,
   onlineByPubkey,
   workingByPubkey,
   parentChannelId,
@@ -95,6 +96,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onAddMembers: () => void;
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
+  onOpenProfile?: (participant: RoomRosterParticipant) => void;
   /** Delivery-availability verdicts: the row's online/offline word only. */
   onlineByPubkey: Readonly<Record<string, boolean>>;
   /** Agents working right now (`selectWorkingAgents`): the gold ring only. */
@@ -229,6 +231,20 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     style={styles.rosterDetail}
                     testID={`room-roster-${participant.pubkey}-detail`}
                   >
+                    {onOpenProfile && (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`View ${displayName}'s profile`}
+                        onPress={() => {
+                          onClose();
+                          onOpenProfile(participant);
+                        }}
+                        style={styles.rosterRemoveButton}
+                        testID={`profile-room-member-${participant.pubkey}`}
+                      >
+                        <Text style={styles.rosterRemoveText}>View profile</Text>
+                      </TouchableOpacity>
+                    )}
                     {canRemove ? (
                       <TouchableOpacity
                         accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}

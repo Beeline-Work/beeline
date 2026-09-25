@@ -1,4 +1,4 @@
-export type ManageableRole = 'owner' | 'admin' | 'member' | undefined | null;
+export type ManageableRole = 'owner' | 'admin' | 'member' | 'spectator' | undefined | null;
 
 /** Owners and admins can manage Workspace membership, avatar, and settings. */
 export function isWorkspaceManagerRole(role: ManageableRole): boolean {

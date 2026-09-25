@@ -1,3 +1,4 @@
+import { HumanProfile } from '../human-profile';
 import BuzzMembers from '../members';
 /** Room and corner conversation surface. */
 import React, {
@@ -489,6 +490,7 @@ export function BuzzChatSurface({
   // desktop shell and a narrowed desktop window as a 3-column wide layout.
   // A packaged Tauri window keeps the desktop experience at every width.
   const desktopExperience = isDesktop || isDesktopShell();
+  const [profileKind, setProfileKind] = useState<'human' | 'agent'>('agent');
   const [profileAgentId, setProfileAgentId] = useState<string | null>(null);
   useEffect(() => { setProfileAgentId(null); }, [decodedId]);
   const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);
@@ -1122,11 +1124,13 @@ export function BuzzChatSurface({
     },
     [decodedId, openDesktopCorner, roomClient],
   );
-  const handleOpenProfile = useCallback((agentId: string) => {
+  const handleOpenProfile = useCallback((agentId: string, kind: 'human' | 'agent' = 'agent') => {
+    if (agentId === cacheViewerPubkey) { router.push('/beeline/settings' as Href); return; }
+    setProfileKind(kind);
     if (!activeCommunityId) return;
     if (desktopExperience) setProfileAgentId(agentId);
-    else router.push({ pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId } } as Href);
-  }, [activeCommunityId, desktopExperience]);
+    else router.push(kind === 'human' ? { pathname: '/beeline/human-profile', params: { communityId: activeCommunityId, memberId: agentId } } as Href : { pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId } } as Href);
+  }, [activeCommunityId, desktopExperience, cacheViewerPubkey]);
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
     async (participantId: string) => {
@@ -5922,7 +5926,7 @@ export function BuzzChatSurface({
         </View>
         {profileAgentId && desktopExperience && activeCommunityId && (
           <View style={styles.agentProfilePane} testID="desktop-agent-profile-pane">
-            <BuzzMembers key={profileAgentId} profileAgentId={profileAgentId} workspaceIdOverride={activeCommunityId} onClose={() => setProfileAgentId(null)} />
+            {profileKind === 'human' ? <HumanProfile key={profileAgentId} memberId={profileAgentId} workspaceId={activeCommunityId} onClose={() => setProfileAgentId(null)} /> : <BuzzMembers key={profileAgentId} profileAgentId={profileAgentId} workspaceIdOverride={activeCommunityId} onClose={() => setProfileAgentId(null)} />}
           </View>
         )}
         {!profileAgentId && desktopWorkPaneMounted && (
@@ -6111,6 +6115,7 @@ export function BuzzChatSurface({
         }}
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
+        onOpenProfile={(participant) => handleOpenProfile(participant.pubkey, participant.kind === 'agent' ? 'agent' : 'human')}
         onlineByPubkey={speakerOnline}
         workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}

@@ -1,3 +1,4 @@
+import { HumanProfile } from './human-profile';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -113,7 +114,8 @@ const client = vi.hoisted(() => ({
 }));
 
 const phoneOperation = vi.hoisted(() =>
-  vi.fn(async (name: string, input: any) => {
+  vi.fn(async (name: string, input: any): Promise<any> => {
+    if (['addWorkspaceMember', 'banWorkspaceMember', 'unbanWorkspaceMember'].includes(name)) return;
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
       return;
@@ -210,7 +212,7 @@ vi.mock('react-native-unistyles', () => ({
   useUnistyles: () => ({ theme: unistylesTheme }),
 }));
 vi.mock('@/constants/Typography', () => ({
-  Typography: { mono: () => ({}), default: () => ({}) },
+  Typography: { mono: () => ({}), default: () => ({}), ledger: () => ({}) },
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -467,6 +469,7 @@ beforeEach(() => {
     membersTruncated: state.workspace.membersTruncated,
     agentsTruncated: state.workspace.agentsTruncated,
   }));
+  client.resolveDirectMessage.mockReset().mockResolvedValue({ channelId: 'dm-room' });
   modal.confirm.mockResolvedValue(true);
   modal.prompt.mockResolvedValue(null);
 });
@@ -606,20 +609,20 @@ describe('Members workspace management', () => {
       'member',
     ]);
     expect(chevronDirections(personRow)).toEqual(['right']);
-    // The viewer's own row has no detail, so no chevron.
+    // The viewer can open their own profile too.
     const selfRow = renderer.root.findByProps({ testID: `member-${VIEWER}-identity` });
-    expect(selfRow.props.disabled).toBe(true);
+    expect(selfRow.props.disabled).toBe(false);
     expect(selfRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       '@viewer',
       'owner',
     ]);
-    expect(chevronDirections(selfRow)).toEqual([]);
+    expect(chevronDirections(selfRow)).toEqual(['right']);
   });
 
   it('shows the connected owner on the agent profile', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
+    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
   });
 
   it('omits a handleless owner from the agent row and profile', async () => {
@@ -641,143 +644,114 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
-  it('opens member actions in a sheet and confirms Workspace removal', async () => {
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findByProps({ testID: 'member-actions' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-roles` })).toBeDefined();
-    expect(
-      renderer.root.findByProps({ testID: `remove-person-${MEMBER}` }).props.accessibilityLabel,
-    ).toBe('Remove Builder from Workspace');
-    await press(renderer, `remove-person-${MEMBER}`);
-
-    expect(modal.confirm).toHaveBeenCalledWith(
-      'Remove Builder?',
-      expect.stringMatching(/every Room/),
-      { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
-    );
-    expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-identity` })).toHaveLength(0);
-  });
-
-  it('lets an admin remove a peer admin but never offers owner removal', async () => {
-    state.workspace = {
-      ...baseWorkspace('admin'),
-      members: [
-        member(VIEWER, 'Viewer', 'admin'),
-        member(OWNER, 'Captain', 'owner'),
-        member(MEMBER, 'Builder', 'admin'),
-      ],
-    };
-    const renderer = await render();
-    await press(renderer, `member-${OWNER}-identity`);
-    expect(renderer.root.findAllByProps({ testID: `remove-person-${OWNER}` })).toHaveLength(0);
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: `remove-person-${MEMBER}` })).toBeDefined();
-    await press(renderer, `remove-person-${MEMBER}`);
-    expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
-  });
-
-  it('offers messaging but hides role and removal controls from a non-manager', async () => {
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        ...baseWorkspace().viewer,
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
+  it('opens a person profile from the roster without opening a DM', async () => {
     const renderer = await render();
     await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findByProps({ testID: `message-person-${MEMBER}` })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
-  });
-
-  it('opens a direct message from member actions', async () => {
-    const renderer = await render();
-    await press(renderer, `member-${MEMBER}-identity`);
-    await press(renderer, `message-person-${MEMBER}`);
-    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, MEMBER);
     const { router } = await import('expo-router');
-    expect(router.navigate).toHaveBeenCalledWith(
-      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'dm-room' } },
-      { dangerouslySingular: true },
-    );
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/beeline/human-profile',
+      params: { communityId: WORKSPACE, memberId: MEMBER },
+    });
+    expect(client.resolveDirectMessage).not.toHaveBeenCalled();
   });
 
-  it('shows a direct message error after dismissing the sheet', async () => {
-    client.resolveDirectMessage.mockRejectedValueOnce(new Error('network unavailable'));
-    const renderer = await render();
-    await press(renderer, `member-${MEMBER}-identity`);
-    await press(renderer, `message-person-${MEMBER}`);
-    expect(renderer.root.findByProps({ testID: 'member-actions' }).props.visible).toBe(false);
+  async function personProfile(memberId = MEMBER) {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HumanProfile workspaceId={WORKSPACE} memberId={memberId} onClose={vi.fn()} />,
+      );
+    });
+    return renderer;
+  }
+
+  it('saves role edits from the human profile and supports cancel', async () => {
+    const renderer = await personProfile();
+    await press(renderer, 'edit-person-role');
+    await press(renderer, 'person-role-selector');
+    await press(renderer, 'person-role-admin');
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await press(renderer, 'save-person-role');
+    expect(phoneOperation).toHaveBeenCalledWith('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: MEMBER,
+      role: 'admin',
+    });
+    expect(renderer.root.findAllByProps({ testID: 'person-role-editor' })).toHaveLength(0);
+  });
+
+  it('keeps peers and owners outside admin role and ban authority', async () => {
+    state.workspace = baseWorkspace('admin');
+    let renderer = await personProfile(OWNER);
+    expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+    state.workspace.members = state.workspace.members.map((m: any) =>
+      m.identity.pubkey === MEMBER ? { ...m, role: 'admin' } : m,
+    );
+    renderer = await personProfile();
+    expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+  });
+
+  it('lets members view a human profile and message without management powers', async () => {
+    state.workspace.viewer = {
+      ...state.workspace.viewer,
+      role: 'member',
+      permissions: { send: true, manage: false },
+    };
+    const renderer = await personProfile();
+    expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+    phoneOperation.mockResolvedValueOnce({ id: 'dm-room' });
+    await press(renderer, 'human-profile-message');
+    expect(phoneOperation).toHaveBeenCalledWith('resolveDirectMessage', {
+      workspaceId: WORKSPACE,
+      participantId: MEMBER,
+    });
+  });
+
+  it('confirms persistent bans and leaves membership untouched on cancellation', async () => {
+    const renderer = await personProfile();
+    modal.confirm.mockResolvedValueOnce(false);
+    await press(renderer, 'ban-person');
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await press(renderer, 'ban-person');
+    expect(phoneOperation).toHaveBeenCalledWith('banWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: MEMBER,
+    });
+  });
+
+  it('keeps human profile mutation failures visible for retry', async () => {
+    const renderer = await personProfile();
+    phoneOperation.mockRejectedValueOnce(new Error('network unavailable'));
+    await press(renderer, 'human-profile-message');
     expect(
       renderer.root
         .findAllByType('Text' as any)
-        .some((node: any) =>
-          String(node.props.children).includes(
-            'Could not open message: Error: network unavailable',
-          ),
-        ),
+        .some((node: any) => String(node.props.children).includes('network unavailable')),
     ).toBe(true);
   });
 
-  it('keeps the member when removal confirmation is canceled', async () => {
-    modal.confirm.mockResolvedValue(false);
+  it('lifts a persistent ban without adding the member back', async () => {
     const renderer = await render();
-    await press(renderer, `member-${MEMBER}-identity`);
-    await press(renderer, `remove-person-${MEMBER}`);
-    expect(modal.confirm).toHaveBeenCalledOnce();
-    expect(client.removeMember).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
-  });
-
-  it('lets an admin change a member role but exposes no editor for an owner', async () => {
-    state.workspace = baseWorkspace('admin');
-    const renderer = await render();
-
-    await press(renderer, `member-${OWNER}-identity`);
-    expect(renderer.root.findAllByProps({ testID: `member-${OWNER}-roles` })).toHaveLength(0);
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-member` }).props.selected).toBe(
-      true,
+    phoneOperation.mockResolvedValueOnce({
+      members: [{ pubkey: MEMBER, name: 'Builder', kind: 'human', canLift: true }],
+      hasMore: false,
+    });
+    await act(async () => renderer.root.findByProps({ title: 'Banned members' }).props.onPress());
+    expect(phoneOperation).toHaveBeenCalledWith('listWorkspaceBans', {
+      workspaceId: WORKSPACE,
+      offset: 0,
+    });
+    await act(async () =>
+      renderer.root.findByProps({ title: 'Builder' }).props.actionControl.onPress(),
     );
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-admin` }).props.selected).toBe(
-      false,
-    );
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
-      true,
-    );
-    await press(renderer, `member-${MEMBER}-admin`);
-
-    expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
-    expect(client.waitUntilMemberRole).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
-    expect(
-      renderer.root
-        .findByProps({ testID: `member-${MEMBER}-identity` })
-        .findAllByType('Text' as any)
-        .map((node: any) => node.props.children),
-    ).toEqual(['@builder', 'admin']);
-  });
-
-  it('lets an owner persist a role change and reflects the selected role', async () => {
-    const renderer = await render();
-    await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
-      false,
-    );
-    await press(renderer, `member-${MEMBER}-owner`);
-    expect(client.addMember).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'owner');
-    expect(
-      renderer.root
-        .findByProps({ testID: `member-${MEMBER}-identity` })
-        .findAllByType('Text' as any)
-        .map((node: any) => node.props.children),
-    ).toEqual(['@builder', 'owner']);
-    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+    expect(phoneOperation).toHaveBeenCalledWith('unbanWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: MEMBER,
+    });
+    expect(client.addMember).not.toHaveBeenCalled();
   });
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
@@ -1030,6 +1004,49 @@ describe('Members workspace management', () => {
     );
   });
 
+  it('does not dispatch avatar generation when confirmation is canceled', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    modal.confirm.mockResolvedValueOnce(false);
+    await press(renderer, 'generate-avatar-from-soul');
+    expect(client.composeMessage).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.disabled).toBe(
+      false,
+    );
+  });
+
+  it('loads older work, preserves the current page on failure, and retries', async () => {
+    state.agent = {
+      ...baseAgent(),
+      recentWork: [{ title: 'First', url: 'https://github.com/acme/repo/pull/2' }],
+      recentWorkCursor: 'cursor-1',
+    };
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    roomView.agent.mockRejectedValueOnce(new Error('offline'));
+    await press(renderer, 'load-more-agent-work');
+    expect(renderer.root.findByProps({ testID: 'load-more-agent-work' }).props.label).toBe(
+      'Retry recent work',
+    );
+    roomView.agent.mockResolvedValueOnce({
+      ...baseAgent(),
+      recentWork: [{ title: 'Older', url: 'https://github.com/acme/repo/pull/1' }],
+    });
+    await press(renderer, 'load-more-agent-work');
+    expect(roomView.agent).toHaveBeenLastCalledWith(WORKSPACE, AGENT, 'cursor-1');
+    expect(renderer.root.findAllByProps({ testID: 'load-more-agent-work' })).toHaveLength(0);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node: any) => node.props.children === 'First'),
+    ).toBe(true);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node: any) => node.props.children === 'Older'),
+    ).toBe(true);
+  });
+
   it('shows the seeded soul when its owner has not written one', async () => {
     state.agent = { ...baseAgent(), soul: undefined };
     const renderer = await render();
@@ -1237,7 +1254,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'agent-handle' }).props.children).toBe('@clara');
+    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
     const ban = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(ban.props.accessibilityLabel).toBe('Ban agent');
     expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
@@ -1350,8 +1367,8 @@ describe('Members workspace management', () => {
     await openAgentManagement(renderer);
 
     // Management names the agent and owner before offering removal.
-    expect(renderer.root.findByProps({ testID: 'agent-handle' }).props.children).toBe('@clara');
-    expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
+    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
+    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove agent');
     expect(control.findAllByType('Text')[0].props.children).toBe('Remove');

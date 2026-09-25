@@ -4,6 +4,7 @@ import {
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
 import {
@@ -1367,6 +1368,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   const syncedRoomRoles = await syncTopLevelSharedRoomRoles(database);
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
   await backfillSystemEventKinds(database);
+  await database.query(
+    `UPDATE identities SET avatar='/v1/connectors/logo/system.svg',updated_at=now()
+     WHERE id=$1 AND avatar IS DISTINCT FROM '/v1/connectors/logo/system.svg'`,
+    [SYSTEM_IDENTITY_ID],
+  );
   await seedDefaultWorkspace(database);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);

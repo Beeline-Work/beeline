@@ -224,8 +224,8 @@ describe('workspace system lines', () => {
 
   it('repairs a legacy System identity before rendering a lifecycle announcement', async () => {
     await database.query(
-      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
-       VALUES($1,'human','Cato',NULL,true)`,
+      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster,avatar)
+       VALUES($1,'human','Cato',NULL,true,'/old.svg')`,
       [SYSTEM_IDENTITY_ID],
     );
 
@@ -249,7 +249,12 @@ describe('workspace system lines', () => {
       kind: 'human',
       name: SYSTEM_IDENTITY_NAME,
       handle: SYSTEM_IDENTITY_HANDLE,
+      avatar: 'http://local.test/v1/connectors/logo/system.svg',
     });
+    const list = await new PhoneService(database, 'http://local.test').readChats(WORKSPACE, HUMAN);
+    expect(list?.chats.find((chat) => chat.room.id === roomId)?.directMessage?.peer.avatar).toBe(
+      'http://local.test/v1/connectors/logo/system.svg',
+    );
   });
 
   it('restores a rejoined recipient to their existing @system DM', async () => {

@@ -64,9 +64,9 @@ export function isConnectableConnector(type: ConnectorKind): boolean {
 
 const logoCache = new Map<string, string>();
 
-/** The connector's avatar/logo, served publicly at /v1/connectors/logo/<type>.svg. */
+/** Fixed bot logos, including System, served at /v1/connectors/logo/<type>.svg. */
 export function connectorLogo(type: string): string | undefined {
-  if (!isConnectorKind(type)) return undefined;
+  if (type !== 'system' && !isConnectorKind(type)) return undefined;
   const cached = logoCache.get(type);
   if (cached) return cached;
   try {
@@ -511,4 +511,3 @@ export async function grantSquireToOwnerMachineAgents(
   }
   return granted;
 }
-

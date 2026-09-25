@@ -855,6 +855,20 @@ describe('previewHandle', () => {
       name: 'Trusty Squire',
     });
   });
+  it('names every fixed-logo bot in the Messages list', () => {
+    for (const [name, handle] of [
+      ['Wallet', 'wallet'],
+      ['System', 'system'],
+      ['Google Calendar', 'google-calendar'],
+    ]) {
+      const peer = { name, handle, avatar: `https://server.test/v1/connectors/logo/${handle}.svg` };
+      expect(previewHandle(peer)).toBe(name);
+      expect(
+        roomRowName({ room, directMessage: { peer: { ...peer, pubkey: handle, kind: 'human' } } })
+          .name,
+      ).toBe(name);
+    }
+  });
   it('uses the local part of a nip05 handle, stripping any leading @', () => {
     expect(previewHandle({ name: 'Ada', handle: '@ada@usebeeline.app' })).toBe('ada');
   });
@@ -965,9 +979,7 @@ describe('fullCornerTitle', () => {
     expect(fullCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
       '#alpha/Fix fixture',
     );
-    expect(fullCornerTitle('alpha', 'ALPHA/Fix fixture', 'abcdef0123')).toBe(
-      '#alpha/Fix fixture',
-    );
+    expect(fullCornerTitle('alpha', 'ALPHA/Fix fixture', 'abcdef0123')).toBe('#alpha/Fix fixture');
     expect(displayGroupedCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
       'Fix fixture',
     );

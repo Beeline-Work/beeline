@@ -12,6 +12,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
   connectionCompany,
@@ -71,6 +72,8 @@ export default function WorkbenchScreen() {
 
   const connections = view ? connectionsForViewer(view, viewerId) : [];
   const connectors = view?.connectors ?? [];
+  const connectorLogoUrl = (id: string) =>
+    `${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${id}.svg`;
 
   const connectConnector = useCallback(
     (connectorId: string) => {
@@ -184,6 +187,7 @@ export default function WorkbenchScreen() {
                   actionDisabled={walletConnecting}
                   actionTestID="workbench-connector-wallet-connect"
                   detailText={connector.description}
+                  logoUrl={connectorLogoUrl(connector.id)}
                   onAction={canConnect ? () => void connectWallet() : undefined}
                   onToggle={connector.status === 'connected' ? openWallet : undefined}
                   testID={`workbench-connector-${connector.id}`}
@@ -217,6 +221,7 @@ export default function WorkbenchScreen() {
                 action={canConnect ? 'Connect' : undefined}
                 actionTestID={`workbench-connector-${connector.id}-connect`}
                 detailText={connector.description}
+                logoUrl={connectorLogoUrl(connector.id)}
                 errorText={
                   connector.status === 'error'
                     ? (connector.errorMessage ?? 'Connection failed')

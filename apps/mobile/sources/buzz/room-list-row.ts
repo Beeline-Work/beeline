@@ -204,8 +204,13 @@ export type RoomRowName = {
   name: string;
 };
 
-function isTrustySquire(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): boolean {
-  return identity.name === 'Trusty Squire' && identity.handle?.replace(/^@/, '') === 'trusty-squire';
+function isSystemBot(
+  identity: Pick<RoomViewIdentity, 'name' | 'handle'> & Partial<Pick<RoomViewIdentity, 'avatar'>>,
+): boolean {
+  return Boolean(
+    (identity.avatar && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(identity.avatar)) ||
+    (identity.name === 'Trusty Squire' && identity.handle?.replace(/^@/, '') === 'trusty-squire'),
+  );
 }
 
 /**
@@ -213,10 +218,12 @@ function isTrustySquire(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): bo
  * `name@domain` handle, else the display name. Never carries a leading `@`,
  * because the sigil is drawn separately in brass.
  */
-export function previewHandle(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): string {
+export function previewHandle(
+  identity: Pick<RoomViewIdentity, 'name' | 'handle'> & Partial<Pick<RoomViewIdentity, 'avatar'>>,
+): string {
   // Connector DMs use their display name as the sender and heading. Their
   // machine handle is an address, not the name shown to the person.
-  if (isTrustySquire(identity)) return identity.name;
+  if (isSystemBot(identity)) return identity.name;
   const handle = identity.handle?.trim().replace(/^@+/, '');
   const local = handle?.split('@')[0]?.trim();
   return local || identity.name.trim();
@@ -259,7 +266,7 @@ export function roomRowPreview(
   // Older cached grant cards may still carry the asking agent as author.
   // The connector DM itself is the authority for the sender shown in the list.
   const peer = item.directMessage?.peer;
-  const author = peer && isTrustySquire(peer) ? peer : latest.author;
+  const author = peer && isSystemBot(peer) ? peer : latest.author;
   return { attribution: 'other', handle: previewHandle(author), text: preview };
 }
 

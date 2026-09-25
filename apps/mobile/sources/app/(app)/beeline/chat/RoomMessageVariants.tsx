@@ -1734,20 +1734,27 @@ export function agentBylineLabel(model?: string): string {
 export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
   receipt,
   connectorName = 'Trusty Squire',
+  identity,
 }: {
   receipt: ConnectorReceipt;
   connectorName?: string;
+  identity?: ChatDisplayMessage['authorIdentity'];
 }) {
-  const mark = connectorName
-    .split(' ')
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase();
   return (
     <View style={styles.connectorReceipt} testID="connector-receipt-card">
-      <Text style={styles.connectorReceiptHead}>
-        {mark} · {connectorName}
-      </Text>
+      <View style={styles.connectorReceiptIdentity}>
+        {identity?.avatar ? (
+          <IdentityMark
+            kind="human"
+            seed={identity.pubkey}
+            name={identity.name}
+            avatarUrl={identity.avatar}
+            size={26}
+            testID="connector-receipt-logo"
+          />
+        ) : null}
+        <Text style={styles.connectorReceiptHead}>{identity?.name ?? connectorName}</Text>
+      </View>
       <Text style={styles.connectorReceiptLine}>
         {receipt.connection} · {receipt.operation}
         {receipt.helper ? ` · on ${receipt.helper}` : ''}
@@ -2027,7 +2034,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const renderedBody = isAgent ? (agentMessageJsonMarkdown(proseBody) ?? proseBody) : proseBody;
   const receiptCard =
     connectorReceipt && !isSelfSteer ? (
-      <ConnectorReceiptCard receipt={connectorReceipt.receipt} />
+      <ConnectorReceiptCard receipt={connectorReceipt.receipt} identity={message.authorIdentity} />
     ) : null;
   const machineNoise = ledgerText?.machine ? (
     <LedgerGhostLine
@@ -2231,6 +2238,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.sectionHead,
     color: theme.buzz.textSecondary,
   },
+  connectorReceiptIdentity: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   connectorReceiptLine: {
     ...Typography.mono(),
     ...theme.buzz.type.machine,

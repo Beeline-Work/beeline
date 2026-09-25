@@ -239,6 +239,8 @@ export class DaemonService {
       'requestAgentGrant',
       'authorizeSquireCall',
       'authorizeResourceCall',
+      'getComposioTools',
+      'executeComposioTool',
       'getWalletToolState',
       'getWalletToolBalance',
       'getWalletToolChains',
@@ -395,6 +397,8 @@ export class DaemonService {
             'authorizeResourceCall',
             'authorizeRepositoryCall',
             'authorizeHostCall',
+            'getComposioTools',
+            'executeComposioTool',
             ...[
               'getWalletToolState',
               'getWalletToolBalance',
@@ -1325,7 +1329,15 @@ export class DaemonService {
   private async composioAccess(
     input: { roomId: string; requestId: string; generationId: string },
     agentId: string,
-  ): Promise<{ connectorId: string; helperAgentId: string; sessionId: string; scope: ReturnType<typeof storedComposioScope> }> {
+  ): Promise<
+    | {
+        connectorId: string;
+        helperAgentId: string;
+        sessionId: string;
+        scope: ReturnType<typeof storedComposioScope>;
+      }
+    | { status: 'permission-required'; grantId?: string }
+  > {
     await this.access(input.roomId, agentId);
     const row = (await this.database.query<{
       id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
@@ -1343,17 +1355,18 @@ export class DaemonService {
          AND owner_workspace.removed_at IS NULL
        JOIN memberships owner_room ON owner_room.room_id=r.id
          AND owner_room.identity_id=c.owner_identity_id AND owner_room.removed_at IS NULL
-       JOIN agent_commands command ON command.room_id=r.id AND command.agent_id=actor.agent_id
-         AND command.turn_request_id=$3 AND command.generation_id=$4 AND command.state='claimed'
-       JOIN messages source ON source.id=command.source_message_id
-       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
        WHERE r.id=$1 AND c.connector_type='composio'
          AND c.status='connected' AND c.owner_identity_id=helper.owner_id
-         AND requester.id=c.owner_identity_id
        ORDER BY c.updated_at DESC LIMIT 1`,
-      [input.roomId, agentId, input.requestId, input.generationId],
+      [input.roomId, agentId],
     )).rows[0];
     if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
+    const permission = await this.authorizeScopedGrant(input, agentId, 'mcp', 'composio');
+    if (!permission.allowed)
+      return {
+        status: 'permission-required',
+        ...(permission.grantId ? { grantId: permission.grantId } : {}),
+      };
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
     return { connectorId: row.id, helperAgentId: row.helper_agent_id,
@@ -1365,6 +1378,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'getComposioTools'>> {
     const access = await this.composioAccess(input, agentId);
+    if ('status' in access) return access;
     return {
       connectorId: access.connectorId,
       toolkits: access.scope.toolkits,
@@ -1377,6 +1391,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'executeComposioTool'>> {
     const access = await this.composioAccess(input, agentId);
+    if ('status' in access) return access;
     if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
       throw new Error('Composio arguments must be an object');
     const result = await this.composioClient!.execute(

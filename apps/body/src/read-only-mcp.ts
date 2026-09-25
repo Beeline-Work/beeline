@@ -103,6 +103,7 @@ import {
   fetchBoundedBytes,
 } from './attachment-delivery.js';
 import { computePatchId } from './patch-identity.js';
+import { describeTailscaleReach } from './connector-tailscale.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -886,7 +887,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'workbench_status',
     description:
-      'Read the Workbench as it stands for the person you are answering: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this person already has and on which machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. Free to call; it changes nothing.',
+      "Read the Workbench of the machine and owner you actually run on: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this owner already has on this machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. When you cannot use a tool, answer in one sentence: I can/can't reach X on this machine because Y; to fix it, Z. Free to call; it changes nothing.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -2587,22 +2588,30 @@ export async function requestGrant(
 export interface ConnectorOfferDeps {
   roomId: string;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+  /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
+  tailscaleReach?: (enabled: boolean) => Promise<string>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
-  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+  return {
+    roomId: agentScheduleRoomId(),
+    execute: daemonExecute,
+    tailscaleReach: (enabled) =>
+      describeTailscaleReach({ enabled, installIfMissing: enabled }),
+  };
 }
 
 /**
- * workbench_status: the Workbench as it stands for the person this turn
- * answers, rendered as text the model reads line by line — a tool it may
- * offer, a tool already paired (and where), a connection by name.
+ * workbench_status: the Workbench of the machine and owner this helper
+ * actually runs on, rendered as text the model reads line by line — a tool
+ * it may offer, a tool already paired (and where), a connection by name.
  */
 export async function workbenchStatus(
   deps: ConnectorOfferDeps = connectorOfferDepsFromEnv(),
 ): Promise<string> {
   const view = (await deps.execute('readAgentWorkbench', { roomId: deps.roomId })) as {
     addressee?: { name?: string; handle?: string };
+    owner?: { name?: string; handle?: string };
     catalog?: Array<{
       connectorType: string;
       name: string;
@@ -2619,11 +2628,13 @@ export async function workbenchStatus(
     }>;
     machine?: { machineId: string; name: string };
   };
-  const who = view.addressee?.handle
-    ? `@${view.addressee.handle}`
-    : (view.addressee?.name ?? 'the person you are answering');
+  const who = view.owner?.handle
+    ? `@${view.owner.handle}`
+    : (view.owner?.name ??
+      (view.addressee?.handle ? `@${view.addressee.handle}` : (view.addressee?.name ?? 'the owner of this machine')));
+  const machine = view.machine?.name ?? 'this machine';
   const lines = [
-    `Workbench for ${who} (an accepted offer installs on your machine, ${view.machine?.name ?? 'this machine'}).`,
+    `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
     '',
     'Catalog:',
   ];
@@ -2644,6 +2655,18 @@ export async function workbenchStatus(
     lines.push(
       `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
     );
+  if (deps.tailscaleReach) {
+    const enabled = Boolean(
+      view.catalog?.some(
+        (entry) =>
+          entry.connectorType === 'tailscale' &&
+          entry.paired &&
+          entry.paired.onThisMachine &&
+          entry.paired.status !== 'disconnected',
+      ),
+    );
+    lines.push('', await deps.tailscaleReach(enabled));
+  }
   return lines.join('\n');
 }
 

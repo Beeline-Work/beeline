@@ -1451,7 +1451,52 @@ export class DaemonService {
       )
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
+    if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Tailscale login URL is posted to the helper owner's connector DM so
+   * they can click it. Workbench still holds the same signIn; this is the
+   * owner-visible half when the node needs sign-in instead of failing.
+   */
+  private async notifyTailscaleSignIn(
+    connectorId: string,
+    url: string,
+    agentId: string,
+  ): Promise<void> {
+    if (!/^https:\/\/login\.tailscale\.com\//u.test(url)) return;
+    const row = (
+      await this.database.query<{
+        workspace_id: string;
+        connector_type: string;
+        owner_id: string;
+        helper_name: string;
+      }>(
+        `SELECT k.workspace_id,k.connector_type,a.owner_id,agent.name helper_name
+         FROM workspace_connectors k
+         JOIN agents a ON a.agent_id=k.helper_agent_id
+         JOIN identities agent ON agent.id=a.agent_id
+         WHERE k.id=$1::uuid AND k.helper_agent_id=$2`,
+        [connectorId, agentId],
+      )
+    ).rows[0];
+    if (!row || row.connector_type !== 'tailscale') return;
+    const roomId = await ensureConnectorDirectMessageRoom(
+      this.database,
+      row.workspace_id,
+      'tailscale',
+      row.owner_id,
+    );
+    await systemLine(this.database, {
+      roomId,
+      authorId: connectorIdentityId('tailscale'),
+      id: createHash('sha256').update(`tailscale-signin:${connectorId}:${url}`).digest('hex'),
+      subject: { kind: 'agent', id: agentId, name: row.helper_name },
+      verb: 'needs',
+      object: { text: 'Tailscale sign-in', url },
+      consequence: 'click the link to join this machine to the tailnet',
+    });
   }
 
   /**
@@ -4454,19 +4499,27 @@ export class DaemonService {
       machineId: context.machine_id ?? agentId,
       name: context.machine_name ?? context.agent_name,
     };
+    const owner = {
+      pubkey: context.owner_id,
+      kind: 'human' as const,
+      name: context.owner_name,
+      ...(context.owner_handle ? { handle: context.owner_handle } : {}),
+      ...(context.owner_avatar ? { avatar: context.owner_avatar } : {}),
+    };
     return {
       workspaceId: context.workspace_id,
       isCorner: context.parent_id !== null,
       addressee,
+      owner,
       agent,
       machine,
     };
   }
 
   /**
-   * workbench_status: what the Workbench can add, and what the person this
-   * turn answers already has. Names only — a connection is listed by service
-   * and label, never by anything the vault holds.
+   * workbench_status: what the Workbench can add, and what the owner of this
+   * helper's machine already has. Names only — a connection is listed by
+   * service and label, never by anything the vault holds.
    */
   private async agentWorkbench(
     input: Input<'readAgentWorkbench'>,
@@ -4490,7 +4543,7 @@ export class DaemonService {
          LEFT JOIN agents a ON a.agent_id=k.helper_agent_id
          WHERE k.workspace_id=$1 AND k.owner_identity_id=$2
          ORDER BY k.updated_at DESC`,
-        [context.workspaceId, context.addressee.pubkey],
+        [context.workspaceId, context.owner.pubkey],
       )
     ).rows;
     const catalog = connectorCatalog().map((entry) => {
@@ -4504,11 +4557,11 @@ export class DaemonService {
         available:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))),
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4536,7 +4589,7 @@ export class DaemonService {
          JOIN workspace_connectors k ON k.id=c.connector_id
          WHERE c.owner_identity_id=$1 AND k.workspace_id=$2
          ORDER BY c.service,c.reference`,
-        [context.addressee.pubkey, context.workspaceId],
+        [context.owner.pubkey, context.workspaceId],
       )
     ).rows;
     return {
@@ -4544,6 +4597,11 @@ export class DaemonService {
         identityId: context.addressee.pubkey,
         name: context.addressee.name,
         ...(context.addressee.handle ? { handle: context.addressee.handle } : {}),
+      },
+      owner: {
+        identityId: context.owner.pubkey,
+        name: context.owner.name,
+        ...(context.owner.handle ? { handle: context.owner.handle } : {}),
       },
       catalog,
       connections: connections.map((row) => ({

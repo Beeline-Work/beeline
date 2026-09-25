@@ -278,6 +278,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     );
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');
+    expect(markdown).toContain(
+      "I can/can't reach X on this machine because Y; to fix it, Z.",
+    );
   });
 
   // R5: earlier skill text sent the person to Settings → Workbench → Tools

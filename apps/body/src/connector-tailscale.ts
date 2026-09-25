@@ -69,10 +69,29 @@ export const runTailscaleCommand: TailscaleCommandRunner = (command, args) =>
 
 type TailscaleStatus = {
   readonly BackendState?: string;
+  readonly AuthURL?: string;
   readonly Self?: { readonly UserID?: number };
   readonly User?: Record<string, { readonly LoginName?: string; readonly DisplayName?: string }>;
   readonly CurrentTailnet?: { readonly Name?: string };
 };
+
+export function formatToolReachLine(input: {
+  readonly can: boolean;
+  readonly thing: string;
+  readonly because: string;
+  readonly fix: string;
+}): string {
+  return `I ${input.can ? 'can' : "can't"} reach ${input.thing} on this machine because ${input.because}; to fix it, ${input.fix}.`;
+}
+
+function loginUrlFrom(status?: TailscaleStatus, output?: string): string | undefined {
+  const fromStatus = status?.AuthURL?.trim();
+  if (fromStatus) {
+    const match = LOGIN_URL.exec(fromStatus)?.[0];
+    if (match) return match;
+  }
+  return output ? LOGIN_URL.exec(output)?.[0] : undefined;
+}
 
 function parseStatus(output: string): TailscaleStatus | undefined {
   try {
@@ -208,6 +227,15 @@ export async function installTailscale(
     return { status: 'installing', steps, signIn: options.signIn };
   }
 
+  const pendingUrl = loginUrlFrom(current);
+  if (pendingUrl) {
+    return {
+      status: 'installing',
+      steps: [...installed.steps, step('Tailnet signed in', 'running', { command: 'tailscale up' })],
+      signIn: { method: 'oauth', url: pendingUrl, browserLocation: { kind: 'none' } },
+    };
+  }
+
   const steps = [
     ...installed.steps,
     step('Tailnet signed in', 'running', { command: 'tailscale up' }),
@@ -242,7 +270,7 @@ export async function installTailscale(
     };
   }
   const output = `${up.stdout}\n${up.stderr}`;
-  const url = LOGIN_URL.exec(output)?.[0];
+  const url = loginUrlFrom(after, output);
   if (url) {
     return {
       status: 'installing',
@@ -256,4 +284,98 @@ export async function installTailscale(
     steps: [...installed.steps, step('Tailnet signed in', 'failed', { reason })],
     errorMessage: reason,
   };
+}
+
+/** Live reachability for workbench_status: one can/can't sentence, and install when enabled. */
+export async function describeTailscaleReach(
+  options: {
+    readonly enabled?: boolean;
+    readonly installIfMissing?: boolean;
+    readonly run?: TailscaleCommandRunner;
+    readonly install?: typeof installTailscale;
+  } = {},
+): Promise<string> {
+  const run = options.run ?? runTailscaleCommand;
+  const version = await run('tailscale', ['version']);
+  if (version.code !== 0 && options.installIfMissing) {
+    const result = await (options.install ?? installTailscale)({ run });
+    if (result.status === 'installing') {
+      return formatToolReachLine({
+        can: false,
+        thing: 'Tailscale',
+        because: 'this node needs sign-in',
+        fix: `the owner should open ${result.signIn.url}`,
+      });
+    }
+    if (result.status === 'connected') {
+      return formatToolReachLine({
+        can: true,
+        thing: 'Tailscale',
+        because: result.signedInAs
+          ? `this node is connected as ${result.signedInAs}`
+          : 'this node is connected',
+        fix: 'use the tailscale CLI for tailnet resources',
+      });
+    }
+  }
+  if (version.code !== 0) {
+    return formatToolReachLine({
+      can: false,
+      thing: 'Tailscale',
+      because: 'the CLI is not installed',
+      fix: options.enabled
+        ? 'the connector will install it and send the owner a login link'
+        : 'offer Tailscale with offer_connector so it can be installed',
+    });
+  }
+  const status = await readStatus(run);
+  if (status?.BackendState === 'Running') {
+    const account = accountName(status);
+    return formatToolReachLine({
+      can: true,
+      thing: 'Tailscale',
+      because: account ? `this node is connected as ${account}` : 'this node is connected',
+      fix: 'use the tailscale CLI for tailnet resources',
+    });
+  }
+  const url = loginUrlFrom(status);
+  if (url) {
+    return formatToolReachLine({
+      can: false,
+      thing: 'Tailscale',
+      because: 'this node needs sign-in',
+      fix: `the owner should open ${url}`,
+    });
+  }
+  if (options.installIfMissing) {
+    const result = await (options.install ?? installTailscale)({ run });
+    if (result.status === 'installing') {
+      return formatToolReachLine({
+        can: false,
+        thing: 'Tailscale',
+        because: 'this node needs sign-in',
+        fix: `the owner should open ${result.signIn.url}`,
+      });
+    }
+    if (result.status === 'connected') {
+      return formatToolReachLine({
+        can: true,
+        thing: 'Tailscale',
+        because: result.signedInAs
+          ? `this node is connected as ${result.signedInAs}`
+          : 'this node is connected',
+        fix: 'use the tailscale CLI for tailnet resources',
+      });
+    }
+  }
+  return formatToolReachLine({
+    can: false,
+    thing: 'Tailscale',
+    because: status?.BackendState
+      ? `the daemon is ${status.BackendState}`
+      : 'the daemon is not running',
+    fix: options.enabled
+      ? 'the connector will start Tailscale and send the owner a login link'
+      : 'offer Tailscale with offer_connector so it can be installed',
+  });
 }

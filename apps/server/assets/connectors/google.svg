@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Google Workspace">
+  <circle cx="32" cy="32" r="22" fill="#1c1c1e" stroke="#3a3a3d" stroke-width="2"/>
+  <path d="M32 18 A14 14 0 1 1 20 38" fill="none" stroke="#d7af5f" stroke-width="5" stroke-linecap="square"/>
+  <path d="M32 32 H46" stroke="#d7af5f" stroke-width="5" stroke-linecap="square"/>
+</svg>

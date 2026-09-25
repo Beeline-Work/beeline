@@ -7,6 +7,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
+import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import {
   backfillInheritedCornerMemberships,
   syncTopLevelSharedRoomRoles,
@@ -1115,7 +1116,7 @@ CREATE TABLE IF NOT EXISTS agent_grants (
   id uuid PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  kind text NOT NULL CHECK (kind IN ('path','host','secret','device','budget','command','mcp')),
+  kind text NOT NULL CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository')),
   target text NOT NULL,
   reason text NOT NULL,
   requested_by text NOT NULL REFERENCES identities(id),
@@ -1131,7 +1132,7 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
 ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
 ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
-  CHECK (kind IN ('path','host','secret','device','budget','command','mcp'));
+  CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository'));
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 
@@ -1214,6 +1215,11 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_session_id text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,
@@ -1402,6 +1408,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
+  await upgradeGrantPolicy(database);
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

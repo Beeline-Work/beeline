@@ -8,6 +8,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { formatForwardedMessage } from '@/buzz/message-forward';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { beelineThemes } from '@/buzz/groknight';
@@ -2312,7 +2313,7 @@ describe('Room message variant components', () => {
     expect(onMention).not.toHaveBeenCalled();
   });
 
-  it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {
+  it('renders the grant card with ALWAYS / ONCE / NO only for the resource owner, and settles each line into its outcome', () => {
     const onDecision = vi.fn();
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
     const requester = { pubkey: 'alex', kind: 'human' as const, name: 'Alex' };
@@ -2359,10 +2360,10 @@ describe('Room message variant components', () => {
     );
     expect(JSON.stringify(ownerView.toJSON())).toContain('asks you');
     expect(ownerView.root.findByProps({ testID: 'grant-g-1-ask' }).props.children).toBe(
-      'run fly deploy -a beeline-preview --with FLY_TOKEN · to publish the preview build',
+      'run fly deploy -a beeline-preview --with FLY_TOKEN · to publish the preview build · requested by Alex',
     );
     expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe(
-      'reach api.fly.io · to reach the Fly API',
+      'reach api.fly.io · to reach the Fly API · requested by Alex',
     );
     expect(JSON.stringify(ownerView.toJSON())).toContain('No');
     expect(JSON.stringify(ownerView.toJSON())).toContain('Once');
@@ -2372,7 +2373,7 @@ describe('Room message variant components', () => {
     act(() => ownerView.root.findByProps({ testID: 'grant-g-2-deny' }).props.onPress());
     expect(onDecision).toHaveBeenCalledWith('g-2', 'deny');
 
-    // A workspace manager who is not the owner decides too.
+    // A workspace manager cannot approve someone else’s resource.
     const manager = render(
       <GrantRequestCard
         message={pending}
@@ -2383,8 +2384,8 @@ describe('Room message variant components', () => {
         onDecision={onDecision}
       />,
     );
-    expect(manager.root.findByProps({ testID: 'grant-g-1-always' })).toBeDefined();
-    expect(manager.root.findByProps({ testID: 'grant-g-2-always' })).toBeDefined();
+    expect(manager.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
+    expect(manager.root.findAllByProps({ testID: 'grant-g-2-always' })).toHaveLength(0);
 
     // A plain member (the requester included) sees the ask and waits for the owner.
     const outsider = render(
@@ -2436,6 +2437,48 @@ describe('Room message variant components', () => {
     );
     expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe('denied');
   });
+
+  it.each([
+    ['repository', 'owner', 'member', false],
+    ['repository', 'manager', 'admin', true],
+    ['mcp', 'manager', 'admin', false],
+    ['mcp', 'owner', 'member', true],
+  ] as const)(
+    'matches server authority for %s, %s, %s',
+    (kind, viewerPubkey, viewerRole, allowed) => {
+      const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Owner' };
+      const view = render(
+        <GrantRequestCard
+          message={message({
+            grantRequest: {
+              agent: { pubkey: 'agent', kind: 'agent', name: 'Bee' },
+              owner,
+              requester: owner,
+              grants: [
+                {
+                  grantId: 'matrix',
+                  kind,
+                  target: 'target',
+                  reason: 'work',
+                  status: 'pending',
+                  requestedBy: owner,
+                  roomId: 'room',
+                  createdAt: 1,
+                  auto: false,
+                },
+              ],
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey={viewerPubkey}
+          viewerRole={viewerRole}
+          actionId={null}
+          onDecision={vi.fn()}
+        />,
+      );
+      expect(view.root.findAllByProps({ testID: 'grant-matrix-always' }).length > 0).toBe(allowed);
+    },
+  );
 
   it('shows a Squire request source and limits every decision to the agent owner', () => {
     const onDecision = vi.fn();
@@ -3015,6 +3058,92 @@ describe('Room message variant components', () => {
     expect(onMessageActions).toHaveBeenCalledTimes(1);
     expect(onMessageActions.mock.calls[0][0].id).toBe('tapped');
     expect(onCopy).not.toHaveBeenCalled();
+  });
+
+  it('opens the exact reply source from the quoted reply strip', () => {
+    const onOpenSource = vi.fn();
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'reply',
+          replyToId: 'source-message',
+          reference: { channelId: 'room-proof', eventId: 'reply', rootId: 'source-message' },
+        })}
+        referencedTarget={{
+          messageId: 'source-message',
+          authorName: 'Alice',
+          isAgent: false,
+          preview: 'Original copy',
+        }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onOpenSource={onOpenSource}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const quote = renderer.root.findByType('LedgerEntry' as never).props.replyReference;
+    expect(quote.props.testID).toBe('reply-reference-reply');
+    act(() => quote.props.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('room-proof', 'source-message');
+  });
+
+  it('opens the exact forwarded source from its quote and leaves legacy forwards inert', () => {
+    const onOpenSource = vi.fn();
+    const common = {
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onOpenSource,
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        {...common}
+        message={message({
+          id: 'forward',
+          text: formatForwardedMessage(
+            'Original copy',
+            'proof',
+            { name: 'Alice', handle: 'alice' },
+            { roomId: 'room-proof', messageId: 'source-message' },
+          ),
+        })}
+      />,
+    );
+
+    const quote = renderer.root.findByType('LedgerEntry' as never).props.bodyAction;
+    expect(quote.testID).toBe('forward-source-forward');
+    act(() => quote.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('room-proof', 'source-message');
+
+    const legacy = render(
+      <OrdinaryLedgerMessage
+        {...common}
+        message={message({
+          id: 'legacy-forward',
+          text: '> Original copy\n\nFORWARDED FROM #proof · @alice',
+        })}
+      />,
+    );
+    expect(legacy.root.findByType('LedgerEntry' as never).props.bodyAction).toBeUndefined();
   });
 
   it('keeps the desktop long press as the copy shortcut', () => {

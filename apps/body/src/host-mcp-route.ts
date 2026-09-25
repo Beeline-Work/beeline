@@ -7,10 +7,10 @@
  * additionally gets the non-electing façade wrapper. Routes are merged after
  * local servers are copied, and ungranted host servers stay out.
  */
+import { resourceFacadeArgs } from './resource-mcp-facade.js';
 import { join, resolve } from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { isSquireMcpGrant } from '@beeline/api-contract/agent-grants';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import {
   classifyImportedMcpServer,
@@ -55,36 +55,22 @@ export function grantedHostRoutesFromList(result: unknown): string[] {
   );
 }
 
-/** A Once host route belongs to one activation. Claim it before mounting it,
- * so a later session cannot inherit the same approval. Squire is the exception:
- * its server gate consumes Once on the first call, after the route is mounted. */
-export async function claimGrantedHostRoutes(
-  result: unknown,
-  consumeOnce: (grantId: string) => Promise<unknown>,
-): Promise<string[]> {
+/** Mounting is not resource use. All Once grants are consumed by the per-call server gate. */
+export async function claimGrantedHostRoutes(result: unknown): Promise<string[]> {
   if (!result || typeof result !== 'object' || !('grants' in result)) return [];
   const grants = (result as { grants?: unknown }).grants;
   if (!Array.isArray(grants)) return [];
-  const mounted: Array<{ kind: string; target: string }> = [];
-  for (const entry of grants) {
-    if (!entry || typeof entry !== 'object') continue;
-    const grant = entry as Record<string, unknown>;
-    if (grant.kind !== 'mcp' || typeof grant.target !== 'string') continue;
-    if (grant.status === 'once') {
-      if (!isSquireMcpGrant({ kind: grant.kind, target: grant.target })) {
-        if (typeof grant.grantId !== 'string' || !grant.grantId) continue;
-        try {
-          await consumeOnce(grant.grantId);
-        } catch {
-          continue;
-        }
-      }
-    } else if (grant.status !== 'approved') {
-      continue;
-    }
-    mounted.push({ kind: 'mcp', target: grant.target });
-  }
-  return grantedMcpServerNames(mounted);
+  return grantedMcpServerNames(
+    grants.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const grant = entry as Record<string, unknown>;
+      return grant.kind === 'mcp' &&
+        typeof grant.target === 'string' &&
+        (grant.status === 'once' || grant.status === 'approved')
+        ? [{ kind: 'mcp', target: grant.target }]
+        : [];
+    }),
+  );
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -149,6 +135,7 @@ export function rewriteHostMcpDeclaration(
   name: string,
   declaration: Record<string, unknown>,
   hostHome: string,
+  resourceAuthFile?: string,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...declaration };
   delete next[MCP_ROUTE_CLASS_KEY];
@@ -162,6 +149,21 @@ export function rewriteHostMcpDeclaration(
   }
   if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
   else next.env = { ...recordValue(declaration.env), ...routeEnv };
+  if (resourceAuthFile) {
+    const target = isSquireDeclaration(name, declaration) ? 'squire' : name;
+    const env = {
+      ...recordValue(next.env),
+      ...recordValue(next.envs),
+      BEELINE_RESOURCE_TARGET: target,
+      BEELINE_RESOURCE_AUTH_FILE: resourceAuthFile,
+      BEELINE_RESOURCE_LAUNCH: JSON.stringify(next),
+    };
+    return {
+      [gooseShape ? 'cmd' : 'command']: process.execPath,
+      args: resourceFacadeArgs(),
+      [gooseShape ? 'envs' : 'env']: env,
+    };
+  }
   return next;
 }
 
@@ -169,20 +171,21 @@ export function rewriteGrantedHostRoutes(
   declarations: Record<string, Record<string, unknown>>,
   granted: readonly string[],
   hostHome: string,
+  resourceAuthFile?: string,
 ): Record<string, Record<string, unknown>> {
   const allowed = new Set(granted);
   const rewritten: Record<string, Record<string, unknown>> = {};
   for (const [name, declaration] of Object.entries(declarations)) {
     if (!allowed.has(name)) continue;
     if (classifyImportedMcpServer({ name, declaration }) !== 'host') continue;
-    rewritten[name] = rewriteHostMcpDeclaration(name, declaration, hostHome);
+    rewritten[name] = rewriteHostMcpDeclaration(name, declaration, hostHome, resourceAuthFile);
   }
   // Code-owned host names are the route even when this harness has no
   // operator declaration (pi has none). Candy's standing squire grant
   // otherwise produced an empty rewrite and never mounted.
   for (const name of granted) {
     if (rewritten[name] || !isCodeOwnedHostMcpName(name)) continue;
-    rewritten[name] = rewriteHostMcpDeclaration(name, {}, hostHome);
+    rewritten[name] = rewriteHostMcpDeclaration(name, {}, hostHome, resourceAuthFile);
   }
   return rewritten;
 }
@@ -192,13 +195,14 @@ export function grantedHostRouteWires(
   granted: readonly string[],
   hostHome: string,
   declarations: Record<string, Record<string, unknown>> = {},
+  resourceAuthFile?: string,
 ): Array<{
   name: string;
   command: string;
   args: string[];
   env?: Array<{ name: string; value: string }>;
 }> {
-  const routes = rewriteGrantedHostRoutes(declarations, granted, hostHome);
+  const routes = rewriteGrantedHostRoutes(declarations, granted, hostHome, resourceAuthFile);
   return Object.entries(routes).flatMap(([name, declaration]) => {
     const command =
       (typeof declaration.command === 'string' && declaration.command) ||

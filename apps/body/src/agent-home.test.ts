@@ -359,6 +359,7 @@ describe('per-room harness state isolation', () => {
 
     await expect(prepareRoomAgentHome({ root })).resolves.toEqual({});
     await expect(prepareRoomAgentHome({ root, failClosed: true })).rejects.toThrow();
+    await expect(prepareRoomAgentHome({ root, resourceAuthFile: '/tmp/resource-auth.json' })).rejects.toThrow();
   });
 
   it('detects the local Trusty Squire state boundary', async () => {
@@ -462,7 +463,7 @@ describe('operator skills + MCP passthrough', () => {
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
     await prepareRoomAgentHome({
-      root: roomRoot,
+      root: roomRoot, grantedHostRoutes: ['project_tools'],
       operatorHome,
       agentKind: 'claude',
       isReviewer: true,
@@ -529,15 +530,8 @@ describe('operator skills + MCP passthrough', () => {
     expect(claudeSettings.permissions.allow).not.toContain('Bash');
     // Host-classified declarations (Squire by name and by launch) stay out of
     // the isolated home entirely; local ones ride along byte-for-byte.
-    expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
-    const isolatedServers = parseToml(isolatedText).mcp_servers as Record<
-      string,
-      { command?: string; args?: string[]; env?: Record<string, string> }
-    >;
-    expect(isolatedServers.project_tools).toEqual({ command: 'project-tools' });
-    expect(isolatedServers.squire).toBeUndefined();
-    expect(isolatedServers.vault_tools).toBeUndefined();
-    expect(isolatedServers.stable_vault).toBeUndefined();
+    expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual([]);
+    expect(parseToml(isolatedText).mcp_servers).toBeUndefined();
     expect(isolatedText).not.toContain('@trusty-squire/mcp');
     expect(isolatedText).not.toBe(`${operatorToml}\n`);
     expect(existsSync(resolve(roomRoot, '.trusty-squire'))).toBe(false);
@@ -726,7 +720,7 @@ describe('operator skills + MCP passthrough', () => {
     );
 
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['files', 'tools'], operatorHome });
 
     const claudeJson = resolve(roomRoot, 'claude', '.claude.json');
     expect(lstatSync(claudeJson).isSymbolicLink()).toBe(false);
@@ -734,7 +728,7 @@ describe('operator skills + MCP passthrough', () => {
       mcpServers: Record<string, unknown>;
     };
     expect(Object.keys(claudeParsed.mcpServers)).toEqual(['files']);
-    expect(claudeParsed.mcpServers.files).toEqual({ command: 'files-mcp' });
+    expect(claudeParsed.mcpServers.files).toMatchObject({ command: 'files-mcp' });
     expect(claudeParsed).not.toHaveProperty('otherTopLevel');
 
     const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');
@@ -754,20 +748,20 @@ describe('operator skills + MCP passthrough', () => {
     );
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['one', 'two'], operatorHome });
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(true);
     await writeFile(
       resolve(operatorHome, '.codex/config.toml'),
       '[mcp_servers.one]\ncommand = "one"\n[mcp_servers.two]\ncommand = "two"\n',
     );
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['one', 'two'], operatorHome });
 
     const regenerated = readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8');
     expect(regenerated).toContain('[mcp_servers.two]');
 
     await writeFile(resolve(operatorHome, '.codex/config.toml'), 'model = "gpt-5-codex"\n');
     await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({ mcpServers: {} }));
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['one', 'two'], operatorHome });
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
     );
@@ -779,11 +773,11 @@ describe('operator skills + MCP passthrough', () => {
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const redirected = resolve(await scratch('beeline-redirected-'), 'config.toml');
     await writeFile(redirected, 'must stay unchanged\n');
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['project_tools'], operatorHome });
     await rm(resolve(roomRoot, 'codex', 'config.toml'));
     await symlink(redirected, resolve(roomRoot, 'codex', 'config.toml'));
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['project_tools'], operatorHome });
 
     expect(lstatSync(resolve(roomRoot, 'codex', 'config.toml')).isSymbolicLink()).toBe(false);
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toContain(
@@ -891,13 +885,8 @@ describe('mounted imported MCP server names', () => {
       ),
     );
 
-    expect(mountedImportedMcpServerNames({ operatorHome })).toEqual([
-      'files',
-      'filesystem',
-      'linear',
-      'typescript',
-    ]);
-    expect(hostImportedMcpServerNames({ operatorHome })).toEqual(['squire', 'vault']);
+    expect(mountedImportedMcpServerNames({ operatorHome })).toEqual([]);
+    expect(hostImportedMcpServerNames({ operatorHome })).toEqual(['files', 'filesystem', 'linear', 'squire', 'typescript', 'vault']);
   });
 
   it.each(['codex', 'grok'] as const)(
@@ -917,10 +906,11 @@ describe('mounted imported MCP server names', () => {
         await writeFile(sourcePath, source);
         const preparedEnv = await prepareRoomAgentHome({
           root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
           operatorHome,
           agentKind,
         });
-        expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
+        expect(mountedImportedMcpServerNames(input)).toEqual([]);
         expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
         await writeFile(sourcePath, '');
         expect(mountedImportedMcpServerNames(input)).toEqual([]);
@@ -943,12 +933,13 @@ describe('mounted imported MCP server names', () => {
     const input = { operatorHome, agentKind: 'goose' as const };
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
       operatorHome,
       agentKind: 'goose',
     });
-    expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
-    expect(hostImportedMcpServerNames(input)).toEqual(['squire']);
+    expect(hostImportedMcpServerNames(input)).toEqual(['files','squire']);
     const isolatedGoose = readFileSync(
       resolve(preparedEnv.GOOSE_PATH_ROOT!, 'config/config.yaml'),
       'utf8',
@@ -987,6 +978,7 @@ describe('mounted imported MCP server names', () => {
     const input = { operatorHome, agentKind: 'codex' as const };
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
       operatorHome,
       agentKind: 'codex',
     });
@@ -998,16 +990,17 @@ describe('mounted imported MCP server names', () => {
     expect(isolated.mcp_servers.context7.args).toEqual(['-y', '@upstash/context7-mcp']);
     expect(isolated.mcp_servers.files.command).toBe('files-mcp');
     expect(isolatedText).not.toContain('@trusty-squire/mcp');
-    expect(mountedImportedMcpServerNames(input)).toEqual(['context7', 'files']);
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['context7', 'files']);
 
     await writeFile(sourcePath, inlineDeclarations.join('\n'));
     const inlineOnlyEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
       operatorHome,
       agentKind: 'codex',
     });
-    expect(mountedImportedMcpServerNames(input)).toEqual(['context7']);
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv: inlineOnlyEnv })).toEqual([
       'context7',
     ]);
@@ -1030,6 +1023,7 @@ describe('mounted imported MCP server names', () => {
     );
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
       operatorHome,
       agentKind: 'codex',
     });
@@ -1043,6 +1037,7 @@ describe('mounted imported MCP server names', () => {
     expect(isolatedText).not.toContain('browser-mcp');
     expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([
       'browser',
+      'files',
       'squire',
     ]);
     expect(
@@ -1067,6 +1062,7 @@ describe('mounted imported MCP server names', () => {
     );
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
+      grantedHostRoutes: ['files', 'context7', 'typescript'],
       operatorHome,
       agentKind: 'codex',
     });
@@ -1074,11 +1070,11 @@ describe('mounted imported MCP server names', () => {
     const isolated = parseToml(isolatedText) as {
       mcp_servers: Record<string, { command?: string; env?: Record<string, string> }>;
     };
-    expect(isolated.mcp_servers.files).toEqual({ command: 'files-mcp' });
+    expect(isolated.mcp_servers.files).toMatchObject({ command: 'files-mcp' });
     expect(isolated.mcp_servers.browser).toBeUndefined();
     expect(isolatedText).not.toContain('browser-mcp');
-    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['browser']);
-    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['files']);
+    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['browser','files']);
+    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([]);
     expect(
       mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv }),
     ).toEqual(['files']);
@@ -1101,7 +1097,7 @@ describe('mounted imported MCP server names', () => {
         mcpServers: { typescript: { command: 'typescript-mcp' } },
       }),
     );
-    const preparedEnv = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
+    const preparedEnv = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, grantedHostRoutes: ['files','typescript'] });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
     expect(mountedImportedMcpServerNames({ agentKind: 'claude', preparedEnv })).toEqual([
       'typescript',
@@ -1111,7 +1107,7 @@ describe('mounted imported MCP server names', () => {
       '[mcp_servers.squire]\nurl = "http://localhost:1234/mcp"\n',
     );
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['squire']);
-    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
+    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, grantedHostRoutes: ['files','typescript'] });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
   });
 
@@ -1147,7 +1143,7 @@ describe('mounted imported MCP server names', () => {
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
       ...input,
-      grantedHostRoutes: ['squire'],
+      grantedHostRoutes: ['files', 'squire'],
     });
     const isolated = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
     expect(isolated).toContain('files-mcp');
@@ -1156,12 +1152,12 @@ describe('mounted imported MCP server names', () => {
     expect(isolated).not.toContain('@trusty-squire/mcp@latest');
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
     expect(
-      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] }),
+      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['files', 'squire'] }),
     ).toEqual(['files', 'squire']);
 
     await prepareRoomAgentHome({ root: agentHomeRoot, ...input });
-    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
-    expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
+    expect(expectedMountedImportedMcpServerNames(input)).toEqual([]);
   });
 
   it('rewrites a standing mcp grant into the isolated pi mcp.json', async () => {
@@ -1186,22 +1182,22 @@ describe('mounted imported MCP server names', () => {
       }),
     );
     const input = { operatorHome, agentKind: 'pi' as const };
-    expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
-    expect(hostImportedMcpServerNames(input)).toEqual(['trusty-squire']);
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
+    expect(hostImportedMcpServerNames(input)).toEqual(['files','trusty-squire']);
     expect(
-      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] }),
+      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['files', 'squire'] }),
     ).toEqual(['files', 'squire']);
 
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
       ...input,
-      grantedHostRoutes: ['squire'],
+      grantedHostRoutes: ['files', 'squire'],
     });
     const isolated = JSON.parse(
       readFileSync(resolve(preparedEnv.PI_CODING_AGENT_DIR!, 'mcp.json'), 'utf8'),
     ) as { mcpServers: Record<string, { command?: string; args?: string[] }> };
     expect(Object.keys(isolated.mcpServers)).toEqual(['files', 'squire']);
-    expect(isolated.mcpServers.files).toEqual({ command: 'files-mcp' });
+    expect(isolated.mcpServers.files).toMatchObject({ command: 'files-mcp' });
     expect(isolated.mcpServers.squire?.args).toEqual(
       expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
     );
@@ -1209,8 +1205,8 @@ describe('mounted imported MCP server names', () => {
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
 
     await prepareRoomAgentHome({ root: agentHomeRoot, ...input });
-    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
-    expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
+    expect(expectedMountedImportedMcpServerNames(input)).toEqual([]);
   });
 
   it('keeps a standing mcp grant on a pi home after a restart', () => {
@@ -1221,14 +1217,14 @@ describe('mounted imported MCP server names', () => {
       expectedMountedImportedMcpServerNames({
         operatorHome,
         agentKind: 'pi',
-        grantedHostRoutes: ['squire'],
+        grantedHostRoutes: ['files', 'squire'],
       }),
     ).toEqual(['squire']);
     expect(
       expectedMountedImportedMcpServerNames({
         operatorHome,
         agentKind: 'pi',
-        grantedHostRoutes: ['squire'],
+        grantedHostRoutes: ['files', 'squire'],
       }),
     ).toEqual(['squire']);
   });

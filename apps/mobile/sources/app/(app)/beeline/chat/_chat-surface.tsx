@@ -2261,6 +2261,18 @@ export function BuzzChatSurface({
   const arrivalFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageAnchorIdRef = useRef(messageAnchorId);
   messageAnchorIdRef.current = messageAnchorId;
+  const sourceJumpSequenceRef = useRef(0);
+  const handleOpenMessageSource = useCallback((roomId: string, messageId: string) => {
+    sourceJumpSequenceRef.current += 1;
+    router.navigate({
+      pathname: '/beeline/chat/[channelId]',
+      params: {
+        channelId: roomId,
+        notificationMessageId: messageId,
+        notificationResponseId: `message-source:${sourceJumpSequenceRef.current}`,
+      },
+    });
+  }, []);
   const raiseArrivalFlash = useCallback((messageId: string) => {
     if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
     setArrivalFlashMessageId(messageId);
@@ -3217,6 +3229,10 @@ export function BuzzChatSurface({
                 : {}),
             },
             attachments: forwardTarget.attachments,
+            source: {
+              roomId: decodedId,
+              messageId: forwardTarget.relayId ?? forwardTarget.id,
+            },
           },
           displayRoomName,
         );
@@ -3229,7 +3245,7 @@ export function BuzzChatSurface({
         setForwardBusyRoomId(null);
       }
     },
-    [activeCommunityId, displayRoomName, forwardBusyRoomId, forwardTarget, transport],
+    [activeCommunityId, decodedId, displayRoomName, forwardBusyRoomId, forwardTarget, transport],
   );
 
   const markOutboxFailed = outbox.markFailed;
@@ -4090,6 +4106,7 @@ export function BuzzChatSurface({
               name: message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE',
               ...(message.pubkey ? { handle: fallbackMemberHandle(message.pubkey) } : {}),
             },
+            { roomId: decodedId, messageId: message.relayId ?? message.id },
           ),
           createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
           roomId: decodedId,
@@ -4975,6 +4992,7 @@ export function BuzzChatSurface({
           onChannelReference={handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
+          onOpenSource={handleOpenMessageSource}
           onMention={handleOpenMention}
           onOpenProfile={handleOpenProfile}
           onTapOutsideComposer={dismissComposerKeyboard}
@@ -5017,6 +5035,7 @@ export function BuzzChatSurface({
       handleChoiceSkip,
       handleOpenSystemIdentity,
       handleOpenCode,
+      handleOpenMessageSource,
       handleReactToMessage,
       handleBookmarkMessage,
       messageIsBookmarked,

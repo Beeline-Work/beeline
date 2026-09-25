@@ -10,6 +10,10 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/ServiceMark', async () => {
+  const ReactModule = await import('react');
+  return { ServiceMark: (props: any) => ReactModule.createElement('ServiceMark', props) };
+});
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -57,7 +61,10 @@ it('shows four independent Google install actions and statuses', async () => {
   await act(async () => { renderer = create(<GoogleEntryRow connectors={connectors}
     onPressConnect={onPressConnect} onPressDisconnect={onPressDisconnect} />); });
   const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
-  expect(parent.props.leading).toBeUndefined();
+  expect(parent.props.leading.props.company).toBe('google');
+  expect(parent.props.leading.props.domain).toBe('google.com');
+  expect(parent.props.leading.props.testID).toBe('google-entry-mark');
+  expect(parent.props.value).toBe('installing');
   expect(parent.props.action).toBeUndefined();
   await act(async () => parent.props.onPress());
   expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe('connected');
@@ -75,6 +82,82 @@ it('shows four independent Google install actions and statuses', async () => {
     testID: 'google-tool-google-calendar',
   }).props.trailingPress.onPress());
   expect(onPressConnect).toHaveBeenCalledWith('google-calendar');
+  await act(async () => renderer.unmount());
+});
+
+it('shows Connect on the parent when no Google tool is connected', async () => {
+  const onPressConnect = vi.fn();
+  const connectors: WorkbenchConnector[] = [
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: true },
+    { id: 'google-calendar', name: 'Calendar', description: 'Events', available: true },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: true },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true },
+  ];
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <GoogleEntryRow
+        connectors={connectors}
+        onPressConnect={onPressConnect}
+        onPressDisconnect={vi.fn()}
+      />,
+    );
+  });
+  const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
+  expect(parent.props.action).toBe('Connect');
+  expect(parent.props.trailingPress.testID).toBe('google-entry-connect');
+  await act(async () => parent.props.trailingPress.onPress());
+  expect(onPressConnect).toHaveBeenCalledWith('google-gmail');
+  await act(async () => renderer.unmount());
+});
+
+it('shows soon on the parent only when every Google tool is unavailable', async () => {
+  const onPressConnect = vi.fn();
+  const connectors: WorkbenchConnector[] = [
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: false },
+    { id: 'google-calendar', name: 'Calendar', description: 'Events', available: false },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: false },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: false },
+  ];
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <GoogleEntryRow
+        connectors={connectors}
+        onPressConnect={onPressConnect}
+        onPressDisconnect={vi.fn()}
+      />,
+    );
+  });
+  const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
+  expect(parent.props.value).toBe('soon');
+  expect(parent.props.action).toBeUndefined();
+  expect(parent.props.trailingPress).toBeUndefined();
+  expect(onPressConnect).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+});
+
+it('shows connected on the parent when every Google tool is connected', async () => {
+  const connectors: WorkbenchConnector[] = [
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: true, status: 'connected' },
+    { id: 'google-calendar', name: 'Calendar', description: 'Events', available: true, status: 'connected' },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: true, status: 'connected' },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true, status: 'connected' },
+  ];
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <GoogleEntryRow
+        connectors={connectors}
+        onPressConnect={vi.fn()}
+        onPressDisconnect={vi.fn()}
+      />,
+    );
+  });
+  const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
+  expect(parent.props.value).toBe('connected');
+  expect(parent.props.action).toBeUndefined();
+  expect(parent.props.trailingPress).toBeUndefined();
   await act(async () => renderer.unmount());
 });
 

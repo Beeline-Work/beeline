@@ -55,12 +55,10 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
   };
 });
 
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/PageHeader', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
   return {
-    HullSurface: host('HullSurface'),
+    PageHeader: (props: any) => ReactModule.createElement('PageHeader', props),
   };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
@@ -157,6 +155,13 @@ async function untilSignin(renderer: ReactTestRenderer): Promise<void> {
 }
 
 describe('Connect Trusty Squire flow — ONE connect path', () => {
+  it('names the tool under a small Workbench eyebrow', async () => {
+    const renderer = await render();
+    const header = renderer.root.findByProps({ testID: 'connect-header' });
+    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.title).toBe('Trusty Squire');
+  });
+
   it('an in-chat offer resumes the already paired install instead of asking for a helper again', async () => {
     searchParams.params = {
       workspaceId: 'workspace-1',
@@ -246,12 +251,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   it('shows the machine’s step-by-step install progress and then the sign-in button', async () => {
     const renderer = await render();
     await pair(renderer);
-    expect(renderer.root.findByProps({ testID: 'connect-selected-machine' }).props.children)
-      .toBe('squire-box');
+    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBe('squire-box');
     await advancePolls(2);
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'connect-selected-machine' }).props.children)
-      .toBe('squire-box');
+    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBe('squire-box');
     const active = renderer.root.findAll(
       (node: any) => node.props?.testID === 'connect-step-1-active',
     );

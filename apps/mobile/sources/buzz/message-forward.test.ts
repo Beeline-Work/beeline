@@ -25,18 +25,48 @@ describe('message forwarding', () => {
   });
 
   it('keeps the original Room and poster when a forwarded message is forwarded again', () => {
-    const original = formatForwardedMessage('ship it', 'general', {
-      name: 'Alice',
-      handle: 'alice',
-    });
-    const forwardedAgain = formatForwardedMessage(original, 'decisions', {
-      name: 'Bob',
-      handle: 'bob',
-    });
+    const original = formatForwardedMessage(
+      'ship it',
+      'general',
+      { name: 'Alice', handle: 'alice' },
+      { roomId: 'room-general', messageId: 'message-original' },
+    );
+    const forwardedAgain = formatForwardedMessage(
+      original,
+      'decisions',
+      { name: 'Bob', handle: 'bob' },
+      { roomId: 'room-decisions', messageId: 'message-forward' },
+    );
 
-    expect(forwardedAgain).toBe('> > ship it\n\nFORWARDED FROM #general · @alice');
+    expect(forwardedMessageParts(forwardedAgain)).toEqual({
+      body: '> > ship it',
+      caption: 'FORWARDED FROM #general · @alice',
+      source: { roomId: 'room-general', messageId: 'message-original' },
+    });
     expect(forwardedAgain).not.toContain('#decisions');
     expect(forwardedAgain).not.toContain('@bob');
+  });
+
+  it('carries an exact source in a backward-compatible caption link', () => {
+    const text = formatForwardedMessage(
+      'open the source',
+      'proof',
+      { name: 'Alice', handle: 'alice' },
+      { roomId: 'room-proof', messageId: 'message-source' },
+    );
+
+    expect(text).toBe(
+      '> open the source\n\n[FORWARDED FROM #proof · @alice](beeline://message-source/room-proof/message-source)',
+    );
+    expect(forwardedMessageParts(text)).toEqual({
+      body: '> open the source',
+      caption: 'FORWARDED FROM #proof · @alice',
+      source: { roomId: 'room-proof', messageId: 'message-source' },
+    });
+    expect(forwardedMessageParts('> legacy\n\nFORWARDED FROM #proof · @alice')).toEqual({
+      body: '> legacy',
+      caption: 'FORWARDED FROM #proof · @alice',
+    });
   });
 
   it('posts the quoted source into the chosen Room', async () => {
@@ -44,12 +74,17 @@ describe('message forwarding', () => {
     await forwardMessageToRoom(
       send,
       'room-two',
-      { text: 'ship it', author: { name: 'Alice', handle: 'alice' } },
+      {
+        text: 'ship it',
+        author: { name: 'Alice', handle: 'alice' },
+        source: { roomId: 'room-one', messageId: 'message-one' },
+      },
       'general',
     );
-    expect(send).toHaveBeenCalledWith({
-      roomId: 'room-two',
-      text: '> ship it\n\nFORWARDED FROM #general · @alice',
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]![0]).toMatchObject({ roomId: 'room-two' });
+    expect(forwardedMessageParts(send.mock.calls[0]![0].text)).toMatchObject({
+      source: { roomId: 'room-one', messageId: 'message-one' },
     });
   });
 

@@ -165,6 +165,7 @@ describe('the desktop work pane artifact view', () => {
       'Notes',
     );
     expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
+    expect(renderer.root.findByType('MonoMarkdown').props.document).toBe(true);
   });
 
   // The audit found the pane sent a PDF to the browser and had no way to paint

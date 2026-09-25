@@ -57,8 +57,7 @@ export function commandFixtureApi(
       if (key === 'liveSubscribe')
         return (...args: unknown[]) => {
           const onItems = args[2] as
-            | ((items: readonly InboxItem[], cursor?: string) => void)
-            | undefined;
+            ((items: readonly InboxItem[], cursor?: string) => void) | undefined;
           notify = args[5] as ((commands: readonly AgentCommand[]) => void) | undefined;
           args[2] = (items: readonly InboxItem[], cursor?: string) => {
             for (const source of items) add(source);
@@ -71,6 +70,7 @@ export function commandFixtureApi(
         return typeof value === 'function' ? value.bind(target) : value;
       }
       return async (name: keyof DaemonOperationMap, input: Record<string, unknown>) => {
+        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall') return { allowed: true };
         if (name === 'getRoomGitHubToken')
           return { token: 'fixture-room-token', expiresAt: Date.now() + 60_000 };
         if (name === 'getAgentCommands') {

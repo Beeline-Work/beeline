@@ -468,6 +468,7 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     await flush();
     expect(renderer.root.findByProps({ testID: 'artifact-viewer-markdown' })).toBeDefined();
     expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
+    expect(renderer.root.findByType('MonoMarkdown').props.document).toBe(true);
   });
 
   // The audit found Android had no PDF viewer: opening one threw the reader

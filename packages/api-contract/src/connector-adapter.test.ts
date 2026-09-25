@@ -9,9 +9,14 @@ import {
 } from './connector-adapter.js';
 
 describe('connector adapters', () => {
-  it('registers only Squire and YouTube', () => {
-    expect(adaptedConnectorKinds()).toEqual(['trusty-squire', 'google-youtube']);
+  it('registers owner-bound connectors', () => {
+    expect(adaptedConnectorKinds()).toEqual(['trusty-squire', 'google-youtube', 'composio']);
     expect(connectorAdapter('trusty-squire')).toBe(SQUIRE_CONNECTOR_ADAPTER);
+    expect(connectorAdapter('composio')?.authorize('connect', 'other')).toEqual({
+      allowed: false,
+      reason: 'connector not found (access denied)',
+    });
+    expect(connectorAdapter('composio')?.assignmentKinds('installing')).toEqual(['install']);
     expect(connectorAdapter('google-youtube')).toBe(YOUTUBE_CONNECTOR_ADAPTER);
     expect(connectorAdapter('google-gmail')).toBeUndefined();
     expect(connectorAdapter('tailscale')).toBeUndefined();

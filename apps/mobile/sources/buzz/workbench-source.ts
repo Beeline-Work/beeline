@@ -29,7 +29,11 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
  * screens never read either implementation directly.
  */
 export interface WorkbenchSource {
-  readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView>;
+  readWorkbench(input: {
+    workspaceId: string;
+    viewerId: string;
+    refreshVault?: boolean;
+  }): Promise<WorkbenchView>;
   listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]>;
   /** Pair a machine's helper: returns the connector whose install is polled. */
   pairConnector(input: {
@@ -61,13 +65,17 @@ function toConnector(entry: {
   connectorType: string;
   name: string;
   available: boolean;
+  approvedTools?: readonly string[];
   row?: ConnectorViewDto;
 }): WorkbenchConnector {
   const id = entry.connectorType as WorkbenchConnectorId;
+  const approvedTools = entry.row?.approvedTools ?? entry.approvedTools;
   return {
     id,
     name: entry.name,
-    description: CONNECTOR_DESCRIPTIONS[id] ?? '',
+    description: approvedTools?.length
+      ? `${CONNECTOR_DESCRIPTIONS[id] ?? ''} Approved tools: ${approvedTools.join(', ')}.`
+      : CONNECTOR_DESCRIPTIONS[id] ?? '',
     available: entry.available,
     ...(entry.row
       ? {
@@ -133,8 +141,15 @@ function toSteps(
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
-  async readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView> {
-    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+  async readWorkbench(input: {
+    workspaceId: string;
+    viewerId: string;
+    refreshVault?: boolean;
+  }): Promise<WorkbenchView> {
+    const dto = await monolithPhoneOperation('readWorkbench', {
+      workspaceId: input.workspaceId,
+      ...(input.refreshVault ? { refreshVault: true } : {}),
+    });
     return {
       helpers: dto.helpers.map((helper): WorkbenchHelper => ({
         id: helper.id,
@@ -158,6 +173,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
           connectorType: entry.connectorType,
           name: entry.name,
           available: entry.available,
+          approvedTools: entry.approvedTools,
           row: dto.connectors.find((candidate) => candidate.connectorType === entry.connectorType),
         });
       }),

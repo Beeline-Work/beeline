@@ -11,6 +11,7 @@ import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { GoogleOAuth } from './google-oauth.js';
+import { ComposioClient } from './connector-composio.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
@@ -188,6 +189,165 @@ describe('workbench connectors', () => {
     return paired.connectorId;
   }
 
+  it('links Composio to one owner, scopes helper tools, and records that owner’s use', async () => {
+    const oldKey = process.env.BEELINE_COMPOSIO_API_KEY;
+    const oldScope = process.env.BEELINE_COMPOSIO_SCOPE;
+    process.env.BEELINE_COMPOSIO_API_KEY = 'test-project-key';
+    process.env.BEELINE_COMPOSIO_SCOPE = JSON.stringify({
+      toolkits: ['github'],
+      tools: { github: ['GITHUB_GET_AN_ISSUE'] },
+    });
+    try {
+      let linked = false;
+      const requests: { url: string; body?: Record<string, unknown> }[] = [];
+      const remote = vi.fn(async (input: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+        requests.push({ url: input, body });
+        const data = input.endsWith('/tool_router/session')
+          ? { session_id: 'trs_owner' }
+          : input.includes('/toolkits?')
+            ? { items: [{ slug: 'github', ...(linked ? { connected_account: { status: 'ACTIVE', user_id: HUMAN } } : {}) }] }
+            : input.endsWith('/link')
+              ? { redirect_url: 'https://app.composio.dev/link/lt_owner' }
+              : { data: { issue: 42 }, log_id: 'log_owner' };
+        return { ok: true, json: async () => data } as Response;
+      });
+      const scoped = new DaemonService(
+        database, new LiveHub(), undefined, undefined, false, undefined,
+        false, undefined, undefined, undefined,
+        new ComposioClient('test-project-key', remote as typeof fetch),
+      );
+      const sibling = 'd'.repeat(64);
+      await database.query(`UPDATE agents SET machine_id='owner-machine' WHERE agent_id=$1`, [HELPER]);
+      await database.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Second bee','second-bee')`,
+        [sibling],
+      );
+      await database.query(
+        `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'owner-machine')`,
+        [sibling, HUMAN],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'member')`,
+        [WORKSPACE, sibling],
+      );
+      const paired = await phone.pairConnector({
+        workspaceId: WORKSPACE, connectorType: 'composio', helperAgentId: HELPER,
+      }, HUMAN);
+      await expect(phone.pairConnector({
+        workspaceId: WORKSPACE, connectorType: 'composio', helperAgentId: HELPER,
+      }, RECIPIENT)).rejects.toThrow();
+      const assignments = await scoped.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
+      expect(assignments.assignments).toContainEqual(expect.objectContaining({
+        kind: 'install', connectorId: paired.connectorId, connectorType: 'composio',
+      }));
+      const link = await scoped.execute('getComposioLink', {
+        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
+      }, HELPER);
+      expect(link).toEqual({
+        status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_owner',
+      });
+      expect(requests[0]!.body).toEqual(expect.objectContaining({
+        user_id: HUMAN,
+        toolkits: { enabled: ['github'] },
+        tools: { github: { enabled: ['GITHUB_GET_AN_ISSUE'] } },
+      }));
+      await expect(scoped.execute('installConnector', {
+        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
+      }, HELPER)).rejects.toThrow('not connected');
+      linked = true;
+      expect(await scoped.execute('getComposioLink', {
+        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
+      }, HELPER)).toEqual({ status: 'connected' });
+      await scoped.execute('installConnector', {
+        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
+      }, HELPER);
+      const connection = await database.query<{ owner_identity_id: string; reference: string }>(
+        `SELECT owner_identity_id,reference FROM workspace_connections WHERE connector_id=$1::uuid`,
+        [paired.connectorId],
+      );
+      expect(connection.rows).toEqual([{ owner_identity_id: HUMAN, reference: 'composio:github' }]);
+
+      const roomId = '77777777-7777-4777-8777-777777777777';
+      await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Tools')`,
+        [roomId, WORKSPACE, HUMAN]);
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+        [WORKSPACE, roomId, HUMAN, RECIPIENT, HELPER, sibling],
+      );
+      for (const [sourceId, requester] of [['owner-source', HUMAN], ['other-source', RECIPIENT]]) {
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'use a tool')`,
+          [sourceId, roomId, requester],
+        );
+        await database.query(
+          `INSERT INTO agent_commands(
+            id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+            root_command_id,root_source_message_id,agent_depth,state,generation_id
+          ) VALUES($1,$2,$3,$4,$5,'input','human_tag',$1,$4,0,'claimed','generation-1')`,
+          [`command-${sourceId}`, roomId, HELPER, sourceId, sourceId],
+        );
+      }
+      await expect(scoped.execute('getComposioTools', {
+        roomId, requestId: 'other-source', generationId: 'generation-1',
+      }, HELPER)).rejects.toThrow('access denied');
+      process.env.BEELINE_COMPOSIO_SCOPE = JSON.stringify({
+        toolkits: ['github'], tools: { github: ['GITHUB_DELETE_REPO'] },
+      });
+      await database.query(
+        `INSERT INTO agent_commands(
+          id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+          root_command_id,root_source_message_id,agent_depth,state,generation_id
+        ) VALUES('sibling-command',$1,$2,'owner-source','sibling-turn','input','human_tag',
+          'sibling-command','owner-source',0,'claimed','generation-1')`,
+        [roomId, sibling],
+      );
+      expect((await scoped.execute('getComposioTools', {
+        roomId, requestId: 'sibling-turn', generationId: 'generation-1',
+      }, sibling)).connectorId).toBe(paired.connectorId);
+      expect(await scoped.execute('getComposioTools', {
+        roomId, requestId: 'owner-source', generationId: 'generation-1',
+      }, HELPER)).toEqual({
+        connectorId: paired.connectorId,
+        toolkits: ['github'],
+        tools: { github: ['GITHUB_GET_AN_ISSUE'] },
+      });
+      await expect(scoped.execute('executeComposioTool', {
+        roomId, requestId: 'owner-source', generationId: 'generation-1',
+        toolkit: 'github', tool: 'GITHUB_DELETE_REPO', arguments: {},
+      }, HELPER)).rejects.toThrow('out of scope');
+      expect(await scoped.execute('executeComposioTool', {
+        roomId, requestId: 'owner-source', generationId: 'generation-1',
+        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
+      }, HELPER)).toEqual({ data: { issue: 42 }, logId: 'log_owner' });
+      const receipts = await database.query<{ owner_identity_id: string; operation: string }>(
+        `SELECT owner_identity_id,operation FROM connection_receipts WHERE connection_id=(
+          SELECT id FROM workspace_connections WHERE connector_id=$1::uuid)`,
+        [paired.connectorId],
+      );
+      expect(receipts.rows).toEqual([{ owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' }]);
+      expect((await connectionReceiptCards()).some((card) => card.author_id === connectorIdentityId('composio')))
+        .toBe(false);
+      const remoteCalls = requests.length;
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+        [roomId, HUMAN],
+      );
+      await expect(scoped.execute('executeComposioTool', {
+        roomId, requestId: 'owner-source', generationId: 'generation-1',
+        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: {},
+      }, HELPER)).rejects.toThrow('access denied');
+      expect(requests).toHaveLength(remoteCalls);
+    } finally {
+      if (oldKey === undefined) delete process.env.BEELINE_COMPOSIO_API_KEY;
+      else process.env.BEELINE_COMPOSIO_API_KEY = oldKey;
+      if (oldScope === undefined) delete process.env.BEELINE_COMPOSIO_SCOPE;
+      else process.env.BEELINE_COMPOSIO_SCOPE = oldScope;
+    }
+  });
+
   it('writes owner-approved Squire ledger grants for every owner agent on the machine', async () => {
     const SIBLING = 'd'.repeat(64);
     const MACHINE = 'machine-squire-box';
@@ -268,6 +428,64 @@ describe('workbench connectors', () => {
     )) as { connectors: unknown[]; connections: unknown[] };
     expect(otherView.connectors).toEqual([]);
     expect(otherView.connections).toEqual([]);
+  });
+
+  it('refreshes edited and deleted keys from Squire before the phone re-reads the list', async () => {
+    const connectorId = await pairOwnerConnector();
+
+    const refreshing = (await phoneOperation('readWorkbench', {
+      workspaceId: WORKSPACE,
+      refreshVault: true,
+    })) as { connections: { reference: string; stale?: boolean }[] };
+    expect(
+      refreshing.connections.find((row) => row.reference === 'github.com/acme/tooling')?.stale,
+    ).toBe(true);
+    const editAssignment = await daemonOperation('getConnectorAssignments', {});
+    expect(editAssignment.body.assignments).toContainEqual({
+      kind: 'sync',
+      connectorId,
+      connectorType: 'trusty-squire',
+    });
+
+    await daemonOperation('postConnectorVault', {
+      connections: [
+        {
+          reference: 'github.com/acme/tooling',
+          service: 'github-renamed',
+          label: 'Renamed tooling',
+          fieldNames: ['token'],
+          allowedHosts: ['api.github.example'],
+          createdAt: Math.floor(Date.now() / 1000),
+          stale: false,
+          state: 'active',
+        },
+      ],
+    });
+    const edited = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string; service: string; label: string; allowedHosts: string[] }[];
+    };
+    expect(
+      edited.connections.find((row) => row.reference === 'github.com/acme/tooling'),
+    ).toMatchObject({
+      service: 'github-renamed',
+      label: 'Renamed tooling',
+      allowedHosts: ['api.github.example'],
+    });
+
+    await phoneOperation('readWorkbench', { workspaceId: WORKSPACE, refreshVault: true });
+    const deleteAssignment = await daemonOperation('getConnectorAssignments', {});
+    expect(deleteAssignment.body.assignments).toContainEqual({
+      kind: 'sync',
+      connectorId,
+      connectorType: 'trusty-squire',
+    });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const deleted = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string }[];
+    };
+    expect(deleted.connections.map((row) => row.reference)).not.toContain(
+      'github.com/acme/tooling',
+    );
   });
 
   it('lists keys in vault created-at order, not by service', async () => {
@@ -484,6 +702,9 @@ describe('workbench connectors', () => {
     const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`);
     expect(systemLogo.status).toBe(200);
     expect(await systemLogo.text()).toContain('aria-label="System"');
+    const googleLogo = await fetch(`${origin}/v1/connectors/logo/google.svg`);
+    expect(googleLogo.status).toBe(200);
+    expect(await googleLogo.text()).toContain('aria-label="Google Workspace"');
   });
 
   it('DMs exactly one receipt card for an approval-class event', async () => {

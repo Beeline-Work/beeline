@@ -121,12 +121,35 @@ describe('MonolithWorkbenchSource connections', () => {
     const view = await new MonolithWorkbenchSource().readWorkbench({
       workspaceId: 'ws1',
       viewerId: 'human-dani',
+      refreshVault: true,
     });
+    expect(state.calls.at(-1)?.input).toEqual({ workspaceId: 'ws1', refreshVault: true });
     expect(view.connections[0].service).toBe('github');
     expect(view.connections[1].service).toBeUndefined();
     // The server-derived brand domain rides through for the mark to fetch.
     expect(view.connections[2].faviconDomain).toBe('resend.com');
     expect(view.connections[0].faviconDomain).toBeUndefined();
+  });
+
+  it('shows the paired Composio scope even after the server catalog changes', async () => {
+    const dto = workbenchDto([]);
+    state.readWorkbenchOutput = {
+      ...dto,
+      catalog: [...dto.catalog, {
+        connectorType: 'composio', name: 'Composio', available: true,
+        approvedTools: ['GITHUB_DELETE_REPO'],
+      }],
+      connectors: [{
+        connectorId: 'composio-row', connectorType: 'composio',
+        status: { status: 'connected', steps: [] },
+        approvedTools: ['GITHUB_GET_AN_ISSUE'],
+      }],
+    };
+    const view = await new MonolithWorkbenchSource().readWorkbench({
+      workspaceId: 'ws1', viewerId: 'human-dani',
+    });
+    expect(view.connectors.find((connector) => connector.id === 'composio')?.description)
+      .toContain('Approved tools: GITHUB_GET_AN_ISSUE.');
   });
 });
 

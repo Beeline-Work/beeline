@@ -48,6 +48,7 @@ const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'google-calendar', name: 'Google Calendar', available: true },
   { connectorType: 'google-drive', name: 'Google Drive', available: true },
   { connectorType: 'google-youtube', name: 'YouTube', available: true },
+  { connectorType: 'composio', name: 'Composio', available: true },
 ];
 
 export function connectorCatalog(): readonly ConnectorCatalogEntry[] {
@@ -66,7 +67,7 @@ const logoCache = new Map<string, string>();
 
 /** Fixed bot logos, including System, served at /v1/connectors/logo/<type>.svg. */
 export function connectorLogo(type: string): string | undefined {
-  if (type !== 'system' && !isConnectorKind(type)) return undefined;
+  if (type !== 'system' && type !== 'google' && !isConnectorKind(type)) return undefined;
   const cached = logoCache.get(type);
   if (cached) return cached;
   try {

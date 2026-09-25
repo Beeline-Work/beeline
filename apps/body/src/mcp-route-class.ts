@@ -3,15 +3,15 @@
  *
  * Each declaration is `local` (copied into the isolated harness home as-is)
  * or `host` (kept out until an owner grant rewrites the route into the home).
- * Built-ins are code-owned: `squire` is `host`. Everything else is `local`
- * unless the operator marks it `host` with that one key in their own config.
+ * Imported declarations are personal resources even when their process is local:
+ * locality says nothing about credentials, connected accounts or ownership.
+ * Repository tools supplied by the daemon are mounted separately.
  * The same classification applies to every imported server on every harness,
  * including Goose, and the Room permission matcher reads the same verdict.
  *
  * Grant acceptance (`host-mcp-route.ts`) writes the rewritten route; this
  * module is the import-step classifier alone.
  */
-import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 
 export type McpRouteClass = 'local' | 'host';
 
@@ -36,15 +36,8 @@ export function isCodeOwnedHostMcpName(name: string): boolean {
   return CODE_OWNED_HOST_MCP_NAMES.includes(name.trim().toLowerCase() as 'squire');
 }
 
-export function classifyImportedMcpServer(input: ImportedMcpServerInput): McpRouteClass {
-  const name = input.name.trim();
-  if (isCodeOwnedHostMcpName(name)) return 'host';
-  const command = input.command ?? mcpLaunchCommand(input.declaration);
-  const args = input.args ?? mcpLaunchArgs(input.declaration);
-  if (command && isTrustySquireMcpLaunch(command, args)) return 'host';
-  if (hasSquireBrokerEnvironment(input.declaration)) return 'host';
-  if (operatorMarkedHost(input.declaration)) return 'host';
-  return 'local';
+export function classifyImportedMcpServer(_input: ImportedMcpServerInput): McpRouteClass {
+  return 'host';
 }
 
 /** An already configured broker route still carries Squire authority. */
@@ -86,27 +79,4 @@ export function isHostMcpIdentity(
     if (lowered === n) return true;
     return hostMcpIdentityPrefixes(n).some((prefix) => lowered.startsWith(prefix));
   });
-}
-
-function operatorMarkedHost(declaration: Record<string, unknown> | undefined): boolean {
-  return declaration?.[MCP_ROUTE_CLASS_KEY] === MCP_ROUTE_HOST;
-}
-
-function mcpLaunchCommand(declaration: Record<string, unknown> | undefined): string | undefined {
-  if (!declaration) return undefined;
-  return stringField(declaration.command) ?? stringField(declaration.cmd);
-}
-
-function mcpLaunchArgs(declaration: Record<string, unknown> | undefined): string[] {
-  return stringArray(declaration?.args);
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as string[])
-    : [];
 }

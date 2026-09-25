@@ -194,7 +194,27 @@ describe('RoomCornersList', () => {
     expect(pressable(tree, 'room-corners-others')).toBeUndefined();
     const onlyTheirs = render([theirs('theirs')]);
     expect(pressable(onlyTheirs, 'room-corners-mine')).toBeUndefined();
-    expect(pressable(onlyTheirs, 'room-corners-others')).toBeTruthy();
+    expect(pressable(onlyTheirs, 'room-corners-others').props.accessibilityState).toMatchObject({
+      expanded: true,
+    });
+    expect(rowIds(onlyTheirs)).toEqual(['room-corner-theirs']);
+    act(() => pressable(onlyTheirs, 'room-corners-others').props.onPress());
+    expect(rowIds(onlyTheirs)).toEqual([]);
+  });
+
+  it('opens Others when a previously empty list loads with no Mine corners', () => {
+    const tree = render([]);
+    act(() => {
+      tree.update(
+        <RoomCornersList
+          corners={[theirs('loaded')]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+        />,
+      );
+    });
+    expect(rowIds(tree)).toEqual(['room-corner-loaded']);
   });
 
   it('names an empty Room instead of inventing a list', () => {

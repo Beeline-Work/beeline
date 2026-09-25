@@ -129,13 +129,16 @@ corners also mount the release-owned `codegraph` server after its local index is
 
 `beeline-readonly-mcp` — reading, in a Room and in a corner:
 
-| Tool                                            | What it does                                                                            |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `list_files`, `read_file`                       | Walk and read the checkout                                                              |
-| `search_text`                                   | Search the checkout                                                                     |
-| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                                                       |
-| `read_agent_file`                               | Read the agent's approved skills or Workspace memory                                    |
-| `write_memory`                                  | Replace the agent's private Workspace `MEMORY.md` — the only memory write a Room allows |
+| Tool                                            | What it does                                         |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| `list_files`, `read_file`                       | Walk and read the checkout                           |
+| `search_text`                                   | Search the checkout                                  |
+| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                    |
+| `read_agent_file`                               | Read the agent's approved materialized skills        |
+
+The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
+Room/corner runtime. Institutional-memory shadow extraction is dark by default and is not served
+to agent prompts.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 

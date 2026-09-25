@@ -117,6 +117,14 @@ import {
 } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 import { notifyConnectorHelper } from './postgres-live.js';
+import {
+  claimInstitutionalMemoryJob,
+  completeInstitutionalMemoryJob,
+  enqueueInstitutionalMemoryTurnReview,
+  failInstitutionalMemoryJob,
+  heartbeatInstitutionalMemoryJob,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -178,6 +186,9 @@ export class DaemonService {
     ) => Promise<Output<'getPrChecksStatus'>>,
     private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
     private readonly composioClient?: ComposioClient,
+    private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
+      enabled: false,
+    },
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -368,6 +379,7 @@ export class DaemonService {
           this.prChecksStatus,
           this.googleOAuth,
           this.composioClient,
+          this.institutionalMemoryShadow,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -453,11 +465,20 @@ export class DaemonService {
             // Transient corner-start clone/network: the helper retries startCorner.
             // Leave the original pending command for that attempt; do not ask
             // systemd to restart, and do not consume the request.
-          } else
+          } else {
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
+            if (candidate.status === 'complete') {
+              await enqueueInstitutionalMemoryTurnReview(db, {
+                roomId: scopedRoom!,
+                sourceMessageId: command.root_source_message_id,
+                requestId: command.turn_request_id,
+                config: this.institutionalMemoryShadow,
+              });
+            }
+          }
         }
         return result;
       });
@@ -502,6 +523,39 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
+      case 'claimInstitutionalMemoryJob': {
+        if (!this.institutionalMemoryShadow.enabled) return { enabled: false } as Output<Name>;
+        const job = await claimInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          this.institutionalMemoryShadow,
+        );
+        return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
+      }
+      case 'heartbeatInstitutionalMemoryJob':
+        await heartbeatInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'heartbeatInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
+      case 'completeInstitutionalMemoryJob':
+        await completeInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'completeInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
+      case 'failInstitutionalMemoryJob':
+        await failInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'failInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -5107,6 +5161,10 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
+  claimInstitutionalMemoryJob: true,
+  heartbeatInstitutionalMemoryJob: true,
+  completeInstitutionalMemoryJob: true,
+  failInstitutionalMemoryJob: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

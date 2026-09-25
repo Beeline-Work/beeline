@@ -2,7 +2,7 @@ import { CommandExecutionContext, runServerCommandIntake } from './server-comman
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -15,10 +15,13 @@ import {
 } from './acp.js';
 import {
   expectedMountedImportedMcpServerNames,
+  freshHarnessLoginLine,
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
+  isExpiredHarnessLoginError,
   prepareRoomAgentHome,
+  repairRoomAgentCredentialLinks,
 } from './agent-home.js';
 import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -702,7 +705,15 @@ export class MonolithCornerTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
-    if (this.client?.isAlive && this.sessionId) return this.sessionId;
+    if (this.client?.isAlive && this.sessionId) {
+      if (this.options.config.agentHomeRoot) {
+        await repairRoomAgentCredentialLinks({
+          root: this.options.config.agentHomeRoot,
+          operatorHome: this.options.config.operatorHome,
+        });
+      }
+      return this.sessionId;
+    }
     trace?.noteActivation('cold');
     const [configuration, roster, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
@@ -1452,7 +1463,7 @@ export class MonolithCornerTurnLoop {
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
-              const runPrompt = async (prompt = buildPrompt()): Promise<PromptResult> => {
+              const runPromptAttempt = async (prompt: string): Promise<PromptResult> => {
                 activityAttempt += 1;
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
@@ -1500,6 +1511,41 @@ export class MonolithCornerTurnLoop {
                     publishToolCalls(calls, false, lastNarratedToolCall);
                   },
                 );
+              };
+              let loginRetryUsed = false;
+              const runPrompt = async (prompt = buildPrompt()): Promise<PromptResult> => {
+                try {
+                  return await runPromptAttempt(prompt);
+                } catch (error) {
+                  if (!isExpiredHarnessLoginError(error)) throw error;
+                  if (loginRetryUsed) {
+                    return {
+                      stopReason: 'login-required',
+                      updates: [],
+                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
+                      toolCalls: [],
+                    };
+                  }
+                  loginRetryUsed = true;
+                  console.warn(
+                    `[thin-core] corner ${cornerId} turn ${requestId}: ` +
+                      'harness login expired; repairing the shared credential and retrying once',
+                  );
+                  trace.retry({ reason: 'expired harness login' });
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                  try {
+                    return await runPromptAttempt(prompt);
+                  } catch (retryError) {
+                    if (!isExpiredHarnessLoginError(retryError)) throw retryError;
+                    return {
+                      stopReason: 'login-required',
+                      updates: [],
+                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
+                      toolCalls: [],
+                    };
+                  }
+                }
               };
               let result = await runPrompt();
               trace.promptSettled();

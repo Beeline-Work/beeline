@@ -3,13 +3,17 @@ import type { ChatListItem, RoomViewIdentity, WorkspaceView } from '@beeline/buz
 import { previewHandle, roomRowName } from '@/buzz/room-list-row';
 
 const FORWARD_CAPTION = /\n\n(FORWARDED FROM #[^\n]+)$/;
+const FORWARD_SOURCE =
+  /\n\n\[(FORWARDED FROM #[^\n\]]+)\]\(beeline:\/\/message-source\/([^/\s]+)\/([^\s)]+)\)$/;
 
 type ForwardAuthor = Pick<RoomViewIdentity, 'name' | 'handle'>;
+export type ForwardSource = { roomId: string; messageId: string };
 
 export function formatForwardedMessage(
   text: string,
   roomName: string,
   author: ForwardAuthor,
+  source?: ForwardSource,
 ): string {
   const existingForward = forwardedMessageParts(text);
   const quote = existingForward.body
@@ -20,12 +24,41 @@ export function formatForwardedMessage(
   const normalizedRoomName = roomName.trim().replace(/^#+/, '');
   const caption =
     existingForward.caption ?? `FORWARDED FROM #${normalizedRoomName} · @${previewHandle(author)}`;
-  return `${quote}\n\n${caption}`;
+  const originalSource = existingForward.source ?? source;
+  return originalSource
+    ? `${quote}\n\n[${caption}](beeline://message-source/${encodeURIComponent(originalSource.roomId)}/${encodeURIComponent(originalSource.messageId)})`
+    : `${quote}\n\n${caption}`;
 }
 
-export function forwardedMessageParts(text: string): { body: string; caption?: string } {
-  const match = text.match(FORWARD_CAPTION);
-  return match ? { body: text.slice(0, match.index), caption: match[1] } : { body: text };
+export function forwardedMessageParts(text: string): {
+  body: string;
+  caption?: string;
+  source?: ForwardSource;
+} {
+  const sourceMatch = text.match(FORWARD_SOURCE);
+  // Older clients render this as an ordinary caption-shaped Markdown link.
+  // They reveal no transport metadata, and their http-only link handler leaves
+  // it inert. This client unwraps the same label and owns the exact jump.
+  const visibleText = sourceMatch
+    ? `${text.slice(0, sourceMatch.index)}\n\n${sourceMatch[1]}`
+    : text;
+  let source: ForwardSource | undefined;
+  if (sourceMatch) {
+    try {
+      const roomId = decodeURIComponent(sourceMatch[2]!);
+      const messageId = decodeURIComponent(sourceMatch[3]!);
+      if (roomId && messageId) source = { roomId, messageId };
+    } catch {
+      // A malformed marker is never navigation authority. It remains hidden,
+      // while the forwarded quote itself continues to render normally.
+    }
+  }
+  const captionMatch = visibleText.match(FORWARD_CAPTION);
+  return {
+    body: captionMatch ? visibleText.slice(0, captionMatch.index) : visibleText,
+    ...(captionMatch ? { caption: captionMatch[1] } : {}),
+    ...(source ? { source } : {}),
+  };
 }
 
 export type ForwardedMessage = {
@@ -48,12 +81,13 @@ export async function forwardMessageToRoom(
     text: string;
     author: ForwardAuthor;
     attachments?: readonly AttachmentReference[];
+    source?: ForwardSource;
   },
   sourceRoomName: string,
 ): Promise<void> {
   await send({
     roomId,
-    text: formatForwardedMessage(message.text, sourceRoomName, message.author),
+    text: formatForwardedMessage(message.text, sourceRoomName, message.author, message.source),
     attachments: message.attachments?.length ? message.attachments : undefined,
   });
 }

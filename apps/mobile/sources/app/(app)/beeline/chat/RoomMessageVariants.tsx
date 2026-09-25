@@ -1695,6 +1695,7 @@ export interface OrdinaryLedgerMessageProps {
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
+  onOpenSource?(roomId: string, messageId: string): void;
   onMention?(participantId: string): void;
   onOpenProfile?(participantId: string, kind?: 'human' | 'agent'): void;
   /** A tap on the row — the composer's "outside" — puts the keyboard away. */
@@ -1807,6 +1808,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onChannelReference,
   codeRoomId,
   onOpenCode,
+  onOpenSource,
   onMention,
   onOpenProfile,
   onTapOutsideComposer,
@@ -2019,15 +2021,41 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     speaksAsAgent: isAgent,
     immediatelyPrecedingMessage,
   });
+  const replySourceRoomId = message.reference?.channelId ?? codeRoomId;
+  const replySourceMessageId = message.replyToId;
+  const replyReferenceContents = (
+    <Text numberOfLines={2} style={styles.replyReferenceText}>
+      ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
+      {referencedTarget?.preview ?? 'Message not loaded'}
+    </Text>
+  );
   const replyReference = showReplyReference ? (
-    <View style={styles.replyReference} testID={`reply-reference-${message.id}`}>
-      <Text numberOfLines={2} style={styles.replyReferenceText}>
-        ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
-        {referencedTarget?.preview ?? 'Message not loaded'}
-      </Text>
-    </View>
+    onOpenSource && replySourceRoomId && replySourceMessageId ? (
+      <Pressable
+        accessibilityLabel="Open original message"
+        accessibilityRole="button"
+        onPress={() => onOpenSource(replySourceRoomId, replySourceMessageId)}
+        style={styles.replyReference}
+        testID={`reply-reference-${message.id}`}
+      >
+        {replyReferenceContents}
+      </Pressable>
+    ) : (
+      <View style={styles.replyReference} testID={`reply-reference-${message.id}`}>
+        {replyReferenceContents}
+      </View>
+    )
   ) : null;
   const forwarded = forwardedMessageParts(message.text);
+  const forwardSource = forwarded.source;
+  const forwardBodyAction =
+    forwardSource && onOpenSource
+      ? {
+          accessibilityLabel: 'Open original forwarded message',
+          onPress: () => onOpenSource(forwardSource.roomId, forwardSource.messageId),
+          testID: `forward-source-${message.id}`,
+        }
+      : undefined;
   const connectorReceipt = parseConnectorReceipt(forwarded.body);
   const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
   const ledgerText = isSelfSteer ? undefined : splitLedgerText(receiptBody);
@@ -2100,6 +2128,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             codeRoomId={codeRoomId}
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
+            bodyAction={forwardBodyAction}
             replyReference={replyReference}
             attachments={attachments}
           />
@@ -2121,6 +2150,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             codeRoomId={codeRoomId}
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
+            bodyAction={forwardBodyAction}
             replyReference={replyReference}
             machineNoise={machineNoise}
             attachments={attachments}
@@ -2128,9 +2158,22 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         )}
         {receiptCard}
         {forwarded.caption ? (
-          <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
-            {forwarded.caption}
-          </Text>
+          forwardSource && onOpenSource ? (
+            <Pressable
+              accessibilityLabel="Open original forwarded message"
+              accessibilityRole="button"
+              onPress={() => onOpenSource(forwardSource.roomId, forwardSource.messageId)}
+              testID={`forward-source-caption-${message.id}`}
+            >
+              <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
+                {forwarded.caption}
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
+              {forwarded.caption}
+            </Text>
+          )
         ) : null}
         {message.isUser && deliveryFailed ? (
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>

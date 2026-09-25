@@ -8,6 +8,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { formatForwardedMessage } from '@/buzz/message-forward';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { beelineThemes } from '@/buzz/groknight';
@@ -3057,6 +3058,92 @@ describe('Room message variant components', () => {
     expect(onMessageActions).toHaveBeenCalledTimes(1);
     expect(onMessageActions.mock.calls[0][0].id).toBe('tapped');
     expect(onCopy).not.toHaveBeenCalled();
+  });
+
+  it('opens the exact reply source from the quoted reply strip', () => {
+    const onOpenSource = vi.fn();
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'reply',
+          replyToId: 'source-message',
+          reference: { channelId: 'room-proof', eventId: 'reply', rootId: 'source-message' },
+        })}
+        referencedTarget={{
+          messageId: 'source-message',
+          authorName: 'Alice',
+          isAgent: false,
+          preview: 'Original copy',
+        }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onOpenSource={onOpenSource}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const quote = renderer.root.findByType('LedgerEntry' as never).props.replyReference;
+    expect(quote.props.testID).toBe('reply-reference-reply');
+    act(() => quote.props.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('room-proof', 'source-message');
+  });
+
+  it('opens the exact forwarded source from its quote and leaves legacy forwards inert', () => {
+    const onOpenSource = vi.fn();
+    const common = {
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onOpenSource,
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        {...common}
+        message={message({
+          id: 'forward',
+          text: formatForwardedMessage(
+            'Original copy',
+            'proof',
+            { name: 'Alice', handle: 'alice' },
+            { roomId: 'room-proof', messageId: 'source-message' },
+          ),
+        })}
+      />,
+    );
+
+    const quote = renderer.root.findByType('LedgerEntry' as never).props.bodyAction;
+    expect(quote.testID).toBe('forward-source-forward');
+    act(() => quote.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('room-proof', 'source-message');
+
+    const legacy = render(
+      <OrdinaryLedgerMessage
+        {...common}
+        message={message({
+          id: 'legacy-forward',
+          text: '> Original copy\n\nFORWARDED FROM #proof · @alice',
+        })}
+      />,
+    );
+    expect(legacy.root.findByType('LedgerEntry' as never).props.bodyAction).toBeUndefined();
   });
 
   it('keeps the desktop long press as the copy shortcut', () => {

@@ -10,6 +10,3 @@ The captures show Trusty Squire, Wallet, System, Tailscale, Gmail, Google
 Calendar, Google Drive, and YouTube. The System asset is served from the same
 fixed-logo endpoint as the connectors. The test suite checks the real DM header,
 list, and receipt card wiring separately.
-
-Rebuild and capture with `node apps/mobile/scripts/render-system-bot-logos-proof.mjs`,
-then open `http://127.0.0.1:4173/` and `?theme=light` at a 430 px viewport.

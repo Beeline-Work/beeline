@@ -669,7 +669,11 @@ export default function BuzzChannels() {
       setRepoPickerError(null);
       setCreatingRepository(true);
       try {
-        const repository = await transport.githubRepositoryCreate({ installationId, name });
+        const repository = await transport.githubRepositoryCreate({
+          installationId,
+          name,
+          private: true,
+        });
         setRepoCandidates((current) => [...current, repository]);
         setPendingRepo(repository);
         setShowRepoPicker(false);

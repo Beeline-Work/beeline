@@ -11,6 +11,15 @@ const deck = vi.hoisted(() => ({
   chatsReads: 0,
   chatsResponse: null as unknown,
   reconnects: 0,
+  createRepository: vi.fn(
+    async (_input: { installationId: number; name: string; private?: boolean }) => ({
+      key: 'github:42',
+      name: 'owner/new-repo',
+      remote: 'git://github.com/owner/new-repo',
+      githubInstallationId: 78,
+      defaultBranch: 'main',
+    }),
+  ),
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -128,6 +137,9 @@ vi.mock('@/sync/transport', () => ({
     reconnectLive() {
       deck.reconnects += 1;
     }
+    githubRepositoryCreate(input: { installationId: number; name: string; private?: boolean }) {
+      return deck.createRepository(input);
+    }
   },
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -212,6 +224,7 @@ beforeEach(() => {
   deck.bottomInset = 0;
   deck.chatsReads = 0;
   deck.reconnects = 0;
+  deck.createRepository.mockClear();
   deck.subscriptions.length = 0;
   deck.chatsResponse = chatList({ id: 'm1', text: 'earlier', createdAt: 10 });
 });
@@ -222,6 +235,20 @@ afterEach(() => {
 });
 
 describe('Room deck live path', () => {
+  it('requests a private repository from the Room creation sheet', async () => {
+    const renderer = await mountDeck();
+    const sheet = renderer.root.findByType('NewRoomDialog');
+
+    await act(async () => sheet.props.handleCreateRepository(78, 'new-repo'));
+
+    expect(deck.createRepository).toHaveBeenCalledWith({
+      installationId: 78,
+      name: 'new-repo',
+      private: true,
+    });
+    await act(async () => renderer.unmount());
+  });
+
   it('keeps the final lobby card above the bottom safe area', async () => {
     deck.bottomInset = 34;
     const renderer = await mountDeck();

@@ -241,7 +241,7 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
   }
   return (
     <ScrollView contentContainerStyle={styles.markdownBody} testID="artifact-viewer-markdown">
-      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
+      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} document />
     </ScrollView>
   );
 }
@@ -281,7 +281,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerBody,
     marginBottom: theme.buzz.space.md,
   },
-  markdownBody: { padding: theme.buzz.space.md },
+  markdownBody: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: theme.buzz.space.md, paddingBottom: theme.buzz.space.xl },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   placeholderText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },

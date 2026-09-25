@@ -7,6 +7,16 @@ const item = (spans: { styles: string[]; text: string; url: string | null }[]) =
 });
 
 describe('parseMarkdown', () => {
+    it('groups quote lines and keeps their inline link', () => {
+        expect(parseMarkdown('> A [source](https://example.com)\n> follows here.')).toEqual([{
+            type: 'quote',
+            content: [
+                { styles: [], text: 'A ', url: null },
+                { styles: [], text: 'source', url: 'https://example.com' },
+                { styles: [], text: '\nfollows here.', url: null },
+            ],
+        }]);
+    });
     it('keeps an incomplete streamed bold delimiter plain until its closing chunk arrives', () => {
         expect(parseMarkdown('**Analyzing trading economics and risks')).toEqual([
             {

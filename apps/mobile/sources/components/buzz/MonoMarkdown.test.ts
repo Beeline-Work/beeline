@@ -124,6 +124,20 @@ describe('MonoMarkdown code navigation', () => {
 });
 
 describe('MonoMarkdown lists', () => {
+  it('renders document quotes and linked table cells as selectable, pressable text', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(MonoMarkdown, {
+        markdown: '# Notes\n> See [source](https://example.com)\n\n| Topic | Link |\n| --- | --- |\n| API | [Docs](https://example.com/docs) |',
+        textStyle: {},
+        document: true,
+      }));
+    });
+    expect(renderedText(renderer)).toContain('See source');
+    expect(renderedText(renderer)).toContain('Docs');
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'link' }).length).toBeGreaterThanOrEqual(2);
+    expect(renderer.root.findAll((node) => node.props.selectable === true).length).toBeGreaterThanOrEqual(3);
+  });
   it('renders prose as selectable native text', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

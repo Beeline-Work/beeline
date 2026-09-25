@@ -84,6 +84,16 @@ export function parseMarkdownBlock(markdown: string) {
         // Trim
         let trimmed = line.trim();
 
+        // Consecutive quote lines form one block; a bare `>` keeps a paragraph break.
+        if (/^>\s?/.test(trimmed)) {
+            const quoted = [trimmed.replace(/^>\s?/, '')];
+            while (index < lines.length && /^>\s?/.test(lines[index].trim())) {
+                quoted.push(lines[index++].trim().replace(/^>\s?/, ''));
+            }
+            blocks.push({ type: 'quote', content: parseMarkdownSpans(quoted.join('\n'), false) });
+            continue;
+        }
+
         // Code block
         if (trimmed.startsWith('```')) {
             const language = trimmed.slice(3).trim() || null;

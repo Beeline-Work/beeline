@@ -176,7 +176,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string; readonly briefRevision?: number },
+    CornerInput & { readonly headSha: string; readonly briefRevision?: number; readonly patchId?: string },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;

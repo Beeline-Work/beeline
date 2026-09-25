@@ -908,6 +908,7 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS brief_revision integer;
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS patch_id text;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,

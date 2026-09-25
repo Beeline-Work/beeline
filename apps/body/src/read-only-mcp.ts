@@ -610,7 +610,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one corner after any material unresolved choice is settled. Supply a complete brief for work whose requirements exceed the short objective. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],

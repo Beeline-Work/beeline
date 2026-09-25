@@ -2125,6 +2125,7 @@ export class DaemonService {
         force: false,
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
+        ...(input.patchId ? { patchId: input.patchId } : {}),
       });
       return {
         pullRequestNumber: target.pull_request_number,

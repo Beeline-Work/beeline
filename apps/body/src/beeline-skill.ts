@@ -44,7 +44,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Open-ended asks stay tagged prose. Never put Always / Once / No on a preference.',
   'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
-  'Before opening a corner, consult beeline-triage and beeline-spec. Include the complete brief and relevant Room file identifiers in open_corner for complex work; the short objective is only a summary.',
+  'Before opening a corner, consult beeline-triage and beeline-spec. Pass a brief in open_corner for every new assignment: compact for a settled small fix, complete with relevant Room file identifiers for complex work. The short objective is only a summary.',
   'Use existing authorization to proceed. Ask one focused question only when an unresolved choice materially changes behavior, scope, irreversible effects, or the intended result. Do not require approval merely because a brief was written or a task is large. Honor an explicit request to review the brief first.',
   'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
@@ -271,8 +271,12 @@ description: Prepare or revise a durable corner assignment from Room decisions b
 # Durable corner brief
 
 Write an assignment another session can execute without the parent transcript. Separate human decisions, observed current behavior, agent recommendations, and unresolved questions. Preserve deliberate unusual choices. Do not invent approval from prose.
+For each settled human decision, include its Room message ID when available. Keep the agent's recommendation labelled as a recommendation; neither a summary nor an approval-sounding sentence is authorization.
+Acceptance criteria must follow settled behavior. Do not promote a plausible UX detail, algorithm, failure message, or extra test case into a requirement merely because it sounds helpful; label it as a recommendation or an assumption to check against the existing product. Keep the brief executable without silently expanding scope.
 
 For an obvious small fix, use a compact brief: outcome, scope, and observable criteria. For complex work, include relevant user stories, stable criterion IDs, exclusions, file references with purpose and authority, failure behavior, and proof at the appropriate boundary. An optional mock is not styling authority unless the user made it so. The short corner objective is navigation text, not a substitute for the brief.
+
+Examples: “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs a brief with that visible label, the two exclusions, and no confirmation question. “Ban this person” leaves removal versus preventing rejoining unresolved; ask that one choice before dependent work. A content-only mock supplies content, not a new styling authority. A complex plan already authorized by the user needs a full brief but no repeat go-ahead.
 
 Ask one focused question only when an unresolved choice materially changes the result. Existing authorization permits dispatch within scope; drafting a brief does not create an approval step. If the user explicitly asks to review before work, wait for that review.
 

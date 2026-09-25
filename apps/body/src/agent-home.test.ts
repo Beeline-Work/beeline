@@ -32,6 +32,7 @@ import {
 } from './agent-home.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   USING_BEELINE_SKILL_NAME,
 } from './beeline-skill.js';
@@ -561,7 +562,7 @@ describe('operator skills + MCP passthrough', () => {
 
     await prepareRoomAgentHome({ root: implementerRoot, operatorHome, agentKind: 'claude' });
     expect(readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort()).toEqual(
-      ['greet', 'draw-avatar', BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
+      ['greet', 'draw-avatar', BEELINE_SPEC_SKILL_NAME, BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
     );
 
     await prepareRoomAgentHome({
@@ -573,6 +574,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort()).toEqual(
       [
         BEELINE_REVIEW_SKILL_NAME,
+        BEELINE_SPEC_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
         'draw-avatar',
         'greet',
@@ -1417,5 +1419,16 @@ describe('skill provision reuse', () => {
 
     await prepareRoomAgentHome({ root, operatorHome, agentKind: 'pi' });
     expect(readFileSync(resolve(root, 'pi', 'skills', 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
+  });
+
+  it('delivers the release-managed spec skill to every supported harness', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    for (const agentKind of AGENT_SKILL_DIRS) {
+      const root = resolve(await scratch(`beeline-spec-${agentKind}-`), 'agent-home');
+      await prepareRoomAgentHome({ root, operatorHome, agentKind });
+      const spec = readFileSync(resolve(root, agentKind, 'skills', 'beeline-spec', 'SKILL.md'), 'utf8');
+      expect(spec).toContain('name: beeline-spec');
+      expect(spec).toContain('Ask one focused question only when an unresolved choice materially changes the result.');
+    }
   });
 });

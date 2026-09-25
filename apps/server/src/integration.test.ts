@@ -1,7 +1,10 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
@@ -7679,11 +7682,14 @@ describe('monolith integration', () => {
   });
 
   it('commits a full brief and its Room file before waking the worker, then preserves the bytes', async () => {
-    const bytes = Buffer.from('approved visual dimensions');
+    const source = await mkdtemp(join(tmpdir(), 'beeline-brief-source-'));
+    await writeFile(join(source, 'approved-mock.txt'), 'approved visual dimensions');
+    const bytes = await readFile(join(source, 'approved-mock.txt'));
     const sha = createHash('sha256').update(bytes).digest('hex');
     const mediaId = '65432109-0000-4000-8000-000000000001';
     const key = `media/${HUMAN}/${sha}`;
     await objectStorage.putObject(key, bytes, 'text/plain');
+    await rm(source, { recursive: true, force: true });
     await database.query(
       `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
        VALUES($1,$2,'media',$3,'text/plain','approved-mock.txt',$4,$5,'ready',now()+interval '1 hour')`,
@@ -7956,6 +7962,32 @@ describe('monolith integration', () => {
       (
         await database.query(
           `SELECT 1 FROM agent_commands WHERE reason='corner_objective' AND turn_request_id='missing-brief-file'`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('rolls back the corner and worker command when brief persistence fails', async () => {
+    await database.query(
+      `ALTER TABLE corner_brief_revisions ADD CONSTRAINT reject_test_brief
+       CHECK (content <> 'reject-this-brief')`,
+    );
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'brief-persistence-failure',
+      name: 'Brief failure',
+      objective: 'Persist a complete assignment',
+      brief: { content: 'reject-this-brief' },
+    });
+    expect(response.status).not.toBe(200);
+    expect(
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`))
+        .rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE reason='corner_objective' AND turn_request_id='brief-persistence-failure'`,
         )
       ).rows,
     ).toEqual([]);

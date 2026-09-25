@@ -94,10 +94,13 @@ describe('corner merge instructions', () => {
       openedByAgent: false,
       pullRequestNumber: 42,
       headSha: 'a'.repeat(40),
+      briefRevision: 2,
     };
     const instruction = cornerReviewerInstruction(reviewer)!;
     expect(instruction).toContain(`Checks are green on PR #42 at ${'a'.repeat(40)}`);
     expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
+    expect(instruction).toContain('assigned brief revision 2');
+    expect(instruction).toContain('briefRevision=2');
     expect(instruction).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
     expect(instruction).toContain('Never merge yourself');
     expect(instruction).toContain('Never say you are holding or waiting for checks');

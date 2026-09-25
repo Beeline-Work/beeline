@@ -42,6 +42,22 @@ it('reads merged PR evidence needed to recover a missed webhook', async () => {
   });
 });
 
+it('reads a bounded PR diff with the documented GitHub media type', async () => {
+  const diff = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n';
+  const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+    new Response(diff, { status: 200 }));
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readPullRequestDiff('room-token', 'owner/widgets', 42)).resolves.toBe(diff);
+  expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('accept')).toBe(
+    'application/vnd.github.diff',
+  );
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('truncated', { status: 200 })));
+  await expect(app.readPullRequestDiff('room-token', 'owner/widgets', 42)).rejects.toThrow(
+    'unavailable or incomplete',
+  );
+});
+
 it('reads the current target branch SHA, including branch names with slashes', async () => {
   const sha = 'a'.repeat(40);
   const fetchMock = vi.fn(

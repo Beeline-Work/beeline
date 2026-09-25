@@ -7840,6 +7840,17 @@ describe('monolith integration', () => {
     });
     expect(stale.status).not.toBe(200);
     expect(
+      (
+        await daemonOperation('reviseCornerBrief', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-without-change',
+          expectedRevision: 2,
+          brief: { content: 'A replacement with no provenance note.' },
+        })
+      ).status,
+    ).not.toBe(200);
+    expect(
       (await database.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]))
         .rows,
     ).toHaveLength(2);

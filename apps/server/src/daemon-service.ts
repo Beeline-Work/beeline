@@ -4673,6 +4673,7 @@ export class DaemonService {
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
+    if (!input.brief.change?.trim()) throw new Error('corner brief revision requires a change description');
     const brief = await this.database.transaction(async (db) => {
       const corner = (
         await db.query<{ parent_id: string; owner_agent_id: string }>(
@@ -4703,10 +4704,10 @@ export class DaemonService {
           input.cornerId,
           revision,
           input.brief.content.trim(),
-          input.brief.change ?? null,
+          input.brief.change?.trim() ?? null,
           agentId,
           corner.parent_id,
-          command.root_source_message_id,
+          command.source_message_id,
           JSON.stringify(attachments),
         ],
       );

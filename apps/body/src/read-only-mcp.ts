@@ -671,7 +671,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
     inputSchema: {
       type: 'object',
-      required: ['expectedRevision', 'content'],
+      required: ['expectedRevision', 'content', 'change'],
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
         content: { type: 'string', minLength: 1, maxLength: 65536 },

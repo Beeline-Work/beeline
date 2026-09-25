@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
+import { AGENT_KINDS } from './agent-command.js';
 import {
   AGENT_SKILL_DIRS,
   agentSkillDir,
@@ -1421,14 +1422,18 @@ describe('skill provision reuse', () => {
     expect(readFileSync(resolve(root, 'pi', 'skills', 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
   });
 
-  it('delivers the release-managed spec skill to every supported harness', async () => {
+  it('delivers release-managed guidance to newly paired homes across every agent kind', async () => {
     const operatorHome = await operatorWithSkill('say hi');
-    for (const agentKind of AGENT_SKILL_DIRS) {
+    for (const agentKind of AGENT_KINDS) {
       const root = resolve(await scratch(`beeline-spec-${agentKind}-`), 'agent-home');
-      await prepareRoomAgentHome({ root, operatorHome, agentKind });
-      const spec = readFileSync(resolve(root, agentKind, 'skills', 'beeline-spec', 'SKILL.md'), 'utf8');
+      await prepareRoomAgentHome({ root, operatorHome, agentKind, isReviewer: true });
+      const skills = resolve(root, agentSkillDir(agentKind), 'skills');
+      const spec = readFileSync(resolve(skills, 'beeline-spec', 'SKILL.md'), 'utf8');
+      const review = readFileSync(resolve(skills, 'beeline-review', 'SKILL.md'), 'utf8');
       expect(spec).toContain('name: beeline-spec');
       expect(spec).toContain('Ask one focused question only when an unresolved choice materially changes the result.');
+      expect(review).toContain('Read the server-assigned brief and its current revision');
+      expect(review).toContain('Build one visible validation record for the brief revision and code head.');
     }
   });
 });

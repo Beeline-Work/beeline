@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
@@ -14,6 +14,7 @@ import {
   type ToolCallEntry,
 } from './acp.js';
 import {
+  AGENT_SKILL_DIRS,
   expectedMountedImportedMcpServerNames,
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
@@ -1087,6 +1088,13 @@ export class MonolithCornerTurnLoop {
           headSha: pr.headSha,
           briefRevision: restore.brief?.revision,
         }),
+        ...(this.options.config.agentHomeRoot &&
+        this.options.config.agentKind &&
+        !(AGENT_SKILL_DIRS as readonly string[]).includes(this.options.config.agentKind)
+          ? [
+              `This harness has no verified native skill discovery. Read the release-managed review procedure at ${resolve(this.options.config.agentHomeRoot, 'codex', 'skills', 'beeline-review', 'SKILL.md')} before the verdict.`,
+            ]
+          : []),
       ].join('\n');
     } catch {
       return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;

@@ -199,7 +199,7 @@ describe('corner merge instructions', () => {
       supervisorRoot: root,
       transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
       agentBinary: '/fake-agent',
-      agentKind: 'codex',
+      agentKind: 'goose',
       agentCommand: '/fake-agent',
       agentArgs: [],
       mcpBinary: '/fake-dev-mcp',
@@ -277,13 +277,14 @@ describe('corner merge instructions', () => {
       runtime,
       config: {
         agentBinary: '/fake-agent',
-        agentKind: 'codex',
+        agentKind: 'goose',
         agentCommand: '/fake-agent',
         agentArgs: [],
         mcpBinary: '/fake-dev-mcp',
         readonlyMcpCommand: '/fake-beeline-mcp',
         agentEnv: {},
         workspaceRoot: root,
+        agentHomeRoot: join(root, 'agent-home'),
         autoApprovePermissions: true,
         codegraphCommand: '/usr/bin/false',
       },
@@ -341,6 +342,9 @@ describe('corner merge instructions', () => {
     const firstInstruction = await activeInstruction();
     expect(firstInstruction).toContain(`Checks are green on PR #7 at ${firstHead}`);
     expect(firstInstruction).toContain(`call the approve_merge tool for ${firstHead}`);
+    const reviewSkill = join(root, 'agent-home', 'codex', 'skills', 'beeline-review', 'SKILL.md');
+    expect(firstInstruction).toContain(reviewSkill);
+    expect(await readFile(reviewSkill, 'utf8')).toContain('Read the server-assigned brief');
     await writeFile(join(root, 'reviewed.txt'), 'latest head\n');
     await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'latest head']);

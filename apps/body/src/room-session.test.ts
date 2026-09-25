@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DaemonApiClient } from './daemon-api-client.js';
+import { AGENT_KINDS } from './agent-command.js';
+import { agentSkillDir } from './agent-home.js';
 import {
   beelineAgentMcpServer,
   readOnlyMcpServer,
@@ -41,6 +43,28 @@ describe('monolith Room inspection mount', () => {
     );
     expect(server).toMatchObject({ name: 'beeline-readonly-mcp', command: '/bin/read-only' });
     expect(server.env).toContainEqual({ name: 'BEELINE_READONLY_ROOT', value: '/room' });
+  });
+
+  it('points each agent kind at its provisioned skill tree for Room inspection', () => {
+    for (const agentKind of AGENT_KINDS) {
+      const server = readOnlyMcpServer(
+        {
+          agentBinary: 'agent',
+          agentKind,
+          agentHomeRoot: '/agent-home',
+          mcpBinary: 'unused',
+          readonlyMcpCommand: '/bin/read-only',
+          agentEnv: {},
+          workspaceRoot: '/room',
+          autoApprovePermissions: false,
+        },
+        '/room',
+      );
+      expect(server.env).toContainEqual({
+        name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
+        value: `/agent-home/${agentSkillDir(agentKind)}/skills`,
+      });
+    }
   });
 
   it('fails closed when the helper is absent', () => {

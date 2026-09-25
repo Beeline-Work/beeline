@@ -4551,10 +4551,27 @@ export class DaemonService {
       // creating another Room, command, or open card.
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
       const existing = (
-        await db.query<{ corner_id: string }>(
-          `SELECT child.id::text corner_id
+        await db.query<{
+          corner_id: string;
+          name: string;
+          objective: string;
+          owner_agent_id: string;
+          request_id: string;
+          repository_key: string | null;
+          repository_target_branch: string;
+          lane: string;
+          brief_content: string | null;
+          brief_change: string | null;
+          brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
+        }>(
+          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
+                  fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
+                  initial.content brief_content,initial.change brief_change,
+                  initial.attachments brief_attachments
            FROM rooms child
            JOIN corner_facts fact ON fact.corner_id=child.id
+           LEFT JOIN corner_brief_revisions initial
+             ON initial.corner_id=child.id AND initial.revision=1
            WHERE child.parent_id=$1
              AND COALESCE(fact.open_idempotency_key,fact.request_id)=$2
              AND child.archived_at IS NULL
@@ -4564,6 +4581,33 @@ export class DaemonService {
         )
       ).rows[0];
       if (existing) {
+        const sameAttachments =
+          (input.brief?.attachments?.length ?? 0) === (existing.brief_attachments?.length ?? 0) &&
+          (input.brief?.attachments ?? []).every((item, index) => {
+            const saved = existing.brief_attachments?.[index];
+            return (
+              saved?.objectId === item.objectId.toLowerCase() &&
+              saved.purpose === item.purpose.trim() &&
+              saved.required === item.required
+            );
+          });
+        const sameBrief = input.brief
+          ? existing.brief_content === input.brief.content.trim() &&
+            existing.brief_change === (input.brief.change ?? null) &&
+            sameAttachments
+          : existing.brief_content === null;
+        if (
+          existing.owner_agent_id !== agentId ||
+          existing.request_id !== input.requestId ||
+          existing.name !== name ||
+          existing.objective !== objective ||
+          existing.repository_key !== (input.repository ?? null) ||
+          existing.repository_target_branch !== (input.targetBranch ?? 'main') ||
+          existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') ||
+          !sameBrief
+        ) {
+          throw new Error('corner assignment conflict: idempotency key was already used for a different assignment');
+        }
         cornerId = existing.corner_id;
         return;
       }

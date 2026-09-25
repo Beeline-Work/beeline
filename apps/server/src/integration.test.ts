@@ -7661,6 +7661,7 @@ describe('monolith integration', () => {
       idempotencyKey: 'repeated-corner-open:call-1',
       name: 'Ship widget',
       objective: 'Ship the widget end to end',
+      brief: { content: 'A1: ship the agreed widget behavior.' },
     };
     const first = await daemonOperation('createCorner', input);
     const second = await daemonOperation('createCorner', input);
@@ -7668,17 +7669,37 @@ describe('monolith integration', () => {
     expect(second.status).toBe(200);
     const firstResult = (await first.json()) as { cornerId: string };
     expect(await second.json()).toEqual(firstResult);
+    for (const changed of [
+      { ...input, objective: 'Ship a different widget' },
+      { ...input, brief: { content: 'A1: ship only a partial widget.' } },
+      {
+        ...input,
+        brief: {
+          ...input.brief,
+          attachments: [{
+            objectId: '65432109-0000-4000-8000-000000000001',
+            purpose: 'Approved mock',
+            required: true,
+          }],
+        },
+      },
+    ]) {
+      const retry = await daemonOperation('createCorner', changed);
+      expect(retry.status).toBe(409);
+      expect(await retry.text()).toContain('different assignment');
+    }
 
-    const stored = await database.query<{ corners: number; cards: number; commands: number }>(
+    const stored = await database.query<{ corners: number; cards: number; commands: number; briefs: number }>(
       `SELECT
          (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
          (SELECT count(*)::integer FROM agent_commands
-          WHERE room_id=$4 AND reason='corner_objective') commands`,
+          WHERE room_id=$4 AND reason='corner_objective') commands,
+         (SELECT count(*)::integer FROM corner_brief_revisions WHERE corner_id=$4) briefs`,
       [input.requestId, ROOM, firstResult.cornerId, firstResult.cornerId],
     );
-    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
+    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1, briefs: 1 });
   });
 
   it('commits a full brief and its Room file before waking the worker, then preserves the bytes', async () => {
@@ -7783,6 +7804,9 @@ describe('monolith integration', () => {
       revision: 2,
       change: 'The requester corrected the label.',
     });
+    // A retry of the original open still names the same corner after a later
+    // correction; the retry is compared with revision 1, not the latest brief.
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
     expect(
       (
         await database.query<{ revision: number }>(

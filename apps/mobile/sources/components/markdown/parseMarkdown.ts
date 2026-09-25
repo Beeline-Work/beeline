@@ -8,6 +8,9 @@ export type MarkdownBlock = {
     level: 1 | 2 | 3 | 4 | 5 | 6
     content: MarkdownSpan[]
 } | {
+    type: 'quote'
+    content: MarkdownSpan[]
+} | {
     type: 'list',
     items: { depth: number, spans: MarkdownSpan[] }[]
 } | {
@@ -41,6 +44,6 @@ export type MarkdownSpan = {
     url: string | null
 }
 
-export function parseMarkdown(markdown: string) {
-    return parseMarkdownBlock(markdown);
+export function parseMarkdown(markdown: string, document = false) {
+    return parseMarkdownBlock(markdown, document);
 }

@@ -124,6 +124,39 @@ describe('MonoMarkdown code navigation', () => {
 });
 
 describe('MonoMarkdown lists', () => {
+  it('keeps document heading levels distinct on the visible inline text', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(MonoMarkdown, {
+        markdown: '# Title\n## Section\n### Detail\nParagraph',
+        textStyle: { fontSize: 16, color: '#888888' },
+        document: true,
+      }));
+    });
+    const styleOf = (word: string) => {
+      const span = renderer.root.find((node) => node.type === 'Text' && node.children.includes(word) && Array.isArray(node.props.style));
+      return Object.assign({}, ...span.props.style.filter(Boolean));
+    };
+    expect(styleOf('Title').fontSize).toBe(22);
+    expect(styleOf('Section').fontSize).toBe(16);
+    expect(styleOf('Title').color).toBe(styleOf('Section').color);
+    expect(styleOf('Detail').color).not.toBe(styleOf('Section').color);
+    expect(styleOf('Paragraph').color).toBe('#888888');
+  });
+  it('renders document quotes and linked table cells as selectable, pressable text', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(MonoMarkdown, {
+        markdown: '# Notes\n> See [source](https://example.com)\n\n| Topic | Link |\n| --- | --- |\n| API | [Docs](https://example.com/docs) |',
+        textStyle: {},
+        document: true,
+      }));
+    });
+    expect(renderedText(renderer)).toContain('See source');
+    expect(renderedText(renderer)).toContain('Docs');
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'link' }).length).toBeGreaterThanOrEqual(2);
+    expect(renderer.root.findAll((node) => node.props.selectable === true).length).toBeGreaterThanOrEqual(3);
+  });
   it('renders prose as selectable native text', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

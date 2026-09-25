@@ -50,7 +50,7 @@ import {
   commandRuleEscalations,
   grantScriptTooLongMessage,
   interpreterScriptArgument,
-  isAgentGrantKind,
+  isRequestableAgentGrantKind,
   isCommandGrantScript,
   parseCommandGrantTarget,
   squireCallAllowed,
@@ -77,6 +77,7 @@ import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from
 import {
   directMessageRoomId,
   restateSystemLine,
+  ensureSystemDirectMessageRoom,
   systemIdentityMention,
   systemLine,
   type SystemPhrase,
@@ -84,6 +85,8 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { connectorAdapter } from '@beeline/api-contract/workbench';
+import { composioScopeForOwner, storedComposioScope } from './composio-config.js';
+import { ComposioClient } from './connector-composio.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -180,6 +183,7 @@ export class DaemonService {
       input: Input<'getPrChecksStatus'>,
     ) => Promise<Output<'getPrChecksStatus'>>,
     private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
+    private readonly composioClient?: ComposioClient,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -199,6 +203,16 @@ export class DaemonService {
         : typeof candidate.cornerId === 'string'
           ? candidate.cornerId
           : undefined;
+    const walletCall = [
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+    ].includes(name);
+    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
     let cornerReviewer = false;
     let isCorner = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
@@ -220,6 +234,18 @@ export class DaemonService {
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
+      'authorizeResourceCall',
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
+      'listTurnAgentGrants',
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
@@ -349,6 +375,7 @@ export class DaemonService {
           this.liveDiagnosticServerInstance,
           this.prChecksStatus,
           this.googleOAuth,
+          this.composioClient,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -358,8 +385,24 @@ export class DaemonService {
           );
         }
         if (
-          name === 'authorizeSquireCall' &&
-          (result as { status?: string }).status === 'pending' &&
+          [
+            'authorizeSquireCall',
+            'authorizeResourceCall',
+            'authorizeRepositoryCall',
+            'authorizeHostCall',
+            ...[
+              'getWalletToolState',
+              'getWalletToolBalance',
+              'getWalletToolChains',
+              'getWalletToolHistory',
+              'getWalletToolQuote',
+              'walletPay',
+              'walletSwap',
+            ],
+          ].includes(name) &&
+          ['pending', 'permission-required'].includes(
+            (result as { status?: string }).status ?? '',
+          ) &&
           (result as { grantId?: string }).grantId
         ) {
           await db.query(
@@ -455,6 +498,16 @@ export class DaemonService {
         );
       }
       return output;
+    }
+    if (walletCall && this.commandTransaction) {
+      const permission = await this.authorizeScopedGrant(
+        input as Input<'authorizeSquireCall'>,
+        authenticatedAgentId,
+        'mcp',
+        'wallet',
+      );
+      if (!permission.allowed)
+        return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
       case 'getAgentCommands':
@@ -748,6 +801,12 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'getComposioLink':
+        return (await this.composioLink(input as Input<'getComposioLink'>, authenticatedAgentId)) as Output<Name>;
+      case 'getComposioTools':
+        return (await this.composioTools(input as Input<'getComposioTools'>, authenticatedAgentId)) as Output<Name>;
+      case 'executeComposioTool':
+        return (await this.composioExecute(input as Input<'executeComposioTool'>, authenticatedAgentId)) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
           (input as Input<'getGoogleOAuthGrant'>).connectorId,
@@ -849,6 +908,43 @@ export class DaemonService {
           input as Input<'consumeAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listTurnAgentGrants': {
+        const requester = await this.grantRequester();
+        const roomId = (input as Input<'listTurnAgentGrants'>).roomId;
+        const listed = await this.listAgentGrants(authenticatedAgentId, roomId);
+        return {
+          grants: listed.grants.filter(
+            (grant) => grant.roomId === roomId && grant.requestedBy === requester.id,
+          ),
+        } as Output<Name>;
+      }
+      case 'authorizeResourceCall':
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeResourceCall'>,
+          authenticatedAgentId,
+          'mcp',
+          (input as Input<'authorizeResourceCall'>).target,
+        )) as Output<Name>;
+      case 'authorizeHostCall':
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeHostCall'>, authenticatedAgentId, 'host', authenticatedAgentId,
+        )) as Output<Name>;
+      case 'authorizeRepositoryCall': {
+        const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
+        const room = (
+          await this.database.query<{ repository_key: string | null }>(
+            `SELECT COALESCE(parent.repository_key,room.repository_key) repository_key
+           FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$1`,
+            [roomId],
+          )
+        ).rows[0];
+        return (await this.authorizeScopedGrant(
+          input as Input<'authorizeRepositoryCall'>,
+          authenticatedAgentId,
+          'repository',
+          room?.repository_key ?? `scratch:${roomId}`,
+        )) as Output<Name>;
+      }
       case 'authorizeSquireCall':
         return (await this.authorizeSquireCall(
           input as Input<'authorizeSquireCall'>,
@@ -1115,6 +1211,155 @@ export class DaemonService {
     return { assignments };
   }
 
+  private async composioLink(
+    input: Input<'getComposioLink'>,
+    agentId: string,
+  ): Promise<Output<'getComposioLink'>> {
+    const row = (await this.database.query<{
+      id: string;
+      owner_identity_id: string;
+      pairing_generation: number;
+      composio_session_id: string | null;
+      composio_link_toolkit: string | null;
+      composio_link_started_at: Date | null;
+      sign_in: { method: string; url: string } | null;
+      composio_scope: unknown;
+    }>(
+      `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
+              c.composio_link_toolkit,c.composio_link_started_at,c.sign_in,c.composio_scope
+       FROM workspace_connectors c
+       JOIN agents a ON a.agent_id=c.helper_agent_id
+       JOIN memberships owner_member ON owner_member.workspace_id=c.workspace_id
+         AND owner_member.room_id IS NULL AND owner_member.identity_id=c.owner_identity_id
+         AND owner_member.removed_at IS NULL
+       WHERE c.id=$1::uuid AND c.helper_agent_id=$2 AND c.connector_type='composio'
+         AND c.status='installing' AND c.owner_identity_id=a.owner_id`,
+      [input.connectorId, agentId],
+    )).rows[0];
+    if (!row || (input.pairingGeneration !== undefined &&
+        row.pairing_generation !== input.pairingGeneration))
+      throw new Error('connector not found for this helper');
+    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+    if (!this.composioClient) throw new Error('Composio is not configured');
+    let sessionId: string | null | undefined = row.composio_session_id;
+    if (!sessionId) {
+      const created = await this.composioClient.createSession(scope);
+      const updated = (await this.database.query<{ composio_session_id: string }>(
+        `UPDATE workspace_connectors SET composio_session_id=$3
+         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$4
+           AND status='installing' AND composio_session_id IS NULL
+         RETURNING composio_session_id`,
+        [row.id, agentId, created, row.pairing_generation],
+      )).rows[0];
+      sessionId = updated?.composio_session_id ??
+        (await this.database.query<{ composio_session_id: string }>(
+          `SELECT composio_session_id FROM workspace_connectors
+           WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
+          [row.id, agentId, row.pairing_generation],
+        )).rows[0]?.composio_session_id;
+      if (!sessionId) throw new Error('connector pairing changed');
+    }
+    for (const toolkit of scope.toolkits) {
+      if (await this.composioClient.connected(sessionId, toolkit, scope)) continue;
+      if (row.composio_link_toolkit === toolkit && row.sign_in?.url) {
+        if (!row.composio_link_started_at ||
+            Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000)
+          throw new Error('Composio sign-in expired; tap Retry to open a new link');
+        return { status: 'pending', toolkit, url: row.sign_in.url };
+      }
+      const url = await this.composioClient.link(sessionId, toolkit, scope);
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET composio_link_toolkit=$3,sign_in=$4::jsonb,
+             composio_link_started_at=now(),updated_at=now()
+         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$5 AND status='installing'`,
+        [row.id, agentId, toolkit, JSON.stringify({ method: 'oauth', url }), row.pairing_generation],
+      );
+      return { status: 'pending', toolkit, url };
+    }
+    await this.database.query(
+      `UPDATE workspace_connectors SET composio_ready=true,updated_at=now()
+       WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
+      [row.id, agentId, row.pairing_generation],
+    );
+    return { status: 'connected' };
+  }
+
+  private async composioAccess(
+    input: { roomId: string; requestId: string; generationId: string },
+    agentId: string,
+  ): Promise<{ connectorId: string; helperAgentId: string; sessionId: string; scope: ReturnType<typeof storedComposioScope> }> {
+    await this.access(input.roomId, agentId);
+    const row = (await this.database.query<{
+      id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
+      composio_scope: unknown;
+    }>(
+      `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
+       FROM workspace_connectors c
+       JOIN rooms r ON r.workspace_id=c.workspace_id
+       JOIN agents helper ON helper.agent_id=c.helper_agent_id
+       JOIN agents actor ON actor.agent_id=$2
+         AND actor.owner_id=c.owner_identity_id
+         AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(c.machine_id,c.helper_agent_id)
+       JOIN memberships owner_workspace ON owner_workspace.workspace_id=c.workspace_id
+         AND owner_workspace.room_id IS NULL AND owner_workspace.identity_id=c.owner_identity_id
+         AND owner_workspace.removed_at IS NULL
+       JOIN memberships owner_room ON owner_room.room_id=r.id
+         AND owner_room.identity_id=c.owner_identity_id AND owner_room.removed_at IS NULL
+       JOIN agent_commands command ON command.room_id=r.id AND command.agent_id=actor.agent_id
+         AND command.turn_request_id=$3 AND command.generation_id=$4 AND command.state='claimed'
+       JOIN messages source ON source.id=command.source_message_id
+       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
+       WHERE r.id=$1 AND c.connector_type='composio'
+         AND c.status='connected' AND c.owner_identity_id=helper.owner_id
+         AND requester.id=c.owner_identity_id
+       ORDER BY c.updated_at DESC LIMIT 1`,
+      [input.roomId, agentId, input.requestId, input.generationId],
+    )).rows[0];
+    if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
+    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+    if (!this.composioClient) throw new Error('Composio is not configured');
+    return { connectorId: row.id, helperAgentId: row.helper_agent_id,
+      sessionId: row.composio_session_id, scope };
+  }
+
+  private async composioTools(
+    input: Input<'getComposioTools'>,
+    agentId: string,
+  ): Promise<Output<'getComposioTools'>> {
+    const access = await this.composioAccess(input, agentId);
+    return {
+      connectorId: access.connectorId,
+      toolkits: access.scope.toolkits,
+      tools: access.scope.tools,
+    };
+  }
+
+  private async composioExecute(
+    input: Input<'executeComposioTool'>,
+    agentId: string,
+  ): Promise<Output<'executeComposioTool'>> {
+    const access = await this.composioAccess(input, agentId);
+    if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
+      throw new Error('Composio arguments must be an object');
+    const result = await this.composioClient!.execute(
+      access.sessionId, access.scope, input.toolkit, input.tool, input.arguments,
+    );
+    await receiveConnectionUsage(this.database, {
+      requestId: input.requestId,
+      agentId,
+      roomId: input.roomId,
+      usage: [{
+        ref: `composio:${input.toolkit}`,
+        service: input.toolkit,
+        operation: input.tool,
+        statusCode: 200,
+        bytes: JSON.stringify(result.data ?? null).length,
+      }],
+    }, access.helperAgentId);
+    return result;
+  }
+
   /**
    * The helper reports it completed (or accepted) an install. `sign_in` is
    * written, not merged: the run that reaches `connected` printed no
@@ -1126,13 +1371,15 @@ export class DaemonService {
   ): Promise<Output<'installConnector'>> {
     const result = await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ id: string; pairing_generation: number }>(
-          `SELECT id,pairing_generation FROM workspace_connectors
+        await database.query<{ id: string; pairing_generation: number; connector_type: string; owner_identity_id: string; composio_ready: boolean; composio_scope: unknown }>(
+          `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
         )
       ).rows[0];
       if (!row) throw new Error('connector not found for this helper');
+      if (row.connector_type === 'composio' && !row.composio_ready)
+        throw new Error('Composio account is not connected');
       if (
         input.pairingGeneration !== undefined &&
         input.pairingGeneration !== row.pairing_generation
@@ -1153,6 +1400,19 @@ export class DaemonService {
           input.signIn ? JSON.stringify(input.signIn) : null,
         ],
       );
+      if (row.connector_type === 'composio') {
+        const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+        await applyVaultList(database, row, scope.toolkits.map((toolkit) => ({
+          reference: `composio:${toolkit}`,
+          service: toolkit,
+          label: `${toolkit} via Composio`,
+          fieldNames: [],
+          allowedHosts: [],
+          createdAt: Math.floor(Date.now() / 1000),
+          stale: false,
+          state: 'active' as const,
+        })));
+      }
       return {
         row,
         completedOffers: await completeConnectorOffersForConnector(database, row.id),
@@ -3752,12 +4012,12 @@ export class DaemonService {
   /**
    * request_grant: the agent raises its hand. Under yolo the grant is approved
    * on the spot (auto=true) and one quiet system line records it; otherwise a
-   * pending grant is stored and joins (or opens) this agent's one open card in
-   * the Room, addressed to the owner. Squire's host route asks in the owner's
-   * connector DM. Budget always asks (the cap is out of scope), even under yolo.
+   * repository grant asks a Workspace manager in the Room. Personal resources
+   * ask only their owner in a private system or connector DM. Every bypass and
+   * approval is scoped to the active command's original requester. Budget asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
-    if (!isAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
+    if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
     if (typeof input.target !== 'string' || !input.target.trim())
       throw new Error('grant target is required');
     if (input.target.length > AGENT_GRANT_TARGET_MAX_LENGTH)
@@ -3816,35 +4076,8 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    // The requester is whoever addressed the agent last in this Room: the
-    // identity whose message triggered the turn that is asking now. With no
-    // such message (a fresh corner objective), the owner asked.
-    //
-    // Read from the command that woke this agent rather than by searching the
-    // transcript for an address. The command IS the trigger, so it names the
-    // right message even when nothing in that message's text spells a handle —
-    // a scheduled prompt wakes the agent by subscription, and a search for a
-    // written tag would walk straight past it to some older line.
-    const sourceMessageId = this.authorizedCommand?.source_message_id;
-    const requesterRow = (
-      await this.database.query<{
-        id: string;
-        kind: 'human' | 'agent';
-        name: string;
-        handle: string | null;
-        avatar: string | null;
-      }>(
-        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
-         FROM agent_commands command
-         JOIN messages message ON message.id=command.source_message_id
-         JOIN identities identity ON identity.id=message.author_id
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
-           AND message.presentation<>'activity'
-           AND ($3::text IS NULL OR command.source_message_id=$3)
-         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [input.roomId, agentId, squireRoute ? (sourceMessageId ?? null) : null],
-      )
-    ).rows[0];
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const requesterRow = await this.grantRequester();
     const owner = {
       pubkey: context.owner_id,
       kind: 'human' as const,
@@ -3859,18 +4092,18 @@ export class DaemonService {
       ...(context.agent_handle ? { handle: context.agent_handle } : {}),
       ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
     };
-    const requester = requesterRow
-      ? {
-          pubkey: requesterRow.id,
-          kind: requesterRow.kind,
-          name: requesterRow.name,
-          ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
-          ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
-        }
-      : owner;
+    const requester = {
+      pubkey: requesterRow.id,
+      kind: requesterRow.kind,
+      name: requesterRow.name,
+      ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
+      ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
+    };
     const grantId = randomUUID();
     const auto =
-      context.yolo_mode && kind !== 'budget' && kind !== 'mcp' && escalations.length === 0;
+      context.yolo_mode &&
+      (kind === 'repository' || requesterRow.id === context.owner_id) &&
+      escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -3911,9 +4144,33 @@ export class DaemonService {
         auto,
         ...(script ? { script } : {}),
       };
+      let resourceRoomId: string | undefined;
+      if (kind !== 'repository') {
+        const member = await database.query(
+          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+           AND identity_id=$2 AND removed_at IS NULL`,
+          [context.workspace_id, context.owner_id],
+        );
+        if (!member.rowCount) throw new Error('resource owner access denied');
+        resourceRoomId = squireRoute
+          ? await ensureConnectorDirectMessageRoom(
+              database,
+              context.workspace_id,
+              'trusty-squire',
+              context.owner_id,
+            )
+          : kind === 'mcp' && target === 'wallet'
+            ? await ensureConnectorDirectMessageRoom(
+                database,
+                context.workspace_id,
+                'wallet',
+                context.owner_id,
+              )
+            : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
+      }
       if (auto) {
         await systemLine(database, {
-          roomId: input.roomId,
+          roomId: resourceRoomId ?? input.roomId,
           subject: { kind: 'agent', id: agentId, name: agent.name },
           verb: 'was granted',
           object: `${kind} ${target}`,
@@ -3921,26 +4178,38 @@ export class DaemonService {
           cardType: 'grant-auto',
           card: { grantId },
         });
-        return { messageId: undefined };
+        return { messageId: undefined, cardRoomId: resourceRoomId };
       }
-      if (squireRoute) {
-        const ownerMember = await database.query(
-          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL`,
-          [context.workspace_id, context.owner_id],
-        );
-        if (!ownerMember.rowCount) throw new Error('Squire owner is no longer a workspace member');
-        const dmRoomId = await ensureConnectorDirectMessageRoom(
-          database,
-          context.workspace_id,
-          'trusty-squire',
-          context.owner_id,
-        );
+      if (resourceRoomId) {
+        const dmRoomId = resourceRoomId;
+        const open = (
+          await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
+            `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
+           AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
+           AND card->'requester'->>'pubkey'=$4 AND created_at>now()-interval '2 minutes'
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
+             JOIN agent_grants g ON g.id=(entry->>'grantId')::uuid WHERE g.status<>'pending')
+           ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+            [dmRoomId, agentId, input.roomId, requester.pubkey],
+          )
+        ).rows[0];
+        if (open) {
+          const grants = [...open.card.grants, grantView];
+          await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
+            agent,
+            owner,
+            requester,
+            grants,
+            sourceRoomId: input.roomId,
+            ...(sourceMessageId ? { sourceMessageId } : {}),
+          });
+          return { messageId: open.id, cardRoomId: dmRoomId };
+        }
         const messageId = id();
         await systemLine(database, {
           id: messageId,
           roomId: dmRoomId,
-          authorId: connectorIdentityId('trusty-squire'),
+          authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
           ...grantCardPhrase(agent, owner, [grantView]),
           presentation: 'card',
           cardType: 'grant-request',
@@ -4062,6 +4331,14 @@ export class DaemonService {
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
        WHERE g.agent_id=$1 AND g.status IN ('approved','once')
          AND (g.expires_at IS NULL OR g.expires_at>now())
+         AND (NOT g.auto OR EXISTS (
+           SELECT 1 FROM agents a JOIN workspaces w ON w.id=g.workspace_id
+           WHERE a.agent_id=g.agent_id AND a.yolo_mode AND w.visibility<>'public'
+             AND (g.kind='repository' OR g.requested_by=a.owner_id)
+         ))
+         AND (g.kind='repository' OR g.auto OR g.decided_by=(
+           SELECT owner_id FROM agents WHERE agent_id=g.agent_id
+         ))
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
       [agentId, roomId ?? null],
@@ -4093,98 +4370,114 @@ export class DaemonService {
     return this.writeResult();
   }
 
-  /**
-   * Squire is mounted per session, not per speaker. Each call still checks who
-   * triggered the turn: the owner passes; anyone else needs a live mcp/squire
-   * grant keyed to them. A miss posts the existing Once/Always/No card in the
-   * owner's Trusty Squire DM.
-   */
-  private async authorizeSquireCall(input: Input<'authorizeSquireCall'>, agentId: string) {
-    await this.access(input.roomId, agentId);
-    const context = (
+  /** Root command provenance is the authority even after delegation and resumes. */
+  private async grantRequester() {
+    const command = this.authorizedCommand;
+    if (!command) throw new Error('resource access requires an active command');
+    const requester = (
       await this.database.query<{
-        workspace_id: string;
-        owner_id: string;
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
       }>(
-        `SELECT room.workspace_id,a.owner_id
-         FROM rooms room
-         JOIN agents a ON a.agent_id=$2
-         WHERE room.id=$1`,
+        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
+        FROM messages message JOIN identities identity ON identity.id=message.author_id
+        WHERE message.id=$1`,
+        [command.root_source_message_id],
+      )
+    ).rows[0];
+    if (!requester) throw new Error('resource requester not found');
+    return requester;
+  }
+
+  private async authorizeSquireCall(input: Input<'authorizeSquireCall'>, agentId: string) {
+    return this.authorizeScopedGrant(input, agentId, 'mcp', 'squire');
+  }
+
+  /** Resource access includes paid calls within the same target and requester scope. */
+  private async authorizeScopedGrant(
+    input: Input<'authorizeSquireCall'>,
+    agentId: string,
+    kind: 'mcp' | 'repository' | 'host',
+    target: string,
+  ) {
+    if (
+      typeof target !== 'string' ||
+      !target.trim() ||
+      target.length > AGENT_GRANT_TARGET_MAX_LENGTH
+    )
+      throw new Error('grant target is invalid');
+    target = target.trim();
+    const requester = await this.grantRequester();
+    const context = (
+      await this.database.query<{ owner_id: string; yolo_mode: boolean; owner_present: boolean }>(
+        `SELECT a.owner_id,EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
+         AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
+       (a.yolo_mode AND w.visibility<>'public') yolo_mode
+       FROM agents a JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
+       WHERE a.agent_id=$2`,
         [input.roomId, agentId],
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    const sourceMessageId = this.authorizedCommand?.source_message_id;
-    const requesterRow = (
-      await this.database.query<{ id: string }>(
-        `SELECT identity.id
-         FROM agent_commands command
-         JOIN messages message ON message.id=command.source_message_id
-         JOIN identities identity ON identity.id=message.author_id
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
-           AND message.presentation<>'activity'
-           AND ($3::text IS NULL OR command.source_message_id=$3)
-         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [input.roomId, agentId, sourceMessageId ?? null],
-      )
-    ).rows[0];
-    const requesterId = requesterRow?.id ?? context.owner_id;
+    if (kind !== 'repository' && !context.owner_present)
+      throw new Error('resource owner access denied');
+    if (context.yolo_mode && (kind === 'repository' || requester.id === context.owner_id))
+      return { allowed: true };
     const listed = await this.listAgentGrants(agentId, input.roomId);
-    const verdict = squireCallAllowed({
-      requesterId,
-      ownerId: context.owner_id,
-      grants: listed.grants,
-    });
-    if (verdict.allowed) {
-      if (verdict.consume && verdict.grantId)
-        await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
-      return {
-        allowed: true as const,
-        ...(verdict.grantId ? { grantId: verdict.grantId } : {}),
-      };
+    const scopedGrants = listed.grants.filter((g) => g.roomId === input.roomId);
+    if (kind === 'mcp' && target === 'squire') {
+      const verdict = squireCallAllowed({
+        requesterId: requester.id,
+        ownerId: context.owner_id,
+        yoloMode: context.yolo_mode,
+        grants: scopedGrants,
+      });
+      if (verdict.allowed) {
+        if (verdict.consume && verdict.grantId)
+          await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
+        return verdict;
+      }
+    }
+    const grant = scopedGrants.find(
+      (g) =>
+        g.kind === kind &&
+        g.target === target &&
+        g.roomId === input.roomId &&
+        g.requestedBy === requester.id,
+    );
+    if (grant) {
+      if (grant.status === 'once')
+        await this.consumeAgentGrant({ grantId: grant.grantId }, agentId);
+      return { allowed: true, grantId: grant.grantId };
     }
     const pending = (
       await this.database.query<{ id: string }>(
-        `SELECT id FROM agent_grants
-         WHERE agent_id=$1 AND workspace_id=$2 AND kind='mcp' AND target='squire'
-           AND requested_by=$3 AND status='pending'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [agentId, context.workspace_id, requesterId],
+        `SELECT id FROM agent_grants WHERE agent_id=$1 AND room_id=$2 AND kind=$3 AND target=$4
+       AND requested_by=$5 AND status='pending' AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) {
-      const card = (
-        await this.database.query<{ id: string }>(
-          `SELECT id FROM messages
-           WHERE card_type='grant-request'
-             AND EXISTS (
-               SELECT 1 FROM jsonb_array_elements(card->'grants') entry
-               WHERE entry->>'grantId'=$1
-             )
-           ORDER BY created_at DESC,id DESC LIMIT 1`,
-          [pending.id],
-        )
-      ).rows[0];
-      return {
-        allowed: false as const,
-        grantId: pending.id,
-        status: 'pending' as const,
-        ...(card ? { messageId: card.id } : {}),
-      };
-    }
+    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
     const asked = await this.requestAgentGrant(
       {
-        roomId: input.roomId,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'use Trusty Squire on this turn',
-        ...(input.requestId ? { requestId: input.requestId } : {}),
-        ...(input.generationId ? { generationId: input.generationId } : {}),
+        ...input,
+        kind,
+        target,
+        reason:
+          kind === 'repository'
+            ? 'edit this repository'
+            : kind === 'host'
+              ? 'run this corner on your machine with host filesystem and command access'
+            : 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
     return {
-      allowed: false as const,
+      allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
@@ -4332,10 +4625,12 @@ export class DaemonService {
         purpose: connectorPurpose(entry.connectorType),
         available:
           entry.available &&
-          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4411,6 +4706,10 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
+    const composioScope = connectorType === 'composio'
+      ? composioScopeForOwner(context.addressee.pubkey) : undefined;
+    if (connectorType === 'composio' && !composioScope)
+      throw new Error('Composio scope is not configured on this Beeline server');
     const connectorName = connectorDisplayName(connectorType);
     const already = (
       await this.database.query<{ status: string }>(
@@ -4477,7 +4776,13 @@ export class DaemonService {
         connectorType,
         connectorName,
         reason,
-        consequence: connectorOfferConsequence(connectorType, reason),
+        consequence: connectorOfferConsequence(
+          connectorType,
+          reason,
+          connectorType === 'composio'
+            ? Object.values(composioScope!.tools).flat()
+            : undefined,
+        ),
         helper: context.machine,
         status: 'pending',
         createdAt: seconds(created.created_at),
@@ -5107,12 +5412,14 @@ function grantCardPhrase(
 ): SystemPhrase {
   return {
     subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
-    verb: `asked ${systemIdentityMention({
-      id: owner.pubkey,
-      kind: owner.kind,
-      name: owner.name,
-      handle: owner.handle ?? null,
-    })} for`,
+    verb: grants.every((grant) => grant.kind === 'repository')
+      ? 'asked a Workspace admin for'
+      : `asked ${systemIdentityMention({
+          id: owner.pubkey,
+          kind: owner.kind,
+          name: owner.name,
+          handle: owner.handle ?? null,
+        })} for`,
     object: grants.map((grant) => `${grant.kind} ${grant.target}`).join(' and '),
     ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
   };
@@ -5211,6 +5518,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
+  getComposioLink: true,
+  getComposioTools: true,
+  executeComposioTool: true,
   getGoogleOAuthGrant: true,
   installConnector: true,
   postConnectorStatus: true,
@@ -5232,6 +5542,10 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentGrants: true,
   consumeAgentGrant: true,
   authorizeSquireCall: true,
+  authorizeResourceCall: true,
+  authorizeRepositoryCall: true,
+  authorizeHostCall: true,
+  listTurnAgentGrants: true,
   readAgentWorkbench: true,
   offerConnector: true,
   createCorner: true,

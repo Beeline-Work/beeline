@@ -212,7 +212,7 @@ function DesktopArtifactMarkdown({ attachment }: { attachment: AttachmentReferen
   }
   return (
     <ScrollView contentContainerStyle={styles.markdownBody} testID="desktop-artifact-markdown">
-      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
+      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} document />
     </ScrollView>
   );
 }
@@ -247,7 +247,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   actionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
-  markdownBody: { padding: theme.buzz.space.md },
+  markdownBody: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xl },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: {
     flex: 1,

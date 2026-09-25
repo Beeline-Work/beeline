@@ -22,7 +22,7 @@ const AGENT = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const ALEX = 'c'.repeat(64);
-type LiveGrant = DaemonOperationMap['listAgentGrants']['output']['grants'][number];
+type LiveGrant = DaemonOperationMap['listTurnAgentGrants']['output']['grants'][number];
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -95,13 +95,16 @@ async function harness(
     join(cwd, 'write.mjs'),
     "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2] ?? 'evil.txt', 'x');\nconsole.log('wrote');\n",
   );
-  await writeFile(join(cwd, 'read.mjs'), "import { readFileSync } from 'node:fs';\nconsole.log(readFileSync('probe.mjs', 'utf8').length > 0 ? 'read' : 'empty');\n");
+  await writeFile(
+    join(cwd, 'read.mjs'),
+    "import { readFileSync } from 'node:fs';\nconsole.log(readFileSync('probe.mjs', 'utf8').length > 0 ? 'read' : 'empty');\n",
+  );
   const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
   const live = grants.map((entry) => bindScript(cwd, entry));
   const api = {
     execute: vi.fn(async (name: string, input: Record<string, unknown>) => {
       calls.push({ name, input });
-      if (name === 'listAgentGrants') return { grants: live };
+      if (name === 'listTurnAgentGrants') return { grants: live };
       if (name === 'consumeAgentGrant') {
         const index = live.findIndex((entry) => entry.grantId === input.grantId);
         if (index < 0 || live[index]!.status !== 'once') throw new Error('once grant not found');
@@ -125,7 +128,13 @@ async function harness(
     workspaceId: WORKSPACE,
     cwd,
     writePolicy,
-    turn: turn ?? (() => ({ requestId: 'turn-1', requester: { pubkey: ALEX, name: 'Alex' } })),
+    turn:
+      turn ??
+      (() => ({
+        requestId: 'turn-1',
+        generationId: 'generation-1',
+        requester: { pubkey: ALEX, name: 'Alex' },
+      })),
   });
   return { runner, api, calls, cwd, live };
 }
@@ -133,13 +142,21 @@ async function harness(
 describe('command grant matching', () => {
   it('matches only word-for-word argv prefixes inside the same Workspace', () => {
     const rules = [grant({ target: 'fly deploy -a preview --with FLY_TOKEN' })];
-    expect(matchCommandGrant(rules, WORKSPACE, ['fly', 'deploy', '-a', 'preview', '--now'])?.grant.grantId).toBe(
-      'grant-1',
-    );
+    expect(
+      matchCommandGrant(rules, WORKSPACE, ['fly', 'deploy', '-a', 'preview', '--now'])?.grant
+        .grantId,
+    ).toBe('grant-1');
     expect(matchCommandGrant(rules, WORKSPACE, ['fly', 'deploy', '-a', 'prod'])).toBeUndefined();
     expect(matchCommandGrant(rules, WORKSPACE, ['fly', 'deploy'])).toBeUndefined();
-    expect(matchCommandGrant(rules, 'other-workspace', ['fly', 'deploy', '-a', 'preview'])).toBeUndefined();
-    expect(matchCommandGrant([grant({ kind: 'host', target: 'fly deploy' })], WORKSPACE, ['fly', 'deploy'])).toBeUndefined();
+    expect(
+      matchCommandGrant(rules, 'other-workspace', ['fly', 'deploy', '-a', 'preview']),
+    ).toBeUndefined();
+    expect(
+      matchCommandGrant([grant({ kind: 'host', target: 'fly deploy' })], WORKSPACE, [
+        'fly',
+        'deploy',
+      ]),
+    ).toBeUndefined();
   });
 });
 
@@ -149,7 +166,7 @@ describe('GrantCommandRunner', () => {
     await expect(runner.run({ roomId: ROOM, argv: ['echo', 'hi'] })).rejects.toThrow(
       'no approved command grant matches: echo hi',
     );
-    expect(calls.map((call) => call.name)).toEqual(['listAgentGrants']);
+    expect(calls.map((call) => call.name)).toEqual(['listTurnAgentGrants']);
   });
 
   it('refuses argv that is not a prefix match of the approved line', async () => {
@@ -167,7 +184,9 @@ describe('GrantCommandRunner', () => {
       'not serving that Room',
     );
     await expect(runner.run({ roomId: ROOM, argv: [] })).rejects.toThrow('non-empty array');
-    await expect(runner.run({ roomId: ROOM, argv: ['echo', 'a\nb'] })).rejects.toThrow('single-line');
+    await expect(runner.run({ roomId: ROOM, argv: ['echo', 'a\nb'] })).rejects.toThrow(
+      'single-line',
+    );
   });
 
   it('runs outside the sandbox in the checkout with PATH/HOME plus only the named secrets, scrubs them, and writes one ledger row with the requester', async () => {
@@ -185,6 +204,7 @@ describe('GrantCommandRunner', () => {
       agentId: AGENT,
       roomId: ROOM,
       requestId: 'turn-1',
+      generationId: 'generation-1',
       activity: [
         expect.objectContaining({
           kind: 'tool',
@@ -210,7 +230,7 @@ describe('GrantCommandRunner', () => {
     const first = await runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] });
     expect(first.exitCode).toBe(0);
     expect(calls.map((call) => call.name)).toEqual([
-      'listAgentGrants',
+      'listTurnAgentGrants',
       'consumeAgentGrant',
       'postAgentActivity',
     ]);
@@ -226,7 +246,7 @@ describe('GrantCommandRunner', () => {
     await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
       'secret MISSING_SECRET is not in the operator key store',
     );
-    expect(calls.map((call) => call.name)).toEqual(['listAgentGrants']);
+    expect(calls.map((call) => call.name)).toEqual(['listTurnAgentGrants']);
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {
@@ -245,18 +265,17 @@ describe('GrantCommandRunner', () => {
     expect(statuses).toEqual(['exit 3', 'error']);
   });
 
-  it('falls back to the grant requester when no turn is in flight', async () => {
-    const { runner, calls } = await harness([grant({ target: `${process.execPath} one.mjs` })], () => undefined);
-    await runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] });
-    const row = calls.find((call) => call.name === 'postAgentActivity')!;
-    expect(row.input.requestId).toBe('grant:grant-1');
-    expect((row.input.activity as Array<{ requestedBy: unknown; title: string }>)[0]).toEqual(
-      expect.objectContaining({
-        requestedBy: { pubkey: ALEX, name: 'Alex' },
-        title: expect.stringContaining('asked by Alex'),
-      }),
+  it('refuses without an active turn rather than inheriting the grant requester', async () => {
+    const { runner, calls } = await harness(
+      [grant({ target: `${process.execPath} one.mjs` })],
+      () => undefined,
     );
+    await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
+      'command requires an active turn',
+    );
+    expect(calls).toEqual([]);
   });
+
 });
 
 /**
@@ -375,7 +394,7 @@ describe('a corner has strictly more freedom than a Room', () => {
     expect(result.exitCode).toBe(0);
     expect(readFileSync(target, 'utf8')).toBe('x');
     // Under yolo this needed no card: the approval is the grant it already has.
-    expect(calls.map((call) => call.name)).toEqual(['listAgentGrants', 'postAgentActivity']);
+    expect(calls.map((call) => call.name)).toEqual(['listTurnAgentGrants', 'postAgentActivity']);
   });
 });
 
@@ -449,9 +468,9 @@ describe('the two hard stops', () => {
     ).rejects.toThrow('names a credential or environment file');
     expect(calls.some((call) => call.name === 'postAgentActivity')).toBe(false);
     // The approved shape itself still runs.
-    expect((await runner.run({ roomId: ROOM, argv: ['cut', '-d=', '-f1', '/dev/null'] })).exitCode).toBe(
-      0,
-    );
+    expect(
+      (await runner.run({ roomId: ROOM, argv: ['cut', '-d=', '-f1', '/dev/null'] })).exitCode,
+    ).toBe(0);
   });
 
   it('refuses an interpreter run whose script no card ever showed', async () => {
@@ -505,7 +524,9 @@ describe('GrantRunnerServer', () => {
         body: JSON.stringify({ roomId: ROOM, argv: ['rm', '-rf', '/'] }),
       });
       expect(refused.status).toBe(400);
-      expect(((await refused.json()) as { error: string }).error).toContain('no approved command grant');
+      expect(((await refused.json()) as { error: string }).error).toContain(
+        'no approved command grant',
+      );
     } finally {
       await server.close();
     }

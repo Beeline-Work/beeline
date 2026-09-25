@@ -1,7 +1,7 @@
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
@@ -31,7 +31,6 @@ import {
 import {
   claimGrantedHostRoutes,
   grantedHostRouteWires,
-  grantedSquireHostRouteNames,
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -56,7 +55,6 @@ import {
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
-  decideSquirePermission,
   isHostMcpPermissionRequest,
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
@@ -590,13 +588,18 @@ export class MonolithRoomTurnLoop {
 
   private async grantedHostRoutes(): Promise<string[]> {
     try {
-      return claimGrantedHostRoutes(
+      const approved = await claimGrantedHostRoutes(
         await this.options.api.execute('listAgentGrants', {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,
         }),
-        (grantId) => this.options.api.execute('consumeAgentGrant', { grantId }),
       );
+      // Discovery is safe to mount; the transport gate authorizes every use.
+      // This also lets an owner use a yolo resource without an activation prompt.
+      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+      }))])];
     } catch {
       return [];
     }
@@ -635,12 +638,23 @@ export class MonolithRoomTurnLoop {
         ? { model: selectionModel, effort: selectionEffort }
         : undefined;
     const operatorHome = this.options.config.operatorHome ?? homedir();
+    const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
+    await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
+    await writeFile(
+      resourceAuthFile,
+      JSON.stringify({
+        ...this.options.api.connection(),
+        turnContextPath: this.commandContext.path,
+      }),
+      { mode: 0o600 },
+    );
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes,
+          resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -756,17 +770,17 @@ export class MonolithRoomTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
+    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
     if (youtube) servers.push(youtube);
     const hostDeclarations = hostImportedMcpDeclarations({
       operatorHome,
       agentKind: this.options.config.agentKind,
     });
-    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
       hostDeclarations,
+      resourceAuthFile,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
@@ -808,12 +822,7 @@ export class MonolithRoomTurnLoop {
       autoApprovePermissions: false,
       permissionHandler: async (request) => {
         if (!isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'reject';
-        const squire = await decideSquirePermission(
-          request,
-          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.roomId }),
-          squireRoutes,
-        );
-        return squire ?? 'allow';
+        return 'allow';
       },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,

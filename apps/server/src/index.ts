@@ -3,6 +3,7 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
+import { ComposioClient } from './connector-composio.js';
 import { LiveHub } from './live.js';
 import {
   BackgroundLeader,
@@ -212,6 +213,9 @@ async function main() {
     process.env.FLY_MACHINE_ID,
     github ? (input) => github!.prChecksStatus(input) : undefined,
     googleOAuth,
+    process.env.BEELINE_COMPOSIO_API_KEY
+      ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
+      : undefined,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

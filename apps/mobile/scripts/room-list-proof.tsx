@@ -8,6 +8,9 @@ import { WorkspaceActionsMenu } from '../sources/components/buzz/WorkspaceAction
 import { RoomDeckComposeMenu } from '../sources/components/buzz/RoomDeckComposeMenu';
 import { RoomListToolbar } from '../sources/components/buzz/RoomListToolbar';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
+import { DirectMessageHeaderIdentity } from '../sources/components/buzz/DirectMessageHeaderIdentity';
+import { ChannelHeaderTitle } from '../sources/components/buzz/ChannelHeaderTitle';
+import { SYSTEM_IDENTITY_PUBKEY } from '../sources/buzz/system-identity';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
 import { RoomListSectionHeader } from '../sources/components/buzz/RoomListSectionHeader';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
@@ -16,6 +19,7 @@ import { filterConversations, type RoomListFilter } from '../sources/buzz/room-l
 import type { ChatListItem } from '@beeline/buzz-client';
 
 const now = Date.now();
+const systemMode = new URLSearchParams(location.search).has('system');
 const states = ['waiting', 'waiting', 'working', 'review', 'working'] as const;
 const cornerNames = [
   'Preview layout',
@@ -79,6 +83,20 @@ const rooms = [
     ? { directMessage: { peer: { pubkey: 'mina', name: 'Mina', kind: 'human' } } }
     : {}),
 })) as unknown as ChatListItem[];
+if (systemMode) {
+  rooms.unshift({
+    room: { id: 'system-dm', name: 'System', updatedAt: now / 1000 },
+    unread: true,
+    latestMessage: {
+      text: 'A Beeline update is ready.',
+      createdAt: now / 1000,
+      author: { pubkey: SYSTEM_IDENTITY_PUBKEY, name: 'System', handle: 'system' },
+    },
+    directMessage: {
+      peer: { pubkey: SYSTEM_IDENTITY_PUBKEY, name: 'System', handle: 'system', kind: 'human' },
+    },
+  } as unknown as ChatListItem);
+}
 function Proof() {
   const { theme } = useUnistyles();
   const t = theme.buzz;
@@ -212,10 +230,41 @@ function Proof() {
       </View>
       {desktop && (
         <View style={{ flex: 1, padding: 40 }}>
-          <Text style={{ ...t.type.body, color: t.textPrimary }}>Room-list component proof</Text>
-          <Text style={{ ...t.type.meta, color: t.ledgerQuiet, marginTop: 16 }}>
-            Real app components with fixture data. Transcript is outside this proof.
-          </Text>
+          {systemMode && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingBottom: 24,
+                borderBottomWidth: 1,
+                borderBottomColor: t.border,
+              }}
+            >
+              <DirectMessageHeaderIdentity
+                isDirectMessage
+                readOnly
+                peerPubkey={SYSTEM_IDENTITY_PUBKEY}
+                kind="human"
+                name="System"
+              />
+              <ChannelHeaderTitle kind="dm" title="System" />
+            </View>
+          )}
+          {systemMode ? (
+            <Text style={{ ...t.type.body, color: t.textPrimary, marginTop: 24 }}>
+              A Beeline update is ready.
+            </Text>
+          ) : (
+            <>
+              <Text style={{ ...t.type.body, color: t.textPrimary }}>
+                Room-list component proof
+              </Text>
+              <Text style={{ ...t.type.meta, color: t.ledgerQuiet, marginTop: 16 }}>
+                Real app components with fixture data. Transcript is outside this proof.
+              </Text>
+            </>
+          )}
           <Text testID="destination" style={{ ...t.type.body, color: t.accent, marginTop: 24 }}>
             {destination}
           </Text>

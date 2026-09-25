@@ -61,13 +61,17 @@ function toConnector(entry: {
   connectorType: string;
   name: string;
   available: boolean;
+  approvedTools?: readonly string[];
   row?: ConnectorViewDto;
 }): WorkbenchConnector {
   const id = entry.connectorType as WorkbenchConnectorId;
+  const approvedTools = entry.row?.approvedTools ?? entry.approvedTools;
   return {
     id,
     name: entry.name,
-    description: CONNECTOR_DESCRIPTIONS[id] ?? '',
+    description: approvedTools?.length
+      ? `${CONNECTOR_DESCRIPTIONS[id] ?? ''} Approved tools: ${approvedTools.join(', ')}.`
+      : CONNECTOR_DESCRIPTIONS[id] ?? '',
     available: entry.available,
     ...(entry.row
       ? {
@@ -158,6 +162,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
           connectorType: entry.connectorType,
           name: entry.name,
           available: entry.available,
+          approvedTools: entry.approvedTools,
           row: dto.connectors.find((candidate) => candidate.connectorType === entry.connectorType),
         });
       }),

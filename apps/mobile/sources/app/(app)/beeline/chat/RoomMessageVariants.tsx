@@ -262,14 +262,12 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   // The server names the asking agent on the card; a loaded roster presentation
   // (soul name) wins once it exists, never a fallback placeholder.
   const agentName = agent ? display.name : request.agent.name;
-  const squireRoute = request.grants.some(
-    (grant) => grant.kind === 'mcp' && grant.target === 'squire',
-  );
+  const repositoryRequest = request.grants.every((grant) => grant.kind === 'repository');
   const canDecide =
     !viewerIsAgent &&
-    (squireRoute
-      ? viewerPubkey === request.owner.pubkey
-      : viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (repositoryRequest
+      ? viewerRole === 'admin' || viewerRole === 'owner'
+      : viewerPubkey === request.owner.pubkey);
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (
     <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
@@ -329,7 +327,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                 <TranscriptCardHandle>@{agentName.replace(/^@/, '')}</TranscriptCardHandle> asks you
               </Text>
             }
-            subline={`${grantAskLine(grant)} · ${grant.reason}${squireRoute ? ` · requested by ${request.requester.name}` : ''}`}
+            subline={`${grantAskLine(grant)} · ${grant.reason}${!repositoryRequest ? ` · requested by ${request.requester.name}` : ''}`}
             sublineTestID={`grant-${grant.grantId}-ask`}
             stamp={ledgerStamp(message.timestamp)}
             code={grant.script?.contents}
@@ -339,7 +337,9 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
               pendingGrant
                 ? canDecide
                   ? undefined
-                  : `waiting for @${request.owner.name.replace(/^@/, '')}`
+                  : repositoryRequest
+                    ? 'waiting for a Workspace admin'
+                    : `waiting for @${request.owner.name.replace(/^@/, '')}`
                 : grant.status === 'once'
                   ? 'allowed once'
                   : grant.status === 'approved'

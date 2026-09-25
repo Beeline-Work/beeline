@@ -228,11 +228,18 @@ export type DaemonOperationMap = {
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   /**
-   * Per-call Squire gate: the owner's turns pass; any other requester needs a
+   * Per-call Squire gate: owner turns bypass only under yolo; otherwise a requester needs a
    * live mcp/squire grant keyed to them. A miss posts the existing Once/Always/No
    * card in the owner's Trusty Squire DM and returns pending.
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
+  authorizeResourceCall: Operation<
+    AuthorizeSquireCallInput & { readonly target: string },
+    AuthorizeSquireCallResult
+  >;
+  authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
+  authorizeHostCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
+  listTurnAgentGrants: Operation<AuthorizeSquireCallInput, AgentGrantListResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
   readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;
   /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
@@ -246,6 +253,22 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
+  getComposioLink: Operation<
+    AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
+    { readonly status: 'connected' } | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
+  >;
+  getComposioTools: Operation<RoomInput & { readonly requestId: string; readonly generationId: string }, {
+    readonly connectorId: string;
+    readonly toolkits: readonly string[];
+    readonly tools: Readonly<Record<string, readonly string[]>>;
+  }>;
+  executeComposioTool: Operation<RoomInput & {
+    readonly requestId: string;
+    readonly generationId: string;
+    readonly toolkit: string;
+    readonly tool: string;
+    readonly arguments: Record<string, unknown>;
+  }, { readonly data: unknown; readonly logId?: string }>;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {
@@ -261,13 +284,34 @@ export type DaemonOperationMap = {
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
-  getWalletToolState: Operation<WalletToolStateInput, WalletToolState>;
-  getWalletToolBalance: Operation<WalletToolBalanceInput, WalletToolBalanceResult>;
-  getWalletToolChains: Operation<WalletToolChainsInput, WalletToolChainsResult>;
-  getWalletToolHistory: Operation<WalletToolHistoryInput, WalletToolHistoryResult>;
-  getWalletToolQuote: Operation<WalletToolQuoteInput, WalletToolQuoteResult>;
-  walletPay: Operation<WalletPayInput, WalletSendOutcome>;
-  walletSwap: Operation<WalletSwapInput, WalletSwapResult>;
+  getWalletToolState: Operation<
+    WalletToolStateInput & TurnOutputAuthority & RoomInput,
+    WalletToolState | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  getWalletToolBalance: Operation<
+    WalletToolBalanceInput & TurnOutputAuthority & RoomInput,
+    WalletToolBalanceResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  getWalletToolChains: Operation<
+    WalletToolChainsInput & TurnOutputAuthority & RoomInput,
+    WalletToolChainsResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  getWalletToolHistory: Operation<
+    WalletToolHistoryInput & TurnOutputAuthority & RoomInput,
+    WalletToolHistoryResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  getWalletToolQuote: Operation<
+    WalletToolQuoteInput & TurnOutputAuthority & RoomInput,
+    WalletToolQuoteResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  walletPay: Operation<
+    WalletPayInput & TurnOutputAuthority & RoomInput,
+    WalletSendOutcome | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  walletSwap: Operation<
+    WalletSwapInput & TurnOutputAuthority & RoomInput,
+    WalletSwapResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
 export type RoomInput = { readonly roomId: string };
@@ -1085,7 +1129,8 @@ export type ConnectorKind =
   | 'google-gmail'
   | 'google-calendar'
   | 'google-drive'
-  | 'google-youtube';
+  | 'google-youtube'
+  | 'composio';
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =

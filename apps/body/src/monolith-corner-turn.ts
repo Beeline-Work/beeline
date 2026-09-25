@@ -1,9 +1,9 @@
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
@@ -21,12 +21,7 @@ import {
   hostImportedMcpDeclarations,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import {
-  claimGrantedHostRoutes,
-  grantedHostRouteWires,
-  grantedSquireHostRouteNames,
-} from './host-mcp-route.js';
-import { decideSquirePermission } from './read-only-policy.js';
+import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -693,13 +688,18 @@ export class MonolithCornerTurnLoop {
 
   private async grantedHostRoutes(): Promise<string[]> {
     try {
-      return claimGrantedHostRoutes(
+      const approved = await claimGrantedHostRoutes(
         await this.options.api.execute('listAgentGrants', {
           agentId: this.agent.publicKey,
           roomId: this.options.cornerId,
         }),
-        (grantId) => this.options.api.execute('consumeAgentGrant', { grantId }),
       );
+      // Discovery is safe to mount; the transport gate authorizes every use.
+      // This also lets an owner use a yolo resource without an activation prompt.
+      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+      }))])];
     } catch {
       return [];
     }
@@ -745,12 +745,23 @@ export class MonolithCornerTurnLoop {
       configuration.model || configuration.effort
         ? { model: configuration.model, effort: configuration.effort }
         : this.options.config.modelSelection;
+    const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
+    await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
+    await writeFile(
+      resourceAuthFile,
+      JSON.stringify({
+        ...this.options.api.connection(),
+        turnContextPath: this.commandContext.path,
+      }),
+      { mode: 0o600 },
+    );
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes,
+          resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -859,7 +870,6 @@ export class MonolithCornerTurnLoop {
       operatorHome,
       agentKind: this.options.config.agentKind,
     });
-    const squireRoutes = grantedSquireHostRouteNames(grantedHostRoutes, hostDeclarations);
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,
@@ -867,13 +877,8 @@ export class MonolithCornerTurnLoop {
       agentCwd: this.options.worktreePath,
       agentLabel: harnessLabel,
       autoApprovePermissions: true,
-      permissionHandler: async (request) => {
-        const squire = await decideSquirePermission(
-          request,
-          () => this.options.api.execute('authorizeSquireCall', { roomId: this.options.cornerId }),
-          squireRoutes,
-        );
-        return squire ?? 'allow';
+      permissionHandler: async () => {
+        return 'allow';
       },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
@@ -950,12 +955,13 @@ export class MonolithCornerTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
+    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
       operatorHome,
       hostDeclarations,
+      resourceAuthFile,
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and
@@ -1215,7 +1221,23 @@ export class MonolithCornerTurnLoop {
           requestId,
           generationId: this.commandContext.generationId,
         },
-        () => {
+        async () => {
+          // Gate the whole turn before any harness can mutate the checkout,
+          // including harnesses whose autonomous mode omits ACP callbacks.
+          const repositoryPermission = await api.execute('authorizeRepositoryCall', {
+            roomId: cornerId,
+          });
+          if (!repositoryPermission.allowed) {
+            deliberateNoReply = true;
+            return;
+          }
+          // A corner harness has host shell access. Repository permission alone
+          // cannot authorize that personal resource, including on a reused session.
+          const hostPermission = await api.execute('authorizeHostCall', { roomId: cornerId });
+          if (!hostPermission.allowed) {
+            deliberateNoReply = true;
+            return;
+          }
           trace.noteScheduler('queue', this.options.scheduler.snapshot());
           trace.start('queue-wait');
           return this.options.scheduler.run(

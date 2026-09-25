@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
+import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
@@ -289,6 +290,10 @@ describe('monolith integration', () => {
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
+      'authorizeResourceCall',
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
+      'listTurnAgentGrants',
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
@@ -399,7 +404,9 @@ describe('monolith integration', () => {
     const completionMessages = () => database.query(
       `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
        WHERE r.workspace_id=$1 AND r.direct_participants @> $2::jsonb
-         AND m.text LIKE '%Your avatar is ready.%'`, [WORKSPACE, JSON.stringify([HUMAN, AGENT])]);
+         AND m.text LIKE '%Your avatar is ready.%'`,
+        [WORKSPACE, JSON.stringify([HUMAN, AGENT])],
+      );
     expect((await completionMessages()).rowCount).toBe(0);
     const saved = await call(input);
     expect(saved.status).toBe(200);
@@ -806,13 +813,19 @@ describe('monolith integration', () => {
     const created = await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' });
     expect(created.status).toBe(200);
     const { id } = (await created.json()) as { id: string };
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status).toBe(400);
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(409);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'Road Map' })).status,
+    ).toBe(400);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
+    ).toBe(409);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map-2' })).status).toBe(204);
     expect((await operation('updateRoom', { roomId: id, name: 'Road Map 3' })).status).toBe(400);
     // Renaming frees the old slug; a later Room can claim it, and the renamed
     // Room can no longer take it back.
-    expect((await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status).toBe(200);
+    expect(
+      (await operation('createRoom', { workspaceId: WORKSPACE, name: 'road-map' })).status,
+    ).toBe(200);
     expect((await operation('updateRoom', { roomId: id, name: 'road-map' })).status).toBe(409);
   });
 
@@ -1833,7 +1846,11 @@ describe('monolith integration', () => {
 
   it('lets an author or Room manager delete a message while retaining its transcript record', async () => {
     const authorMessageId = 'd'.repeat(64);
-    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: authorMessageId, text: 'remove me' }, AGENT);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: authorMessageId, text: 'remove me' },
+      AGENT,
+    );
     await phone.execute(
       'setMessageBookmark',
       { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
@@ -1847,19 +1864,29 @@ describe('monolith integration', () => {
     expect(authorDeleted).toMatchObject({ text: 'Message deleted', deleted: true });
     expect(authorDeleted?.attachments).toBeUndefined();
     expect(authorDeleted?.reactions).toBeUndefined();
-    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks).toContainEqual(
-      expect.objectContaining({ messageId: authorMessageId, available: false }),
-    );
+    expect(
+      (await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks,
+    ).toContainEqual(expect.objectContaining({ messageId: authorMessageId, available: false }));
 
     const managerMessageId = 'e'.repeat(64);
-    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' }, AGENT);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' },
+      AGENT,
+    );
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, HUMAN);
     expect(
-      (await phone.readRoom(ROOM, HUMAN))!.messages.find((message) => message.id === managerMessageId),
+      (await phone.readRoom(ROOM, HUMAN))!.messages.find(
+        (message) => message.id === managerMessageId,
+      ),
     ).toMatchObject({ text: 'Message deleted', deleted: true });
 
     await expect(
-      phone.execute('reactToMessage', { roomId: ROOM, messageId: managerMessageId, emoji: '👍' }, HUMAN),
+      phone.execute(
+        'reactToMessage',
+        { roomId: ROOM, messageId: managerMessageId, emoji: '👍' },
+        HUMAN,
+      ),
     ).rejects.toThrow('message is not available for reaction');
   });
 
@@ -1893,7 +1920,9 @@ describe('monolith integration', () => {
     await expect(
       phone.execute('deleteRoomMessage', { roomId: directRoomId, messageId }, HUMAN),
     ).rejects.toThrow('message is not available for deletion');
-    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe('private message');
+    expect((await phone.readRoom(directRoomId, firstMember))?.messages[0]?.text).toBe(
+      'private message',
+    );
   });
 
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
@@ -8673,6 +8702,338 @@ describe('monolith integration', () => {
       ).rows.map((row) => row.text),
     ).toEqual(['@owner turned yolo on for @bee · grant requests are now approved automatically']);
   });
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'enforces the repository/resource matrix (yolo=%s ownerRequester=%s)',
+    async (yolo, ownerRequester) => {
+      await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+      const token = await phoneToken('matrix-member');
+      const member = createHash('sha256').update('github:matrix-member').digest('hex');
+      await operation('addWorkspaceMember', {
+        workspaceId: WORKSPACE,
+        memberId: member,
+        role: 'admin',
+      });
+      await operation('addRoomMember', { roomId: ROOM, memberId: member });
+      const source = (await (
+        await operation(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            text: '@bee perform this task',
+            mentions: [AGENT],
+          },
+          ownerRequester ? accessToken : token,
+        )
+      ).json()) as { messageId: string };
+      const context = { roomId: ROOM, requestId: source.messageId };
+      const repo = await (await daemonOperation('authorizeRepositoryCall', context)).json();
+      expect(repo.allowed).toBe(yolo);
+      if (!yolo) {
+        const card = (
+          await database.query<{ room_id: string }>(`SELECT room_id FROM messages WHERE id=$1`, [
+            repo.messageId,
+          ])
+        ).rows[0]!;
+        expect(card.room_id).toBe(ROOM);
+        await database.query(
+          `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+          [WORKSPACE, HUMAN],
+        );
+        expect(
+          (await operation('decideAgentGrant', { grantId: repo.grantId, decision: 'always' }))
+            .status,
+        ).toBe(403);
+        expect(
+          (
+            await operation(
+              'decideAgentGrant',
+              { grantId: repo.grantId, decision: 'always' },
+              token,
+            )
+          ).status,
+        ).toBe(200);
+        expect(
+          (await (await daemonOperation('authorizeRepositoryCall', context)).json()).allowed,
+        ).toBe(true);
+      }
+      const host = await (await daemonOperation('authorizeHostCall', context)).json();
+      expect(host.allowed).toBe(yolo && ownerRequester);
+      if (!host.allowed) {
+        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }, token)).status).toBe(403);
+        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' })).status).toBe(200);
+        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(true);
+      }
+      const resource = await (
+        await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
+      ).json();
+      expect(resource.allowed).toBe(yolo && ownerRequester);
+      if (!resource.allowed) {
+        const card = (
+          await database.query<{ room_id: string; card: { requester: { pubkey: string } } }>(
+            `SELECT room_id,card FROM messages WHERE id=$1`,
+            [resource.messageId],
+          )
+        ).rows[0]!;
+        expect(card.room_id).not.toBe(ROOM);
+        expect(card.card.requester.pubkey).toBe(ownerRequester ? HUMAN : member);
+        expect(
+          (await request(`/v1/phone/rooms/${card.room_id}`, 'GET', undefined, token)).status,
+        ).toBe(404);
+        expect(
+          (
+            await operation(
+              'decideAgentGrant',
+              { grantId: resource.grantId, decision: 'always' },
+              token,
+            )
+          ).status,
+        ).toBe(403);
+        expect(
+          (await operation('decideAgentGrant', { grantId: resource.grantId, decision: 'always' }))
+            .status,
+        ).toBe(200);
+        // Paid calls share the approved resource scope; repeated calls do not ask for a budget.
+        for (let i = 0; i < 2; i++)
+          expect(
+            (
+              await (
+                await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
+              ).json()
+            ).allowed,
+          ).toBe(true);
+        expect(
+          (
+            await (
+              await daemonOperation('authorizeResourceCall', {
+                ...context,
+                target: 'different-api',
+              })
+            ).json()
+          ).allowed,
+        ).toBe(false);
+        expect((await operation('revokeAgentGrant', { grantId: resource.grantId })).status).toBe(
+          200,
+        );
+        expect(
+          (
+            await (
+              await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
+            ).json()
+          ).allowed,
+        ).toBe(false);
+      }
+      expect(
+        (await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows,
+      ).toEqual([]);
+    },
+  );
+
+  it('privatizes legacy resource cards and revokes unproven approvals without broadening pending grants', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const grants: Array<{ grantId: string; messageId: string }> = [];
+    for (const target of ['pending-resource', 'missing-provenance', 'foreign-approval']) {
+      grants.push(await (await daemonOperation('requestAgentGrant', {
+        roomId: ROOM, kind: 'host', target, reason: 'use the host',
+      })).json());
+    }
+    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [grants[1]!.grantId]);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`,
+      [grants[2]!.grantId, AGENT]);
+    // Reproduce the pre-upgrade shared Room placement.
+    await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [ROOM, grants[0]!.messageId]);
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
+    const automatic = await (await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: 'automatic-resource', reason: 'use the host',
+    })).json();
+    await database.query(`UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
+      [ROOM, automatic.grantId]);
+    await upgradeGrantPolicy(database);
+    await upgradeGrantPolicy(database);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-auto'
+      AND card->>'grantId'=$2`, [ROOM, automatic.grantId])).rowCount).toBe(0);
+    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId])).rows)
+      .toEqual([{status: 'approved'}]);
+    const rows = await database.query<{ id: string; status: string }>(
+      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
+    expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
+      [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
+    });
+    const card = (await database.query<{ room_id: string; card: { sourceRoomId: string; grants: Array<{status: string}> } }>(
+      `SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])).rows[0]!;
+    expect(card.room_id).not.toBe(ROOM);
+    expect(card.card.sourceRoomId).toBe(ROOM);
+    expect(card.card.grants.map(g => g.status)).toEqual(['pending','revoked','revoked']);
+    expect((await operation('decideAgentGrant', {grantId: grants[1]!.grantId, decision:'always'})).status).toBe(409);
+    expect((await operation('decideAgentGrant', {grantId: grants[0]!.grantId, decision:'always'})).status).toBe(200);
+  });
+
+  it('forces both bypasses off in a public Workspace and rejects calls without live command authority', async () => {
+    await database.query(`UPDATE workspaces SET visibility='public' WHERE id=$1`, [WORKSPACE]);
+    const source = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee work', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    for (const name of ['authorizeRepositoryCall', 'authorizeSquireCall']) {
+      expect(
+        (await (await daemonOperation(name, { roomId: ROOM, requestId: source.messageId })).json())
+          .allowed,
+      ).toBe(false);
+    }
+    const response = await fetch(`${origin}/v1/daemon/operations/authorizeResourceCall`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${daemonToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId: ROOM, target: 'paid-api' }),
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(
+      (await database.query(`SELECT id FROM agent_grants WHERE target='paid-api'`)).rows,
+    ).toEqual([]);
+  });
+
+  it('keeps the root requester through delegation, resumes, and later owner turns', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
+    const token = await phoneToken('delegated-member');
+    const member = createHash('sha256').update('github:delegated-member').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: member,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: member });
+    const source = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: ROOM, text: '@bee use the resource', mentions: [AGENT] },
+        token,
+      )
+    ).json()) as { messageId: string };
+    const parent = (
+      await database.query<any>(
+        `SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+        [source.messageId, AGENT],
+      )
+    ).rows[0]!;
+    const delegated = createHash('sha256').update('delegated-resource-task').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'delegated task','message')`,
+      [delegated, ROOM, AGENT],
+    );
+    await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: delegated,
+      parent,
+      reason: 'agent_mention',
+    });
+    // A newer owner turn must not replace the delegated turn's requester.
+    const owner = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee my task', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    expect(
+      (
+        await (
+          await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: owner.messageId })
+        ).json()
+      ).allowed,
+    ).toBe(true);
+    const held = await (
+      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: delegated })
+    ).json();
+    expect(held.allowed).toBe(false);
+    expect(
+      (
+        await database.query<{ requested_by: string }>(
+          `SELECT requested_by FROM agent_grants WHERE id=$1`,
+          [held.grantId],
+        )
+      ).rows[0]!.requested_by,
+    ).toBe(member);
+    expect(
+      (await operation('decideAgentGrant', { grantId: held.grantId, decision: 'once' })).status,
+    ).toBe(200);
+    const resume = (
+      await database.query<any>(
+        `SELECT * FROM agent_commands WHERE action='resume' AND agent_id=$1 ORDER BY created_at DESC LIMIT 1`,
+        [AGENT],
+      )
+    ).rows[0]!;
+    expect(resume.root_source_message_id).toBe(source.messageId);
+    const context = { roomId: ROOM, requestId: resume.turn_request_id };
+    expect((await (await daemonOperation('authorizeSquireCall', context)).json()).allowed).toBe(
+      true,
+    );
+    expect((await (await daemonOperation('authorizeSquireCall', context)).json()).allowed).toBe(
+      false,
+    );
+  });
+
+  it('does not reuse an owner command grant on a third-party turn or without command authority', async () => {
+    const ownerAsk = (await (
+      await operation('sendRoomMessage', {
+        roomId: ROOM,
+        text: '@bee run tests',
+        mentions: [AGENT],
+      })
+    ).json()) as { messageId: string };
+    const grant = await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        requestId: ownerAsk.messageId,
+        kind: 'command',
+        target: 'npm test',
+        reason: 'test',
+      })
+    ).json();
+    expect(grant.auto).toBe(true);
+    const token = await phoneToken('command-member');
+    const member = createHash('sha256').update('github:command-member').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: member,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: member });
+    const ask = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: ROOM, text: '@bee run tests', mentions: [AGENT] },
+        token,
+      )
+    ).json()) as { messageId: string };
+    expect(
+      (
+        await (
+          await daemonOperation('listTurnAgentGrants', { roomId: ROOM, requestId: ask.messageId })
+        ).json()
+      ).grants,
+    ).toEqual([]);
+    expect(
+      (
+        await (
+          await daemonOperation('listTurnAgentGrants', {
+            roomId: ROOM,
+            requestId: ownerAsk.messageId,
+          })
+        ).json()
+      ).grants.map((g: any) => g.grantId),
+    ).toContain(grant.grantId);
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    expect(
+      (
+        await (
+          await daemonOperation('listTurnAgentGrants', {
+            roomId: ROOM,
+            requestId: ownerAsk.messageId,
+          })
+        ).json()
+      ).grants,
+    ).toEqual([]);
+  });
+
   it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
     // New agents default to yolo on; this test exercises the pending-card path
     // an owner who has turned yolo off still goes through.
@@ -8717,6 +9078,7 @@ describe('monolith integration', () => {
     const first = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
+        requestId: ask.messageId,
         kind: 'command',
         target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
         reason: 'publish the preview build',
@@ -8729,6 +9091,7 @@ describe('monolith integration', () => {
     const second = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
+        requestId: ask.messageId,
         kind: 'host',
         target: 'api.fly.io',
         reason: 'reach the Fly API',
@@ -8737,6 +9100,7 @@ describe('monolith integration', () => {
     ).json()) as { grantId: string; status: string; messageId: string };
     expect(second.messageId).toBe(first.messageId);
     const cards = await database.query<{
+      room_id: string;
       author_id: string;
       text: string;
       tagged_ids: string[];
@@ -8747,7 +9111,7 @@ describe('monolith integration', () => {
         requester: { pubkey: string };
       };
     }>(
-      `SELECT author_id,text,${taggedIdentityIdsSql('messages')} tagged_ids,presentation,card
+      `SELECT room_id,author_id,text,${taggedIdentityIdsSql('messages')} tagged_ids,presentation,card
        FROM messages WHERE card_type='grant-request'`,
     );
     expect(cards.rows).toHaveLength(1);
@@ -8764,12 +9128,12 @@ describe('monolith integration', () => {
     expect(card.card.requester.pubkey).toBe(memberId);
     expect(card.card.grants.map((grant) => grant.status)).toEqual(['pending', 'pending']);
     expect(card.card.grants[1]!.expiresAt).toEqual(expect.any(Number));
-    // Room cards do not trigger a push by themselves. Squire approval instead
+    // Resource prompts are private. Squire approval instead
     // reaches its owner through the connector DM's direct-message push path.
-    expect(await pushes.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    await pushes.runOnce();
+    expect(card.room_id).not.toBe(ROOM);
     // The phone reads the card as a validated grantRequest message.
-    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    const room = (await (await request(`/v1/phone/rooms/${card.room_id}`)).json()) as RoomView;
     expect(isRoomView(room)).toBe(true);
     const cardMessage = room.messages.find((message) => message.grantRequest);
     expect(cardMessage?.grantRequest?.grants).toHaveLength(2);
@@ -8783,7 +9147,7 @@ describe('monolith integration', () => {
     );
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({
-      error: "Only the agent's owner or a workspace admin can change this",
+      error: "Only the agent's owner can change this",
     });
     // Only pending answers are not yet on the profile.
     const profileBefore = (await (
@@ -8824,19 +9188,17 @@ describe('monolith integration', () => {
     expect(settled.rows[0]!.card.grants[0]!.decidedAt).toEqual(expect.any(Number));
     // One system line per decision wakes the daemon: it mentions the agent and
     // reaches its inbox; it never pushes to a human.
-    const inbox = (await (
-      await daemonOperation('getRoomInbox', { roomId: ROOM, after: undefined })
-    ).json()) as {
-      items: Array<{
-        type: string;
+    const decisions = (
+      await database.query<{
         body: string;
         authorId: string;
-        systemEvent?: unknown;
-      }>;
-    };
-    const decisions = inbox.items.filter(
-      (item) => item.type === 'system' && /\b(approved|declined)\b/.test(item.body),
-    );
+        systemEvent: unknown;
+      }>(
+        `SELECT text body,author_id "authorId",system_event "systemEvent" FROM messages
+        WHERE room_id=$1 AND card_type='grant-decision' ORDER BY created_at,id`,
+        [ROOM],
+      )
+    ).rows;
     expect(decisions.map((item) => item.body)).toEqual([
       '@owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
       '@owner declined host api.fly.io',
@@ -8908,6 +9270,7 @@ describe('monolith integration', () => {
     const third = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
+        requestId: ask.messageId,
         kind: 'command',
         target: 'npm test',
         reason: 'run the suite',
@@ -9385,7 +9748,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('approves grants on the spot under yolo with auto=true and no card, except budget and mcp which always ask', async () => {
+  it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
       await daemonOperation('requestAgentGrant', {
@@ -9409,7 +9772,7 @@ describe('monolith integration', () => {
       system_event: unknown;
     }>(
       `SELECT text,presentation,${taggedIdentityIdsSql('messages')} tagged_ids,author_id,system_event
-       FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
+       FROM messages WHERE room_id<>$1 AND card_type IN ('grant-request','grant-auto')`,
       [ROOM],
     );
     expect(lines.rows).toEqual([
@@ -9431,17 +9794,15 @@ describe('monolith integration', () => {
     ).json()) as { grants: Array<{ auto: boolean; status: string; decidedBy?: unknown }> };
     expect(profile.grants).toEqual([expect.objectContaining({ auto: true, status: 'approved' })]);
     expect(profile.grants[0]!.decidedBy).toBeUndefined();
-    // Budget still asks: a pending card, not an auto approval.
-    const budget = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        kind: 'budget',
-        target: '$10 of API spend',
-        reason: 'more tokens',
-      })
-    ).json()) as Record<string, unknown>;
-    expect(budget).toEqual(
-      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+    const budget = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      kind: 'budget',
+      target: '$10 of API spend',
+      reason: 'more tokens',
+    });
+    expect(budget.status).toBe(400);
+    expect((await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows).toEqual(
+      [],
     );
     const mcp = (await (
       await daemonOperation('requestAgentGrant', {
@@ -9451,9 +9812,7 @@ describe('monolith integration', () => {
         reason: 'route Trusty Squire into this agent home',
       })
     ).json()) as Record<string, unknown>;
-    expect(mcp).toEqual(
-      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
-    );
+    expect(mcp).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
   });
 
   it('routes Squire approval to its owner without changing shared agent access', async () => {
@@ -9588,6 +9947,7 @@ describe('monolith integration', () => {
     const second = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
+        requestId: sourceId,
         kind: 'mcp',
         target: 'squire',
         reason: 'another exact request',
@@ -9623,6 +9983,7 @@ describe('monolith integration', () => {
     const denied = (await (
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
+        requestId: sourceId,
         kind: 'mcp',
         target: 'squire',
         reason: 'request to decline',
@@ -9939,7 +10300,7 @@ describe('monolith integration', () => {
       reason: 'because',
     });
     const cornerLine = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND card_type='grant-auto'`,
+      `SELECT text FROM messages WHERE card_type='grant-auto' AND card->>'grantId' IN (SELECT id::text FROM agent_grants WHERE room_id=$1)`,
       [cornerId],
     );
     expect(cornerLine.rows[0]!.text).toBe(
@@ -10545,19 +10906,27 @@ describe('monolith integration', () => {
     const { choiceId, closesAt } = (await created.json()) as { choiceId: string; closesAt: number };
     expect(closesAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
     const opened = readRoomView(await (await request(`/v1/phone/rooms/${ROOM}`)).json());
-    expect(opened?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
-      expect.objectContaining({ mode: 'poll', status: 'open', agent: expect.objectContaining({ kind: 'human' }) }),
+    expect(
+      opened?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice,
+    ).toEqual(
+      expect.objectContaining({
+        mode: 'poll',
+        status: 'open',
+        agent: expect.objectContaining({ kind: 'human' }),
+      }),
     );
     expect((await operation('answerChoice', { choiceId, optionId: 'A' })).status).toBe(200);
     const voted = readRoomView(await (await request(`/v1/phone/rooms/${ROOM}`)).json());
-    expect(voted?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
-      expect.objectContaining({ status: 'open', votedCount: 1 }),
-    );
+    expect(
+      voted?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice,
+    ).toEqual(expect.objectContaining({ status: 'open', votedCount: 1 }));
     expect((await operation('answerChoice', { choiceId, optionId: 'B' }, memberToken)).status).toBe(
       200,
     );
     const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(readRoomView(room)?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
+    expect(
+      readRoomView(room)?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice,
+    ).toEqual(
       expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie', votedCount: 2 }),
     );
   });

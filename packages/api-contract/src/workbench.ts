@@ -29,6 +29,7 @@ export const CONNECTOR_KINDS = [
   'google-calendar',
   'google-drive',
   'google-youtube',
+  'composio',
 ] as const;
 export type ConnectorKind = (typeof CONNECTOR_KINDS)[number];
 
@@ -47,6 +48,7 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'google-calendar',
   'google-drive',
   'google-youtube',
+  'composio',
 ];
 
 /**
@@ -90,6 +92,8 @@ export type WorkbenchConnectorView = {
   readonly helperAgentId: string;
   readonly connectedAt?: number;
   readonly createdAt: number;
+  /** The paired Composio row's fixed approved tool scope. */
+  readonly approvedTools?: readonly string[];
 };
 
 /**
@@ -138,6 +142,8 @@ export type WorkbenchCatalogEntry = {
   readonly connectorType: ConnectorKind;
   readonly name: string;
   readonly available: boolean;
+  /** The exact Composio tool slugs this server will allow when paired. */
+  readonly approvedTools?: readonly string[];
 };
 
 /** One machine the viewer connected that can serve as a connector helper. */

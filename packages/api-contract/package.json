@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./composio": {
+      "types": "./dist/composio.d.ts",
+      "import": "./dist/composio.js",
+      "default": "./dist/composio.js"
+    },
     "./phone": {
       "types": "./dist/phone.d.ts",
       "import": "./dist/phone.js",

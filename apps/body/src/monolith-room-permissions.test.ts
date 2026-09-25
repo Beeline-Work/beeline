@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { parse as parseToml } from 'smol-toml';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -480,6 +481,10 @@ describe('a granted host route reaches the permission matcher', () => {
     await loop;
     await scheduler.dispose();
     expect(handler).toBeDefined();
+    const generated = parseToml(await readFile(join(root, 'agent-home/grok/config.toml'), 'utf8'));
+    const mounted = generated.mcp_servers as Record<string, { env: Record<string, string> }>;
+    for (const route of ['squire', 'vault', 'broker'])
+      expect(mounted[route]?.env.BEELINE_RESOURCE_AUTH_FILE).toEqual(expect.any(String));
     return async (request) => (await handler!(request)) === 'allow';
   }
 
@@ -498,17 +503,17 @@ describe('a granted host route reaches the permission matcher', () => {
     expect(await allow(grokUseTool)).toBe(true);
   });
 
-  it('keeps refusing the same call with no grant', async () => {
+  it('routes an unapproved tool to its transport gate so the owner can decide privately', async () => {
     const allow = await capturedHandler([]);
-    expect(await allow(grokUseTool)).toBe(false);
+    expect(await allow(grokUseTool)).toBe(true);
   });
 
-  it('refuses a mounted Squire call when the turn requester has no applicable approval', async () => {
+  it('lets a mounted Squire call reach its transport authorization gate', async () => {
     const allow = await capturedHandler(
       [{ kind: 'mcp', target: 'squire', status: 'approved' }],
       false,
     );
-    expect(await allow(grokUseTool)).toBe(false);
+    expect(await allow(grokUseTool)).toBe(true);
   });
 
   it('gates an aliased Squire route mounted through the same façade', async () => {
@@ -522,13 +527,16 @@ describe('a granted host route reaches the permission matcher', () => {
       [{ kind: 'mcp', target: 'vault', status: 'approved' }],
       false,
     );
-    expect(await allow(aliasCall)).toBe(false);
+    expect(await allow(aliasCall)).toBe(true);
     const approved = await capturedHandler([{ kind: 'mcp', target: 'vault', status: 'approved' }]);
     expect(await approved(aliasCall)).toBe(true);
   });
 
   it('gates an alias identified by its broker environment', async () => {
-    const allow = await capturedHandler([{ kind: 'mcp', target: 'broker', status: 'approved' }], false);
+    const allow = await capturedHandler(
+      [{ kind: 'mcp', target: 'broker', status: 'approved' }],
+      false,
+    );
     expect(
       await allow({
         toolCall: {
@@ -536,6 +544,6 @@ describe('a granted host route reaches the permission matcher', () => {
           rawInput: { server: 'broker', tool: 'use_credential' },
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

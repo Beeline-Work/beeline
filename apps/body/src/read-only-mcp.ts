@@ -50,7 +50,7 @@ import {
   type RoomConversationResult,
 } from '@beeline/api-contract/daemon';
 import {
-  AGENT_GRANT_KINDS,
+  REQUESTABLE_AGENT_GRANT_KINDS,
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
   AGENT_GRANT_VERBS,
@@ -59,7 +59,7 @@ import {
   formatGrantEscalationReason,
   grantScriptTooLongMessage,
   interpreterScriptArgument,
-  isAgentGrantKind,
+  isRequestableAgentGrantKind,
   parseCommandGrantTarget,
   type AgentGrantEscalation,
   type CommandGrantRule,
@@ -384,7 +384,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_pay',
     description:
-      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. The only other refusal is insufficient funds. Every send is written to the @wallet ledger.",
+      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. Resource access is checked for the original requester; approval includes paid calls within that scope. Insufficient funds still refuses the send. Every send is written to the @wallet ledger.",
     inputSchema: {
       type: 'object',
       required: ['asset', 'amount', 'to'],
@@ -965,18 +965,18 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      "Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command|mcp with one target and the reason. Under yolo a path, host, secret, device or command is approved at once, but budget and mcp never are — those always wait for a person. Otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
+      "Raise your hand for reach outside the sandbox: kind repository|path|host|secret|device|command|mcp with one target and the reason. Under yolo repository permissions skip prompts; personal resources skip prompts only for their owner as the original requester. Repository cards go to the Room for a Workspace admin or master; personal resource cards go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget prompt. Otherwise a card goes to the authorized approver and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
       properties: {
-        kind: { type: 'string', enum: [...AGENT_GRANT_KINDS] },
+        kind: { type: 'string', enum: [...REQUESTABLE_AGENT_GRANT_KINDS] },
         target: {
           type: 'string',
           minLength: 1,
           maxLength: AGENT_GRANT_TARGET_MAX_LENGTH,
           description:
-            'What you need: a path, a host, a secret name, a device, a budget, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
+            'What you need: a repository, a path, a host, a secret name, a device, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
         },
         reason: {
           type: 'string',
@@ -998,6 +998,25 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description:
       'Read the Workbench as it stands for the person you are answering: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this person already has and on which machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. Free to call; it changes nothing.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'composio_tools',
+    description: 'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'composio_execute',
+    description: 'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
+    inputSchema: {
+      type: 'object',
+      required: ['toolkit', 'tool', 'arguments'],
+      properties: {
+        toolkit: { type: 'string' },
+        tool: { type: 'string' },
+        arguments: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: 'offer_connector',
@@ -1679,7 +1698,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      !name.startsWith('get') &&
+      (!name.startsWith('get') || name.startsWith('getWallet')) &&
       !name.startsWith('list')
         ? await activeCommandContext()
         : {}),
@@ -2684,8 +2703,8 @@ export async function requestGrant(
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
 ): Promise<string> {
   const kind = stringArg(args, 'kind');
-  if (!isAgentGrantKind(kind)) {
-    throw new Error(`kind must be one of ${AGENT_GRANT_KINDS.join(', ')}`);
+  if (!isRequestableAgentGrantKind(kind)) {
+    throw new Error(`kind must be one of ${REQUESTABLE_AGENT_GRANT_KINDS.join(', ')}`);
   }
   const rawTarget = stringArg(args, 'target');
   const target = kind === 'command' ? (rawTarget ?? '') : (rawTarget ?? '').trim();
@@ -2999,15 +3018,31 @@ async function daemonUploadArtifact(
 async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
     case 'wallet_address':
-      return JSON.stringify(await daemonExecute('getWalletToolState', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolState', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_balance':
-      return JSON.stringify(await daemonExecute('getWalletToolBalance', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolBalance', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_chains':
-      return JSON.stringify(await daemonExecute('getWalletToolChains', { agentId: 'self' }));
+      return JSON.stringify(
+        await daemonExecute('getWalletToolChains', {
+          agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
     case 'wallet_history':
       return JSON.stringify(
         await daemonExecute('getWalletToolHistory', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
         }),
       );
@@ -3015,6 +3050,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('getWalletToolQuote', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -3024,6 +3060,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('walletPay', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -3034,6 +3071,7 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return JSON.stringify(
         await daemonExecute('walletSwap', {
           agentId: 'self',
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           fromAsset: String(args.fromAsset ?? 'usdc'),
           toAsset: String(args.toAsset ?? 'eth'),
@@ -3254,6 +3292,22 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
+    case 'composio_tools': {
+      const context = await activeCommandContext();
+      return JSON.stringify(await daemonExecute('getComposioTools', context));
+    }
+    case 'composio_execute': {
+      const context = await activeCommandContext();
+      if (typeof args.toolkit !== 'string' || typeof args.tool !== 'string' ||
+          !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+        throw new Error('Composio toolkit, tool and arguments are required');
+      return JSON.stringify(await daemonExecute('executeComposioTool', {
+        ...context,
+        toolkit: args.toolkit,
+        tool: args.tool,
+        arguments: args.arguments,
+      }));
+    }
     case 'offer_connector':
       return offerConnector(args);
     case 'ask_choice':

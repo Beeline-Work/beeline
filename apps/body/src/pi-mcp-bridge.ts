@@ -89,12 +89,13 @@ export function piMcpBridgeSource(servers: readonly McpServerWire[]): string {
     name: server.name,
     // Rewritten aliases carry the broker socket even after their original launch is replaced.
     requiresSquireAuthorization:
-      grantedSquireHostRoute([server.name], {
+      !server.env?.some((entry) => entry.name === 'BEELINE_RESOURCE_AUTH_FILE') &&
+      (grantedSquireHostRoute([server.name], {
         [server.name]: { command: server.command, args: server.args },
       }) ||
-      Boolean(
-        server.env?.some((entry) => entry.name === 'TRUSTY_SQUIRE_BROKER_SOCKET' && entry.value),
-      ),
+        Boolean(
+          server.env?.some((entry) => entry.name === 'TRUSTY_SQUIRE_BROKER_SOCKET' && entry.value),
+        )),
     command: server.command,
     args: server.args ?? [],
     env: Object.fromEntries((server.env ?? []).map((entry) => [entry.name, entry.value])),

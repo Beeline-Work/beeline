@@ -63,13 +63,12 @@ function renderLayout(themeName: 'bone' | 'obsidian'): void {
 }
 
 describe('(app) RootLayout status bar glyphs', () => {
-  it('registers the Workbench key route as the single Key header', () => {
+  it('lets the Workbench key page draw the shared PageHeader', () => {
     renderLayout('bone');
     const route = screenPropsRef.current.find(
       (screen) => screen.name === 'beeline/settings/workbench/connection',
     );
-    expect(route?.options).toMatchObject({ headerTitle: 'Key' });
-    expect(route?.options?.headerShown).not.toBe(false);
+    expect(route?.options).toMatchObject({ headerShown: false });
   });
 
   it('asks for dark icons in light mode', () => {

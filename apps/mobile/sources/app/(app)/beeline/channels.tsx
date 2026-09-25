@@ -885,7 +885,6 @@ export default function BuzzChannels() {
         )}
         <NewRoomDialog
           visible={showCreateRoom}
-          workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}
           roomName={roomName}
           setRoomName={setRoomName}
           inviteOnly={inviteOnly}

@@ -31,6 +31,8 @@ export type RepoPickerProps = {
   onAddAccount?: (owner?: string) => void;
   onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
+  /** Open a host-owned creation step instead of the picker's inline editor. */
+  onStartCreateRepository?: () => void;
   /** Present only when the current viewer may unlink a bound Room repository. */
   onUnlink?: () => void;
   unlinkRepositoryName?: string | null;
@@ -69,6 +71,7 @@ export const RepoPicker = memo(function RepoPicker({
   onAddAccount,
   onManageInstallation,
   onCreateRepository,
+  onStartCreateRepository,
   onUnlink,
   unlinkRepositoryName,
   onAskOwnerGrant,
@@ -278,6 +281,10 @@ export const RepoPicker = memo(function RepoPicker({
             accessibilityRole="button"
             disabled={busy}
             onPress={() => {
+              if (onStartCreateRepository) {
+                onStartCreateRepository();
+                return;
+              }
               setCreating((value) => !value);
               setCreateInstallationId(
                 (current) => current ?? activeInstallations[0]!.installationId,
@@ -286,9 +293,9 @@ export const RepoPicker = memo(function RepoPicker({
             style={styles.actionRow}
             testID={`${testIDPrefix}-create-repo`}
           >
-            <Text style={styles.actionText}>＋ Create a new repo</Text>
+            <Text style={styles.actionText}>＋ Create repository</Text>
           </TouchableOpacity>
-          {creating && (
+          {creating && !onStartCreateRepository && (
             <View style={styles.createForm}>
               <View style={styles.accountChoices}>
                 {activeInstallations.map((installation) => (

@@ -26,6 +26,13 @@ describe('scheduled Agent work', () => {
     expect(screen).not.toContain('Alert.alert');
   });
 
+  it('labels corner schedules and opens their corner from the parent Room list', () => {
+    expect(screen).toContain("import { cornerHref } from '@/buzz/corner-navigation'");
+    expect(screen).toContain('CORNER · {corner.name}');
+    expect(screen).toContain('router.push(cornerHref(corner.id, roomId!, corner.name))');
+    expect(screen).toContain('testID={`open-scheduled-work-${schedule.id}`}');
+  });
+
   it('draws no in-page back control: the stack header is the only back button (C75)', () => {
     expect(screen).not.toContain('router.back()');
     expect(screen).not.toContain('accessibilityLabel="Back"');

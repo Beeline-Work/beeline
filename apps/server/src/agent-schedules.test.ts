@@ -18,6 +18,7 @@ const AGENT = 'c'.repeat(64);
 const OTHER_AGENT = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const CORNER = '33333333-3333-4333-8333-333333333333';
 
 async function fixture() {
   const database = new PgliteDatabase();
@@ -92,6 +93,56 @@ describe('manager schedule phone operations', () => {
         schedules: [created],
       });
       await phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: created.id }, OWNER);
+      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
+        schedules: [],
+      });
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('lists a corner-created schedule from its parent Room with its corner identity', async () => {
+    const database = await fixture();
+    try {
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+         VALUES($1,$2,$3,$4,'Launch review')`,
+        [CORNER, WORKSPACE, ROOM, OWNER],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, CORNER, AGENT],
+      );
+      const daemon = new DaemonService(database, new LiveHub());
+      const created = await daemon.execute(
+        'createAgentSchedule',
+        {
+          agentId: AGENT,
+          roomId: CORNER,
+          prompt: 'Check the launch candidate.',
+          cadence: { kind: 'interval', everyMinutes: 10 },
+        },
+        AGENT,
+      );
+
+      const phone = new PhoneService(database, 'http://local.test');
+      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
+        schedules: [
+          expect.objectContaining({
+            id: created.scheduleId,
+            roomId: CORNER,
+            message: 'Check the launch candidate.',
+            corner: { id: CORNER, name: 'Launch review' },
+          }),
+        ],
+      });
+
+      await phone.execute(
+        'deleteRoomSchedule',
+        { roomId: ROOM, scheduleId: created.scheduleId },
+        OWNER,
+      );
       await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
         schedules: [],
       });

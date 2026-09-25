@@ -477,15 +477,11 @@ describe('workbench connectors', () => {
       avatar: 'http://placeholder/v1/connectors/logo/trusty-squire.svg',
     });
 
-    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
+    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`);
     expect(logo.status).toBe(200);
     expect(logo.headers.get('content-type')).toBe('image/svg+xml');
     expect(await logo.text()).toContain('aria-label="Trusty Squire"');
-    const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
+    const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`);
     expect(systemLogo.status).toBe(200);
     expect(await systemLogo.text()).toContain('aria-label="System"');
   });

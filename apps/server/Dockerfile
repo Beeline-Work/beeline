@@ -13,6 +13,7 @@ COPY packages/buzz-client/package.json packages/buzz-client/tsconfig.json ./pack
 RUN npm ci --ignore-scripts
 
 COPY apps/server/src ./apps/server/src
+COPY apps/server/assets ./apps/server/assets
 COPY apps/auth/src ./apps/auth/src
 COPY apps/push-gateway/src ./apps/push-gateway/src
 COPY apps/body/src ./apps/body/src
@@ -50,6 +51,7 @@ COPY packages/api-contract/package.json ./packages/api-contract/package.json
 COPY packages/buzz-client/package.json ./packages/buzz-client/package.json
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/apps/server/dist ./apps/server/dist
+COPY --from=build /app/apps/server/assets ./apps/server/assets
 COPY --from=build /app/apps/auth/dist ./apps/auth/dist
 COPY --from=build /app/apps/push-gateway/dist ./apps/push-gateway/dist
 COPY --from=build /app/apps/body/dist ./apps/body/dist

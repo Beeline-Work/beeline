@@ -34,6 +34,7 @@ Evidence recorded for implementation commit `f86fd5a3`; PR #1712 carries the sam
 - [x] Scoped paid calls and independent payments: repeated authorized resource calls create no budget grant; wallet integration preserves delegation and funds checks.
 - [x] Once, revocation and upgrade: grant tests cover consumption and revocation; the idempotent upgrade test privatizes old cards/receipts, revokes unproven/foreign approvals, and preserves valid pending grants.
 - [x] Agent and phone guidance: generated skill guidance and grant-card authority tests passed; imported routes and YouTube use the resource facade.
+- [x] Google credential handoff rechecks connector ownership against the current helper owner. A regression reproduced token disclosure from a stale ownership assignment before the query fix; the Google OAuth and Workbench suites pass with the check.
 - [x] Local validation: 193 focused body tests, 17 focused server integration tests, 30 database/wallet tests, 17 grant-contract tests, and 83 mobile card tests passed. Server/body/dependency builds and mobile typechecking passed. The final agent-home fail-closed assertion was rechecked in its 42-test suite.
 - [ ] Complete current-head CI. Do not reuse results from budget-only head `559c7aad`.
 - [ ] Configured reviewer's exact-current-head approval. Keep the PR draft until full delivery is accepted; call `pr_checks_status` before any merge.

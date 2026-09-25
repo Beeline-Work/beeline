@@ -157,6 +157,7 @@ export class GoogleOAuth {
     const result = await this.database.query<{ sealed_grant: string; workspace_id: string;
       owner_identity_id: string; machine_id: string }>(
       `SELECT g.sealed_grant,g.workspace_id,g.owner_identity_id,g.machine_id FROM workspace_connectors c
+       JOIN agents a ON a.agent_id=c.helper_agent_id AND a.owner_id=c.owner_identity_id
        JOIN google_oauth_grants g ON g.workspace_id=c.workspace_id
         AND g.owner_identity_id=c.owner_identity_id AND g.machine_id=c.machine_id
        WHERE c.id=$1 AND c.helper_agent_id=$2 AND c.connector_type LIKE 'google-%'

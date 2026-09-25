@@ -67,6 +67,26 @@ it('pairs one product with its own OAuth sign-in and leaves siblings uninstalled
 });
 afterEach(async () => database.close());
 
+it('withholds credentials when a stored connector no longer belongs to its helper owner', async () => {
+  const transport = vi.fn(async (url: string | URL | Request) =>
+    new Response(JSON.stringify(String(url).endsWith('/token') ? {
+      access_token: 'owner-token', refresh_token: 'owner-refresh', expires_in: 3600,
+      scope: 'openid email',
+    } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  expect(await oauth.complete(state, 'google-code')).toBe(true);
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toMatchObject({ accessToken: 'owner-token' });
+
+  const otherOwner = 'd'.repeat(64);
+  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other owner')`, [otherOwner]);
+  await database.query(`UPDATE agents SET owner_id=$2 WHERE agent_id=$1`, [HELPER, otherOwner]);
+  vi.mocked(transport).mockClear();
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toBeNull();
+  expect(transport).not.toHaveBeenCalled();
+});
+
 it('exchanges one exact state, seals the grant, and returns it only to the paired helper', async () => {
   const requests: string[] = [];
   const transport = vi.fn(async (url: string | URL | Request) => {

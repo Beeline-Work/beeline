@@ -7,6 +7,7 @@ import type { AgentDetailView } from '@beeline/buzz-client';
 vi.mock('react-native', () => ({
   Platform: { OS: 'android', select: (choices: any) => choices.default },
   Text: (props: any) => React.createElement('Text', props, props.children),
+  TextInput: (props: any) => React.createElement('TextInput', props),
   View: (props: any) => React.createElement('View', props, props.children),
 }));
 vi.mock('./MonoHull', () => ({ MonoButton: (props: any) => React.createElement('Button', props) }));
@@ -46,9 +47,27 @@ describe('soul avatar generation', () => {
     mount(original, generate);
     expect(countHint()).toBe(0);
     await act(async () => renderer.root.findByType('Button').props.onPress());
-    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul');
+    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul', undefined);
     expect(countHint()).toBe(0);
     expect(renderer.root.findByType('Button').props.label).toBe('Retry avatar generation');
+    expect(
+      renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
+    ).toContain('offline');
+  });
+
+  it('passes trimmed optional direction with the current soul', async () => {
+    const generate = vi.fn().mockRejectedValue(new Error('save refused'));
+    mount(original, generate);
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'avatar-direction' })
+        .props.onChangeText('  brighter eyes  '),
+    );
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul', 'brighter eyes');
+    expect(
+      renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
+    ).toContain('save refused');
   });
 
   it('replaces the display after successful refresh and keeps guidance after reopening', async () => {

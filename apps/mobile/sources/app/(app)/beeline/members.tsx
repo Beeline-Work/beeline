@@ -722,7 +722,7 @@ export default function BuzzMembers({
     }
   };
 
-  const requestSoulAvatar = async (soul: string) => {
+  const requestSoulAvatar = async (soul: string, direction?: string) => {
     if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
       throw new Error('Agent settings are unavailable.');
     const client = new BuzzRigTransport(identity);
@@ -731,7 +731,7 @@ export default function BuzzMembers({
     const message = await client.composeMessage(
       {
         sessionId: room.channelId,
-        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}`,
+        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}${direction ? `; visual direction: ${JSON.stringify(direction)}` : ''}`,
       },
       { mentionAgent: agent.pubkey },
     );

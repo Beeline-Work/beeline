@@ -112,7 +112,7 @@ function mount({ startPicker = false, createFails = false } = {}) {
 }
 
 describe('New Room sheet', () => {
-  it('starts with only Name, Repository, and Public, with public enabled', () => {
+  it('starts with Name, Repository, and Public Room, with public enabled', () => {
     const { renderer, host, sheet, submit } = mount();
     expect(sheet().title).toBe('New Room');
     expect(sheet().subtitle).toBeUndefined();

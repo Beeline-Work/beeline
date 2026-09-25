@@ -681,6 +681,7 @@ export type WorkspaceMemberListView = {
 };
 
 export type WorkspaceMemberListQuery = {
+  readonly memberId?: string;
   readonly q?: string;
   readonly kind?: 'human' | 'agent';
   readonly offset?: number;
@@ -698,6 +699,7 @@ export type AgentDetailView = {
   readonly avatarGenerationId?: string;
   /** Merged PRs opened by this agent in corners the viewer may read. */
   readonly recentWork?: readonly { readonly title: string; readonly url: string }[];
+  readonly recentWorkCursor?: string;
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
   /** The person who connected and owns this agent's configuration. */

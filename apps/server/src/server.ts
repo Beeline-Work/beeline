@@ -1106,6 +1106,7 @@ async function route(
     const rawOffset = url.searchParams.get('offset');
     const offset = rawOffset === null || rawOffset === '' ? undefined : Number(rawOffset);
     const result = await options.phone.readWorkspaceMembers(match[1]!, identityId!, {
+      ...(url.searchParams.get('memberId') ? { memberId: url.searchParams.get('memberId')! } : {}),
       ...(url.searchParams.get('q') ? { q: url.searchParams.get('q')! } : {}),
       ...(rawKind === 'human' || rawKind === 'agent' ? { kind: rawKind } : {}),
       ...(Number.isSafeInteger(offset) && (offset as number) >= 0 ? { offset } : {}),
@@ -1121,7 +1122,7 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/agents\/([0-9a-f]{64})$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.readAgent(match[1]!, match[2]!, identityId!);
+    const result = await options.phone.readAgent(match[1]!, match[2]!, identityId!, url.searchParams.get('workCursor') ?? undefined);
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

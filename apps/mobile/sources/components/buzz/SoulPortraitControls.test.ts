@@ -9,6 +9,7 @@ vi.mock('react-native', () => ({
   Text: (props: any) => React.createElement('Text', props, props.children),
   View: (props: any) => React.createElement('View', props, props.children),
 }));
+vi.mock('@/modal/ModalManager', () => ({ Modal: { confirm: vi.fn(async () => true) } }));
 vi.mock('./MonoHull', () => ({ MonoButton: (props: any) => React.createElement('Button', props) }));
 import { SoulPortraitControls } from './SoulPortraitControls';
 

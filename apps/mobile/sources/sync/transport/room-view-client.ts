@@ -62,6 +62,7 @@ class MonolithRoomViewClient {
   ): Promise<WorkspaceMemberListView> {
     const params = new URLSearchParams();
     if (query.q) params.set('q', query.q);
+    if (query.memberId) params.set('memberId', query.memberId);
     if (query.kind) params.set('kind', query.kind);
     if (query.offset !== undefined) params.set('offset', String(query.offset));
     const suffix = params.toString() ? `?${params.toString()}` : '';
@@ -70,9 +71,9 @@ class MonolithRoomViewClient {
       readWorkspaceMemberListView,
     );
   }
-  agent(workspaceId: string, agentId: string): Promise<AgentDetailView> {
+  agent(workspaceId: string, agentId: string, workCursor?: string): Promise<AgentDetailView> {
     return this.get(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}`,
+      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}${workCursor ? `?workCursor=${encodeURIComponent(workCursor)}` : ''}`,
       readAgentDetailView,
     );
   }
@@ -96,7 +97,10 @@ class MonolithRoomViewClient {
   }
   history(id: string, before?: { createdAt: number; id: string }): Promise<RoomHistoryView> {
     const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`, readRoomHistoryView);
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`,
+      readRoomHistoryView,
+    );
   }
   invite(token: string): Promise<InviteView> {
     return this.operation('resolveInvite', { token }, readInviteView);
@@ -151,8 +155,7 @@ class MonolithRoomViewClient {
         { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
       )
       .catch((error: unknown) => {
-        if (error instanceof MonolithRequestTimeoutError)
-          throw new RoomViewHttpError(0, 'timeout');
+        if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');
         throw error;
       });
     if (!response.ok) {
@@ -184,7 +187,7 @@ export class RoomViewClient {
   workspaceMembers(id: string, query?: WorkspaceMemberListQuery) {
     return this.implementation.workspaceMembers(id, query);
   }
-  agent(workspaceId: string, agentId: string) {
+  agent(workspaceId: string, agentId: string, workCursor?: string) {
     return this.implementation.agent(workspaceId, agentId);
   }
   chats(id: string) {

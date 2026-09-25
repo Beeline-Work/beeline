@@ -63,6 +63,20 @@ export type PhoneOperationMap = {
    *  without effect. */
   deleteWorkspace: { input: WorkspaceInput; output: void };
   addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
+  banWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
+  unbanWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
+  listWorkspaceBans: {
+    input: WorkspaceInput & { readonly offset?: number };
+    output: {
+      readonly members: readonly {
+        readonly pubkey: string;
+        readonly name: string;
+        readonly kind: 'human' | 'agent';
+        readonly canLift: boolean;
+      }[];
+      readonly hasMore: boolean;
+    };
+  };
   removeWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };

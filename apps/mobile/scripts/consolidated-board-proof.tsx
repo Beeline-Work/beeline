@@ -1,3 +1,4 @@
+import { HumanProfile } from '../sources/app/(app)/beeline/human-profile';
 import BuzzMembers from '../sources/app/(app)/beeline/members';
 import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
@@ -84,7 +85,18 @@ Object.assign(globalThis, {
     workspace: {
       workspace: { id: agent.workspaceId, name: 'Tubing Crew' },
       viewer: { identity: viewer, role: 'admin', permissions: { manage: true } },
-      members: [],
+      members: [
+        {
+          identity: {
+            pubkey: 'h'.repeat(64),
+            kind: 'human',
+            name: 'River',
+            handle: 'river',
+            face: 'fox',
+          },
+          role: 'member',
+        },
+      ],
       agents: [agent.agent],
       watchFilters: [],
     },
@@ -95,7 +107,7 @@ function App() {
     mode === 'pinned' ? 'pinned' : 'all',
   );
   const [unread, setUnread] = useState(true);
-  const [profile, setProfile] = useState(mode === 'profile');
+  const [profile, setProfile] = useState(mode === 'profile' || mode === 'human');
   const [query, setQuery] = useState('');
   const rows = (
     <>
@@ -205,7 +217,15 @@ function App() {
       )}
       {profile && (
         <View style={{ width: desktop ? 380 : undefined, flex: desktop ? undefined : 1 }}>
-          {profileView}
+          {mode === 'human' ? (
+            <HumanProfile
+              workspaceId={agent.workspaceId}
+              memberId={'h'.repeat(64)}
+              onClose={() => setProfile(false)}
+            />
+          ) : (
+            profileView
+          )}
         </View>
       )}
     </View>

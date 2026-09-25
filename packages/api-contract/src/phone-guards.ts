@@ -1586,6 +1586,10 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   return {
     workspaceId: item.workspaceId,
     agent,
+    ...field(
+      'recentWorkCursor',
+      nonempty(item.recentWorkCursor) ? item.recentWorkCursor : undefined,
+    ),
     recentWork:
       readList(
         item.recentWork,

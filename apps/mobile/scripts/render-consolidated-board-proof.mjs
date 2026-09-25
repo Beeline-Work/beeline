@@ -71,7 +71,7 @@ export const FadeInDown = { duration: () => FadeInDown, springify: () => FadeInD
 
 // Only the transport and native host adapters are fixtures; profile and management render production components.
 const fixtureMocks = {
-  'expo-router': `export const router = { back() {}, push() {}, replace() {} }; export const useLocalSearchParams = () => ({communityId: globalThis.__boardFixture.workspace.workspace.id});`,
+  'expo-router': `export const router = { back() {}, push() {}, replace() {} }; export const useNavigation = () => ({addListener:()=>()=>{},dispatch(){}}); export const useLocalSearchParams = () => ({communityId: globalThis.__boardFixture.workspace.workspace.id});`,
   'react-native-keyboard-controller': `export { ScrollView as KeyboardAwareScrollView, KeyboardAvoidingView } from 'react-native';`,
   '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => globalThis.__boardFixture.identity; export const getEffectiveRelayUrl = async () => 'https://fixture.invalid';`,
   '@/buzz/surface-storage': `export const surfaceAddress = () => ({}); export const mobileSurfaceCache = {read:async()=>null,write:async()=>{}};`,

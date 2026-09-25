@@ -481,6 +481,29 @@ CREATE TABLE IF NOT EXISTS memberships (
   joined_at timestamptz NOT NULL DEFAULT now(),
   removed_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS workspace_bans (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  banned_by text REFERENCES identities(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(workspace_id, identity_id)
+);
+-- Serialize ban decisions with every membership restoration, including legacy
+-- pairing and background paths. The ban is independent of removed membership rows.
+CREATE OR REPLACE FUNCTION enforce_workspace_ban() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.removed_at IS NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(NEW.workspace_id::text || NEW.identity_id, 0));
+    IF EXISTS (SELECT 1 FROM workspace_bans WHERE workspace_id=NEW.workspace_id AND identity_id=NEW.identity_id) THEN
+      RAISE EXCEPTION 'workspace member is banned';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
+CREATE TRIGGER membership_workspace_ban BEFORE INSERT OR UPDATE ON memberships
+  FOR EACH ROW EXECUTE FUNCTION enforce_workspace_ban();
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS invited_by text;
 ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;

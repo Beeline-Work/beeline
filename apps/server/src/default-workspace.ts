@@ -54,6 +54,7 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        SELECT $1,NULL,identity.id,'member' FROM identities identity
        WHERE identity.kind='human' AND identity.hidden_from_roster=false
+         AND NOT EXISTS (SELECT 1 FROM workspace_bans b WHERE b.workspace_id=$1 AND b.identity_id=identity.id)
        ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL DO NOTHING`,
       [DEFAULT_WORKSPACE_ID],
     );

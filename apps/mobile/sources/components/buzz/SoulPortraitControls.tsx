@@ -3,6 +3,7 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal/ModalManager';
 import { MonoButton } from './MonoHull';
 
 export function SoulPortraitControls({
@@ -21,6 +22,7 @@ export function SoulPortraitControls({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+  const requestActive = useRef(false);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   useEffect(
@@ -31,12 +33,19 @@ export function SoulPortraitControls({
   );
 
   const draw = async () => {
-    if (pending || disabled || !soul.trim()) return;
+    if (requestActive.current || disabled || !soul.trim()) return;
+    requestActive.current = true;
     const attempt = ++generation.current;
     const previous = detail.avatarGenerationId;
     setPending(true);
     setError(null);
     try {
+      const confirmed = await Modal.confirm(
+        'Generate avatar from soul?',
+        'This sends the current soul text to the agent and uses its connected model to draw a replacement avatar. Unsaved soul edits are not saved by this action.',
+        { cancelText: 'Cancel', confirmText: 'Generate' },
+      );
+      if (!confirmed || attempt !== generation.current) return;
       await generate(soul.trim());
       // Slow model turns and offline agents get a bounded wait, with a retry.
       for (let i = 0; i < 90 && attempt === generation.current; i += 1) {
@@ -53,7 +62,10 @@ export function SoulPortraitControls({
           'Could not confirm a new avatar. Check the agent’s DM or retry when it is available.',
         );
     } finally {
-      if (attempt === generation.current) setPending(false);
+      if (attempt === generation.current) {
+        requestActive.current = false;
+        setPending(false);
+      }
     }
   };
   const handle = detail.agent.identity.handle?.replace(/^@/, '');

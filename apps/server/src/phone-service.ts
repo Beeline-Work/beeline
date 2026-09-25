@@ -1018,6 +1018,15 @@ export class PhoneService {
       [workspaceId, viewerId],
     );
     if (!access.rowCount) return null;
+    if (query.memberId) {
+      const members = await this.members(workspaceId, null, query.memberId);
+      return {
+        members: members.filter((m) => m.identity.kind === 'human'),
+        agents: [],
+        membersTruncated: false,
+        agentsTruncated: false,
+      };
+    }
     return this.workspaceRoster(workspaceId, query);
   }
 
@@ -1249,20 +1258,20 @@ export class PhoneService {
                 createdAt: unix(row.latest_created_at),
                 ...(row.latest_attachments?.length
                   ? {
-                      attachments: (row.latest_attachments as NonNullable<RoomViewMessage['attachments']>).map(
-                        (attachment) => ({
-                          ...attachment,
-                          url: attachment.url.startsWith('/')
-                            ? `${this.publicOrigin}${attachment.url}`
-                            : attachment.url,
-                          ...(attachment.previewUrl?.startsWith('/')
-                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                            : {}),
-                          ...(attachment.thumbnailUrl?.startsWith('/')
-                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                            : {}),
-                        }),
-                      ),
+                      attachments: (
+                        row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
+                      ).map((attachment) => ({
+                        ...attachment,
+                        url: attachment.url.startsWith('/')
+                          ? `${this.publicOrigin}${attachment.url}`
+                          : attachment.url,
+                        ...(attachment.previewUrl?.startsWith('/')
+                          ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                          : {}),
+                        ...(attachment.thumbnailUrl?.startsWith('/')
+                          ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                          : {}),
+                      })),
                     }
                   : {}),
                 author: identity(
@@ -2045,13 +2054,14 @@ export class PhoneService {
     workspaceId: string,
     agentId: string,
     viewerId: string,
+    workCursor?: string,
   ): Promise<AgentDetailView | null> {
     const viewer = await this.database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [workspaceId, viewerId],
     );
     if (!viewer.rowCount) return null;
-    const member = (await this.members(workspaceId, null)).find(
+    const member = (await this.members(workspaceId, null, agentId)).find(
       (entry) => entry.identity.pubkey === agentId,
     );
     if (!member || member.identity.kind !== 'agent') return null;
@@ -2097,9 +2107,24 @@ export class PhoneService {
         [agentId, workspaceId, viewerId],
       )
     ).rows[0];
-    const recentWork = await this.database.query<{ title: string; url: string }>(
-      `SELECT DISTINCT f.lifecycle->'pr'->>'title' title, f.lifecycle->'pr'->>'url' url,
-              f.lifecycle->'pr'->>'mergedAt' merged_at
+    let cursor: [string, string] | null = null;
+    if (workCursor) {
+      try {
+        const value: unknown = JSON.parse(workCursor);
+        if (
+          !Array.isArray(value) ||
+          value.length !== 2 ||
+          !value.every((part) => typeof part === 'string' && part.length <= 2048)
+        )
+          throw new Error('invalid cursor');
+        cursor = value as [string, string];
+      } catch {
+        throw new Error('invalid recent work cursor');
+      }
+    }
+    const recentWork = await this.database.query<{ title: string; url: string; merged_at: string }>(
+      `SELECT max(f.lifecycle->'pr'->>'title') title, f.lifecycle->'pr'->>'url' url,
+              max(f.lifecycle->'pr'->>'mergedAt') merged_at
        FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
        WHERE r.workspace_id=$1 AND f.owner_agent_id=$2
          AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
@@ -2107,13 +2132,20 @@ export class PhoneService {
          AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
          AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
            AND m.identity_id=$3 AND m.removed_at IS NULL)
-       ORDER BY merged_at DESC LIMIT 20`,
-      [workspaceId, agentId, viewerId],
+       GROUP BY f.lifecycle->'pr'->>'url'
+       HAVING $4::text IS NULL OR (max(f.lifecycle->'pr'->>'mergedAt'), f.lifecycle->'pr'->>'url') < ($4,$5)
+       ORDER BY merged_at DESC, url DESC LIMIT 21`,
+      [workspaceId, agentId, viewerId, cursor?.[0] ?? null, cursor?.[1] ?? null],
     );
+    const workPage = recentWork.rows.slice(0, 20);
+    const lastWork = workPage.at(-1);
     return {
       workspaceId,
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
-      recentWork: recentWork.rows.map(({ title, url }) => ({ title, url })),
+      recentWork: workPage.map(({ title, url }) => ({ title, url })),
+      ...(recentWork.rows.length > 20 && lastWork
+        ? { recentWorkCursor: JSON.stringify([lastWork.merged_at, lastWork.url]) }
+        : {}),
       agent: member,
       ...(config?.soul
         ? {
@@ -2818,6 +2850,38 @@ export class PhoneService {
           input as Input<'addWorkspaceMember'>,
           viewerId,
         )) as Output<Name>;
+      case 'banWorkspaceMember':
+      case 'unbanWorkspaceMember':
+        await this.setWorkspaceBan(
+          input as Input<'banWorkspaceMember'>,
+          viewerId,
+          name === 'banWorkspaceMember',
+        );
+        return undefined as Output<Name>;
+      case 'listWorkspaceBans': {
+        const request = input as Input<'listWorkspaceBans'>;
+        await this.requireWorkspaceManager(request.workspaceId, viewerId);
+        const offset =
+          Number.isSafeInteger(request.offset) && (request.offset ?? 0) >= 0 ? request.offset! : 0;
+        const result = await this.database.query<{
+          pubkey: string;
+          name: string;
+          kind: 'human' | 'agent';
+          canLift: boolean;
+        }>(
+          `SELECT i.id pubkey,i.name,i.kind,
+             (actor.role='owner' OR target.role='member') "canLift"
+           FROM workspace_bans b JOIN identities i ON i.id=b.identity_id
+           JOIN memberships target ON target.workspace_id=b.workspace_id AND target.identity_id=b.identity_id AND target.room_id IS NULL
+           JOIN memberships actor ON actor.workspace_id=b.workspace_id AND actor.identity_id=$3 AND actor.room_id IS NULL AND actor.removed_at IS NULL
+           WHERE b.workspace_id=$1 ORDER BY b.created_at DESC,i.id LIMIT 51 OFFSET $2`,
+          [request.workspaceId, offset, viewerId],
+        );
+        return {
+          members: result.rows.slice(0, 50),
+          hasMore: result.rows.length > 50,
+        } as Output<Name>;
+      }
       case 'removeWorkspaceMember':
         await this.removeWorkspaceMember(input as Input<'removeWorkspaceMember'>, viewerId);
         return undefined as Output<Name>;
@@ -4713,6 +4777,54 @@ export class PhoneService {
       return { joined: inserted.rowCount > 0 };
     });
   }
+  private async setWorkspaceBan(
+    input: Input<'banWorkspaceMember'>,
+    viewerId: string,
+    banned: boolean,
+  ) {
+    if (input.memberId === viewerId) throw new Error('workspace managers cannot ban themselves');
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      await database.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text || $2::text, 0))`,
+        [input.workspaceId, input.memberId],
+      );
+      const roles = await database.query<{
+        identity_id: string;
+        role: string;
+        removed_at: Date | null;
+      }>(
+        `SELECT identity_id,role,removed_at FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) FOR UPDATE`,
+        [input.workspaceId, viewerId, input.memberId],
+      );
+      const actor = roles.rows.find((row) => row.identity_id === viewerId);
+      const target = roles.rows.find((row) => row.identity_id === input.memberId);
+      if (!actor || actor.removed_at || !['owner', 'admin'].includes(actor.role))
+        throw new Error('workspace manager required');
+      if (!target) throw new Error('workspace membership required');
+      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin'))
+        throw new Error('workspace manager cannot ban a member with equal or greater authority');
+      if (banned) {
+        await database.query(
+          `INSERT INTO workspace_bans(workspace_id,identity_id,banned_by)
+          VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+          [input.workspaceId, input.memberId, viewerId],
+        );
+        await database.query(
+          `UPDATE memberships SET removed_at=COALESCE(removed_at,now())
+          WHERE workspace_id=$1 AND identity_id=$2`,
+          [input.workspaceId, input.memberId],
+        );
+      } else {
+        await database.query(
+          `DELETE FROM workspace_bans WHERE workspace_id=$1 AND identity_id=$2`,
+          [input.workspaceId, input.memberId],
+        );
+      }
+    });
+  }
+
   /**
    * A manager removes a person from the Workspace. Admins may remove peers;
    * owners remain protected. Every live Room membership goes with the
@@ -6513,10 +6625,10 @@ export class PhoneService {
     const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
       ? (
           await database.query<{ status: string }>(
-          `SELECT status FROM workspace_connectors
+            `SELECT status FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
+            [ws.workspace_id, viewerId, input.connectorType, machineId],
           )
         ).rows[0]?.status
       : undefined;
@@ -7096,16 +7208,21 @@ export class PhoneService {
     };
   }
 
-  private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
+  private async members(
+    workspaceId: string,
+    roomId: string | null,
+    memberId?: string,
+  ): Promise<RoomViewMember[]> {
     const rows = await this.database.query<MemberRow>(
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
          i.face_id,
          m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
-       WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'}
-         AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
-      roomId ? [workspaceId, roomId] : [workspaceId],
+       WHERE m.workspace_id=$1 AND ($2::uuid IS NULL AND m.room_id IS NULL OR m.room_id=$2)
+         AND m.removed_at IS NULL AND i.hidden_from_roster=false
+         AND ($3::text IS NULL OR i.id=$3)`,
+      [workspaceId, roomId, memberId ?? null],
     );
     const presence = await this.optionalEnrichment(
       'member-presence',
@@ -7122,9 +7239,9 @@ export class PhoneService {
            WHERE agent_id=member.identity_id AND kind='presence'
            ORDER BY updated_at DESC LIMIT 1
          ) presence ON true
-         WHERE member.workspace_id=$1 AND ${roomId ? 'member.room_id=$2' : 'member.room_id IS NULL'}
-           AND member.removed_at IS NULL`,
-        roomId ? [workspaceId, roomId] : [workspaceId],
+         WHERE member.workspace_id=$1 AND ($2::uuid IS NULL AND member.room_id IS NULL OR member.room_id=$2)
+           AND member.removed_at IS NULL AND ($3::text IS NULL OR member.identity_id=$3)`,
+        [workspaceId, roomId, memberId ?? null],
       ),
     );
     const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
@@ -7528,6 +7645,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteWorkspace',
   'addWorkspaceMember',
   'removeWorkspaceMember',
+  'banWorkspaceMember',
+  'unbanWorkspaceMember',
+  'listWorkspaceBans',
   'createRoom',
   'updateRoom',
   'deleteRoom',

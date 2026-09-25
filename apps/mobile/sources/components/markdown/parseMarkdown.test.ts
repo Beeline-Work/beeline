@@ -8,7 +8,7 @@ const item = (spans: { styles: string[]; text: string; url: string | null }[]) =
 
 describe('parseMarkdown', () => {
     it('groups quote lines and keeps their inline link', () => {
-        expect(parseMarkdown('> A [source](https://example.com)\n> follows here.')).toEqual([{
+        expect(parseMarkdown('> A [source](https://example.com)\n> follows here.', true)).toEqual([{
             type: 'quote',
             content: [
                 { styles: [], text: 'A ', url: null },
@@ -16,6 +16,7 @@ describe('parseMarkdown', () => {
                 { styles: [], text: '\nfollows here.', url: null },
             ],
         }]);
+        expect(parseMarkdown('> A source')[0]?.type).toBe('text');
     });
     it('keeps an incomplete streamed bold delimiter plain until its closing chunk arrives', () => {
         expect(parseMarkdown('**Analyzing trading economics and risks')).toEqual([

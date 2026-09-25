@@ -44,6 +44,6 @@ export type MarkdownSpan = {
     url: string | null
 }
 
-export function parseMarkdown(markdown: string) {
-    return parseMarkdownBlock(markdown);
+export function parseMarkdown(markdown: string, document = false) {
+    return parseMarkdownBlock(markdown, document);
 }

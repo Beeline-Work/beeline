@@ -387,7 +387,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   tail,
   testID,
 }: MonoMarkdownProps) {
-  const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+  const blocks = useMemo(() => parseMarkdown(markdown, document), [markdown, document]);
   const liveMentionHandles = useMemo(
     () =>
       new Set((mentionHandles ?? []).map((handle) => handle.normalize('NFKC').toLocaleLowerCase())),
@@ -436,12 +436,13 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           );
         }
         if (block.type === 'header') {
+          const headingBase = { ...base, ...styles.heading, ...(document ? styles[`documentHeading${block.level}`] : {}) };
           return (
             <Text key={index} selectable style={[base, styles.heading, document && styles[`documentHeading${block.level}`], blockStyle, document && styles.documentHeadingSpace, document && index === 0 && styles.documentFirstHeading]}>
               {lead}
               <InlineMarkdown
                 spans={block.content}
-                base={base}
+                base={headingBase}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
                 onMention={onMention}
@@ -456,7 +457,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           return (
             <View key={index} style={[styles.quote, document && styles.documentQuote, blockStyle]}>
               <Text selectable style={[base, styles.quoteText]}>
-                <InlineMarkdown spans={block.content} base={base} onLink={onLink} liveMentionHandles={liveMentionHandles} onMention={onMention} channelIndex={channelIndex} onChannelReference={onChannelReference} tail={trail} />
+                <InlineMarkdown spans={block.content} base={{ ...base, ...styles.quoteText }} onLink={onLink} liveMentionHandles={liveMentionHandles} onMention={onMention} channelIndex={channelIndex} onChannelReference={onChannelReference} tail={trail} />
               </Text>
             </View>
           );
@@ -573,8 +574,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   documentHeading1: { ...theme.buzz.type.hero, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.textPrimary },
   documentHeading2: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  documentHeading3: { ...theme.buzz.type.bodyStrong, color: theme.buzz.ledgerBright },
-  documentHeading4: { ...theme.buzz.type.body, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.ledgerQuiet },
+  documentHeading3: { ...theme.buzz.type.bodyStrong, color: theme.buzz.ledgerQuiet },
+  documentHeading4: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   documentHeading5: { ...theme.buzz.type.meta, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.ledgerQuiet },
   documentHeading6: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   documentHeadingSpace: { marginTop: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },

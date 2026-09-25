@@ -112,6 +112,12 @@ type LedgerBodyProps = {
   precededByDayCaption?: boolean;
   marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
+  /** An exact source jump for bodies whose whole quote is one control. */
+  bodyAction?: {
+    onPress(): void;
+    accessibilityLabel: string;
+    testID: string;
+  };
   attachments?: React.ReactNode;
   /** The turn's tool run, collapsed — rendered under the prose it belongs to. */
   machineNoise?: React.ReactNode;
@@ -474,6 +480,7 @@ export function LedgerEntry({
   precededByDayCaption = false,
   luminous = false,
   replyReference,
+  bodyAction,
   attachments,
   machineNoise,
   typewriter = false,
@@ -547,7 +554,16 @@ export function LedgerEntry({
     >
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
-      {settleFrom && (leadText || remainingText) ? (
+      {bodyAction && (leadText || remainingText) ? (
+        <Pressable
+          accessibilityLabel={bodyAction.accessibilityLabel}
+          accessibilityRole="button"
+          onPress={bodyAction.onPress}
+          testID={bodyAction.testID}
+        >
+          {settleFrom ? <SettleFade provisional={settleFrom}>{body}</SettleFade> : body}
+        </Pressable>
+      ) : settleFrom && (leadText || remainingText) ? (
         <SettleFade provisional={settleFrom}>{body}</SettleFade>
       ) : (
         body
@@ -575,6 +591,7 @@ export function LedgerSteer({
   chronological = false,
   precededByDayCaption = false,
   replyReference,
+  bodyAction,
   attachments,
   mentionHandles,
   onMention,
@@ -598,17 +615,38 @@ export function LedgerSteer({
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {bodyText ? (
-        <MonoMarkdown
-          markdown={bodyText}
-          mentionHandles={mentionHandles}
-          onMention={onMention}
-          channelIndex={channelIndex}
-          onChannelReference={onChannelReference}
-          codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
-          onOpenCode={onOpenCode}
-          textStyle={styles.steerText}
-          testID={bodyTestID}
-        />
+        bodyAction ? (
+          <Pressable
+            accessibilityLabel={bodyAction.accessibilityLabel}
+            accessibilityRole="button"
+            onPress={bodyAction.onPress}
+            testID={bodyAction.testID}
+          >
+            <MonoMarkdown
+              markdown={bodyText}
+              mentionHandles={mentionHandles}
+              onMention={onMention}
+              channelIndex={channelIndex}
+              onChannelReference={onChannelReference}
+              codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
+              onOpenCode={onOpenCode}
+              textStyle={styles.steerText}
+              testID={bodyTestID}
+            />
+          </Pressable>
+        ) : (
+          <MonoMarkdown
+            markdown={bodyText}
+            mentionHandles={mentionHandles}
+            onMention={onMention}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
+            codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
+            onOpenCode={onOpenCode}
+            textStyle={styles.steerText}
+            testID={bodyTestID}
+          />
+        )
       ) : null}
       {attachments}
     </View>

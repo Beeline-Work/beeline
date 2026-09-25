@@ -172,6 +172,35 @@ describe('the ledger — an agent turn', () => {
     expect(leadStyle.fontSize).toBe(16);
   });
 
+  it('makes an exact-source body action tappable for either speaker lane', () => {
+    const onPress = vi.fn();
+    const bodyAction = {
+      accessibilityLabel: 'Open original message',
+      onPress,
+      testID: 'message-source',
+    };
+    const entry = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'entry',
+        bodyText: '> Agent quote',
+        bodyTestID: 'entry-body',
+        bodyAction,
+      }),
+    );
+    const steer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'steer',
+        bodyText: '> Human quote',
+        bodyTestID: 'steer-body',
+        bodyAction: { ...bodyAction, testID: 'human-message-source' },
+      }),
+    );
+
+    act(() => entry.root.findByProps({ testID: 'message-source' }).props.onPress());
+    act(() => steer.root.findByProps({ testID: 'human-message-source' }).props.onPress());
+    expect(onPress).toHaveBeenCalledTimes(2);
+  });
+
   it('opens a Room run with a byline: steel dot, name, role tag, stamp', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {

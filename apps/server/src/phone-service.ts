@@ -6372,7 +6372,37 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    void input;
+    if (input.refreshVault) {
+      const refreshes = await this.database.transaction(async (database) => {
+        const rows = (
+          await database.query<{ id: string; helper_agent_id: string }>(
+            `UPDATE workspace_connectors
+             SET pending_ops=CASE
+                   WHEN pending_ops @> '"sync"'::jsonb THEN pending_ops
+                   ELSE pending_ops || '"sync"'::jsonb
+                 END,
+                 updated_at=now()
+             WHERE owner_identity_id=$1 AND connector_type='trusty-squire'
+               AND status='connected'
+             RETURNING id,helper_agent_id`,
+            [viewerId],
+          )
+        ).rows;
+        if (rows.length) {
+          await database.query(
+            `UPDATE workspace_connections SET last_synced_at=NULL,updated_at=now()
+             WHERE connector_id=ANY($1::uuid[])`,
+            [rows.map((row) => row.id)],
+          );
+        }
+        return rows;
+      });
+      // The helper's live assignment wake makes the sync immediate; its
+      // ordinary five-minute poll remains the recovery path.
+      for (const helperId of new Set(refreshes.map((row) => row.helper_agent_id))) {
+        await notifyConnectorAssignment(this.database, helperId);
+      }
+    }
     const connectors = (
       await this.database.query<{
         id: string;

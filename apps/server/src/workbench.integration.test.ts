@@ -430,6 +430,64 @@ describe('workbench connectors', () => {
     expect(otherView.connections).toEqual([]);
   });
 
+  it('refreshes edited and deleted keys from Squire before the phone re-reads the list', async () => {
+    const connectorId = await pairOwnerConnector();
+
+    const refreshing = (await phoneOperation('readWorkbench', {
+      workspaceId: WORKSPACE,
+      refreshVault: true,
+    })) as { connections: { reference: string; stale?: boolean }[] };
+    expect(
+      refreshing.connections.find((row) => row.reference === 'github.com/acme/tooling')?.stale,
+    ).toBe(true);
+    const editAssignment = await daemonOperation('getConnectorAssignments', {});
+    expect(editAssignment.body.assignments).toContainEqual({
+      kind: 'sync',
+      connectorId,
+      connectorType: 'trusty-squire',
+    });
+
+    await daemonOperation('postConnectorVault', {
+      connections: [
+        {
+          reference: 'github.com/acme/tooling',
+          service: 'github-renamed',
+          label: 'Renamed tooling',
+          fieldNames: ['token'],
+          allowedHosts: ['api.github.example'],
+          createdAt: Math.floor(Date.now() / 1000),
+          stale: false,
+          state: 'active',
+        },
+      ],
+    });
+    const edited = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string; service: string; label: string; allowedHosts: string[] }[];
+    };
+    expect(
+      edited.connections.find((row) => row.reference === 'github.com/acme/tooling'),
+    ).toMatchObject({
+      service: 'github-renamed',
+      label: 'Renamed tooling',
+      allowedHosts: ['api.github.example'],
+    });
+
+    await phoneOperation('readWorkbench', { workspaceId: WORKSPACE, refreshVault: true });
+    const deleteAssignment = await daemonOperation('getConnectorAssignments', {});
+    expect(deleteAssignment.body.assignments).toContainEqual({
+      kind: 'sync',
+      connectorId,
+      connectorType: 'trusty-squire',
+    });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const deleted = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string }[];
+    };
+    expect(deleted.connections.map((row) => row.reference)).not.toContain(
+      'github.com/acme/tooling',
+    );
+  });
+
   it('lists keys in vault created-at order, not by service', async () => {
     const connectorId = await pairOwnerConnector();
     // The helper reports what `vaultConnectionMeta` produced from Squire's

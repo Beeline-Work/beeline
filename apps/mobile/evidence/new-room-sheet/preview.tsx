@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
+// @ts-expect-error Standalone proof uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import { Text, View } from 'react-native';
+import type { RepoCandidate } from '../../sources/buzz/room-repo-picker';
 import { beelineThemes } from '../../sources/buzz/groknight';
 import { NewRoomDialog } from '../../sources/components/buzz/NewRoomDialog';
 
 const hull = beelineThemes.bone;
 
-const FIXTURE_CANDIDATES = [
+const FIXTURE_CANDIDATES: RepoCandidate[] = [
   {
     key: 'github:1',
     name: 'Beeline-Work/beeline',
@@ -47,7 +49,7 @@ function Preview() {
   const step = new URLSearchParams(location.search).get('step') ?? 'form';
   const [roomName, setRoomName] = useState('product-planning');
   const [inviteOnly, setInviteOnly] = useState(false);
-  const [pendingRepo, setPendingRepo] = useState<(typeof FIXTURE_CANDIDATES)[number] | null>(null);
+  const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
   const [showRepoPicker, setShowRepoPicker] = useState(step === 'picker' || step === 'create');
 
   return (

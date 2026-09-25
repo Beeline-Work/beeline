@@ -504,6 +504,8 @@ $$;
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 CREATE TRIGGER membership_workspace_ban BEFORE INSERT OR UPDATE ON memberships
   FOR EACH ROW EXECUTE FUNCTION enforce_workspace_ban();
+ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
+ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK(role IN ('owner','admin','member','spectator'));
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS invited_by text;
 ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;

@@ -84,14 +84,14 @@ describe('agent profile recent work', () => {
       [workspace, viewer],
     );
     const first = await phone.readAgent(workspace, agent, viewer);
-    expect(first?.recentWork).toHaveLength(20);
+    expect(first?.recentWork).toHaveLength(5);
     expect(first?.recentWorkCursor).toBeTruthy();
     const second = await phone.readAgent(workspace, agent, viewer, first!.recentWorkCursor);
     expect(second?.recentWork).toHaveLength(5);
-    expect(second?.recentWorkCursor).toBeUndefined();
+    expect(second?.recentWorkCursor).toBeTruthy();
     expect(
       new Set([...first!.recentWork!, ...second!.recentWork!].map((work) => work.url)).size,
-    ).toBe(25);
+    ).toBe(10);
     await expect(phone.readAgent(workspace, agent, viewer, 'bad cursor')).rejects.toThrow('cursor');
     await database.query(
       `UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NOT NULL`,
@@ -183,4 +183,55 @@ describe('persistent Workspace bans', () => {
       phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: viewer }, viewer),
     ).rejects.toThrow();
   });
+});
+
+it('enforces strict role authority and spectator writes and lists Workspace-owned agents', async () => {
+  database = new PgliteDatabase();
+  await migrate(database);
+  await database.query(
+    `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person'),($3,'agent','Agent')`,
+    [viewer, other, agent],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES ($1,$2,'Room')`, [
+    parent,
+    workspace,
+  ]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES ($1,$2)`, [agent, other]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'owner'),($1,$3,'member'),($1,$4,'member')`,
+    [workspace, viewer, other, agent],
+  );
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'member')`,
+    [workspace, parent, other],
+  );
+  const phone = new PhoneService(database, 'https://server.example');
+  const change = (actor: string, memberId: string, role: 'admin' | 'member' | 'spectator') =>
+    phone.execute('addWorkspaceMember', { workspaceId: workspace, memberId, role }, actor);
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  await change(viewer, other, 'spectator');
+  expect((await phone.readWorkspace(workspace, other))?.viewer.permissions.send).toBe(false);
+  await expect(
+    phone.execute('sendRoomMessage', { roomId: parent, text: 'blocked' }, other),
+  ).rejects.toThrow();
+  await change(viewer, other, 'admin');
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  await database.query(
+    `UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`,
+    [viewer],
+  );
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  await expect(
+    phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: viewer }, other),
+  ).rejects.toThrow();
+  const owned = await phone.readWorkspaceMembers(workspace, other, {
+    kind: 'agent',
+    ownerId: other,
+  });
+  expect(owned?.agents.map((member) => member.identity.pubkey)).toEqual([agent]);
+  expect(
+    (await phone.readWorkspaceMembers(workspace, other, { kind: 'agent', ownerId: viewer }))
+      ?.agents,
+  ).toEqual([]);
 });

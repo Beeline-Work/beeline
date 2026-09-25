@@ -70,6 +70,7 @@ const item = (id: string, unread: boolean): ChatListItem =>
 const viewer = { pubkey: 'b'.repeat(64), kind: 'human', name: 'Viewer' };
 const owner = params.get('role') !== 'admin';
 Object.assign(agent, {
+  owner: { id: viewer.pubkey, name: 'Owner', handle: 'owner' },
   access: {
     policy: 'everyone',
     canChange: owner,
@@ -146,7 +147,7 @@ function App() {
       onClose={() => setProfile(false)}
       onMessage={() => setProfile(false)}
       canManage={false}
-      canEdit={false}
+      canEdit={owner}
       avatarDisabled={false}
       onGenerateAvatar={async () => undefined}
       refreshAgent={async () => agent}

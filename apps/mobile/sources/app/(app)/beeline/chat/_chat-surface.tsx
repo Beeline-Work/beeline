@@ -1125,11 +1125,12 @@ export function BuzzChatSurface({
     [decodedId, openDesktopCorner, roomClient],
   );
   const handleOpenProfile = useCallback((agentId: string, kind: 'human' | 'agent' = 'agent') => {
+    if (agentId === cacheViewerPubkey) { router.push('/beeline/settings' as Href); return; }
     setProfileKind(kind);
     if (!activeCommunityId) return;
     if (desktopExperience) setProfileAgentId(agentId);
     else router.push(kind === 'human' ? { pathname: '/beeline/human-profile', params: { communityId: activeCommunityId, memberId: agentId } } as Href : { pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId } } as Href);
-  }, [activeCommunityId, desktopExperience]);
+  }, [activeCommunityId, desktopExperience, cacheViewerPubkey]);
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
     async (participantId: string) => {

@@ -63,6 +63,7 @@ class MonolithRoomViewClient {
     const params = new URLSearchParams();
     if (query.q) params.set('q', query.q);
     if (query.memberId) params.set('memberId', query.memberId);
+    if (query.ownerId) params.set('ownerId', query.ownerId);
     if (query.kind) params.set('kind', query.kind);
     if (query.offset !== undefined) params.set('offset', String(query.offset));
     const suffix = params.toString() ? `?${params.toString()}` : '';

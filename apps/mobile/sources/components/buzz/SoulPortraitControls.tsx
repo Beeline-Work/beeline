@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal/ModalManager';
+import { runAvatarGeneration, useAvatarGeneration } from '@/buzz/avatar-generation';
 import { MonoButton } from './MonoHull';
 
 export function SoulPortraitControls({
@@ -19,8 +20,10 @@ export function SoulPortraitControls({
   generate: (soul: string, direction?: string) => Promise<void>;
   refresh: () => Promise<AgentDetailView>;
 }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const agentId = detail.agent.identity.pubkey;
+  const job = useAvatarGeneration(agentId);
+  const pending = job.pending || detail.avatarGenerationPending === true;
+  const error = job.error;
   const [direction, setDirection] = useState('');
   const generation = useRef(0);
   const requestActive = useRef(false);
@@ -33,40 +36,54 @@ export function SoulPortraitControls({
     [],
   );
 
+  useEffect(() => {
+    if (!detail.avatarGenerationPending || job.pending) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        await refreshRef.current();
+      } catch {
+        /* Keep the server-owned job disabled until a read settles it. */
+      }
+      if (!disposed) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [detail.avatarGenerationPending, job.pending]);
+
   const draw = async () => {
-    if (requestActive.current || disabled || !soul.trim()) return;
+    if (pending || requestActive.current || disabled || !soul.trim()) return;
     requestActive.current = true;
-    const attempt = ++generation.current;
-    const previous = detail.avatarGenerationId;
-    setPending(true);
-    setError(null);
+    const attempt = generation.current;
     try {
-      const confirmed = await Modal.confirm(
-        'Generate avatar from soul?',
-        'This sends the current soul text to the agent and uses its connected model to draw a replacement avatar. Unsaved soul edits are not saved by this action.',
-        { cancelText: 'Cancel', confirmText: 'Generate' },
-      );
-      if (!confirmed || attempt !== generation.current) return;
-      await generate(soul.trim(), direction.trim() || undefined);
-      // Slow model turns and offline agents get a bounded wait, with a retry.
-      for (let i = 0; i < 90 && attempt === generation.current; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (attempt !== generation.current) return;
-        const next = await refreshRef.current();
-        if (next.avatarGenerationId && next.avatarGenerationId !== previous) return;
-      }
-      if (attempt === generation.current)
-        setError('The agent has not saved a new avatar yet. Check its DM or retry.');
-    } catch (reason) {
-      if (attempt === generation.current)
-        setError(
-          `Could not request or confirm the avatar: ${reason instanceof Error ? reason.message : String(reason)}`,
+      await runAvatarGeneration(agentId, async () => {
+        const confirmed = await Modal.confirm(
+          'Generate avatar from soul?',
+          'This sends the current soul text and optional direction to the agent. Unsaved soul edits are not saved by this action.',
+          { cancelText: 'Cancel', confirmText: 'Generate' },
         );
+        if (!confirmed || attempt !== generation.current) return;
+        const previous = detail.avatarGenerationId;
+        await generate(soul.trim(), direction.trim() || undefined);
+        for (let i = 0; i < 90; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const next = await refreshRef.current();
+          if (next.avatarGenerationId && next.avatarGenerationId !== previous) return;
+          if (next.avatarGenerationPending === false)
+            throw new Error(
+              'The avatar job ended without saving a new avatar. Check the agent’s DM and retry.',
+            );
+        }
+        throw new Error(
+          'The agent has not saved a new avatar yet. Check its DM. An active job must finish before retrying.',
+        );
+      });
     } finally {
-      if (attempt === generation.current) {
-        requestActive.current = false;
-        setPending(false);
-      }
+      requestActive.current = false;
     }
   };
   const handle = detail.agent.identity.handle?.replace(/^@/, '');
@@ -86,7 +103,7 @@ export function SoulPortraitControls({
       <MonoButton
         label={
           pending
-            ? 'Generating avatar…'
+            ? 'generating, will DM you when the avatar is ready'
             : error
               ? 'Retry avatar generation'
               : 'Generate avatar from soul'

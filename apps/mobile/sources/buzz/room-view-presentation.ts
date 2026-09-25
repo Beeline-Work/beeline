@@ -249,7 +249,7 @@ export type WorkspaceMemberDisplayItem = {
   avatarUrl?: string;
   /** The chosen face id; absent → derived from the pubkey. */
   face?: string;
-  role?: 'owner' | 'admin' | 'member';
+  role?: 'owner' | 'admin' | 'member' | 'spectator';
 };
 
 /** Presentation-only row. It is recomputed from server DTO partitions and is never persisted. */

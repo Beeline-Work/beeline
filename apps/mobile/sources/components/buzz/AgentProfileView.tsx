@@ -4,7 +4,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
-import { IdentityMark } from './IdentityMark';
+import { ProfileIdentity } from './ProfileIdentity';
 import { ChevronGlyph } from './ChevronGlyph';
 import { MonoButton } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
@@ -131,34 +131,6 @@ export function AgentProfileView({
           <ChevronGlyph direction="left" size={22} color={styles.accent.color} />
         </Pressable>
         <Text style={styles.heading}>Profile</Text>
-        <View style={styles.headerActions}>
-          {canEdit &&
-            (editing ? (
-              <>
-                <MonoButton
-                  label="Cancel"
-                  disabled={saving}
-                  onPress={onCancel}
-                  testID="cancel-agent-edit"
-                  variant="secondary"
-                />
-                <MonoButton
-                  label={saving ? 'Saving' : 'Save'}
-                  loading={saving}
-                  disabled={saving}
-                  onPress={onSave}
-                  testID="save-agent-soul"
-                />
-              </>
-            ) : (
-              <MonoButton
-                label="Edit"
-                onPress={onEdit}
-                testID="edit-agent-soul"
-                variant="secondary"
-              />
-            ))}
-        </View>
       </View>
       <KeyboardAwareScrollView contentContainerStyle={styles.content}>
         {loading && <SurfaceGlyphLoader testID="agent-profile-loader" />}
@@ -172,45 +144,58 @@ export function AgentProfileView({
         )}
         {identity && (
           <>
-            <View style={styles.identity}>
-              <IdentityMark
-                kind="agent"
-                seed={identity.pubkey}
-                name={identity.name}
-                face={identity.face}
-                avatarUrl={identity.avatar}
-                size={72}
-              />
-              {editing ? (
-                <TextInput
-                  accessibilityLabel="Agent name"
-                  editable={!saving}
-                  maxLength={AGENT_NAME_MAX_LENGTH}
-                  onChangeText={onNameChange}
-                  style={styles.nameInput}
-                  testID="agent-soul-name"
-                  value={nameDraft}
-                />
-              ) : (
-                <Text style={styles.name}>{identity.name}</Text>
-              )}
-              {identity.handle && (
-                <Text style={styles.copy} testID="agent-handle">{`@${identity.handle}`}</Text>
-              )}
-              <Pressable
-                accessibilityRole="button"
+            <ProfileIdentity identity={identity} ownerHandle={detail.owner?.handle} />
+            <SettingsRow
+              title="Model / difficulty"
+              value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
+            />
+            <View style={styles.headerActions}>
+              <MonoButton
+                label="Message"
                 onPress={onMessage}
-                style={({ pressed }) => [styles.message, pressed && styles.pressed]}
+                variant="secondary"
                 testID="agent-profile-message"
-              >
-                <Text style={styles.accent}>Message</Text>
-              </Pressable>
+              />
+              {canEdit &&
+                (editing ? (
+                  <>
+                    <MonoButton
+                      label="Cancel"
+                      disabled={saving}
+                      onPress={onCancel}
+                      variant="secondary"
+                      testID="cancel-agent-edit"
+                    />
+                    <MonoButton
+                      label={saving ? 'Saving' : 'Save'}
+                      disabled={saving}
+                      loading={saving}
+                      onPress={onSave}
+                      testID="save-agent-soul"
+                    />
+                  </>
+                ) : (
+                  <MonoButton
+                    label="Edit"
+                    onPress={onEdit}
+                    variant="secondary"
+                    testID="edit-agent-soul"
+                  />
+                ))}
             </View>
-            <SettingsRow title="Model" value={label(model, modelAxis)} />
-            <SettingsRow title="Effort" value={label(effort, effortAxis)} />
-            {detail.owner && <SettingsRow title="Owner" value={detail.owner.name} />}
+            {editing && (
+              <TextInput
+                accessibilityLabel="Agent name"
+                editable={!saving}
+                maxLength={AGENT_NAME_MAX_LENGTH}
+                onChangeText={onNameChange}
+                style={styles.nameInput}
+                testID="agent-soul-name"
+                value={nameDraft}
+              />
+            )}
             <View style={styles.section}>
-              <Text style={styles.strong}>Soul</Text>
+              <Text style={styles.strong}>SOUL</Text>
               {editing ? (
                 <TextInput
                   accessibilityLabel="Persona / instructions"
@@ -254,6 +239,14 @@ export function AgentProfileView({
                 />
               )}
             </View>
+            <SettingsRow
+              title="Permission mode"
+              value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
+            />
+            <SettingsRow
+              title="Answer scope"
+              value={detail.access?.policy === 'everyone' ? 'Everyone' : 'Owner only'}
+            />
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
@@ -282,7 +275,7 @@ export function AgentProfileView({
               )}
               {cursor && loadMoreWork && (
                 <MonoButton
-                  label={workLoading ? 'Loading…' : workError ? 'Retry recent work' : 'Show more'}
+                  label={workLoading ? 'Loading…' : workError ? 'Retry recent work' : 'More'}
                   loading={workLoading}
                   disabled={workLoading}
                   onPress={() => void moreWork()}
@@ -323,7 +316,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textPrimary,
     flex: 1,
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 16 },
+  headerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.md,
+  },
   content: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.xxl },
   identity: {
     paddingVertical: theme.buzz.space.lg,

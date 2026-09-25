@@ -622,7 +622,7 @@ describe('Members workspace management', () => {
   it('shows the connected owner on the agent profile', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
+    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
   });
 
   it('omits a handleless owner from the agent row and profile', async () => {
@@ -668,6 +668,7 @@ describe('Members workspace management', () => {
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();
     await press(renderer, 'edit-person-role');
+    await press(renderer, 'person-role-selector');
     await press(renderer, 'person-role-admin');
     expect(phoneOperation).not.toHaveBeenCalled();
     await press(renderer, 'save-person-role');
@@ -1253,7 +1254,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'agent-handle' }).props.children).toBe('@clara');
+    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
     const ban = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(ban.props.accessibilityLabel).toBe('Ban agent');
     expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
@@ -1366,8 +1367,8 @@ describe('Members workspace management', () => {
     await openAgentManagement(renderer);
 
     // Management names the agent and owner before offering removal.
-    expect(renderer.root.findByProps({ testID: 'agent-handle' }).props.children).toBe('@clara');
-    expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
+    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
+    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove agent');
     expect(control.findAllByType('Text')[0].props.children).toBe('Remove');

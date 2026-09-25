@@ -1106,6 +1106,7 @@ async function route(
     const rawOffset = url.searchParams.get('offset');
     const offset = rawOffset === null || rawOffset === '' ? undefined : Number(rawOffset);
     const result = await options.phone.readWorkspaceMembers(match[1]!, identityId!, {
+      ...(url.searchParams.get('ownerId') ? { ownerId: url.searchParams.get('ownerId')! } : {}),
       ...(url.searchParams.get('memberId') ? { memberId: url.searchParams.get('memberId')! } : {}),
       ...(url.searchParams.get('q') ? { q: url.searchParams.get('q')! } : {}),
       ...(rawKind === 'human' || rawKind === 'agent' ? { kind: rawKind } : {}),

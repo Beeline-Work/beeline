@@ -100,7 +100,7 @@ describe('soul avatar generation', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('@ember /draw-avatar');
   });
 
-  it('bounds an offline wait and stops polling when the settings close', async () => {
+  it('bounds an offline wait and preserves exclusion when the settings close', async () => {
     const props = mount();
     await act(async () => renderer.root.findByType('Button').props.onPress());
     await act(async () => vi.advanceTimersByTimeAsync(180000));
@@ -110,6 +110,13 @@ describe('soul avatar generation', () => {
     act(() => renderer.unmount());
     const calls = (props.refresh as any).mock.calls.length;
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect((props.refresh as any).mock.calls.length).toBe(calls);
+    expect((props.refresh as any).mock.calls.length).toBe(calls + 1);
+    const reopened = mount();
+    expect(renderer.root.findByType('Button').props.disabled).toBe(true);
+    expect(renderer.root.findByType('Button').props.label).toBe('generating, will DM you when the avatar is ready');
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    expect(reopened.generate).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(180000));
+    expect(renderer.root.findByType('Button').props.disabled).toBe(false);
   });
 });

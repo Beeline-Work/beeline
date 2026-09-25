@@ -270,7 +270,7 @@ export default function BuzzMembers({
     surface?.viewer.permissions.manage &&
     selectedAgent &&
     selectedAgent.agent.role !== 'owner' &&
-    (surface.viewer.role === 'owner' || selectedAgent.agent.role === 'member'),
+    (surface.viewer.role === 'owner' || ['member','spectator'].includes(selectedAgent.agent.role)),
   );
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const selectedAgentOwnerByline = selectedAgent?.owner
@@ -1241,7 +1241,7 @@ export default function BuzzMembers({
           name={member.identity.name}
           onPress={() =>
             router.push({
-              pathname: '/beeline/human-profile',
+              pathname: member.identity.pubkey === surface.viewer.identity.pubkey ? '/beeline/settings' : '/beeline/human-profile',
               params: { communityId: workspaceId, memberId: member.identity.pubkey },
             } as Href)
           }

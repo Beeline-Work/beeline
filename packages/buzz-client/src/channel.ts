@@ -100,7 +100,7 @@ export interface ChannelOpsContext {
   ws?: () => RelayWs | null;
 }
 
-export type ChannelRole = 'owner' | 'admin' | 'member';
+export type ChannelRole = 'owner' | 'admin' | 'member' | 'spectator';
 
 /**
  * Room creation is a HUMAN action. A registered agent identity must never
@@ -207,7 +207,7 @@ export async function setMemberRole(
   ctx: ChannelOpsContext,
   channelId: string,
   targetPubkey: string,
-  role: 'owner' | 'admin' | 'member',
+  role: 'owner' | 'admin' | 'member' | 'spectator',
   opts?: { extraTags?: string[][] },
 ): Promise<PublishResult> {
   const tags: string[][] = [

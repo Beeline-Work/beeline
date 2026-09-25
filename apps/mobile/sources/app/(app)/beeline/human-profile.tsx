@@ -8,7 +8,12 @@ import type { RoomViewMember, WorkspaceView } from '@beeline/api-contract/phone'
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { ProfileIdentity } from '@/components/buzz/ProfileIdentity';
+import {
+  HullActionSheetModal,
+  HullActionSheetRow,
+  HullActionSheetCancel,
+} from '@/components/buzz/HullActionSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -32,6 +37,9 @@ export function HumanProfile({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
+  const [connectedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
+  const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState<RoomViewMember['role']>('member');
   const [retry, setRetry] = useState(0);
@@ -48,14 +56,21 @@ export function HumanProfile({
       if (!identity) throw new Error('Sign in to view this profile.');
       const baseUrl = await getEffectiveRelayUrl();
       const client = new RoomViewClient({ identity, baseUrl });
-      const [surface, page] = await Promise.all([
+      const [surface, page, owned] = await Promise.all([
         client.workspace(workspaceId),
         client.workspaceMembers(workspaceId, { memberId }),
+        client.workspaceMembers(workspaceId, { kind: 'agent', ownerId: memberId }),
       ]);
       const person = page.members.find((entry) => entry.identity.pubkey === memberId);
       if (!person) throw new Error('This person is no longer a member of this Workspace.');
       if (!cancelled) {
+        if (surface.viewer.identity.pubkey === memberId) {
+          router.replace('/beeline/settings');
+          return;
+        }
         setWorkspace(surface);
+        setConnectedAgents(owned.agents);
+        setAgentsHasMore(owned.agentsTruncated);
         setMember(person);
         setRole(person.role);
       }
@@ -76,8 +91,10 @@ export function HumanProfile({
     !self &&
     manager &&
     Boolean(member) &&
-    (workspace?.viewer.role === 'owner' || member?.role === 'member');
-  const canBan = canEditRole && member?.role !== 'owner';
+    ((workspace?.viewer.role === 'owner' && member?.role !== 'owner') ||
+      (workspace?.viewer.role === 'admin' &&
+        (member?.role === 'member' || member?.role === 'spectator')));
+  const canBan = canEditRole;
   const perform = async (action: () => Promise<void>) => {
     if (mutation.current) return;
     mutation.current = true;
@@ -168,18 +185,7 @@ export function HumanProfile({
         )}
         {member && (
           <>
-            <View style={styles.identity}>
-              <IdentityMark
-                kind="human"
-                seed={memberId}
-                name={member.identity.name}
-                face={member.identity.face}
-                avatarUrl={member.identity.avatar}
-                size={72}
-              />
-              <Text style={styles.name}>{member.identity.name}</Text>
-              {member.identity.handle && <Text style={styles.copy}>@{member.identity.handle}</Text>}
-            </View>
+            <ProfileIdentity identity={member.identity} role={member.role} />
             {!self && (
               <SettingsRow
                 title="Message"
@@ -208,31 +214,16 @@ export function HumanProfile({
                 onPress={() => router.push('/beeline/settings/identity')}
               />
             )}
-            <Text style={styles.section}>Workspace</Text>
-            <SettingsRow
-              title="Role"
-              value={
-                member.role === 'owner' ? 'Owner' : member.role === 'admin' ? 'Admin' : 'Member'
-              }
-            />
             {editing && canEditRole && (
               <View testID="person-role-editor">
-                {(
-                  [
-                    'member',
-                    'admin',
-                    ...(workspace?.viewer.role === 'owner' ? ['owner'] : []),
-                  ] as RoomViewMember['role'][]
-                ).map((choice) => (
-                  <SettingsRow
-                    key={choice}
-                    title={choice === 'owner' ? 'Owner' : choice === 'admin' ? 'Admin' : 'Member'}
-                    value={role === choice ? 'Selected' : undefined}
-                    disabled={busy}
-                    testID={`person-role-${choice}`}
-                    onPress={() => setRole(choice)}
-                  />
-                ))}
+                <SettingsRow
+                  title="Role"
+                  value={role}
+                  chevron="down"
+                  disabled={busy}
+                  testID="person-role-selector"
+                  onPress={() => setRolePickerOpen(true)}
+                />
                 <View style={styles.actions}>
                   <MonoButton
                     label="Cancel"
@@ -263,6 +254,49 @@ export function HumanProfile({
                 </View>
               </View>
             )}
+            <Text style={styles.section}>Connected agents</Text>
+            {connectedAgents.length ? (
+              connectedAgents.map((agent) => (
+                <SettingsRow
+                  key={agent.identity.pubkey}
+                  title={agent.identity.handle ? `@${agent.identity.handle}` : 'Handle unavailable'}
+                  description={agent.model}
+                  chevron="right"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/beeline/agent-profile',
+                      params: { communityId: workspaceId, agentId: agent.identity.pubkey },
+                    })
+                  }
+                />
+              ))
+            ) : (
+              <Text style={styles.copy}>No connected agents in this Workspace.</Text>
+            )}
+            {agentsHasMore && (
+              <MonoButton
+                label="More"
+                disabled={busy}
+                testID="more-connected-agents"
+                onPress={() =>
+                  void perform(async () => {
+                    const identity = await loadBuzzIdentity();
+                    if (!identity) throw new Error('Sign in to continue.');
+                    const client = new RoomViewClient({
+                      identity,
+                      baseUrl: await getEffectiveRelayUrl(),
+                    });
+                    const page = await client.workspaceMembers(workspaceId, {
+                      kind: 'agent',
+                      ownerId: memberId,
+                      offset: connectedAgents.length,
+                    });
+                    setConnectedAgents((current) => [...current, ...page.agents]);
+                    setAgentsHasMore(page.agentsTruncated);
+                  })
+                }
+              />
+            )}
             {canBan && (
               <SettingsRow
                 title="Ban from Workspace"
@@ -275,6 +309,28 @@ export function HumanProfile({
           </>
         )}
       </ScrollView>
+      <HullActionSheetModal
+        title="Workspace role"
+        visible={rolePickerOpen && canEditRole}
+        onClose={() => setRolePickerOpen(false)}
+        testID="person-role-picker"
+        accessibilityLabel="Close role selector"
+      >
+        {(['admin', 'member', 'spectator'] as const).map((choice) => (
+          <HullActionSheetRow
+            key={choice}
+            label={choice}
+            selected={role === choice}
+            disabled={busy}
+            testID={`person-role-${choice}`}
+            onPress={() => {
+              setRole(choice);
+              setRolePickerOpen(false);
+            }}
+          />
+        ))}
+        <HullActionSheetCancel onPress={() => setRolePickerOpen(false)} />
+      </HullActionSheetModal>
     </View>
   );
 }

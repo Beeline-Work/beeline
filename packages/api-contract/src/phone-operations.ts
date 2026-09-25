@@ -177,7 +177,7 @@ export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
 export type WorkspaceMemberInput = WorkspaceInput & {
   readonly memberId: string;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: 'owner' | 'admin' | 'member' | 'spectator';
 };
 /** A manager removes a person from the Workspace and every live Room in it; agents use removeAgent. */
 export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };

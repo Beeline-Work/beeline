@@ -104,7 +104,7 @@ export interface WritePermissionCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   actionId: string | null;
   targetBranch?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
@@ -230,7 +230,7 @@ export interface GrantRequestCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   /** The grant whose decision is in flight. */
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
@@ -365,7 +365,7 @@ export interface ConnectorOfferCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
   onAccept(

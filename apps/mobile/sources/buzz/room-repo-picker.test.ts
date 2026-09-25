@@ -4,9 +4,12 @@ import {
   explainMissingRepo,
   filterRepoCandidates,
   githubRepositoryLinkagePlan,
+  groupRepoCandidatesByOwner,
   looksLikeCornerOpenIntent,
   githubFullNameFromInput,
   matchesRepoQuery,
+  repoOwnerFromCandidate,
+  repoShortName,
   roomRepoChipLabel,
 } from './room-repo-picker';
 
@@ -130,6 +133,51 @@ describe('explainMissingRepo', () => {
         [{ ...installation, repositorySelection: 'all' as const }],
       ),
     ).toMatchObject({ reason: 'listing-stale', owner: 'acme' });
+  });
+});
+
+describe('groupRepoCandidatesByOwner', () => {
+  it('splits repos that share one installation onto their real owners', () => {
+    const beeline = {
+      key: 'github:1',
+      name: 'Beeline-Work/beeline',
+      githubInstallationId: 11,
+    };
+    const veritaserum = {
+      key: 'github:2',
+      name: 'Trusty-Squire/veritaserum',
+      githubInstallationId: 11,
+    };
+    const castellan = {
+      key: 'github:3',
+      name: 'Trusty-Squire/castellan',
+      githubInstallationId: 11,
+    };
+
+    expect(groupRepoCandidatesByOwner([beeline, veritaserum, castellan])).toEqual([
+      { owner: 'Beeline-Work', data: [beeline] },
+      { owner: 'Trusty-Squire', data: [veritaserum, castellan] },
+    ]);
+  });
+
+  it('reads the owner from a GitHub remote when the local name omits it', () => {
+    const candidate = {
+      key: 'k',
+      name: 'gizmo',
+      remote: 'git://github.com/octocat/gizmo.git',
+    };
+    expect(repoOwnerFromCandidate(candidate)).toBe('octocat');
+    expect(repoShortName(candidate, 'octocat')).toBe('gizmo');
+    expect(groupRepoCandidatesByOwner([candidate])).toEqual([
+      { owner: 'octocat', data: [candidate] },
+    ]);
+  });
+
+  it('keeps names that are not owner/repo ungrouped', () => {
+    const local = { key: 'local', name: 'scratch' };
+    expect(repoOwnerFromCandidate(local)).toBeNull();
+    expect(repoShortName(local, null)).toBe('scratch');
+    expect(groupRepoCandidatesByOwner([local])).toEqual([{ owner: null, data: [local] }]);
   });
 });
 

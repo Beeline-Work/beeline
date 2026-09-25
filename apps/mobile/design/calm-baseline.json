@@ -26,7 +26,7 @@
   "components/buzz/Ledger.tsx": 7,
   "components/buzz/MonoHull.tsx": 4,
   "components/buzz/MonoMarkdown.tsx": 2,
-  "components/buzz/RepoPicker.tsx": 12,
+  "components/buzz/RepoPicker.tsx": 11,
   "components/buzz/RoomContextPreamble.tsx": 3,
   "components/buzz/SlashVerbPicker.tsx": 6,
   "components/buzz/TurnProgressLine.tsx": 3,

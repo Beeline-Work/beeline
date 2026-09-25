@@ -198,6 +198,75 @@ describe('RepoPicker', () => {
     act(() => renderer.unmount());
   });
 
+  it('groups repositories by owner even when they share one installation', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker
+          candidates={[
+            {
+              key: 'github:1',
+              name: 'Beeline-Work/beeline',
+              githubInstallationId: 11,
+            },
+            {
+              key: 'github:2',
+              name: 'Trusty-Squire/veritaserum',
+              githubInstallationId: 11,
+            },
+            {
+              key: 'github:3',
+              name: 'Trusty-Squire/castellan',
+              githubInstallationId: 11,
+            },
+          ]}
+          installations={[
+            {
+              installationId: 11,
+              accountId: '1',
+              accountLogin: 'Beeline-Work',
+              accountType: 'Organization',
+              repositorySelection: 'selected',
+              status: 'active',
+              repositoryCount: 3,
+              manageUrl: 'https://github.com/organizations/Beeline-Work/settings/installations/11',
+            },
+          ]}
+          onSelect={() => {}}
+        />,
+      );
+    });
+
+    const list = renderer.root.findByProps({ testID: 'repo-picker-list' });
+    expect(
+      list.props.sections.map((section: { owner: string; data: { name: string }[] }) => ({
+        owner: section.owner,
+        names: section.data.map((item) => item.name),
+        count: list.props.renderSectionHeader({ section }).props.children[1].props.children,
+      })),
+    ).toEqual([
+      { owner: 'Beeline-Work', names: ['Beeline-Work/beeline'], count: '1 REPO' },
+      {
+        owner: 'Trusty-Squire',
+        names: ['Trusty-Squire/veritaserum', 'Trusty-Squire/castellan'],
+        count: '2 REPOS',
+      },
+    ]);
+    expect(
+      list.props.renderItem({
+        item: list.props.sections[0].data[0],
+        section: list.props.sections[0],
+      }).props.children[0].props.children,
+    ).toBe('beeline');
+    expect(
+      list.props.renderItem({
+        item: list.props.sections[1].data[0],
+        section: list.props.sections[1],
+      }).props.children[0].props.children,
+    ).toBe('veritaserum');
+    act(() => renderer.unmount());
+  });
+
   it('paints hairline placeholders while the candidate list is loading', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

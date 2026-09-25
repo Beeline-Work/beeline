@@ -102,9 +102,8 @@ export type InstallGoogleToolOptions = {
   /** Override credential resolution (tests). */
   readonly resolveCredentials?: () => Promise<ResolvedGoogleCredentials>;
   /**
-   * An already-resolved (or in-flight) grant shared across this drain's
-   * Google tool installs: the single Google consent resolves ONCE and every
-   * tool's install rides the same result. Takes precedence over
+   * An already-resolved (or in-flight) grant for this connector. The helper
+   * checks each connector's OAuth readiness. Takes precedence over
    * `resolveCredentials` when both are given.
    */
   readonly resolvedCredentials?:

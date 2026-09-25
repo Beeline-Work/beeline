@@ -6464,13 +6464,13 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
-    return this.armConnectorPairing(this.database, {
+    return this.database.transaction((database) => this.armConnectorPairing(database, {
       workspaceId: ws.workspace_id,
       ownerIdentityId: viewerId,
       connectorType: input.connectorType,
       helperAgentId: matched.agent_id,
       machineId,
-    });
+    }));
   }
 
   /**

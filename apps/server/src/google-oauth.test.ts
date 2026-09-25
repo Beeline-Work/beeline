@@ -127,3 +127,44 @@ it('only the newest retry state can finish Google sign-in', async () => {
     `SELECT status FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
   expect(current.rows[0]!.status).toBe('installing');
 });
+
+it('withholds an old machine grant from the retried tool until fresh OAuth completes', async () => {
+  let exchange = 0;
+  const transport = vi.fn(async (url: string | URL | Request) => {
+    if (String(url).endsWith('/token')) {
+      exchange += 1;
+      return new Response(JSON.stringify({
+        access_token: exchange === 1 ? 'old-token' : 'fresh-token',
+        refresh_token: `refresh-${exchange}`, expires_in: 3600,
+        scope: 'openid email https://www.googleapis.com/auth/gmail.readonly',
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ email: 'owner@example.test' }), { status: 200 });
+  }) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const firstState = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  expect(await oauth.complete(firstState, 'first-code')).toBe(true);
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toMatchObject({ accessToken: 'old-token' });
+
+  await database.query(
+    `UPDATE workspace_connectors SET status='error',status_error='Gmail permission denied'
+     WHERE id=$1`, [CONNECTOR]);
+  const phone = new PhoneService(database, 'https://beeline.example', undefined,
+    undefined, undefined, false, database, undefined, oauth);
+  await phone.pairConnector({ workspaceId: WORKSPACE,
+    connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
+  const retry = await database.query<{ sign_in: { url: string }; status_error: string }>(
+    `SELECT sign_in,status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+  expect(retry.rows[0]!.status_error).toBe('Gmail permission denied');
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toBeNull();
+
+  const retryState = new URL(retry.rows[0]!.sign_in.url).searchParams.get('state')!;
+  expect(await oauth.complete(retryState, 'retry-code')).toBe(true);
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toMatchObject({
+    accessToken: 'fresh-token',
+  });
+  const after = await database.query<{ status_error: string }>(
+    `SELECT status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+  expect(after.rows[0]!.status_error).toBe('Gmail permission denied');
+});

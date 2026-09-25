@@ -85,9 +85,8 @@ export type ConnectorAssignmentLoopOptions = {
   readonly mcp?: SquireMcpClient;
   /** Override the Squire install routine. */
   readonly install?: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
-  /** Override the Google tool install routine. The third argument is the
-   * drain's SHARED grant-resolution factory: the single Google consent is
-   * resolved once and every Google tool install in the batch rides it. */
+  /** Override the Google tool install routine. The third argument resolves
+   * access for this connector, so a sibling cannot bypass pending OAuth. */
   readonly installGoogle?: (
     connectorType: ConnectorKind,
     onProgress: (steps: readonly ConnectorStep[]) => void,
@@ -266,11 +265,8 @@ export class ConnectorAssignmentLoop {
     for (const assignment of assignments) {
       const key = `${assignment.kind}:${assignment.connectorId}`;
       if (assignment.kind === 'uninstall') continue; // the server reaps disconnected rows
-      // Google tool installs do not race each other or their siblings: one
-      // drain runs them as ONE sequential batch behind ONE shared grant
-      // resolution — the single Google consent — instead of four parallel
-      // install processes on the machine (one-connector-per-machine pairing
-      // is preserved; each tool still fails independently).
+      // Google installs run sequentially. Each connector checks whether its
+      // OAuth grant is available before it can confirm its own tool.
       if (assignment.kind === 'install' && isGoogleToolConnectorType(assignment.connectorType)) {
         if (this.inFlight.has(key)) continue;
         this.inFlight.add(key);
@@ -293,29 +289,20 @@ export class ConnectorAssignmentLoop {
     }
   }
 
-  /** The Google tool connectors ride ONE grant: every install in the batch
-   * shares one credential resolution (the single Google consent) and the
-   * installs run one at a time. Each tool still verifies and fails
-   * independently — a grant that cannot serve one tool's scope refuses that
-   * tool alone, never its siblings. */
+  /** Google tools share a machine grant, but each connector has its own OAuth
+   * readiness. Resolve it per connector while installs run sequentially. */
   private async runGoogleBatch(batch: readonly ConnectorAssignment[]): Promise<void> {
-    let shared: Promise<ResolvedGoogleCredentials> | undefined;
-    const sharedCredentials = () =>
-      (shared ??= this.resolveGoogleCredentials(batch[0]!.connectorId));
     for (const assignment of batch) {
       await this.runGoogleInstall(
         assignment.connectorId,
         assignment.connectorType,
-        sharedCredentials,
+        () => this.resolveGoogleCredentials(assignment.connectorId),
         assignment.kind === 'install' ? assignment.pairingGeneration : undefined,
       );
     }
   }
 
-  /** The ONE grant resolution shared by every Google tool install of a
-   * drain: the Squire one-click vault path first, then the manual
-   * credentials path. Never rejects — a failure resolves as an unusable
-   * grant each install reports through its own steps. */
+  /** A failed grant lookup becomes an error for this connector. */
   private resolveGoogleCredentials(connectorId: string): Promise<ResolvedGoogleCredentials> {
     return (async () => {
       try {

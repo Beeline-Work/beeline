@@ -160,7 +160,8 @@ export class GoogleOAuth {
        JOIN google_oauth_grants g ON g.workspace_id=c.workspace_id
         AND g.owner_identity_id=c.owner_identity_id AND g.machine_id=c.machine_id
        WHERE c.id=$1 AND c.helper_agent_id=$2 AND c.connector_type LIKE 'google-%'
-         AND c.status IN ('installing','connected')`,
+         AND c.status IN ('installing','connected')
+         AND c.sign_in->>'method' IS DISTINCT FROM 'oauth'`,
       [connectorId, agentId],
     );
     const row = result.rows[0];

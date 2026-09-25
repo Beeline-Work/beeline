@@ -42,9 +42,9 @@ describe('the chat header title (C72)', () => {
     expect(ladderSource).not.toMatch(/Typography\.mono|fontSize:|letterSpacing:/);
   });
 
-  it('shows a Direct Message peer identity, including read-only connector DMs', () => {
+  it('shows a Direct Message peer identity, including read-only System and connector DMs', () => {
     expect(chatSource).toMatch(
-      /!isReadOnlyDirectMessage \|\|\s+isConnectorLogoUrl\(\s+dmPeerIdentity\?\.avatar \?\? directMessageListItem\?\.directMessage\?\.peer\.avatar/,
+      /!isReadOnlyDirectMessage \|\|\s+dmPeerPubkey === SYSTEM_IDENTITY_PUBKEY \|\|\s+isConnectorLogoUrl\(\s+dmPeerIdentity\?\.avatar \?\? directMessageListItem\?\.directMessage\?\.peer\.avatar/,
     );
     expect(chatSource).toContain('<HeaderIdentitySlot testID="direct-message-header-identity">');
     expect(chatSource).toContain(

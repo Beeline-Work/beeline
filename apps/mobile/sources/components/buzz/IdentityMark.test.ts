@@ -69,6 +69,8 @@ import { BONE, FACE_IDS, INK } from '@/buzz/faces/animals';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { PERSON_PLATE } from '@/buzz/faces/face-tile';
 import { ALIVE_RING_PAD, identityPalette } from '@/buzz/identity-mark';
+import beelineMark from '@/buzz/beeline-mark.json';
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { IdentityMark } from './IdentityMark';
 
 const originalConsoleError = console.error;
@@ -508,6 +510,29 @@ describe('one mark, everywhere', () => {
       expect(renderer.root.findAllByType('Image')).toHaveLength(0);
       expect(hosts(renderer, 'face-figure')).toHaveLength(1);
     }
+  });
+
+  it('renders the canonical Beeline mark for System while people keep their face', () => {
+    const system = render(
+      React.createElement(IdentityMark, {
+        seed: SYSTEM_IDENTITY_PUBKEY,
+        kind: 'human',
+        name: 'System',
+        size: 26,
+      }),
+    );
+    expect(system.root.findByProps({ testID: 'identity-system-logo' })).toBeTruthy();
+    expect(system.root.findByType('Path').props.d).toBe(beelineMark.path);
+    expect(system.root.findByType('Svg').props.viewBox).toBe('40 40 160 160');
+    expect(hosts(system, 'face-figure')).toHaveLength(0);
+
+    const person = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', name: 'Joy', size: 26 }),
+    );
+    expect(hosts(person, 'face-figure')).toHaveLength(1);
+    expect(
+      person.root.findAllByType('Path').some((path) => path.props.d === beelineMark.path),
+    ).toBe(false);
   });
 
   it('does not re-render when its own props are unchanged', () => {

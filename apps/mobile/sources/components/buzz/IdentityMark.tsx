@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
-import Svg, { G, Rect, SvgUri } from 'react-native-svg';
+import Svg, { G, Path, Rect, SvgUri } from 'react-native-svg';
 import {
   ALIVE_RING_PAD,
   CYPHER_MIN_SIZE,
@@ -16,7 +16,7 @@ import { resolveFace } from '@/buzz/faces';
 import { PERSON_PLATE, agentFaceLayers, personFaceLayers } from '@/buzz/faces/face-tile';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
-import { BeelineMark } from './BeelineMark';
+import beelineMark from '@/buzz/beeline-mark.json';
 import { HullLivePulse } from './MonoHull';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -230,7 +230,21 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         style={[styles.frame, { width: size, height: size }]}
         testID={testID ?? 'identity-system-logo'}
       >
-        <BeelineMark size={size} compact />
+        <Svg
+          accessible
+          accessibilityLabel="Beeline logo"
+          width={size}
+          height={size}
+          viewBox="40 40 160 160"
+        >
+          <G transform={beelineMark.transform}>
+            <Path
+              d={beelineMark.path}
+              fillRule={beelineMark.fillRule as 'evenodd' | 'nonzero'}
+              fill={groknight.brandMark}
+            />
+          </G>
+        </Svg>
       </View>
     );
   }

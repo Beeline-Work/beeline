@@ -29,6 +29,14 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('./MonoHull', () => ({ HullSurface: 'HullSurface' }));
 vi.mock('./RepoPicker', () => ({ RepoPicker: 'RepoPicker' }));
+vi.mock('./HullActionSheet', async () => {
+  const React = await import('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      React.createElement('HullActionSheetModal', props, props.children, props.footer),
+  };
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -92,10 +100,11 @@ function textContent(node: any): string {
     .join('');
 }
 
-function mountWithInstallFlow() {
+function mountWithInstallFlow(creatingRepository = false) {
   const submit = vi.fn();
   const addAccount = vi.fn();
   const manageInstallation = vi.fn();
+  const createRepository = vi.fn().mockResolvedValue(undefined);
   function Harness() {
     const [roomName, setRoomName] = useState('');
     const [inviteOnly, setInviteOnly] = useState(false);
@@ -110,6 +119,7 @@ function mountWithInstallFlow() {
         inviteOnly={inviteOnly}
         setInviteOnly={setInviteOnly}
         creatingRoom={false}
+        creatingRepository={creatingRepository}
         createRoom={() => submit(roomName.trim(), pendingRepo)}
         onClose={() => {}}
         pendingRepo={pendingRepo}
@@ -129,6 +139,7 @@ function mountWithInstallFlow() {
         repoPickerNotice="Refreshing repositories…"
         handleAddGitHubAccount={addAccount}
         handleManageGitHubInstallation={manageInstallation}
+        handleCreateRepository={createRepository}
       />
     );
   }
@@ -137,7 +148,7 @@ function mountWithInstallFlow() {
     renderer = create(<Harness />);
   });
   const picker = () => renderer.root.findByType('RepoPicker').props;
-  return { renderer, picker, submit, addAccount, manageInstallation };
+  return { renderer, picker, submit, addAccount, manageInstallation, createRepository };
 }
 
 describe('New Room form', () => {
@@ -150,15 +161,10 @@ describe('New Room form', () => {
       windowHeight = height;
       const { renderer, host, submit } = mount();
 
-      const header = renderer.root
-        .findAllByProps({ accessibilityRole: 'header' })
-        .find((node: any) => node.type === 'Text');
-      expect(textContent(header)).toBe('New Room');
-      expect(
-        renderer.root
-          .findAllByType('Text')
-          .some((node: any) => textContent(node).includes('Repository optional')),
-      ).toBe(true);
+      expect(renderer.root.findByType('HullActionSheetModal').props.title).toBe('New Room');
+      expect(renderer.root.findByType('HullActionSheetModal').props.subtitle).toBe(
+        'In Workshop. Repository optional.',
+      );
       expect(host('create-room-name')).toBeDefined();
       expect(
         host('create-room-repo-row')
@@ -169,14 +175,10 @@ describe('New Room form', () => {
 
       act(() => host('create-room-repo-row').props.onPress());
       expect(host('create-room-picker')).toBeDefined();
-      expect(host('create-room-content').type).toBe('ScrollView');
+      expect(host('create-room-content').type).toBe('View');
       expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
       expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBeUndefined();
-      expect(
-        renderer.root
-          .findAllByType('Text')
-          .some((node: any) => textContent(node).includes('Repository optional')),
-      ).toBe(true);
+      expect(renderer.root.findByType('HullActionSheetModal').props.title).toBe('New Room');
       act(() => host('create-room-no-repository').props.onPress());
       act(() => host('create-room-name').props.onChangeText(`${viewport}-room`));
       act(() => host('create-room-submit').props.onPress());
@@ -233,11 +235,14 @@ describe('New Room form', () => {
     windowHeight = 844;
   });
 
-  it('hands the GitHub install flow to the repository picker', () => {
-    const { renderer, picker, addAccount, manageInstallation } = mountWithInstallFlow();
+  it('hands GitHub installation and repository creation to the picker', async () => {
+    const { renderer, picker, addAccount, manageInstallation, createRepository } =
+      mountWithInstallFlow();
     expect(picker().notice).toBe('Refreshing repositories…');
     expect(picker().testIDPrefix).toBe('create-room-repo-picker');
     expect(picker().error).toBeNull();
+    await act(async () => picker().onCreateRepository(78, 'new-repo'));
+    expect(createRepository).toHaveBeenCalledWith(78, 'new-repo');
     act(() => picker().onAddAccount());
     expect(addAccount).toHaveBeenCalledTimes(1);
     const installation = {
@@ -263,6 +268,16 @@ describe('New Room form', () => {
     act(() => host('create-room-name').props.onChangeText('private-room'));
     act(() => host('create-room-submit').props.onPress());
     expect(submit).toHaveBeenCalledWith('private-room', null, true);
+    act(() => renderer.unmount());
+  });
+
+  it('holds Room submission and picker changes while a repository is being created', () => {
+    const { renderer, picker } = mountWithInstallFlow(true);
+    expect(picker().busy).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'create-room-submit' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'create-room-no-repository' }).props.disabled).toBe(
+      true,
+    );
     act(() => renderer.unmount());
   });
 });

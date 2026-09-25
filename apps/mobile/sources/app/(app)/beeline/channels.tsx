@@ -191,6 +191,7 @@ export default function BuzzChannels() {
   const [roomName, setRoomName] = useState('');
   const [inviteOnly, setInviteOnly] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
+  const [creatingRepository, setCreatingRepository] = useState(false);
   const [showRepoPicker, setShowRepoPicker] = useState(false);
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
@@ -662,6 +663,26 @@ export default function BuzzChannels() {
     setRepoPickerError(null);
   }, []);
 
+  const handleCreateRepository = useCallback(
+    async (installationId: number, name: string) => {
+      if (!transport) throw new Error('Connection is still starting. Try again.');
+      setRepoPickerError(null);
+      setCreatingRepository(true);
+      try {
+        const repository = await transport.githubRepositoryCreate({ installationId, name });
+        setRepoCandidates((current) => [...current, repository]);
+        setPendingRepo(repository);
+        setShowRepoPicker(false);
+      } catch (reason) {
+        setRepoPickerError(`Could not create repository: ${String(reason)}`);
+        throw reason;
+      } finally {
+        setCreatingRepository(false);
+      }
+    },
+    [transport],
+  );
+
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
     if (
@@ -669,6 +690,7 @@ export default function BuzzChannels() {
       !transport ||
       !activeCommunityId ||
       creatingRoom ||
+      creatingRepository ||
       !canManageWorkspace
     )
       return;
@@ -711,6 +733,7 @@ export default function BuzzChannels() {
     activeCommunityId,
     canManageWorkspace,
     creatingRoom,
+    creatingRepository,
     inviteOnly,
     pendingRepo,
     roomName,
@@ -868,6 +891,7 @@ export default function BuzzChannels() {
           inviteOnly={inviteOnly}
           setInviteOnly={setInviteOnly}
           creatingRoom={creatingRoom}
+          creatingRepository={creatingRepository}
           createRoom={createRoom}
           onClose={() => setShowCreateRoom(false)}
           pendingRepo={pendingRepo}
@@ -883,6 +907,7 @@ export default function BuzzChannels() {
           handleManageGitHubInstallation={(installation) =>
             void handleManageGitHubInstallation(installation)
           }
+          handleCreateRepository={handleCreateRepository}
         />
         <MemberPickerSheet
           agentConnectOnly

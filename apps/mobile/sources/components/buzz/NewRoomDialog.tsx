@@ -1,45 +1,15 @@
 import React from 'react';
-import { ScrollView, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
-import {
-  HULL_DIALOG_LAYOUT,
-  HullDialog,
-  HullDialogInput,
-  hullDialogMinimumHeight,
-} from './HullDialog';
+import { HullDialogInput } from './HullDialog';
+import { HullActionSheetModal, HULL_SHEET_INSET } from './HullActionSheet';
 import { RepoPicker } from './RepoPicker';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-
-const DIALOG_VIEWPORT_GUTTER = 48;
-const PICKER_DIALOG_HEIGHT = 520;
-const NEW_ROOM_FORM_LAYOUT = {
-  contentPaddingTop: 16,
-  controlsGap: 8,
-  fieldLabelLineHeight: 15,
-  hintLineHeight: 19,
-  repoRowHeight: 44,
-  repoRowMarginTop: 10,
-  visibilityRowHeight: 44,
-} as const;
-const NEW_ROOM_FORM_CONTENT_HEIGHT =
-  NEW_ROOM_FORM_LAYOUT.contentPaddingTop +
-  NEW_ROOM_FORM_LAYOUT.fieldLabelLineHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  HULL_DIALOG_LAYOUT.inputMarginTop +
-  HULL_DIALOG_LAYOUT.inputMinHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.hintLineHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.repoRowMarginTop +
-  NEW_ROOM_FORM_LAYOUT.repoRowHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.visibilityRowHeight;
-const FORM_DIALOG_MIN_HEIGHT = hullDialogMinimumHeight(NEW_ROOM_FORM_CONTENT_HEIGHT, true);
 
 type Props = {
   visible: boolean;
@@ -49,6 +19,7 @@ type Props = {
   inviteOnly: boolean;
   setInviteOnly: (value: boolean) => void;
   creatingRoom: boolean;
+  creatingRepository?: boolean;
   createRoom: () => void;
   onClose: () => void;
   pendingRepo: RepoCandidate | null;
@@ -65,6 +36,7 @@ type Props = {
   handleAddGitHubAccount?: () => void;
   /** Adjust an existing installation's repository selection on GitHub. */
   handleManageGitHubInstallation?: (installation: GitHubInstallationAccess) => void;
+  handleCreateRepository?: (installationId: number, name: string) => Promise<void>;
 };
 
 export function NewRoomDialog({
@@ -75,6 +47,7 @@ export function NewRoomDialog({
   inviteOnly,
   setInviteOnly,
   creatingRoom,
+  creatingRepository = false,
   createRoom,
   onClose,
   pendingRepo,
@@ -88,21 +61,16 @@ export function NewRoomDialog({
   repoPickerNotice,
   handleAddGitHubAccount,
   handleManageGitHubInstallation,
+  handleCreateRepository,
 }: Props) {
   const { theme } = useUnistyles();
-  const { height } = useWindowDimensions();
-  const availableDialogHeight = Math.max(0, height - DIALOG_VIEWPORT_GUTTER);
-  const dialogMinHeight = Math.min(
-    showRepoPicker ? PICKER_DIALOG_HEIGHT : FORM_DIALOG_MIN_HEIGHT,
-    availableDialogHeight,
-  );
   const roomControls = (
     <View style={styles.roomControls}>
       <Text style={styles.fieldLabel}>Room name</Text>
       <HullDialogInput
         accessibilityLabel={`${ROOM_LABEL} name`}
         autoFocus
-        editable={!creatingRoom}
+        editable={!creatingRoom && !creatingRepository}
         onChangeText={setRoomName}
         onSubmitEditing={() => void createRoom()}
         placeholder="#room-name"
@@ -116,7 +84,7 @@ export function NewRoomDialog({
       )}
       <TouchableOpacity
         accessibilityRole="button"
-        disabled={creatingRoom}
+        disabled={creatingRoom || creatingRepository}
         onPress={() => void handleToggleRepoPicker()}
         style={styles.repoRow}
         testID="create-room-repo-row"
@@ -139,7 +107,7 @@ export function NewRoomDialog({
         <Text style={styles.visibilityLabel}>Invite-only</Text>
         <Switch
           accessibilityLabel="Invite-only Room"
-          disabled={creatingRoom}
+          disabled={creatingRoom || creatingRepository}
           onValueChange={setInviteOnly}
           testID="create-room-invite-only"
           thumbColor={theme.buzz.textPrimary}
@@ -150,36 +118,56 @@ export function NewRoomDialog({
     </View>
   );
   return (
-    <HullDialog
-      actions={[
-        { label: 'Cancel', onPress: onClose, variant: 'quiet' },
-        {
-          label: creatingRoom ? 'Creating' : 'Create',
-          onPress: () => void createRoom(),
-          disabled: !validRoomSlug(roomName) || creatingRoom,
-          busy: creatingRoom,
-          variant: 'primary',
-          testID: 'create-room-submit',
-        },
-      ]}
-      body={`In ${workspaceName}. Repository optional.`}
-      contentLayout="fill"
-      onRequestClose={onClose}
-      surfaceStyle={{ minHeight: dialogMinHeight, maxHeight: availableDialogHeight }}
+    <HullActionSheetModal
+      dismissOnBackdrop={!creatingRoom && !creatingRepository}
+      onClose={() => {
+        if (!creatingRoom && !creatingRepository) onClose();
+      }}
+      subtitle={`In ${workspaceName}. Repository optional.`}
       testID="new-room-dialog"
       title={`New ${ROOM_LABEL}`}
       visible={visible}
+      footer={
+        <View style={styles.actions}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={creatingRoom || creatingRepository}
+            onPress={onClose}
+            style={styles.action}
+            testID="create-room-cancel"
+          >
+            <Text style={styles.actionText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityState={{
+              busy: creatingRoom || creatingRepository,
+              disabled: !validRoomSlug(roomName) || creatingRoom || creatingRepository,
+            }}
+            disabled={!validRoomSlug(roomName) || creatingRoom || creatingRepository}
+            onPress={() => void createRoom()}
+            style={[
+              styles.action,
+              styles.primaryAction,
+              (!validRoomSlug(roomName) || creatingRoom || creatingRepository) &&
+                styles.disabledAction,
+            ]}
+            testID="create-room-submit"
+          >
+            <Text style={styles.primaryActionText}>
+              {creatingRoom ? 'Creating…' : 'Create Room'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      }
     >
-      <ScrollView
-        contentContainerStyle={styles.formScrollContent}
-        style={styles.formScroll}
-        testID="create-room-content"
-      >
+      <View style={styles.form} testID="create-room-content">
         {roomControls}
         {showRepoPicker && (
           <View style={styles.picker} testID="create-room-picker">
             <TouchableOpacity
               accessibilityRole="button"
+              disabled={creatingRepository}
               onPress={handleSelectNoRepository}
               style={styles.noRepoRow}
               testID="create-room-no-repository"
@@ -188,35 +176,33 @@ export function NewRoomDialog({
             </TouchableOpacity>
             <RepoPicker
               candidates={repoCandidates}
+              busy={creatingRepository}
               currentKey={pendingRepo?.key ?? null}
               error={repoPickerError}
               installations={repoInstallations}
               notice={repoPickerNotice}
               onAddAccount={handleAddGitHubAccount}
               onManageInstallation={handleManageGitHubInstallation}
+              onCreateRepository={handleCreateRepository}
               onSelect={handleSelectRepoCandidate}
               testIDPrefix="create-room-repo-picker"
             />
           </View>
         )}
-      </ScrollView>
-    </HullDialog>
+      </View>
+    </HullActionSheetModal>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    formScroll: { flex: 1, flexShrink: 1, minHeight: 0 },
-    formScrollContent: {
-      minHeight: NEW_ROOM_FORM_CONTENT_HEIGHT,
-      paddingTop: NEW_ROOM_FORM_LAYOUT.contentPaddingTop,
-    },
-    roomControls: { gap: NEW_ROOM_FORM_LAYOUT.controlsGap },
+    form: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: 12 },
+    roomControls: { gap: 8 },
     repoRow: {
-      marginTop: NEW_ROOM_FORM_LAYOUT.repoRowMarginTop,
+      marginTop: 10,
       // A fixed height: on some devices a minimum height collapses until first tap.
-      height: NEW_ROOM_FORM_LAYOUT.repoRowHeight,
+      height: 44,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
@@ -231,7 +217,7 @@ const styles = StyleSheet.create((theme) => {
     },
     repoRowChevron: { color: hull.chrome },
     visibilityRow: {
-      minHeight: NEW_ROOM_FORM_LAYOUT.visibilityRowHeight,
+      minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -251,15 +237,46 @@ const styles = StyleSheet.create((theme) => {
     fieldLabel: {
       ...Typography.default(),
       ...hull.type.sectionHead,
-      lineHeight: NEW_ROOM_FORM_LAYOUT.fieldLabelLineHeight,
+      lineHeight: 15,
       color: hull.textPrimary,
     },
     hint: {
       ...Typography.default(),
       ...hull.type.meta,
-      lineHeight: NEW_ROOM_FORM_LAYOUT.hintLineHeight,
+      lineHeight: 19,
       color: hull.textMuted,
     },
     picker: { marginTop: 8 },
+    actions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    action: {
+      minHeight: 44,
+      minWidth: 72,
+      paddingHorizontal: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: hull.radius,
+    },
+    actionText: {
+      ...Typography.mono('semiBold'),
+      color: hull.chrome,
+      fontSize: 12,
+      textTransform: 'uppercase',
+    },
+    primaryAction: { backgroundColor: hull.accent },
+    disabledAction: { opacity: 0.42 },
+    primaryActionText: {
+      ...Typography.mono('semiBold'),
+      color: hull.textInverted,
+      fontSize: 12,
+      textTransform: 'uppercase',
+    },
   };
 });

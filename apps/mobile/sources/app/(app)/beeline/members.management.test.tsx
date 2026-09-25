@@ -25,6 +25,7 @@ const navigation = vi.hoisted(() => ({
   beforeRemove: null as null | ((event: any) => void),
   dispatch: vi.fn(),
 }));
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
 const client = vi.hoisted(() => ({
   composeMessage: vi.fn(async (input: any, options: any) => ({
     ...input,
@@ -168,7 +169,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Share: { share },
-    Platform: { OS: 'ios' },
+    Platform: platform,
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
@@ -456,6 +457,7 @@ async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  platform.OS = 'ios';
   navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
   state.agent = baseAgent();
@@ -664,6 +666,29 @@ describe('Members workspace management', () => {
     });
     return renderer;
   }
+
+  it('opens a human profile on Android when window has no browser event API', async () => {
+    platform.OS = 'android';
+    vi.stubGlobal('window', {});
+    try {
+      const renderer = await personProfile();
+      expect(renderer.root.findByProps({ testID: 'human-profile' })).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('opens an agent profile on Android when window has no browser event API', async () => {
+    platform.OS = 'android';
+    vi.stubGlobal('window', {});
+    try {
+      const renderer = await render();
+      await openAgentProfile(renderer);
+      expect(renderer.root.findByProps({ testID: 'agent-profile' })).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();

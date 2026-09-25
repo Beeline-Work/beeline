@@ -7,6 +7,7 @@ import {
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { GoogleOAuth } from './google-oauth.js';
+import { approvedComposioTools, composioScopeForOwner } from './composio-config.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
@@ -6376,6 +6377,7 @@ export class PhoneService {
         squire_version: string | null;
         signed_in_as: string | null;
         sign_in: ConnectorStatus['signIn'] | null;
+        composio_scope: unknown;
         connected_at: Date | null;
         created_at: Date;
       }>(
@@ -6385,7 +6387,7 @@ export class PhoneService {
                           WHERE sibling.machine_id=c.machine_id
                             AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
-                c.signed_in_as,c.sign_in,c.connected_at,c.created_at
+                c.signed_in_as,c.sign_in,c.composio_scope,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
          WHERE c.owner_identity_id=$1
@@ -6461,9 +6463,12 @@ export class PhoneService {
     return {
       workspaceId: input.workspaceId,
       catalog: connectorCatalog().map((entry) =>
-        isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
+        (isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth) ||
+        (entry.connectorType === 'composio' && !composioScopeForOwner(viewerId))
           ? { ...entry, available: false }
-          : entry,
+          : entry.connectorType === 'composio'
+            ? { ...entry, approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat() }
+            : entry,
       ),
       ...(walletRow
         ? {
@@ -6497,6 +6502,9 @@ export class PhoneService {
           ...(row.status_error ? { errorMessage: row.status_error } : {}),
         } as ConnectorStatus,
         helperAgentId: row.helper_agent_id,
+        ...(row.connector_type === 'composio'
+          ? { approvedTools: approvedComposioTools(row.composio_scope, viewerId) }
+          : {}),
         ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
         createdAt: seconds(row.created_at),
       })),
@@ -6615,6 +6623,10 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
+    const composioScope = input.connectorType === 'composio'
+      ? composioScopeForOwner(input.ownerIdentityId) : undefined;
+    if (input.connectorType === 'composio' && !composioScope)
+      throw new Error('Composio scope is not configured on this Beeline server');
     if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
       throw new Error('Google OAuth is not configured on this Beeline server');
     const adapter = connectorAdapter(input.connectorType);
@@ -6646,8 +6658,8 @@ export class PhoneService {
     await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-         status,status_steps,pairing_generation
-       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1)
+         status,status_steps,pairing_generation,composio_scope
+       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1,$8::jsonb)
        ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
@@ -6657,6 +6669,12 @@ export class PhoneService {
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,
+           composio_session_id=CASE WHEN EXCLUDED.connector_type='composio'
+             THEN NULL ELSE workspace_connectors.composio_session_id END,
+           composio_link_toolkit=NULL,
+           composio_ready=false,
+           composio_link_started_at=NULL,
+           composio_scope=EXCLUDED.composio_scope,
            pairing_generation=workspace_connectors.pairing_generation + 1,
            updated_at=now()`,
       [
@@ -6666,7 +6684,13 @@ export class PhoneService {
         input.connectorType,
         matched.agent_id,
         machineId,
-        JSON.stringify(defaultConnectorSteps()),
+        JSON.stringify(input.connectorType === 'composio'
+          ? [
+              { label: 'Prepare Composio session', status: 'pending' },
+              { label: 'Link account', status: 'pending' },
+            ]
+          : defaultConnectorSteps()),
+        composioScope ? JSON.stringify(composioScope) : null,
       ],
     );
     // A conflicting row (a previous pairing of the same connector on the same

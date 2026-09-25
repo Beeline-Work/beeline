@@ -59,9 +59,15 @@ export function isOfferableConnectorKind(value: unknown): value is ConnectorKind
  * …" clause; the boundary after the em dash is fixed text and never agent
  * prose. The line is spoken by the agent (the card wears its face).
  */
-export function connectorOfferConsequence(kind: ConnectorKind, reason?: string): string {
+export function connectorOfferConsequence(
+  kind: ConnectorKind,
+  reason?: string,
+  approvedTools?: readonly string[],
+): string {
   const clause = reason?.trim().replace(/[.]+$/u, '');
-  const boundary = connectorOfferBoundary(kind);
+  const boundary = kind === 'composio' && approvedTools?.length
+    ? `${connectorOfferBoundary(kind)}; approved tools: ${approvedTools.join(', ')}`
+    : connectorOfferBoundary(kind);
   if (clause) return `This changes your Workbench. Once it is added, I can ${clause} — ${boundary}`;
   switch (kind) {
     case 'trusty-squire':
@@ -71,6 +77,8 @@ export function connectorOfferConsequence(kind: ConnectorKind, reason?: string):
     case 'google-drive':
     case 'google-youtube':
       return 'This changes your Workbench. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password';
+    case 'composio':
+      return `This changes your Workbench. Once it is added, I can use your linked apps through Composio — ${boundary}`;
     default:
       return `This changes your Workbench. Once it is added, I can use the tool from there — ${boundary}`;
   }
@@ -85,6 +93,8 @@ function connectorOfferBoundary(kind: ConnectorKind): string {
     case 'google-drive':
     case 'google-youtube':
       return 'I never see your password';
+    case 'composio':
+      return 'your account stays with Composio and only approved tools can run';
     default:
       return 'its credentials stay in the tool, never in chat';
   }
@@ -111,6 +121,8 @@ export function connectorPurpose(kind: ConnectorKind): string {
       return 'Read and organise Drive files through the person’s own Google sign-in.';
     case 'google-youtube':
       return 'Read YouTube channel, video, and playlist data through the person’s own Google sign-in. Analytics (watch time, traffic, demographics) requires the channel owner account, not a manager.';
+    case 'composio':
+      return 'Link your own app accounts through Composio and let the helper run tools scoped to your connection; usage is recorded in Workbench.';
   }
 }
 

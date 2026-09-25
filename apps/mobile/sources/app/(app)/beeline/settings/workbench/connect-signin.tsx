@@ -45,6 +45,7 @@ export default function ConnectorSignInScreen() {
   const machineName = firstParam(params.machineName);
   const url = firstParam(params.url) ?? '';
   const method = firstParam(params.method) ?? 'streamed';
+  const [currentSignIn, setCurrentSignIn] = useState({ url, method });
   const roomId = firstParam(params.roomId);
   const webView = useSandboxWebView();
   const [fellBack, setFellBack] = useState(false);
@@ -64,6 +65,10 @@ export default function ConnectorSignInScreen() {
         .readInstallState({ workspaceId, connectorId })
         .then((state) => {
           if (state?.connected) dismiss();
+          else if (state?.signIn) setCurrentSignIn({
+            url: state.signIn.url,
+            method: state.signIn.method,
+          });
         })
         .catch(() => undefined);
     }, SIGN_IN_POLL_MS);
@@ -71,14 +76,14 @@ export default function ConnectorSignInScreen() {
   }, [connectorId, dismiss, workspaceId]);
 
   const openExternally = useCallback(async () => {
-    if (!url) return;
-    await WebBrowser.openBrowserAsync(url);
+    if (!currentSignIn.url) return;
+    await WebBrowser.openBrowserAsync(currentSignIn.url);
     setFellBack(true);
-  }, [url]);
+  }, [currentSignIn.url]);
 
   const host = (() => {
     try {
-      return new URL(url).host;
+      return new URL(currentSignIn.url).host;
     } catch {
       return '';
     }
@@ -108,28 +113,28 @@ export default function ConnectorSignInScreen() {
           {host ? <Text style={styles.subtitle}>{host}</Text> : null}
         </View>
       </View>
-      {method === 'oauth' ? (
+      {currentSignIn.method === 'oauth' ? (
         <View style={styles.centered} testID="signin-oauth-browser">
-          <Text style={styles.note}>Google sign-in opens in your browser. Return here after granting access.</Text>
+          <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
           <TouchableOpacity
             accessibilityRole="button"
             onPress={() => void openExternally()}
             style={styles.fallbackButton}
             testID="signin-open-external"
           >
-            <Text style={styles.fallbackText}>Continue with Google</Text>
+            <Text style={styles.fallbackText}>Continue with {connectorName}</Text>
           </TouchableOpacity>
         </View>
-      ) : webView && url ? (
+      ) : webView && currentSignIn.url ? (
         // JS-enabled on purpose: the sign-in sequence itself must run.
         React.createElement(webView, {
-          source: { uri: url },
+          source: { uri: currentSignIn.url },
           style: styles.webView,
           javaScriptEnabled: true,
           domStorageEnabled: true,
           testID: 'signin-webview',
         })
-      ) : webView && !url ? (
+      ) : webView && !currentSignIn.url ? (
         <View style={styles.centered}>
           <Text style={styles.errorText}>No sign-in page was reported</Text>
         </View>

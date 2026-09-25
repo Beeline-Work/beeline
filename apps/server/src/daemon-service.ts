@@ -78,6 +78,8 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { connectorAdapter } from '@beeline/api-contract/workbench';
+import { composioScopeForOwner, storedComposioScope } from './composio-config.js';
+import { ComposioClient } from './connector-composio.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -174,6 +176,7 @@ export class DaemonService {
       input: Input<'getPrChecksStatus'>,
     ) => Promise<Output<'getPrChecksStatus'>>,
     private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
+    private readonly composioClient?: ComposioClient,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -341,6 +344,7 @@ export class DaemonService {
           this.liveDiagnosticServerInstance,
           this.prChecksStatus,
           this.googleOAuth,
+          this.composioClient,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -725,6 +729,12 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'getComposioLink':
+        return (await this.composioLink(input as Input<'getComposioLink'>, authenticatedAgentId)) as Output<Name>;
+      case 'getComposioTools':
+        return (await this.composioTools(input as Input<'getComposioTools'>, authenticatedAgentId)) as Output<Name>;
+      case 'executeComposioTool':
+        return (await this.composioExecute(input as Input<'executeComposioTool'>, authenticatedAgentId)) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
           (input as Input<'getGoogleOAuthGrant'>).connectorId,
@@ -1092,6 +1102,155 @@ export class DaemonService {
     return { assignments };
   }
 
+  private async composioLink(
+    input: Input<'getComposioLink'>,
+    agentId: string,
+  ): Promise<Output<'getComposioLink'>> {
+    const row = (await this.database.query<{
+      id: string;
+      owner_identity_id: string;
+      pairing_generation: number;
+      composio_session_id: string | null;
+      composio_link_toolkit: string | null;
+      composio_link_started_at: Date | null;
+      sign_in: { method: string; url: string } | null;
+      composio_scope: unknown;
+    }>(
+      `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
+              c.composio_link_toolkit,c.composio_link_started_at,c.sign_in,c.composio_scope
+       FROM workspace_connectors c
+       JOIN agents a ON a.agent_id=c.helper_agent_id
+       JOIN memberships owner_member ON owner_member.workspace_id=c.workspace_id
+         AND owner_member.room_id IS NULL AND owner_member.identity_id=c.owner_identity_id
+         AND owner_member.removed_at IS NULL
+       WHERE c.id=$1::uuid AND c.helper_agent_id=$2 AND c.connector_type='composio'
+         AND c.status='installing' AND c.owner_identity_id=a.owner_id`,
+      [input.connectorId, agentId],
+    )).rows[0];
+    if (!row || (input.pairingGeneration !== undefined &&
+        row.pairing_generation !== input.pairingGeneration))
+      throw new Error('connector not found for this helper');
+    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+    if (!this.composioClient) throw new Error('Composio is not configured');
+    let sessionId: string | null | undefined = row.composio_session_id;
+    if (!sessionId) {
+      const created = await this.composioClient.createSession(scope);
+      const updated = (await this.database.query<{ composio_session_id: string }>(
+        `UPDATE workspace_connectors SET composio_session_id=$3
+         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$4
+           AND status='installing' AND composio_session_id IS NULL
+         RETURNING composio_session_id`,
+        [row.id, agentId, created, row.pairing_generation],
+      )).rows[0];
+      sessionId = updated?.composio_session_id ??
+        (await this.database.query<{ composio_session_id: string }>(
+          `SELECT composio_session_id FROM workspace_connectors
+           WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
+          [row.id, agentId, row.pairing_generation],
+        )).rows[0]?.composio_session_id;
+      if (!sessionId) throw new Error('connector pairing changed');
+    }
+    for (const toolkit of scope.toolkits) {
+      if (await this.composioClient.connected(sessionId, toolkit, scope)) continue;
+      if (row.composio_link_toolkit === toolkit && row.sign_in?.url) {
+        if (!row.composio_link_started_at ||
+            Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000)
+          throw new Error('Composio sign-in expired; tap Retry to open a new link');
+        return { status: 'pending', toolkit, url: row.sign_in.url };
+      }
+      const url = await this.composioClient.link(sessionId, toolkit, scope);
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET composio_link_toolkit=$3,sign_in=$4::jsonb,
+             composio_link_started_at=now(),updated_at=now()
+         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$5 AND status='installing'`,
+        [row.id, agentId, toolkit, JSON.stringify({ method: 'oauth', url }), row.pairing_generation],
+      );
+      return { status: 'pending', toolkit, url };
+    }
+    await this.database.query(
+      `UPDATE workspace_connectors SET composio_ready=true,updated_at=now()
+       WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
+      [row.id, agentId, row.pairing_generation],
+    );
+    return { status: 'connected' };
+  }
+
+  private async composioAccess(
+    input: { roomId: string; requestId: string; generationId: string },
+    agentId: string,
+  ): Promise<{ connectorId: string; helperAgentId: string; sessionId: string; scope: ReturnType<typeof storedComposioScope> }> {
+    await this.access(input.roomId, agentId);
+    const row = (await this.database.query<{
+      id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
+      composio_scope: unknown;
+    }>(
+      `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
+       FROM workspace_connectors c
+       JOIN rooms r ON r.workspace_id=c.workspace_id
+       JOIN agents helper ON helper.agent_id=c.helper_agent_id
+       JOIN agents actor ON actor.agent_id=$2
+         AND actor.owner_id=c.owner_identity_id
+         AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(c.machine_id,c.helper_agent_id)
+       JOIN memberships owner_workspace ON owner_workspace.workspace_id=c.workspace_id
+         AND owner_workspace.room_id IS NULL AND owner_workspace.identity_id=c.owner_identity_id
+         AND owner_workspace.removed_at IS NULL
+       JOIN memberships owner_room ON owner_room.room_id=r.id
+         AND owner_room.identity_id=c.owner_identity_id AND owner_room.removed_at IS NULL
+       JOIN agent_commands command ON command.room_id=r.id AND command.agent_id=actor.agent_id
+         AND command.turn_request_id=$3 AND command.generation_id=$4 AND command.state='claimed'
+       JOIN messages source ON source.id=command.source_message_id
+       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
+       WHERE r.id=$1 AND c.connector_type='composio'
+         AND c.status='connected' AND c.owner_identity_id=helper.owner_id
+         AND requester.id=c.owner_identity_id
+       ORDER BY c.updated_at DESC LIMIT 1`,
+      [input.roomId, agentId, input.requestId, input.generationId],
+    )).rows[0];
+    if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
+    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+    if (!this.composioClient) throw new Error('Composio is not configured');
+    return { connectorId: row.id, helperAgentId: row.helper_agent_id,
+      sessionId: row.composio_session_id, scope };
+  }
+
+  private async composioTools(
+    input: Input<'getComposioTools'>,
+    agentId: string,
+  ): Promise<Output<'getComposioTools'>> {
+    const access = await this.composioAccess(input, agentId);
+    return {
+      connectorId: access.connectorId,
+      toolkits: access.scope.toolkits,
+      tools: access.scope.tools,
+    };
+  }
+
+  private async composioExecute(
+    input: Input<'executeComposioTool'>,
+    agentId: string,
+  ): Promise<Output<'executeComposioTool'>> {
+    const access = await this.composioAccess(input, agentId);
+    if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
+      throw new Error('Composio arguments must be an object');
+    const result = await this.composioClient!.execute(
+      access.sessionId, access.scope, input.toolkit, input.tool, input.arguments,
+    );
+    await receiveConnectionUsage(this.database, {
+      requestId: input.requestId,
+      agentId,
+      roomId: input.roomId,
+      usage: [{
+        ref: `composio:${input.toolkit}`,
+        service: input.toolkit,
+        operation: input.tool,
+        statusCode: 200,
+        bytes: JSON.stringify(result.data ?? null).length,
+      }],
+    }, access.helperAgentId);
+    return result;
+  }
+
   /**
    * The helper reports it completed (or accepted) an install. `sign_in` is
    * written, not merged: the run that reaches `connected` printed no
@@ -1103,13 +1262,15 @@ export class DaemonService {
   ): Promise<Output<'installConnector'>> {
     const result = await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ id: string; pairing_generation: number }>(
-          `SELECT id,pairing_generation FROM workspace_connectors
+        await database.query<{ id: string; pairing_generation: number; connector_type: string; owner_identity_id: string; composio_ready: boolean; composio_scope: unknown }>(
+          `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
         )
       ).rows[0];
       if (!row) throw new Error('connector not found for this helper');
+      if (row.connector_type === 'composio' && !row.composio_ready)
+        throw new Error('Composio account is not connected');
       if (
         input.pairingGeneration !== undefined &&
         input.pairingGeneration !== row.pairing_generation
@@ -1130,6 +1291,19 @@ export class DaemonService {
           input.signIn ? JSON.stringify(input.signIn) : null,
         ],
       );
+      if (row.connector_type === 'composio') {
+        const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
+        await applyVaultList(database, row, scope.toolkits.map((toolkit) => ({
+          reference: `composio:${toolkit}`,
+          service: toolkit,
+          label: `${toolkit} via Composio`,
+          fieldNames: [],
+          allowedHosts: [],
+          createdAt: Math.floor(Date.now() / 1000),
+          stale: false,
+          state: 'active' as const,
+        })));
+      }
       return {
         row,
         completedOffers: await completeConnectorOffersForConnector(database, row.id),
@@ -4198,10 +4372,12 @@ export class DaemonService {
         purpose: connectorPurpose(entry.connectorType),
         available:
           entry.available &&
-          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4277,6 +4453,10 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
+    const composioScope = connectorType === 'composio'
+      ? composioScopeForOwner(context.addressee.pubkey) : undefined;
+    if (connectorType === 'composio' && !composioScope)
+      throw new Error('Composio scope is not configured on this Beeline server');
     const connectorName = connectorDisplayName(connectorType);
     const already = (
       await this.database.query<{ status: string }>(
@@ -4343,7 +4523,13 @@ export class DaemonService {
         connectorType,
         connectorName,
         reason,
-        consequence: connectorOfferConsequence(connectorType, reason),
+        consequence: connectorOfferConsequence(
+          connectorType,
+          reason,
+          connectorType === 'composio'
+            ? Object.values(composioScope!.tools).flat()
+            : undefined,
+        ),
         helper: context.machine,
         status: 'pending',
         createdAt: seconds(created.created_at),
@@ -4844,6 +5030,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
+  getComposioLink: true,
+  getComposioTools: true,
+  executeComposioTool: true,
   getGoogleOAuthGrant: true,
   installConnector: true,
   postConnectorStatus: true,

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Composio connector">
+  <rect x="7" y="7" width="50" height="50" rx="12" fill="#262629"/>
+  <path d="M43 20a17 17 0 1 0 0 24" fill="none" stroke="#d7af5f" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="44" cy="20" r="4" fill="#d7af5f"/>
+  <circle cx="44" cy="44" r="4" fill="#d7af5f"/>
+</svg>

@@ -11,7 +11,10 @@ const searchParams = vi.hoisted(() => ({
   url: 'https://login.tailscale.com/a/test',
   method: 'oauth',
 }));
-const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | { connected: boolean }));
+const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
+  connected: boolean;
+  signIn?: { method: 'oauth'; url: string };
+}));
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), replace: vi.fn() },
@@ -194,6 +197,32 @@ describe('ConnectorSignInScreen', () => {
     await act(async () => renderer.unmount());
     searchParams.connectorName = 'Tailscale';
     searchParams.url = 'https://login.tailscale.com/a/test';
+  });
+
+  it('switches to the next Composio toolkit link while the overlay stays open', async () => {
+    searchParams.connectorName = 'Composio';
+    searchParams.url = 'https://app.composio.dev/link/first';
+    readInstallState.mockResolvedValue({
+      connected: false,
+      signIn: { method: 'oauth', url: 'https://app.composio.dev/link/second' },
+    });
+    vi.useFakeTimers();
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(renderer.root.findByProps({ testID: 'signin-oauth-browser' })).toBeTruthy();
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://app.composio.dev/link/second');
+      expect(router.replace).not.toHaveBeenCalled();
+      await act(async () => renderer.unmount());
+    } finally {
+      vi.useRealTimers();
+      readInstallState.mockReset();
+      vi.mocked(WebBrowser.openBrowserAsync).mockClear();
+      searchParams.connectorName = 'Tailscale';
+      searchParams.url = 'https://login.tailscale.com/a/test';
+    }
   });
 
   it('names the connector being authenticated', async () => {

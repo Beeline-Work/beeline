@@ -32,6 +32,7 @@ const CONNECTOR_NAMES: Record<string, string> = {
   'google-calendar': 'Google Calendar',
   'google-drive': 'Google Drive',
   'google-youtube': 'YouTube',
+  composio: 'Composio',
 };
 
 function connectorNameFor(connectorId: string): string {

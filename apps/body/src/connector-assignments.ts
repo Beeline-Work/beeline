@@ -127,6 +127,7 @@ export class ConnectorAssignmentLoop {
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
   private readonly googleHomeDir: string;
+  private readonly composioWatches = new Map<string, unknown>();
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
     mcp: SquireMcpClient,
@@ -201,6 +202,8 @@ export class ConnectorAssignmentLoop {
       this.cancel(this.tailscaleWatch);
       this.tailscaleWatch = undefined;
     }
+    for (const watch of this.composioWatches.values()) this.cancel(watch);
+    this.composioWatches.clear();
   }
 
   /**
@@ -330,7 +333,9 @@ export class ConnectorAssignmentLoop {
         ? assignment.pairingGeneration
         : undefined;
     if (assignment.kind === 'install') {
-      if (assignment.connectorType === 'tailscale') {
+      if (assignment.connectorType === 'composio') {
+        await this.runComposioInstall(assignment);
+      } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
       } else {
         await this.runInstall(assignment.connectorId, pairingGeneration);
@@ -343,6 +348,55 @@ export class ConnectorAssignmentLoop {
         persistManualGoogleCredentials(this.googleHome(), grant.credentials);
     } else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
+  }
+
+  private async runComposioInstall(
+    assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
+  ): Promise<void> {
+    const generation = assignment.pairingGeneration !== undefined
+      ? { pairingGeneration: assignment.pairingGeneration } : {};
+    try {
+      const link = await this.api.execute('getComposioLink', {
+        agentId: this.agentId,
+        connectorId: assignment.connectorId,
+        ...generation,
+      });
+      if (link.status === 'pending') {
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId: assignment.connectorId,
+          steps: [{ label: `Link ${link.toolkit}`, status: 'running' }],
+          signIn: { method: 'oauth', url: link.url },
+          ...generation,
+        });
+        if (!this.composioWatches.has(assignment.connectorId)) {
+          const watch = this.schedule(() => {
+            this.composioWatches.delete(assignment.connectorId);
+            if (!this.stopped) void this.runOnce();
+          }, CONNECT_WATCH_INTERVAL_MS);
+          this.composioWatches.set(assignment.connectorId, watch);
+        }
+        return;
+      }
+    } catch (error) {
+      const message = `Composio connection failed: ${describe(error)}`;
+      await this.api.execute('postConnectorStatus', {
+        agentId: this.agentId,
+        connectorId: assignment.connectorId,
+        steps: [{ label: 'Connect Composio', status: 'failed', reason: message }],
+        errorMessage: message,
+        ...generation,
+      });
+      return;
+    }
+    const watch = this.composioWatches.get(assignment.connectorId);
+    if (watch !== undefined) this.cancel(watch);
+    this.composioWatches.delete(assignment.connectorId);
+    await this.api.execute('installConnector', {
+      agentId: this.agentId,
+      connectorId: assignment.connectorId,
+      ...generation,
+    });
   }
 
   /** Install Tailscale and publish its browser login URL until the tailnet is connected. */

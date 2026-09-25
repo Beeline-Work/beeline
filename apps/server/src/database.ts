@@ -1214,6 +1214,11 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_session_id text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,

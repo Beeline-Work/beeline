@@ -85,6 +85,50 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('publishes the Composio owner link and completes only after the server confirms it', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'install', connectorId: 'composio-1', connectorType: 'composio', pairingGeneration: 4,
+    };
+    const calls: ExecuteCall[] = [];
+    let linked = false;
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        calls.push({ op, input });
+        if (op === 'getConnectorAssignments') return { assignments: [assignment] };
+        if (op === 'getComposioLink') return linked
+          ? { status: 'connected' }
+          : { status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_1' };
+        return {};
+      },
+    };
+    const timers: (() => void)[] = [];
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      install: async () => { throw new Error('Squire must not run'); },
+      schedule: (fn) => { timers.push(fn); return fn; },
+      cancel: () => {},
+    });
+    await loop.runOnce();
+    await settle();
+    expect(calls).toContainEqual({
+      op: 'postConnectorStatus',
+      input: {
+        agentId: 'agent-1', connectorId: 'composio-1', pairingGeneration: 4,
+        steps: [{ label: 'Link github', status: 'running' }],
+        signIn: { method: 'oauth', url: 'https://app.composio.dev/link/lt_1' },
+      },
+    });
+    expect(calls.some((call) => call.op === 'installConnector')).toBe(false);
+    linked = true;
+    timers[0]!();
+    await settle();
+    expect(calls).toContainEqual({
+      op: 'installConnector',
+      input: { agentId: 'agent-1', connectorId: 'composio-1', pairingGeneration: 4 },
+    });
+    loop.stop();
+  });
   it('routes a Tailscale assignment through its own sign-in ceremony', async () => {
     const api = apiMock([{ kind: 'install', connectorId: 'tail-1', connectorType: 'tailscale' }]);
     const loop = new ConnectorAssignmentLoop({

@@ -1144,6 +1144,45 @@ describe('workbench connectors', () => {
     );
   });
 
+  it('posts the Tailscale login link to the helper owner DM instead of only failing', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'tailscale',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    const url = 'https://login.tailscale.com/a/owner-link';
+    const posted = await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      pairingGeneration: 1,
+      steps: [{ label: 'Tailnet signed in', status: 'running' }],
+      signIn: { method: 'oauth', url },
+    });
+    expect(posted.status).toBe(200);
+    const dm = await database.query<{ text: string; author_id: string; system_event: Record<string, any> }>(
+      `SELECT m.text,m.author_id,m.system_event FROM messages m
+       JOIN rooms r ON r.id=m.room_id
+       WHERE r.workspace_id=$1 AND m.presentation='system'
+         AND m.system_event->'object'->>'url'=$2`,
+      [WORKSPACE, url],
+    );
+    expect(dm.rows).toHaveLength(1);
+    expect(dm.rows[0]!.author_id).toBe(connectorIdentityId('tailscale'));
+    expect(dm.rows[0]!.text).toContain('needs');
+    expect(dm.rows[0]!.text).not.toContain(url);
+    expect(dm.rows[0]!.system_event.object.url).toBe(url);
+    const participants = await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships WHERE room_id=(
+         SELECT room_id FROM messages WHERE id=(
+           SELECT id FROM messages WHERE system_event->'object'->>'url'=$1 LIMIT 1
+         )
+       )`,
+      [url],
+    );
+    expect(participants.rows.map((row) => row.identity_id).sort()).toEqual(
+      [HUMAN, connectorIdentityId('tailscale')].sort(),
+    );
+  });
+
   it('pairing one Google tool queues only that product', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,

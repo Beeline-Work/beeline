@@ -795,12 +795,19 @@ export type AuthorizeSquireCallResult = {
 /**
  * What an agent may learn about the Workbench from a Room: the catalog (every
  * connector kind, its name, one-line purpose, and whether it can be offered),
- * plus what the ADDRESSEE — the person whose message woke this turn — already
- * has paired and which keys they hold (names only; a vault value never crosses
- * this wire). Another member's rows are never visible.
+ * plus what the OWNER of this helper's machine already has paired and which
+ * keys they hold (names only; a vault value never crosses this wire). The
+ * addressee is who woke the turn (for offers); the catalog is never theirs
+ * unless they are also the owner.
  */
 export type AgentWorkbenchView = {
   readonly addressee: {
+    readonly identityId: string;
+    readonly name: string;
+    readonly handle?: string;
+  };
+  /** The human who owns this helper and this machine. */
+  readonly owner: {
     readonly identityId: string;
     readonly name: string;
     readonly handle?: string;
@@ -813,7 +820,7 @@ export type AgentWorkbenchView = {
     readonly available: boolean;
     /** You may offer it from this Room with offer_connector. */
     readonly offerable: boolean;
-    /** The addressee's own row for this kind, when they have one on any machine. */
+    /** The owner's own row for this kind, when they have one on any machine. */
     readonly paired?: {
       readonly status: 'installing' | 'connected' | 'error' | 'disconnected';
       readonly helperName: string;
@@ -821,7 +828,7 @@ export type AgentWorkbenchView = {
       readonly onThisMachine: boolean;
     };
   }[];
-  /** The addressee's provisioned keys, by name only. */
+  /** The owner's provisioned keys, by name only. */
   readonly connections: readonly {
     readonly connectorType: string;
     readonly service: string | null;

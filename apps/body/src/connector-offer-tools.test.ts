@@ -10,6 +10,7 @@ import { pendingGrantToolCall, resumePrompt } from './monolith-room-turn.js';
 function deps(
   answer: Record<string, unknown>,
   ops: Array<{ name: string; input: Record<string, unknown> }> = [],
+  extra: Partial<ConnectorOfferDeps> = {},
 ): ConnectorOfferDeps {
   return {
     roomId: 'room-1',
@@ -17,6 +18,7 @@ function deps(
       ops.push({ name, input: input as Record<string, unknown> });
       return answer;
     },
+    ...extra,
   };
 }
 
@@ -31,6 +33,14 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(corner).not.toContain('workbench_status');
     expect(corner).not.toContain('offer_connector');
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('offer_connector');
+  });
+
+  it('describes workbench_status as this machine and owner, with one failure sentence', () => {
+    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'workbench_status')!;
+    expect(tool.description).toContain('machine and owner you actually run on');
+    expect(tool.description).toContain(
+      "I can/can't reach X on this machine because Y; to fix it, Z.",
+    );
   });
 
   it('offer_connector accepts only offerable kinds: never the wallet', () => {
@@ -58,6 +68,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
       deps(
         {
           addressee: { identityId: 'zeke-id', name: 'Zeke', handle: 'zeke' },
+          owner: { identityId: 'moon-id', name: 'Moonscanner', handle: 'moonscanner' },
           machine: { machineId: 'machine-1', name: 'otter-laptop' },
           catalog: [
             {
@@ -98,8 +109,9 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
       ),
     );
     expect(ops).toEqual([{ name: 'readAgentWorkbench', input: { roomId: 'room-1' } }]);
-    expect(text).toContain('Workbench for @zeke');
-    expect(text).toContain('installs on your machine, otter-laptop');
+    expect(text).toContain('Workbench for @moonscanner');
+    expect(text).not.toContain('Workbench for @zeke');
+    expect(text).toContain('on otter-laptop');
     expect(text).toContain(
       '- trusty-squire (Trusty Squire): not added — you may offer it with offer_connector. A credential vault.',
     );
@@ -111,6 +123,42 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(text).toContain('- 1inch API key (1inch) via trusty-squire');
     // Names only: nothing in the view carries a value, and the text prints nothing but names.
     expect(text).not.toMatch(/secret|password|token=/i);
+  });
+
+  it('installs Tailscale when it is enabled on this machine and the CLI is missing', async () => {
+    const ensured: boolean[] = [];
+    const text = await workbenchStatus(
+      deps(
+        {
+          addressee: { identityId: 'zeke-id', name: 'Zeke', handle: 'zeke' },
+          owner: { identityId: 'moon-id', name: 'Moonscanner', handle: 'moonscanner' },
+          machine: { machineId: 'machine-1', name: 'chode' },
+          catalog: [
+            {
+              connectorType: 'tailscale',
+              name: 'Tailscale',
+              purpose: 'Network.',
+              available: true,
+              offerable: true,
+              paired: { status: 'connected', helperName: 'chode', onThisMachine: true },
+            },
+          ],
+          connections: [],
+        },
+        [],
+        {
+          tailscaleReach: async (enabled) => {
+            ensured.push(enabled);
+            return "I can't reach Tailscale on this machine because the CLI is not installed; to fix it, the connector will install it and send the owner a login link.";
+          },
+        },
+      ),
+    );
+    expect(ensured).toEqual([true]);
+    expect(text).toContain('Workbench for @moonscanner');
+    expect(text).toContain(
+      "I can't reach Tailscale on this machine because the CLI is not installed; to fix it, the connector will install it and send the owner a login link.",
+    );
   });
 
   it('offer_connector posts one offer and tells the agent its turn is paused on the card', async () => {

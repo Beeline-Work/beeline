@@ -172,6 +172,33 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
+  it('re-runs Tailscale install on sync when the CLI may be missing', async () => {
+    const api = apiMock([{ kind: 'sync', connectorId: 'tail-1', connectorType: 'tailscale' }]);
+    let installed = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      install: async () => {
+        throw new Error('must not run the Squire installer');
+      },
+      installTailscale: async () => {
+        installed += 1;
+        return {
+          status: 'connected',
+          steps: [{ label: 'Tailscale installed', status: 'done' }],
+          signedInAs: 'sol@example.test',
+        };
+      },
+    });
+
+    await loop.runOnce();
+    await settle();
+
+    expect(installed).toBe(1);
+    expect(api.calls.some((call) => call.op === 'installConnector')).toBe(true);
+    loop.stop();
+  });
+
   it('drains immediately on wake without waiting for the recovery poll', async () => {
     const api = apiMock([]);
     let scheduled = 0;

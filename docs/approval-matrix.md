@@ -23,3 +23,19 @@ Upgrade: existing shared personal-resource request cards and automatic receipts 
 Resource ownership is the helper owner's host/tool inventory; wallet and Squire retain their existing owner-bound account resolution. The agent owner's approval is not permission to route another person's Workbench connection through that helper. Generic imported tools must be provisioned for that helper owner. Filesystem confinement is still the documented hygiene boundary, not a new security sandbox; the new host approval precedes use of that existing host-capable runtime. Credential-file and unread-script hard stops remain enforced by the granted-command runner, and payment delegation, funds, and merge/review rules remain independent.
 
 Release server and its schema migration before updating helpers, because new helpers call new authorization operations. The PR stays draft until the complete change and its acceptance evidence are reviewed. No claim of spending caps is made.
+
+## Implementation and evidence checklist
+
+Evidence recorded for implementation commit `f86fd5a3`; PR #1712 carries the same criteria-to-evidence mapping and the full validation limitations.
+
+- [x] Authenticated original-requester provenance: `DaemonService.grantRequester` resolves the command root; integration delegation/resume and command-reuse tests passed.
+- [x] Repository, host and resource matrix: four integration cases exercise owner/third-party requesters with yolo on/off, including direct API decision checks and private-card reads.
+- [x] Execution boundaries: corner tests suppress autonomous prompts without repository or host authorization; actual stdio/HTTP transport tests change requester within the same running process; command-runner tests exercise live grants.
+- [x] Scoped paid calls and independent payments: repeated authorized resource calls create no budget grant; wallet integration preserves delegation and funds checks.
+- [x] Once, revocation and upgrade: grant tests cover consumption and revocation; the idempotent upgrade test privatizes old cards/receipts, revokes unproven/foreign approvals, and preserves valid pending grants.
+- [x] Agent and phone guidance: generated skill guidance and grant-card authority tests passed; imported routes and YouTube use the resource facade.
+- [x] Local validation: 193 focused body tests, 17 focused server integration tests, 30 database/wallet tests, 17 grant-contract tests, and 83 mobile card tests passed. Server/body/dependency builds and mobile typechecking passed. The final agent-home fail-closed assertion was rechecked in its 42-test suite.
+- [ ] Complete current-head CI. Do not reuse results from budget-only head `559c7aad`.
+- [ ] Configured reviewer's exact-current-head approval. Keep the PR draft until full delivery is accepted; call `pr_checks_status` before any merge.
+
+Validation limitations: the broader server integration/wallet run had nine failures and 159 passes. All nine failures reproduced in an isolated checkout of unchanged `559c7aad` (websocket invalidation timeout, concurrent retry response, seeded-soul settings, managed-identity response, invalid agent-name status, peer corner inbox, working receipt heartbeat, parent Room working receipt, and outside-turn event fixture). The no-mistakes pipeline could not initialize because its existing remote conflicts with setup; no pipeline success is claimed. A mobile clock test failed when its two-minute-old fixture crossed UTC midnight; the full 83-test file passed with `TZ=America/New_York`.

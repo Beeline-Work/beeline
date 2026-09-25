@@ -7993,6 +7993,101 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
+  it('wakes the configured reviewer with a revised brief on an already green head', async () => {
+    const opened = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'reviewer-brief-open',
+      name: 'Review brief',
+      objective: 'Keep the agreed behavior',
+      brief: { content: 'A1: keep the agreed behavior.' },
+    });
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const reviewerId = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Reviewer','reviewer')`,
+      [reviewerId],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [reviewerId, HUMAN]);
+    for (const memberRoom of [null, ROOM, cornerId])
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, memberRoom, reviewerId],
+      );
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, reviewerId]);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: { number: 77, url: 'https://github.com/example/repo/pull/77', headSha: '1'.repeat(40) },
+      }),
+    ]);
+    const revised = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'reviewer-brief-correction',
+      expectedRevision: 1,
+      brief: { content: 'A1: keep the agreed behavior. A2: retain the corrected label.', change: 'Corrected label' },
+    });
+    expect(revised.status).toBe(200);
+    expect(await revised.json()).toMatchObject({ revision: 2, change: 'Corrected label' });
+    const commands = await database.query<{ agent_id: string; reason: string }>(
+      `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
+      [cornerId],
+    );
+    expect(commands.rows).toEqual([
+      { agent_id: AGENT, reason: 'corner_brief_revision' },
+      { agent_id: reviewerId, reason: 'corner_check' },
+    ]);
+    const reviewerCommand = (
+      await database.query<{ id: string; turn_request_id: string }>(
+        `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_check'`,
+        [cornerId, reviewerId],
+      )
+    ).rows[0]!;
+    const reviewerDaemon = new DaemonService(database, new LiveHub());
+    await reviewerDaemon.execute(
+      'claimAgentCommand',
+      { roomId: cornerId, commandId: reviewerCommand.id, generationId: 'review-generation' },
+      reviewerId,
+    );
+    await reviewerDaemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: cornerId,
+        agentId: reviewerId,
+        requestId: reviewerCommand.turn_request_id,
+        generationId: 'review-generation',
+        status: 'working',
+      },
+      reviewerId,
+    );
+    await expect(
+      reviewerDaemon.execute(
+        'postCornerValidationStage',
+        {
+          cornerId,
+          requestId: reviewerCommand.turn_request_id,
+          generationId: 'review-generation',
+          briefRevision: 2,
+          headSha: '1'.repeat(40),
+          stage: 'review',
+          status: 'passed',
+          evidence: 'Compared both acceptance criteria with the current head.',
+        },
+        reviewerId,
+      ),
+    ).resolves.toMatchObject({ stage: 'review', status: 'passed', actorId: reviewerId });
+    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+      brief: { revision: 2, content: 'A1: keep the agreed behavior. A2: retain the corrected label.' },
+      validation: expect.arrayContaining([
+        expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
+        expect.objectContaining({ stage: 'tests', status: 'pending' }),
+      ]),
+    });
+  });
+
   it('creates every independently keyed corner requested by one originating task', async () => {
     const requestId = 'multiple-corner-open';
     const first = await daemonOperation('createCorner', {

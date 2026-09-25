@@ -290,9 +290,90 @@ describe('workbench connectors', () => {
           [`command-${sourceId}`, roomId, HELPER, sourceId, sourceId],
         );
       }
-      await expect(scoped.execute('getComposioTools', {
-        roomId, requestId: 'other-source', generationId: 'generation-1',
-      }, HELPER)).rejects.toThrow('access denied');
+      const unrelatedGrant = await scoped.execute('authorizeResourceCall', {
+        roomId,
+        requestId: 'other-source',
+        generationId: 'generation-1',
+        target: 'unrelated-resource',
+      }, HELPER);
+      expect(unrelatedGrant).toEqual(expect.objectContaining({ allowed: false, status: 'pending' }));
+      await phone.execute('decideAgentGrant', {
+        grantId: unrelatedGrant.grantId!, decision: 'always',
+      }, HUMAN);
+      const firstResume = (await database.query<{
+        turn_request_id: string;
+        root_source_message_id: string;
+        source_author_id: string;
+      }>(
+        `SELECT command.turn_request_id,command.root_source_message_id,
+                source.author_id source_author_id
+         FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.action='resume'
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+        [roomId, HELPER],
+      )).rows[0]!;
+      expect(firstResume).toEqual(expect.objectContaining({
+        root_source_message_id: 'other-source',
+        source_author_id: HUMAN,
+      }));
+      await database.query(
+        `UPDATE agent_commands SET state='claimed',generation_id='generation-resume-1'
+         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
+        [roomId, HELPER, firstResume.turn_request_id],
+      );
+      const resumedContext = {
+        roomId,
+        requestId: firstResume.turn_request_id,
+        generationId: 'generation-resume-1',
+      };
+      const remoteCallsBeforeDenied = requests.length;
+      const toolsDenied = await scoped.execute('getComposioTools', resumedContext, HELPER);
+      expect(toolsDenied).toEqual(expect.objectContaining({ status: 'permission-required' }));
+      expect(await scoped.execute('executeComposioTool', {
+        ...resumedContext,
+        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
+      }, HELPER)).toEqual(toolsDenied);
+      expect(requests).toHaveLength(remoteCallsBeforeDenied);
+      const composioGrant = (await database.query<{
+        id: string;
+        requested_by: string;
+        status: string;
+      }>(
+        `SELECT id,requested_by,status FROM agent_grants
+         WHERE agent_id=$1 AND room_id=$2 AND kind='mcp' AND target='composio'
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [HELPER, roomId],
+      )).rows[0]!;
+      expect(composioGrant).toEqual({
+        id: (toolsDenied as { grantId: string }).grantId,
+        requested_by: RECIPIENT,
+        status: 'pending',
+      });
+      await phone.execute('decideAgentGrant', {
+        grantId: composioGrant.id, decision: 'always',
+      }, HUMAN);
+      const approvedResume = (await database.query<{ turn_request_id: string }>(
+        `SELECT turn_request_id FROM agent_commands
+         WHERE room_id=$1 AND agent_id=$2 AND action='resume' AND root_source_message_id='other-source'
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [roomId, HELPER],
+      )).rows[0]!;
+      await database.query(
+        `UPDATE agent_commands SET state='claimed',generation_id='generation-resume-2'
+         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
+        [roomId, HELPER, approvedResume.turn_request_id],
+      );
+      const approvedContext = {
+        roomId,
+        requestId: approvedResume.turn_request_id,
+        generationId: 'generation-resume-2',
+      };
+      expect((await scoped.execute('getComposioTools', approvedContext, HELPER)).connectorId)
+        .toBe(paired.connectorId);
+      expect(await scoped.execute('executeComposioTool', {
+        ...approvedContext,
+        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
+      }, HELPER)).toEqual({ data: { issue: 42 }, logId: 'log_owner' });
       process.env.BEELINE_COMPOSIO_SCOPE = JSON.stringify({
         toolkits: ['github'], tools: { github: ['GITHUB_DELETE_REPO'] },
       });
@@ -327,7 +408,10 @@ describe('workbench connectors', () => {
           SELECT id FROM workspace_connections WHERE connector_id=$1::uuid)`,
         [paired.connectorId],
       );
-      expect(receipts.rows).toEqual([{ owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' }]);
+      expect(receipts.rows).toEqual([
+        { owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' },
+        { owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' },
+      ]);
       expect((await connectionReceiptCards()).some((card) => card.author_id === connectorIdentityId('composio')))
         .toBe(false);
       const remoteCalls = requests.length;

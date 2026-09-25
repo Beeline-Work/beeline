@@ -248,18 +248,25 @@ export type DaemonOperationMap = {
     AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
     { readonly status: 'connected' } | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
   >;
-  getComposioTools: Operation<RoomInput & { readonly requestId: string; readonly generationId: string }, {
-    readonly connectorId: string;
-    readonly toolkits: readonly string[];
-    readonly tools: Readonly<Record<string, readonly string[]>>;
-  }>;
+  getComposioTools: Operation<
+    RoomInput & { readonly requestId: string; readonly generationId: string },
+    | {
+        readonly connectorId: string;
+        readonly toolkits: readonly string[];
+        readonly tools: Readonly<Record<string, readonly string[]>>;
+      }
+    | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
   executeComposioTool: Operation<RoomInput & {
     readonly requestId: string;
     readonly generationId: string;
     readonly toolkit: string;
     readonly tool: string;
     readonly arguments: Record<string, unknown>;
-  }, { readonly data: unknown; readonly logId?: string }>;
+  },
+    | { readonly data: unknown; readonly logId?: string }
+    | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {

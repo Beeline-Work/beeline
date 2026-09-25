@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { RoomScheduleCadence, RoomScheduleView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { cornerHref } from '@/buzz/corner-navigation';
 import { Typography } from '@/constants/Typography';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -124,12 +125,12 @@ export default function ScheduledWork() {
             ) : (
               schedules.map((schedule) => {
                 const confirming = confirmStop === schedule.id;
-                return (
-                  <View
-                    key={schedule.id}
-                    style={styles.scheduleRow}
-                    testID={`scheduled-work-${schedule.id}`}
-                  >
+                const corner = schedule.corner;
+                const details = (
+                  <>
+                    {corner && (
+                      <Text style={styles.scheduleCorner}>CORNER · {corner.name}</Text>
+                    )}
                     <Text style={styles.scheduleAgent}>
                       @{agentNames.get(schedule.agentId) ?? 'Agent'}
                     </Text>
@@ -138,6 +139,28 @@ export default function ScheduledWork() {
                     <Text style={styles.scheduleMeta}>
                       Next {NEXT_RUN.format(new Date(schedule.nextRunAt * 1_000))}
                     </Text>
+                  </>
+                );
+                return (
+                  <View
+                    key={schedule.id}
+                    style={styles.scheduleRow}
+                    testID={`scheduled-work-${schedule.id}`}
+                  >
+                    {corner ? (
+                      <TouchableOpacity
+                        accessibilityLabel={`Open ${corner.name} corner`}
+                        onPress={() =>
+                          router.push(cornerHref(corner.id, roomId!, corner.name))
+                        }
+                        style={styles.scheduleDetails}
+                        testID={`open-scheduled-work-${schedule.id}`}
+                      >
+                        {details}
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.scheduleDetails}>{details}</View>
+                    )}
                     <View style={styles.stopRow}>
                       <TouchableOpacity
                         disabled={working}
@@ -189,6 +212,8 @@ const styles = StyleSheet.create((theme) => ({
   notice: { ...Typography.default(), color: theme.buzz.textMuted, fontSize: 13, lineHeight: 19 },
   empty: { ...Typography.default(), color: theme.buzz.textMuted, fontSize: 13, lineHeight: 19 },
   scheduleRow: { borderTopWidth: 1, borderTopColor: theme.buzz.border, paddingTop: 12, gap: 4 },
+  scheduleDetails: { gap: 4 },
+  scheduleCorner: { ...Typography.mono('semiBold'), color: theme.buzz.textMuted, fontSize: 10 },
   scheduleAgent: { ...Typography.mono('semiBold'), color: theme.buzz.chrome, fontSize: 12 },
   scheduleMessage: {
     ...Typography.default(),

@@ -365,6 +365,8 @@ interface RoomScheduleRow {
   message: string;
   next_run_at: Date;
   created_at: Date;
+  surface_parent_id?: string | null;
+  surface_name?: string;
 }
 
 function hash(value: string): string {
@@ -670,6 +672,9 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
     message: row.message,
     nextRunAt: unix(row.next_run_at),
     createdAt: unix(row.created_at),
+    ...(row.surface_parent_id && row.surface_name
+      ? { corner: { id: row.room_id, name: row.surface_name } }
+      : {}),
   };
 }
 
@@ -3376,8 +3381,13 @@ export class PhoneService {
     await this.requireTopLevelRoom(roomId);
     await this.requireRoomWorkspaceManager(roomId, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
-      `SELECT id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at
-       FROM agent_schedules WHERE room_id=$1 ORDER BY created_at,id`,
+      `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
+              schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
+              schedule.created_at,surface.parent_id surface_parent_id,surface.name surface_name
+       FROM agent_schedules schedule
+       JOIN rooms surface ON surface.id=schedule.room_id
+       WHERE surface.id=$1 OR surface.parent_id=$1
+       ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
     return { schedules: schedules.rows.map(roomSchedule) };
@@ -3389,7 +3399,9 @@ export class PhoneService {
     await this.requireTopLevelRoom(input.roomId);
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const deleted = await this.database.query(
-      `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+      `DELETE FROM agent_schedules schedule USING rooms surface
+       WHERE schedule.id=$1 AND surface.id=schedule.room_id
+         AND (surface.id=$2 OR surface.parent_id=$2)`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');

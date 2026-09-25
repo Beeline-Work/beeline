@@ -138,6 +138,13 @@ describe('phone contract', () => {
       footer: 'closed · 3 of 4 voted',
     };
     expect(isRoomView({ ...room, messages: [{ ...message, choice }] })).toBe(true);
+    const humanPoll = { ...choice, status: 'open', agent: identity };
+    expect(readRoomView({ ...room, messages: [{ ...message, choice: humanPoll }] })?.messages[0]?.choice)
+      .toEqual(humanPoll);
+    expect(
+      readRoomView({ ...room, messages: [{ ...message, choice: { ...humanPoll, mode: 'question' } }] })
+        ?.messages[0]?.choice,
+    ).toBeUndefined();
     expect(
       readRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] })
         ?.messages[0]?.choice,

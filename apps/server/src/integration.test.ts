@@ -23,6 +23,7 @@ import {
   isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
+  readRoomView,
   DEFAULT_WORKSPACE_ID,
   WELCOME_ROOM_ID,
   ROOM_VIEW_MESSAGE_LIMIT,
@@ -10089,13 +10090,21 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { choiceId, closesAt } = (await created.json()) as { choiceId: string; closesAt: number };
     expect(closesAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    const opened = readRoomView(await (await request(`/v1/phone/rooms/${ROOM}`)).json());
+    expect(opened?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
+      expect.objectContaining({ mode: 'poll', status: 'open', agent: expect.objectContaining({ kind: 'human' }) }),
+    );
     expect((await operation('answerChoice', { choiceId, optionId: 'A' })).status).toBe(200);
+    const voted = readRoomView(await (await request(`/v1/phone/rooms/${ROOM}`)).json());
+    expect(voted?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
+      expect.objectContaining({ status: 'open', votedCount: 1 }),
+    );
     expect((await operation('answerChoice', { choiceId, optionId: 'B' }, memberToken)).status).toBe(
       200,
     );
     const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(room.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
-      expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie' }),
+    expect(readRoomView(room)?.messages.find((message) => message.choice?.choiceId === choiceId)?.choice).toEqual(
+      expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie', votedCount: 2 }),
     );
   });
 

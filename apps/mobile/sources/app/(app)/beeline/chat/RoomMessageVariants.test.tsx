@@ -2844,6 +2844,40 @@ describe('Room message variant components', () => {
     ).toBe(2);
   });
 
+  it('renders a human-created poll and lets an elector vote', () => {
+    const onAnswer = vi.fn();
+    const renderer = render(
+      <ChoiceCard
+        message={message({
+          choice: {
+            choiceId: 'human-poll',
+            mode: 'poll',
+            status: 'open',
+            agent: { pubkey: 'human', kind: 'human', name: 'Owner' },
+            prompt: 'Which plan?',
+            options: [
+              { optionId: 'A', letter: 'A', label: 'Plan A', consequence: 'Plan A' },
+              { optionId: 'B', letter: 'B', label: 'Plan B', consequence: 'Plan B' },
+            ],
+            electorate: ['human', 'member'],
+            votedCount: 0,
+            electorateCount: 2,
+            responses: [],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="member"
+        actionId={null}
+        onAnswer={onAnswer}
+        onSkip={vi.fn()}
+      />,
+    );
+    expect(JSON.stringify(renderer.toJSON())).toContain('Which plan?');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Owner');
+    act(() => renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress());
+    expect(onAnswer).toHaveBeenCalledWith('human-poll', 'A');
+  });
+
   it('keeps a long poll question and every option within the card at larger text sizes', () => {
     const prompt =
       'Which of these approaches should we take for the next release when the integration needs more time?';

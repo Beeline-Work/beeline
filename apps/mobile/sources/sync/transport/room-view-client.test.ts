@@ -113,6 +113,42 @@ describe('mobile transport cutover switch', () => {
     );
   });
 
+  it('requests older agent work with the server cursor instead of repeating the first page', async () => {
+    controls.enabled = true;
+    const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+    const agentId = 'b'.repeat(64);
+    const cursor = JSON.stringify(['2026-09-24T00:00:00Z', 'https://github.com/acme/repo/pull/6']);
+    const firstWork = { title: 'Newest work', url: 'https://github.com/acme/repo/pull/6' };
+    const olderWork = { title: 'Older work', url: 'https://github.com/acme/repo/pull/5' };
+    const { monolithSession } = await import('@/auth/monolith-session');
+    vi.mocked(monolithSession.fetch).mockImplementation(async (input) => {
+      const older = new URL(String(input)).searchParams.get('workCursor') === cursor;
+      return Response.json({
+        workspaceId,
+        agent: { identity: { pubkey: agentId, kind: 'agent', name: 'Agent' }, role: 'member' },
+        recentWork: [older ? olderWork : firstWork],
+        ...(older ? {} : { recentWorkCursor: cursor }),
+        catalog: [],
+        watchFilters: [],
+      });
+    });
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: fixture.viewer.pubkey, secretKey: new Uint8Array(32) },
+    });
+    const first = await client.agent(workspaceId, agentId);
+    expect(first.recentWork).toEqual([firstWork]);
+    expect(first.recentWorkCursor).toBe(cursor);
+    const older = await client.agent(workspaceId, agentId, first.recentWorkCursor);
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenLastCalledWith(
+      `https://server.example/v1/phone/workspaces/${workspaceId}/agents/${agentId}?workCursor=${encodeURIComponent(cursor)}`,
+      expect.objectContaining({ method: 'GET' }),
+      { timeoutMs: 15_000 },
+    );
+    expect(older.recentWork).toEqual([olderWork]);
+    expect(older.recentWorkCursor).toBeUndefined();
+  });
+
   it('puts the archived-corners opt-in on the monolith request', async () => {
     controls.enabled = true;
     const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';

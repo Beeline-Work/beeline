@@ -189,7 +189,7 @@ export class RoomViewClient {
     return this.implementation.workspaceMembers(id, query);
   }
   agent(workspaceId: string, agentId: string, workCursor?: string) {
-    return this.implementation.agent(workspaceId, agentId);
+    return this.implementation.agent(workspaceId, agentId, workCursor);
   }
   chats(id: string) {
     return this.implementation.chats(id);

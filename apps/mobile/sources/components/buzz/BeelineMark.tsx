@@ -21,7 +21,15 @@ const MARK_VIEWBOX = beelineMark.viewBox;
 const MARK_TRANSFORM = beelineMark.transform;
 const MARK_FILL_RULE = beelineMark.fillRule as 'evenodd' | 'nonzero';
 
-export function BeelineMark({ size = 112, shimmer = false }: { size?: number; shimmer?: boolean }) {
+export function BeelineMark({
+  size = 112,
+  shimmer = false,
+  compact = false,
+}: {
+  size?: number;
+  shimmer?: boolean;
+  compact?: boolean;
+}) {
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotion();
   const highlight = useSharedValue(0);
@@ -50,14 +58,10 @@ export function BeelineMark({ size = 112, shimmer = false }: { size?: number; sh
       accessibilityLabel="Beeline logo"
       width={size}
       height={size}
-      viewBox={MARK_VIEWBOX}
+      viewBox={compact ? '40 40 160 160' : MARK_VIEWBOX}
     >
       <G transform={MARK_TRANSFORM}>
-        <Path
-          d={MARK_PATH}
-          fillRule={MARK_FILL_RULE}
-          fill={theme.buzz.brandMark}
-        />
+        <Path d={MARK_PATH} fillRule={MARK_FILL_RULE} fill={theme.buzz.brandMark} />
         <AnimatedPath
           d={MARK_PATH}
           fillRule={MARK_FILL_RULE}

@@ -15,6 +15,8 @@ import {
 import { resolveFace } from '@/buzz/faces';
 import { PERSON_PLATE, agentFaceLayers, personFaceLayers } from '@/buzz/faces/face-tile';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
+import { BeelineMark } from './BeelineMark';
 import { HullLivePulse } from './MonoHull';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -220,6 +222,18 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   useEffect(() => setFailedAvatar(null), [avatarUrl]);
 
   const label = `${name ?? identityKindLabel(kind)}, ${identityKindLabel(kind)}${live ? ', working' : ''}`;
+
+  if (kind === 'human' && seed === SYSTEM_IDENTITY_PUBKEY) {
+    return (
+      <View
+        accessibilityLabel="System, Beeline logo"
+        style={[styles.frame, { width: size, height: size }]}
+        testID={testID ?? 'identity-system-logo'}
+      >
+        <BeelineMark size={size} compact />
+      </View>
+    );
+  }
 
   if (kind === 'workspace') {
     return (

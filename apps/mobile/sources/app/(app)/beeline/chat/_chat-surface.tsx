@@ -361,6 +361,7 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark, isConnectorLogoUrl } from '@/components/buzz/IdentityMark';
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
@@ -5195,6 +5196,7 @@ export function BuzzChatSurface({
             )}
             {isDirectMessage &&
               (!isReadOnlyDirectMessage ||
+                dmPeerPubkey === SYSTEM_IDENTITY_PUBKEY ||
                 isConnectorLogoUrl(
                   dmPeerIdentity?.avatar ?? directMessageListItem?.directMessage?.peer.avatar,
                 )) &&

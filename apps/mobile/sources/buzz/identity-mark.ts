@@ -28,6 +28,11 @@
 
 export type IdentityKind = 'agent' | 'human' | 'workspace';
 
+/** Only server-rendered agent portraits replace the assigned face tile. */
+export function isGeneratedAgentAvatarUrl(avatarUrl?: string): boolean {
+  return Boolean(avatarUrl && /\/v1\/agent-avatars\/[0-9a-f-]{36}$/.test(avatarUrl));
+}
+
 /** A cell of the cypher grid. `void` always resolves to the mark's own deep
  *  tone, so it reads as shadow rather than as a hole in the slab. */
 export type CypherTone = 'void' | 'mid' | 'bright';

@@ -7,6 +7,7 @@ import {
   identityKindLabel,
   identityMarkGeometry,
   identityPalette,
+  isGeneratedAgentAvatarUrl,
   type CypherCell,
   type IdentityKind,
   type IdentityPalette,
@@ -210,12 +211,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   // Workspace pictures are the sole photo exception. Human and agent relay
   // photos stay inert even when an untyped/stale caller supplies avatarUrl.
   const showGeneratedAvatar =
-    kind === 'agent' &&
-    Boolean(
-      avatarUrl &&
-      /\/v1\/agent-avatars\/[0-9a-f-]{36}$/.test(avatarUrl) &&
-      failedAvatar !== avatarUrl,
-    );
+    kind === 'agent' && Boolean(isGeneratedAgentAvatarUrl(avatarUrl) && failedAvatar !== avatarUrl);
   const showRelayAvatar =
     WORKSPACE_PICTURES_ENABLED &&
     kind === 'workspace' &&

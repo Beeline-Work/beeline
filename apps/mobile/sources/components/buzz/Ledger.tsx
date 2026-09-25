@@ -13,7 +13,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
-import { identityPalette } from '@/buzz/identity-mark';
+import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -317,12 +317,14 @@ export const LedgerBylineView = Byline;
 
 function Byline({ byline }: { byline: LedgerByline }) {
   const mark = byline.mark;
-  // The name is set in the speaker's own signature hue — the same colour the
-  // tile carries — so "who is talking" is read twice, by face and by name.
-  // The viewer alone stays brass; a byline with no mark has no hue to borrow
-  // and keeps the plain bright tone.
+  // Generated portraits sit on a fixed brass plate; use the theme's readable
+  // brass for their names. Drawn faces keep their seed hue.
   const nameHue =
-    mark && !byline.isViewer ? { color: identityPalette(mark.seed, mark.kind).mid } : undefined;
+    mark && !byline.isViewer
+      ? mark.kind === 'agent' && isGeneratedAgentAvatarUrl(mark.avatarUrl)
+        ? styles.bylineNameViewer
+        : { color: identityPalette(mark.seed, mark.kind).mid }
+      : undefined;
   const Container = byline.onOpenProfile ? Pressable : View;
   return (
     <Container

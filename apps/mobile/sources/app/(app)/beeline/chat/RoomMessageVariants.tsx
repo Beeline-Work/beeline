@@ -1578,7 +1578,7 @@ function SwipeToReply({
                 style={styles.cornerSwipeAction}
                 testID={`corner-swipe-action-${messageId}`}
               >
-                <CornerGlyph size={20} />
+                <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
                 <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
               </View>
             )
@@ -2349,6 +2349,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.buzz.borderStrong,
     backgroundColor: theme.buzz.bgHighlight,
   },
+  cornerSwipeGlyph: { color: theme.buzz.accent },
   replySwipeGlyph: {
     ...Typography.default('semiBold'),
     color: theme.buzz.textPrimary,

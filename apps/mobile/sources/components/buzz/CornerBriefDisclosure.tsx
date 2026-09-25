@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
+import { typeRoles } from '@/buzz/groknight';
 
 type Brief = {
   revision: number;
@@ -76,11 +76,11 @@ export function CornerBriefDisclosure({
 const styles = StyleSheet.create((theme) => ({
   wrap: { paddingHorizontal: 22 },
   toggle: { minHeight: 44, justifyContent: 'center' },
-  label: { ...Typography.default(), color: theme.buzz.textSecondary, fontSize: 13 },
+  label: { ...typeRoles.meta, color: theme.buzz.textSecondary },
   detail: { paddingBottom: 12, gap: 12 },
-  content: { ...Typography.default(), color: theme.buzz.textPrimary, fontSize: 14, lineHeight: 21 },
+  content: { ...typeRoles.body, color: theme.buzz.textPrimary },
   file: { minHeight: 44, justifyContent: 'center' },
-  fileTitle: { ...Typography.default(), color: theme.buzz.textPrimary, fontSize: 14 },
-  filePurpose: { ...Typography.default(), color: theme.buzz.textSecondary, fontSize: 12 },
+  fileTitle: { ...typeRoles.body, color: theme.buzz.textPrimary },
+  filePurpose: { ...typeRoles.meta, color: theme.buzz.textSecondary },
   validation: { gap: 8 },
 }));

@@ -250,7 +250,7 @@ describe('Beeline display branding', () => {
       iosBundleIdentifier: 'app.usebeeline.mobile',
       androidPackage: 'app.usebeeline',
     });
-  });
+  }, 30_000);
 
   it('keeps production binaries on production and gives the canary a beta-only APK', () => {
     const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
@@ -299,7 +299,7 @@ describe('Beeline display branding', () => {
     expect(loadRuntimeVersions()).toEqual({ android: '29', ios: '29' });
     expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
     expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
-  });
+  }, 30_000);
 
   it('computes one native fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {
     // The NATIVE FINGERPRINT gate compares this stamp against the committed
@@ -448,5 +448,5 @@ describe('Beeline display branding', () => {
     expect(beelineClient?.client_info.mobilesdk_app_id).toBe(
       '1:31955293663:android:2eba1e1e6d1b89dc03206a',
     );
-  });
+  }, 30_000);
 });

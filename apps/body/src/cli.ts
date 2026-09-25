@@ -42,6 +42,10 @@ import {
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
+import {
+  InstitutionalMemoryShadowWorker,
+  institutionalMemoryShadowEnabled,
+} from './institutional-memory-shadow-worker.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
@@ -350,6 +354,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   const refreshCatalog = (): Promise<void> => {
     catalogRefresh ??= syncAgentModelCatalog({
@@ -533,6 +538,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
+        // Phase 0 is dark unless both this host and the server opt in. The
+        // worker waits for interactive idleness and stores shadow evidence;
+        // it never changes Room/corner prompt assembly.
+        if (institutionalMemoryShadowEnabled()) {
+          institutionalMemoryWorker ??= new InstitutionalMemoryShadowWorker({
+            api: daemonApi,
+            agentId: runtime.agent.publicKey,
+            agent,
+            agentEnv: config.agentEnv,
+            ...(runtime.modelSelection ? { modelSelection: runtime.modelSelection } : {}),
+            isInteractiveIdle: () => core.isWorkspaceIdle(),
+            log: (message) => console.log(`[body] institutional memory: ${message}`),
+          });
+          institutionalMemoryWorker.start();
+        }
       },
       onProgress: async (status) => {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
@@ -569,6 +589,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     throw error;
   } finally {
     clearInterval(scratchSweepTimer);
+    connectorLoop?.stop();
+    institutionalMemoryWorker?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid record while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.

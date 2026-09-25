@@ -30,6 +30,7 @@ import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
+import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -216,6 +217,7 @@ async function main() {
     process.env.BEELINE_COMPOSIO_API_KEY
       ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
       : undefined,
+    institutionalMemoryShadowConfigFromEnv(),
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

@@ -1,0 +1,110 @@
+[
+  {
+    "jobId": "fixture-preference-correct",
+    "workspaceId": "workspace-fixture",
+    "requesterIdentityId": "human-alice",
+    "eligibleTurnOrdinal": 1,
+    "expected": {
+      "candidateType": "correction_candidate",
+      "memoryKind": "human_profile_fact",
+      "canonicalKey": "alice-wants-mockups-first"
+    },
+    "actual": {
+      "proposalVersion": 1,
+      "candidateType": "correction_candidate",
+      "memoryKind": "human_profile_fact",
+      "subjectIdentityId": "human-alice",
+      "canonicalKey": "alice-wants-mockups-first",
+      "body": "Alice prefers reviewing a mockup before implementation.",
+      "source": {
+        "roomId": "room-fixture",
+        "messageIds": ["message-preference"]
+      },
+      "audience": "human_profile",
+      "confidence": 0.98,
+      "classification": {
+        "stillTrueForAnotherRequester": false,
+        "rationale": "This describes Alice's working preference."
+      },
+      "cas": { "baseVersion": null }
+    },
+    "inputBytes": 1200,
+    "outputBytes": 430,
+    "estimatedCostUsdMicros": 25
+  },
+  {
+    "jobId": "fixture-workspace-fact-correct",
+    "workspaceId": "workspace-fixture",
+    "requesterIdentityId": "human-bob",
+    "eligibleTurnOrdinal": 1,
+    "expected": {
+      "candidateType": "fact_candidate",
+      "memoryKind": "workspace_fact",
+      "canonicalKey": "deploy-requires-release-marker-last"
+    },
+    "actual": {
+      "proposalVersion": 1,
+      "candidateType": "fact_candidate",
+      "memoryKind": "workspace_fact",
+      "canonicalKey": "deploy-requires-release-marker-last",
+      "body": "Release migrations write the schema marker last.",
+      "source": {
+        "roomId": "room-fixture",
+        "messageIds": ["message-fact"]
+      },
+      "audience": "workspace",
+      "confidence": 0.94,
+      "classification": {
+        "stillTrueForAnotherRequester": true,
+        "rationale": "The release invariant is independent of the requester."
+      },
+      "cas": { "baseVersion": null }
+    },
+    "inputBytes": 980,
+    "outputBytes": 390,
+    "estimatedCostUsdMicros": 20
+  },
+  {
+    "jobId": "fixture-false-positive",
+    "workspaceId": "workspace-fixture",
+    "requesterIdentityId": "human-bob",
+    "eligibleTurnOrdinal": 2,
+    "expected": null,
+    "actual": {
+      "proposalVersion": 1,
+      "candidateType": "fact_candidate",
+      "memoryKind": "workspace_fact",
+      "canonicalKey": "temporary-greeting",
+      "body": "The requester said hello.",
+      "source": {
+        "roomId": "room-fixture",
+        "messageIds": ["message-greeting"]
+      },
+      "audience": "workspace",
+      "confidence": 0.6,
+      "classification": {
+        "stillTrueForAnotherRequester": true,
+        "rationale": "Incorrect fixture prediction used to exercise precision."
+      },
+      "cas": { "baseVersion": null }
+    },
+    "inputBytes": 400,
+    "outputBytes": 320,
+    "estimatedCostUsdMicros": 10
+  },
+  {
+    "jobId": "fixture-false-negative",
+    "workspaceId": "workspace-fixture",
+    "requesterIdentityId": "human-alice",
+    "eligibleTurnOrdinal": 2,
+    "expected": {
+      "candidateType": "correction_candidate",
+      "memoryKind": "human_profile_fact",
+      "canonicalKey": "alice-never-merges"
+    },
+    "actual": null,
+    "inputBytes": 700,
+    "outputBytes": 4,
+    "estimatedCostUsdMicros": 12
+  }
+]

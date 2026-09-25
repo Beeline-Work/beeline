@@ -10,6 +10,11 @@ import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
 import type {
+  ClaimInstitutionalMemoryJobResult,
+  CompleteInstitutionalMemoryJobInput,
+  FailInstitutionalMemoryJobInput,
+} from './institutional-memory.js';
+import type {
   WalletPayInput,
   WalletSendOutcome,
   WalletSwapInput,
@@ -101,6 +106,14 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
+  /** Phase-0 only: claims shadow extraction work and never returns live memory. */
+  claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
+  heartbeatInstitutionalMemoryJob: Operation<
+    AgentInput & { readonly jobId: string; readonly leaseToken: string },
+    WriteResult
+  >;
+  completeInstitutionalMemoryJob: Operation<CompleteInstitutionalMemoryJobInput, WriteResult>;
+  failInstitutionalMemoryJob: Operation<FailInstitutionalMemoryJobInput, WriteResult>;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }

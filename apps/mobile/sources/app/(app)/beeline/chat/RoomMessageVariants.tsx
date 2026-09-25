@@ -360,6 +360,68 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   );
 });
 
+export interface SquireApprovalCardProps {
+  message: ChatDisplayMessage;
+  onOpenSource?(roomId: string, messageId: string): void;
+}
+
+/**
+ * A notification, not an authority surface: the primary action opens the
+ * exact page Squire returned, where Squire's own passkey policy decides it.
+ */
+export const SquireApprovalCard = React.memo(function SquireApprovalCard({
+  message,
+  onOpenSource,
+}: SquireApprovalCardProps) {
+  const approval = message.squireApproval!;
+  const agentName = (approval.agent.handle ?? approval.agent.name).replace(/^@/, '');
+  const actionLabel =
+    approval.linkKind === 'passkey'
+      ? 'Use passkey ↗'
+      : approval.linkKind === 'vouch'
+        ? 'Vouch ↗'
+        : 'Review ↗';
+  const actions: TranscriptCardAction[] = [
+    {
+      label: actionLabel,
+      primary: true,
+      accessibilityRole: 'link',
+      onPress: () => void openExternalUrl(approval.approvalUrl),
+      testID: 'squire-approval-open',
+    },
+  ];
+  if (approval.sourceRoomId && approval.sourceMessageId && onOpenSource) {
+    actions.push({
+      label: 'View request',
+      accessibilityRole: 'link',
+      onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!),
+      testID: 'squire-approval-source',
+    });
+  }
+  return (
+    <TranscriptCard
+      tier="ask"
+      testID="squire-approval-card"
+      identity={
+        <IdentityMark
+          kind="agent"
+          seed={approval.agent.pubkey}
+          avatarUrl={approval.agent.avatar}
+          face={approval.agent.face}
+          name={approval.agent.name}
+          size={26}
+        />
+      }
+      title={approval.title}
+      subline={`${approval.detail} · requested by @${agentName}`}
+      sublineTestID="squire-approval-detail"
+      stamp={ledgerStamp(message.timestamp)}
+      footerNote="approval stays with Trusty Squire"
+      actions={actions}
+    />
+  );
+});
+
 export interface ConnectorOfferCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;

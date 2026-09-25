@@ -367,6 +367,30 @@ describe('phone surface readers', () => {
     expect(invalid?.grantRequest?.sourceMessageId).toBeUndefined();
   });
 
+  it('preserves a Squire-owned approval link and drops malformed destinations', () => {
+    const sourceMessageId = 'e'.repeat(64);
+    const squireApproval = {
+      agent,
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'Headphones · at Acme · 199.00 USD',
+      approvalUrl: 'https://approve.trustysquire.test/approval/one',
+      approvalId: 'one',
+      linkKind: 'approval' as const,
+      sourceRoomId: roomId,
+      sourceMessageId,
+    };
+    expect(readRoomViewMessage({ ...message, squireApproval })?.squireApproval).toEqual(
+      squireApproval,
+    );
+    expect(
+      readRoomViewMessage({
+        ...message,
+        squireApproval: { ...squireApproval, approvalUrl: 'javascript:alert(1)' },
+      })?.squireApproval,
+    ).toBeUndefined();
+  });
+
   it('keeps a native installed Corner App without a linked developer identity', () => {
     const app = {
       version: 1,

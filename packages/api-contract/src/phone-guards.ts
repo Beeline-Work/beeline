@@ -495,6 +495,36 @@ function readGrantRequest(value: unknown): GrantRequestCardView | null {
   };
 }
 
+function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
+  const item = record(value);
+  const agent = readIdentity(item?.agent);
+  const linkKind = oneOf(item?.linkKind, ['approval', 'passkey', 'vouch']);
+  if (
+    !item ||
+    !agent ||
+    agent.kind !== 'agent' ||
+    !nonempty(item.tool) ||
+    !nonempty(item.title) ||
+    !nonempty(item.detail) ||
+    !httpUrl(item.approvalUrl) ||
+    !linkKind
+  ) {
+    return null;
+  }
+  return {
+    agent,
+    tool: item.tool,
+    title: item.title,
+    detail: item.detail,
+    approvalUrl: item.approvalUrl,
+    linkKind,
+    ...field('approvalId', nonempty(item.approvalId) ? item.approvalId : undefined),
+    ...(uuid(item.sourceRoomId) && hex64(item.sourceMessageId)
+      ? { sourceRoomId: item.sourceRoomId, sourceMessageId: item.sourceMessageId }
+      : {}),
+  };
+}
+
 export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardView | null {
   const item = record(value);
   const helper = record(item?.helper);
@@ -989,6 +1019,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('cornerApp', readMessageCornerApp(item.cornerApp)),
     ...field('permission', readPermission(item.permission)),
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
+    ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('choice', readChoiceCard(item.choice)),
     ...field('walletTx', readWalletTx(item.walletTx)),

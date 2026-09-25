@@ -276,11 +276,13 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
-    expect(entry.props.leading.props.avatarUrl).toBe(
-      'https://server.example.test/v1/connectors/logo/google.svg',
-    );
+    expect(entry.props.leading.props.company).toBe('google');
+    expect(entry.props.leading.props.domain).toBe('google.com');
     expect(entry.props.value).toBeUndefined();
-    expect(entry.props.action).toBeUndefined();
+    expect(entry.props.action).toBe('Connect');
+    expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
+    act(() => entry.props.trailingPress.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google');
     act(() => entry.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
     expect(gmail.props.action).toBe('Connect');
@@ -395,7 +397,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.action).toBe('Connect');
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
-    expect(google.props.action).toBeUndefined();
+    expect(google.props.action).toBe('Connect');
     expect(google.props.descriptionTone).toBe('danger');
     expect(google.props.description).toContain(
       'another Trusty Squire session is already using the browser',

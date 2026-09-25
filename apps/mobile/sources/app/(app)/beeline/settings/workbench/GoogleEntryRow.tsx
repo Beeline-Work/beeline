@@ -3,8 +3,10 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
+  GOOGLE_ENTRY_FAVICON_DOMAIN,
   GOOGLE_ENTRY_ID,
   googleEntryConnector,
   googleToolRows,
@@ -33,27 +35,39 @@ export function GoogleEntryRow({
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const instrument = connectorInstrument(entry.status, entry.id);
+  const instrument = connectorInstrument(
+    entry.available ? entry.status : 'soon',
+    entry.id,
+  );
+  const canConnect = instrument.connect && entry.available;
   const errorText =
     entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined;
 
   return (
     <View testID="google-entry">
       <SettingsRow
+        action={canConnect ? 'Connect' : undefined}
         description={errorText}
         descriptionTone={entry.status === 'error' ? 'danger' : undefined}
         leading={
-          <IdentityMark
-            kind="human"
-            seed={GOOGLE_ENTRY_ID}
-            name={entry.name}
-            avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${GOOGLE_ENTRY_ID}.svg`}
-            size={26}
+          <ServiceMark
+            company={GOOGLE_ENTRY_ID}
+            domain={GOOGLE_ENTRY_FAVICON_DOMAIN}
+            testID="google-entry-mark"
           />
         }
         onPress={() => setExpanded((value) => !value)}
         testID="google-entry-row"
         title={entry.name}
+        trailingPress={
+          canConnect
+            ? {
+                accessibilityLabel: 'Connect Google Workspace',
+                onPress: () => onPressConnect(GOOGLE_ENTRY_ID),
+                testID: 'google-entry-connect',
+              }
+            : undefined
+        }
         value={instrument.value}
         valueTone={instrument.valueTone}
       />

@@ -206,7 +206,7 @@ export function NewRoomDialog({
             <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
           </TouchableOpacity>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>Public Room</Text>
+            <Text style={styles.rowLabel}>Public</Text>
             <Switch
               accessibilityLabel="Public Room"
               disabled={creatingRoom}
@@ -292,7 +292,6 @@ export function NewRoomDialog({
               testID="create-repository-name"
               value={repositoryName}
             />
-            <Text style={styles.hint}>New repositories are private on GitHub.</Text>
           </View>
           {!!repoPickerError && (
             <Text accessibilityRole="alert" style={styles.error} testID="create-repository-error">

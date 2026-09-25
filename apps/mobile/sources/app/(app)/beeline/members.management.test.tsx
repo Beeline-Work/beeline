@@ -974,6 +974,33 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.label).toBe(
       'Retry avatar generation',
     );
+    expect(
+      renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
+    ).toContain('offline');
+  });
+
+  it('sends optional avatar direction with the current soul', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    await act(async () =>
+      renderer.root
+        .findByProps({ testID: 'avatar-direction' })
+        .props.onChangeText('  brighter eyes  '),
+    );
+    await act(async () =>
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText('A deity of faraway stars'),
+    );
+    client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
+    await press(renderer, 'generate-avatar-from-soul');
+    expect(client.composeMessage).toHaveBeenCalledWith(
+      {
+        sessionId: 'dm-room',
+        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"; visual direction: "brighter eyes"',
+      },
+      { mentionAgent: AGENT },
+    );
   });
 
   it('does not dispatch avatar generation when confirmation is canceled', async () => {

@@ -57,7 +57,9 @@ it('shows four independent Google install actions and statuses', async () => {
   await act(async () => { renderer = create(<GoogleEntryRow connectors={connectors}
     onPressConnect={onPressConnect} onPressDisconnect={onPressDisconnect} />); });
   const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
-  expect(parent.props.leading).toBeUndefined();
+  expect(parent.props.leading.props.avatarUrl).toBe(
+    'https://server.example.test/v1/connectors/logo/google.svg',
+  );
   expect(parent.props.action).toBeUndefined();
   await act(async () => parent.props.onPress());
   expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe('connected');

@@ -13,7 +13,7 @@ on `127.0.0.1:4310`.
 
 | Screen | Before | After |
 | --- | --- | --- |
-| Workbench list | `before-workbench.png` — small stack title `< Workbench` | `after-workbench.png` — small **Settings** over large **Workbench** |
+| Workbench list | `before-workbench.png` — small stack title `< Workbench`; Google Workspace had no mark | `after-workbench.png` — small **Settings** over large **Workbench**; Google Workspace wears the same company mark + trailing column as the other tools |
 | Wallet | `before-wallet.png` — small stack title `< Wallet` | `after-wallet.png` — small **Workbench** over large **Wallet** |
 | Trusty Squire | same stack-title pattern as Wallet (no separate live before; Settings navigation on the release image failed) | `after-squire.png` — Workbench / **Trusty Squire** |
 | Tailscale | same | `after-tailscale.png` — Workbench / **Tailscale** |

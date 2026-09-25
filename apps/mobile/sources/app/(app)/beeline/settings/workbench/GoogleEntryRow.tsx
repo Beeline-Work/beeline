@@ -5,6 +5,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
+  GOOGLE_ENTRY_ID,
   googleEntryConnector,
   googleToolRows,
   connectorExpandedActions,
@@ -16,8 +17,9 @@ import {
  * One Google account with four separately installed tools. The disclosure
  * shows each tool's status and its own Connect action.
  *
- * The row has one state and one valid action. Its disclosure has no glyph and
- * contains only the catalog's existing one-line capability copy.
+ * The row wears the same company mark and trailing status as every other
+ * tool. Its disclosure has no extra glyph and contains only the catalog's
+ * existing one-line capability copy.
  */
 export function GoogleEntryRow({
   connectors,
@@ -40,6 +42,15 @@ export function GoogleEntryRow({
       <SettingsRow
         description={errorText}
         descriptionTone={entry.status === 'error' ? 'danger' : undefined}
+        leading={
+          <IdentityMark
+            kind="human"
+            seed={GOOGLE_ENTRY_ID}
+            name={entry.name}
+            avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${GOOGLE_ENTRY_ID}.svg`}
+            size={26}
+          />
+        }
         onPress={() => setExpanded((value) => !value)}
         testID="google-entry-row"
         title={entry.name}

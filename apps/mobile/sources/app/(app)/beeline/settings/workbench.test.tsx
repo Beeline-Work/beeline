@@ -276,6 +276,9 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
+    expect(entry.props.leading.props.avatarUrl).toBe(
+      'https://server.example.test/v1/connectors/logo/google.svg',
+    );
     expect(entry.props.value).toBeUndefined();
     expect(entry.props.action).toBeUndefined();
     act(() => entry.props.onPress());

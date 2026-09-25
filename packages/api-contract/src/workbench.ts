@@ -174,7 +174,12 @@ export type WorkbenchView = {
   };
 };
 
-export type ReadWorkbenchInput = { readonly workspaceId: string };
+export type ReadWorkbenchInput = {
+  readonly workspaceId: string;
+  /** Ask the connected Squire helper for a current vault snapshot. The read
+   * returns the cached rows as stale until that asynchronous report lands. */
+  readonly refreshVault?: boolean;
+};
 export type PairConnectorInput = {
   readonly workspaceId: string;
   readonly connectorType: ConnectorKind;

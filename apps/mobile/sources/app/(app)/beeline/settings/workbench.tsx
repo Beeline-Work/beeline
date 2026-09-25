@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { AppState, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
 import { PageHeader } from '@/components/buzz/PageHeader';
@@ -30,6 +30,8 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+const VAULT_REFRESH_POLL_MS = 500;
+
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
  * lists of `SettingsRow`s under small-caps heads: the tools this build knows
@@ -57,18 +59,52 @@ export default function WorkbenchScreen() {
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    try {
-      setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId }));
-      setNetworkFailure(null);
-    } catch {
-      setNetworkFailure('load');
-    }
-  }, [workspaceId, viewerId]);
+  const [foregroundGeneration, setForegroundGeneration] = useState(0);
+  const load = useCallback(
+    async (refreshVault = false) => {
+      try {
+        const next = await getWorkbenchSource().readWorkbench({
+          workspaceId,
+          viewerId,
+          ...(refreshVault ? { refreshVault: true } : {}),
+        });
+        setView(next);
+        setNetworkFailure(null);
+        return next;
+      } catch {
+        setNetworkFailure('load');
+        return undefined;
+      }
+    },
+    [workspaceId, viewerId],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setForegroundGeneration((generation) => generation + 1);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const refresh = async (requestVault: boolean) => {
+        const next = await load(requestVault);
+        if (cancelled || !next) return;
+        if (next.connections.some((connection) => connection.stale)) {
+          timer = setTimeout(() => void refresh(false), VAULT_REFRESH_POLL_MS);
+        }
+      };
+      void foregroundGeneration;
+      void refresh(true);
+      return () => {
+        cancelled = true;
+        if (timer !== undefined) clearTimeout(timer);
+      };
+    }, [foregroundGeneration, load]),
+  );
 
   const connections = view ? connectionsForViewer(view, viewerId) : [];
   const connectors = view?.connectors ?? [];

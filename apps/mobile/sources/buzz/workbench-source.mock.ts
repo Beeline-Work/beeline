@@ -151,7 +151,11 @@ export class MockWorkbenchSource implements WorkbenchSource {
   private failedConnectors = new Set<string>();
   private signInMethod: 'streamed' | 'oauth' | undefined;
 
-  async readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView> {
+  async readWorkbench(input: {
+    workspaceId: string;
+    viewerId: string;
+    refreshVault?: boolean;
+  }): Promise<WorkbenchView> {
     const viewer = this.viewer(input.viewerId);
     const connected = this.installs.size > 0 || this.failedConnectors.size > 0;
     return {

@@ -4374,6 +4374,24 @@ export class DaemonService {
       status,
       auto,
       ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(!auto
+        ? {
+            approval: {
+              destination:
+                kind === 'repository'
+                  ? ('room' as const)
+                  : squireRoute
+                    ? ('trusty-squire-dm' as const)
+                    : kind === 'mcp' && target === 'wallet'
+                      ? ('wallet-dm' as const)
+                      : ('system-dm' as const),
+              authority:
+                kind === 'repository'
+                  ? ('workspace-manager' as const)
+                  : ('resource-owner' as const),
+            },
+          }
+        : {}),
       ...(escalations.length ? { escalations } : {}),
     };
   }
@@ -4499,7 +4517,7 @@ export class DaemonService {
 
   /** Resource access includes paid calls within the same target and requester scope. */
   private async authorizeScopedGrant(
-    input: Input<'authorizeSquireCall'>,
+    input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
     kind: 'mcp' | 'repository' | 'host',
     target: string,
@@ -4550,7 +4568,7 @@ export class DaemonService {
         g.requestedBy === requester.id,
     );
     if (grant) {
-      if (grant.status === 'once')
+      if (grant.status === 'once' && input.consume !== false)
         await this.consumeAgentGrant({ grantId: grant.grantId }, agentId);
       return { allowed: true, grantId: grant.grantId };
     }

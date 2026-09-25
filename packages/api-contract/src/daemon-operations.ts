@@ -241,7 +241,7 @@ export type DaemonOperationMap = {
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   authorizeResourceCall: Operation<
-    AuthorizeSquireCallInput & { readonly target: string },
+    AuthorizeSquireCallInput & { readonly target: string; readonly consume?: boolean },
     AuthorizeSquireCallResult
   >;
   authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
@@ -784,6 +784,11 @@ export type RequestAgentGrantResult = {
   readonly auto: boolean;
   /** The card message when one was posted or joined. */
   readonly messageId?: string;
+  /** Server-owned placement and decision authority for a pending card. */
+  readonly approval?: {
+    readonly destination: 'room' | 'system-dm' | 'trusty-squire-dm' | 'wallet-dm';
+    readonly authority: 'workspace-manager' | 'resource-owner';
+  };
   /** Why yolo did not cover this ask, when it did not (C94). */
   readonly escalations?: readonly AgentGrantEscalation[];
 };

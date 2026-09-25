@@ -74,6 +74,30 @@ function searchFor(renderer: ReactTestRenderer, query: string): void {
 }
 
 describe('RepoPicker', () => {
+  it('puts the optional no-repository choice after search', () => {
+    const onSelectNoRepository = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker
+          candidates={[]}
+          onSelect={() => {}}
+          onSelectNoRepository={onSelectNoRepository}
+        />,
+      );
+    });
+    const children = renderer.root.findAll(
+      (node: any) => node.type === 'View' && node.props.testID === 'repo-picker',
+    )[0].children;
+    expect((children[0] as any).props.accessibilityLabel).toBe(
+      'Search repositories or paste a GitHub URL',
+    );
+    expect((children[1] as any).props.testID).toBe('repo-picker-no-repository');
+    act(() => (children[1] as any).props.onPress());
+    expect(onSelectNoRepository).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+
   it('names every resource the GitHub installation action can add', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

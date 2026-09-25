@@ -28,6 +28,8 @@ export type RepoPickerProps = {
    */
   ownerGrant?: OwnerGrantNeeded | null;
   onSelect: (candidate: RepoCandidate) => void;
+  onSelectNoRepository?: () => void;
+  noRepositoryInset?: number;
   onAddAccount?: (owner?: string) => void;
   onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
@@ -68,6 +70,8 @@ export const RepoPicker = memo(function RepoPicker({
   notice,
   ownerGrant,
   onSelect,
+  onSelectNoRepository,
+  noRepositoryInset = 0,
   onAddAccount,
   onManageInstallation,
   onCreateRepository,
@@ -174,6 +178,20 @@ export const RepoPicker = memo(function RepoPicker({
         style={styles.search}
         value={query}
       />
+      {onSelectNoRepository && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={onSelectNoRepository}
+          style={[
+            styles.noRepositoryRow,
+            { marginHorizontal: -noRepositoryInset, paddingHorizontal: noRepositoryInset },
+          ]}
+          testID={`${testIDPrefix}-no-repository`}
+        >
+          <Text style={styles.noRepositoryLabel}>No repository</Text>
+          {!currentKey && <Text style={styles.candidateCheck}>✓</Text>}
+        </TouchableOpacity>
+      )}
       {ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}
       <SectionList
         keyboardShouldPersistTaps="handled"
@@ -395,6 +413,19 @@ const styles = StyleSheet.create((theme) => {
     },
     container: { flexShrink: 1, minHeight: 0 },
     containerFill: { flex: 1 },
+    noRepositoryRow: {
+      minHeight: 54,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.border,
+    },
+    noRepositoryLabel: {
+      ...Typography.default(),
+      ...groknight.type.body,
+      color: groknight.textPrimary,
+      flex: 1,
+    },
     candidateScroll: {
       // Height-bounded so a 100+ repo account scrolls instead of rendering past
       // the fold; six 42px rows, see REPO_CANDIDATE_LIST_MAX_HEIGHT.

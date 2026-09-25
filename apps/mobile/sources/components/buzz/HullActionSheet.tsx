@@ -21,6 +21,8 @@ type HullActionSheetProps = {
   children: React.ReactNode;
   /** Pinned under the title: cannot scroll away with the sheet body. */
   sticky?: React.ReactNode;
+  /** Navigation shown between the grip and title. */
+  navigation?: React.ReactNode;
   /** Pinned under the body (Cancel). Stays on-screen while the body scrolls. */
   footer?: React.ReactNode;
   /** A virtualized child list owns scrolling for this sheet body. */
@@ -65,6 +67,7 @@ export function HullActionSheet({
   footer,
   scrollBody = true,
   grip = true,
+  navigation,
   sticky,
   style,
   subtitle,
@@ -116,6 +119,7 @@ export function HullActionSheet({
           <View style={styles.grip} />
         </View>
       ) : null}
+      {navigation}
       {title ? (
         <Text accessibilityRole="header" style={styles.title}>
           {title}
@@ -285,6 +289,7 @@ type HullActionSheetModalProps = {
   dismissOnBackdrop?: boolean;
   /** Pinned under the title. */
   sticky?: React.ReactNode;
+  navigation?: React.ReactNode;
   /** Pinned under the scrolling body. */
   footer?: React.ReactNode;
   scrollBody?: boolean;
@@ -305,6 +310,7 @@ export function HullActionSheetModal({
   footer,
   scrollBody,
   modalTestID,
+  navigation,
   onClose,
   scrimTestID,
   sticky,
@@ -330,6 +336,7 @@ export function HullActionSheetModal({
         footer={footer}
         scrollBody={scrollBody}
         grip={!isDesktop}
+        navigation={navigation}
         sticky={sticky}
         style={{ paddingBottom: Math.max(insets.bottom, 10) }}
         subtitle={subtitle}

@@ -141,10 +141,10 @@ describe('New Room sheet', () => {
   });
 
   it('keeps no repository as an explicit picker choice', () => {
-    const { renderer, host, sheet } = mount({ startPicker: true });
+    const { renderer, picker, sheet } = mount({ startPicker: true });
     expect(sheet().title).toBe('Repository');
-    expect(host('create-room-no-repository')).toBeDefined();
-    act(() => host('create-room-no-repository')?.props.onPress());
+    expect(picker().onSelectNoRepository).toBeDefined();
+    act(() => picker().onSelectNoRepository());
     expect(sheet().title).toBe('New Room');
     act(() => renderer.unmount());
   });
@@ -155,7 +155,10 @@ describe('New Room sheet', () => {
     });
     act(() => picker().onStartCreateRepository());
     expect(sheet().title).toBe('Create repository');
-    expect(host('create-room-no-repository')).toBeUndefined();
+    expect(sheet().navigation?.props.testID).toBe('create-repository-back');
+    act(() => sheet().navigation?.props.onPress());
+    expect(sheet().title).toBe('Repository');
+    act(() => picker().onStartCreateRepository());
     expect(host('create-repository-submit')?.props.disabled).toBe(true);
     act(() => host('create-repository-name')?.props.onChangeText('new-repo'));
     await act(async () => host('create-repository-submit')?.props.onPress());

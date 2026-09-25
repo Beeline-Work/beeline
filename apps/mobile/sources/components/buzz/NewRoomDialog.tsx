@@ -119,6 +119,20 @@ export function NewRoomDialog({
       dismissOnBackdrop={!creatingRoom && !creatingRepository}
       onClose={closeStep}
       scrollBody={step !== 'picker'}
+      navigation={
+        step === 'create' ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={creatingRepository}
+            onPress={() => setCreatingRepoStep(false)}
+            style={styles.backRow}
+            testID="create-repository-back"
+          >
+            <ChevronGlyph color={styles.chevron.color} direction="left" size={CHEVRON_ROW_SIZE} />
+            <Text style={styles.backText}>Repository</Text>
+          </TouchableOpacity>
+        ) : undefined
+      }
       testID="new-room-dialog"
       title={title}
       visible={visible}
@@ -207,15 +221,6 @@ export function NewRoomDialog({
       )}
       {step === 'picker' && (
         <View style={styles.picker} testID="create-room-picker">
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={handleSelectNoRepository}
-            style={styles.row}
-            testID="create-room-no-repository"
-          >
-            <Text style={styles.rowLabel}>No repository</Text>
-            {!pendingRepo && <Text style={styles.selectedMark}>✓</Text>}
-          </TouchableOpacity>
           <View style={styles.pickerContent}>
             <RepoPicker
               candidates={repoCandidates}
@@ -232,6 +237,8 @@ export function NewRoomDialog({
                 setCreatingRepoStep(true);
               }}
               onSelect={handleSelectRepoCandidate}
+              onSelectNoRepository={handleSelectNoRepository}
+              noRepositoryInset={HULL_SHEET_INSET}
               testIDPrefix="create-room-repo-picker"
             />
           </View>
@@ -332,6 +339,14 @@ const styles = StyleSheet.create((theme) => {
     },
     chevron: { color: hull.chrome },
     selectedMark: { ...hull.type.body, color: hull.accent },
+    backRow: {
+      minHeight: 32,
+      paddingHorizontal: HULL_SHEET_INSET,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    backText: { ...Typography.default(), ...hull.type.meta, color: hull.chrome },
     picker: { paddingBottom: 8 },
     pickerContent: { paddingHorizontal: HULL_SHEET_INSET, flexShrink: 1 },
     createForm: { paddingBottom: 12 },

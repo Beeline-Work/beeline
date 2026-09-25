@@ -1,46 +1,35 @@
-# Workbench title hierarchy — impeccable native audit
+# Workbench title hierarchy — before and after
 
-Captured on `emulator-5554` (AVD `buzzy_api36`, 1080×2400) from the one
-fixed signed-in Workspace. The installed `app.usebeeline` binary is a
-release/OTA image (`versionCode=101`, not debuggable), so it will not
-load this branch's Metro. Before frames are that live release UI. After
-frames of the new Workbench header are the same `PageHeader` already
-shipping on Bookmarks and Members (the component this PR now uses on
-every Workbench screen).
+**Before** frames are the live release/OTA install on `emulator-5554`
+(AVD `buzzy_api36`). That binary cannot load this branch.
 
-## Audit health
+**After** frames are this branch’s Expo web client at **390×844**, dark
+appearance, signed in through `/review/design-audit-review-secret-0001` to
+the isolated design-audit fixture Workspace named **Beeline** (not a
+production or captain Workspace). Server: `.verification/design-audit/fixture-server.mts`
+on `127.0.0.1:4310`.
 
-| # | Dimension | Score | Key finding |
-|---|-----------|-------|-------------|
-| 1 | Accessibility | 3 | Sign-in overlay close was 40×40 with a raw ✕; now `PageHeader`'s 44pt back |
-| 2 | Performance | 4 | Workbench lists stay small; no virtualization gap on these screens |
-| 3 | Appearance & Theming | 3 | Receive/send/QR placeholder used raw colors; QR modules stay high-contrast for scanners |
-| 4 | Platform Conformance | 3 | Stack header was a second, smaller title; `headerShown: false` + `PageHeader` |
-| 5 | Adaptivity | 3 | Phone safe-area + desktop omits back, same as Bookmarks |
-| **Total** | | **16/20** | **Good** |
+## Pairing
 
-## Presentation findings (fixed in this PR)
-
-| Finding | Before | After |
+| Screen | Before | After |
 | --- | --- | --- |
-| Workbench used a small stack title, not Settings / Workbench | `before-workbench.png` | `reference-bookmarks.png` / `reference-members.png` (same `PageHeader`: small parent over large noun) |
-| Wallet used a small stack title, not Workbench / Wallet | `before-wallet.png` | Same ladder; Wallet also keeps the CDP meta line |
-| Connect / key / send / receive / sign-in used a stack title or a custom 40×40 ✕ header | same stack pattern as Wallet | `PageHeader` (Workbench / tool or key; Wallet / Send or Receive; Workbench / Sign in to {tool}) |
-| Receive + send placeholder + QR empty frame used raw hex | code | hull tokens (`textMuted` / type roles). QR *modules* stay `#ffffff` / `#171310` so scanners can read them |
+| Workbench list | `before-workbench.png` — small stack title `< Workbench` | `after-workbench.png` — small **Settings** over large **Workbench** |
+| Wallet | `before-wallet.png` — small stack title `< Wallet` | `after-wallet.png` — small **Workbench** over large **Wallet** |
+| Trusty Squire | same stack-title pattern as Wallet (no separate live before; Settings navigation on the release image failed) | `after-squire.png` — Workbench / **Trusty Squire** |
+| Tailscale | same | `after-tailscale.png` — Workbench / **Tailscale** |
+| Google Workspace | same | `after-google.png` — Workbench / **Google Workspace** |
+| Composio | same | `after-composio.png` — Workbench / **Composio** |
+| Wallet Send | (no live before; was stack or in-page without the ladder) | `after-wallet-send.png` — Wallet / **Send** |
+| Wallet Receive | same | `after-wallet-receive.png` — Wallet / **Receive** |
+| Key detail | no key on the release Workspace | `after-key-detail.png` — Workbench / **Key** |
+| Sign-in overlay | 40×40 raw ✕ header | `after-signin.png` — Workbench / **Sign in to Trusty Squire** |
 
-## Behaviour not built
+## Repeat
 
-- There is no Beeline key-edit screen. Key detail is `connection.tsx`. Listed only.
-- The stale keys-list-after-edit refresh is a separate task. Not implemented here.
-- Keys live on the Workbench list (no separate keys-list route). Empty on this Workspace (`None yet`), so no live key-detail before frame.
-- Tailscale / Google Workspace / Composio are the same `connect.tsx` as Trusty Squire (title = connector name). Composio remains `soon`.
-- Settings opened from the Members self-row currently errors on this release image (`undefined is not a function`). Not a presentation change; not investigated here.
-
-## Frames
-
-| file | shows |
-| --- | --- |
-| `before-workbench.png` | Release Workbench: `< Workbench` stack title, no Settings eyebrow |
-| `before-wallet.png` | Release Wallet: `< Wallet` stack title + CDP subtitle |
-| `reference-bookmarks.png` | Live Bookmarks: small workspace name over large **Bookmarks** |
-| `reference-members.png` | Live Members: small workspace name over large **Members** |
+```
+AUDIT_WEB_ORIGIN=http://127.0.0.1:8083 AUDIT_SERVER_PORT=4310 \
+  node --import tsx .verification/design-audit/fixture-server.mts
+cd apps/mobile
+EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:4310 npx expo start --web --port 8083
+# then /review/design-audit-review-secret-0001 at 390×844
+```

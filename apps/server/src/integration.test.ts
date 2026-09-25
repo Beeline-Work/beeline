@@ -281,6 +281,7 @@ describe('monolith integration', () => {
       'postAgentAttachment',
       'postAgentTurnReceipt',
       'retractAgentLiveOutput',
+      'postSquireApproval',
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
@@ -9368,7 +9369,53 @@ describe('monolith integration', () => {
     expect(mcp).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
   });
 
-  it('routes Squire approval to its owner without changing shared agent access', async () => {
+  it('relays Squire-owned approval pages into the owner connector DM exactly once', async () => {
+    const requestId = createHash('sha256').update('squire-purchase-approval').digest('hex');
+    const payload = {
+      roomId: ROOM,
+      requestId,
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'Noise-cancelling headphones · at Acme · 199.00 USD',
+      approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
+      approvalId: 'purchase-1',
+      linkKind: 'approval',
+    };
+    const first = await daemonOperation('postSquireApproval', payload);
+    expect(first.status).toBe(200);
+    const duplicate = await daemonOperation('postSquireApproval', payload);
+    expect(duplicate.status).toBe(200);
+    expect((await duplicate.json()).id).toBe((await first.json()).id);
+
+    const rows = await database.query<{
+      room_id: string;
+      author_id: string;
+      card: {
+        approvalUrl: string;
+        title: string;
+        detail: string;
+        sourceRoomId: string;
+        sourceMessageId: string;
+      };
+    }>(`SELECT room_id,author_id,card FROM messages WHERE card_type='squire-approval'`);
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    expect(row.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(row.room_id).not.toBe(ROOM);
+    expect(row.card).toMatchObject({
+      approvalUrl: payload.approvalUrl,
+      title: payload.title,
+      detail: payload.detail,
+      sourceRoomId: ROOM,
+      sourceMessageId: requestId,
+    });
+    const view = await phone.readRoom(row.room_id, HUMAN);
+    expect(view?.messages.find((message) => message.squireApproval)?.squireApproval).toEqual(
+      expect.objectContaining({ approvalUrl: payload.approvalUrl, detail: payload.detail }),
+    );
+  });
+
+  it('routes the Squire host grant to its owner without changing shared agent access', async () => {
     const adminToken = await phoneToken('mcp-grant-admin');
     const adminId = createHash('sha256').update('github:mcp-grant-admin').digest('hex');
     await operation('addWorkspaceMember', {

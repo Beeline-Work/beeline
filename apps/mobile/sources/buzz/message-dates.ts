@@ -79,6 +79,7 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.roomUpdate ||
     message.writePermission ||
     message.grantRequest ||
+    message.squireApproval ||
     message.choice ||
     message.connectorOffer ||
     message.walletTx ||

@@ -594,6 +594,8 @@ function projectedMessage(
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
+    case 'squire-approval':
+      return { ...base, squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']> };
     case 'connector-offer':
       return {
         ...base,

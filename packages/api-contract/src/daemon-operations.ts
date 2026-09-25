@@ -193,6 +193,9 @@ export type DaemonOperationMap = {
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
+  /** Relay a Squire-owned approval page into the agent owner's private
+   * Trusty Squire DM. Beeline never settles the approval itself. */
+  postSquireApproval: Operation<PostSquireApprovalInput, WriteResult>;
   postPermissionRequest: Operation<PostPermissionRequestInput, WriteResult>;
   postPermissionExecution: Operation<PostPermissionExecutionInput, WriteResult>;
   postWorkSchedule: Operation<PostWorkScheduleInput, WriteResult>;
@@ -783,6 +786,15 @@ export type AgentGrantListResult = {
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
 export type AuthorizeSquireCallInput = TurnOutputAuthority & RoomInput;
+export type PostSquireApprovalInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly tool: string;
+    readonly title: string;
+    readonly detail: string;
+    readonly approvalUrl: string;
+    readonly approvalId?: string;
+    readonly linkKind: 'approval' | 'passkey' | 'vouch';
+  };
 export type AuthorizeSquireCallResult = {
   readonly allowed: boolean;
   readonly grantId?: string;

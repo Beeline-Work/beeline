@@ -222,6 +222,7 @@ export class DaemonService {
       'retractAgentLiveOutput',
       'postAgentTurnReceipt',
       'postAgentActivity',
+      'postSquireApproval',
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
@@ -714,6 +715,11 @@ export class DaemonService {
       case 'postAgentActivity':
         return (await this.activity(
           input as Input<'postAgentActivity'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postSquireApproval':
+        return (await this.squireApproval(
+          input as Input<'postSquireApproval'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postPermissionRequest':
@@ -3312,6 +3318,109 @@ export class DaemonService {
       });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
+  /**
+   * Squire owns the decision and its passkey page. Beeline only places that
+   * page in the resource owner's existing connector DM so Telegram is not a
+   * prerequisite for seeing it.
+   */
+  private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
+    if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
+    if (!input.title.trim() || input.title.length > 120)
+      throw new Error('Squire approval title is invalid');
+    if (!input.detail.trim() || input.detail.length > 500)
+      throw new Error('Squire approval detail is invalid');
+    if (
+      input.approvalId !== undefined &&
+      (!input.approvalId.trim() || input.approvalId.length > 240)
+    )
+      throw new Error('Squire approval id is invalid');
+    let approvalUrl: URL;
+    try {
+      approvalUrl = new URL(input.approvalUrl);
+    } catch {
+      throw new Error('Squire approval URL is invalid');
+    }
+    if (
+      !['http:', 'https:'].includes(approvalUrl.protocol) ||
+      approvalUrl.username ||
+      approvalUrl.password ||
+      !['approval', 'passkey', 'vouch'].includes(input.linkKind)
+    )
+      throw new Error('Squire approval URL is invalid');
+    const context = (
+      await this.database.query<{
+        workspace_id: string;
+        owner_id: string;
+        agent_name: string;
+        agent_handle: string | null;
+        agent_avatar: string | null;
+      }>(
+        `SELECT room.workspace_id,agent.owner_id,identity.name agent_name,
+                identity.handle agent_handle,identity.avatar agent_avatar
+         FROM rooms room
+         JOIN agents agent ON agent.agent_id=$2
+         JOIN identities identity ON identity.id=agent.agent_id
+         WHERE room.id=$1`,
+        [input.roomId, agentId],
+      )
+    ).rows[0];
+    if (!context) throw new Error('agent not found');
+    const member = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+       AND identity_id=$2 AND removed_at IS NULL`,
+      [context.workspace_id, context.owner_id],
+    );
+    if (!member.rowCount) throw new Error('resource owner access denied');
+    const roomId = await ensureConnectorDirectMessageRoom(
+      this.database,
+      context.workspace_id,
+      'trusty-squire',
+      context.owner_id,
+    );
+    const dedupeKey = input.approvalId?.trim() || approvalUrl.toString();
+    const messageId = createHash('sha256')
+      .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
+      .digest('hex');
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const agent = {
+      pubkey: agentId,
+      kind: 'agent' as const,
+      name: context.agent_name,
+      ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+      ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
+    };
+    const connectorId = connectorIdentityId('trusty-squire');
+    const line = await systemLine(this.database, {
+      id: messageId,
+      roomId,
+      authorId: connectorId,
+      subject: {
+        kind: 'person',
+        id: connectorId,
+        name: connectorDisplayName('trusty-squire'),
+      },
+      verb: 'needs your approval for',
+      object: input.title.trim(),
+      consequence: input.detail.trim(),
+      presentation: 'card',
+      cardType: 'squire-approval',
+      card: {
+        agent,
+        tool: input.tool.trim(),
+        title: input.title.trim(),
+        detail: input.detail.trim(),
+        approvalUrl: approvalUrl.toString(),
+        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
+        linkKind: input.linkKind,
+        sourceRoomId: input.roomId,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+      },
+    });
+    if (line.inserted)
+      this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+    return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const scope = input.scope;
@@ -5151,6 +5260,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   retractAgentLiveOutput: true,
   postAgentTurnReceipt: true,
   postAgentActivity: true,
+  postSquireApproval: true,
   postPermissionRequest: true,
   postPermissionExecution: true,
   postWorkSchedule: true,

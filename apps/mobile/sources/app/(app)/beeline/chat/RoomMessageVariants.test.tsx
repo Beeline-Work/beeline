@@ -169,6 +169,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  SquireApprovalCard,
   ConnectorOfferCard,
   ConnectorReceiptCard,
   ChoiceCard,
@@ -2537,6 +2538,33 @@ describe('Room message variant components', () => {
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-once' }).props.onPress());
     expect(onDecision).toHaveBeenCalledWith('squire-grant', 'once');
+  });
+
+  it('opens a relayed Squire approval in Squire and preserves the source request link', () => {
+    const onOpenSource = vi.fn();
+    const approval = message({
+      squireApproval: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
+        tool: 'inject_card',
+        title: 'Purchase approval',
+        detail: 'Headphones · at Acme · 199.00 USD',
+        approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
+        approvalId: 'purchase-1',
+        linkKind: 'approval',
+        sourceRoomId: 'source-room',
+        sourceMessageId: 'source-message',
+      },
+    });
+    const view = render(<SquireApprovalCard message={approval} onOpenSource={onOpenSource} />);
+    expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain(
+      'Headphones · at Acme · 199.00 USD',
+    );
+    act(() => view.root.findByProps({ testID: 'squire-approval-open' }).props.onPress());
+    expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
+      'https://approve.trustysquire.test/approval/purchase-1',
+    );
+    act(() => view.root.findByProps({ testID: 'squire-approval-source' }).props.onPress());
+    expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
   });
 
   describe('connector-offer card (R5)', () => {

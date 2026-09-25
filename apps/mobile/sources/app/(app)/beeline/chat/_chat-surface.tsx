@@ -264,6 +264,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  SquireApprovalCard,
   ConnectorOfferCard,
   ChoiceCard,
   WalletCards,
@@ -4819,6 +4820,23 @@ export function BuzzChatSurface({
                   channelId: roomId,
                   notificationMessageId: messageId,
                   notificationResponseId: `squire-grant:${item.id}`,
+                },
+              })
+            }
+          />
+        );
+      }
+      if (item.squireApproval) {
+        return (
+          <SquireApprovalCard
+            message={item}
+            onOpenSource={(roomId, messageId) =>
+              router.navigate({
+                pathname: '/beeline/chat/[channelId]',
+                params: {
+                  channelId: roomId,
+                  notificationMessageId: messageId,
+                  notificationResponseId: `squire-approval:${item.id}`,
                 },
               })
             }

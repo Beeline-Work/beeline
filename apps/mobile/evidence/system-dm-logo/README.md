@@ -1,6 +1,6 @@
 # System DM logo proof
 
-These Chrome screenshots render the mobile app's `ConversationRow` and `IdentityMark` through React Native Web with a fixed System DM fixture. `IdentityMark` draws the canonical path from `beeline-mark.json`. They verify the list mark and the header mark at their shipped sizes. The installed Android build was older than this change, so these are component screenshots rather than a native end-to-end capture.
+These Chrome screenshots render the mobile app's `ConversationRow`, `DirectMessageHeaderIdentity`, and `ChannelHeaderTitle` through React Native Web with a fixed System DM fixture. The header component is the one `BuzzChatSurface` calls. The fixture passes `readOnly=true` and System's fixed peer ID, exercising the same visibility condition as the app. `IdentityMark` draws the canonical path from `beeline-mark.json`. The installed Android build was older than this change, so these are component screenshots rather than a native end-to-end capture.
 
 - `list.png`: 390 × 844 list view, System row at the top.
 - `header.png`: 1200 × 780 desktop list and System DM header.

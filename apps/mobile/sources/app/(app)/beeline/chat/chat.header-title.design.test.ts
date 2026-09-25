@@ -13,6 +13,10 @@ const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8
 const componentsDir = path.join(__dirname, '..', '..', '..', '..', 'components', 'buzz');
 const titleSource = readFileSync(path.join(componentsDir, 'ChannelHeaderTitle.tsx'), 'utf8');
 const ladderSource = readFileSync(path.join(componentsDir, 'HeaderLadder.tsx'), 'utf8');
+const dmIdentitySource = readFileSync(
+  path.join(componentsDir, 'DirectMessageHeaderIdentity.tsx'),
+  'utf8',
+);
 
 describe('the chat header title (C72)', () => {
   it('renders every header title through the one shared renderer', () => {
@@ -43,15 +47,15 @@ describe('the chat header title (C72)', () => {
   });
 
   it('shows a Direct Message peer identity, including read-only System and connector DMs', () => {
-    expect(chatSource).toMatch(
-      /!isReadOnlyDirectMessage \|\|\s+dmPeerPubkey === SYSTEM_IDENTITY_PUBKEY \|\|\s+isConnectorLogoUrl\(\s+dmPeerIdentity\?\.avatar \?\? directMessageListItem\?\.directMessage\?\.peer\.avatar/,
+    expect(chatSource).toContain('<DirectMessageHeaderIdentity');
+    expect(chatSource).toContain('readOnly={isReadOnlyDirectMessage}');
+    expect(chatSource).toContain('peerPubkey={dmPeerPubkey}');
+    expect(dmIdentitySource).toContain('peerPubkey !== SYSTEM_IDENTITY_PUBKEY');
+    expect(dmIdentitySource).toContain('!isConnectorLogoUrl(connectorAvatarUrl)');
+    expect(dmIdentitySource).toContain(
+      '<HeaderIdentitySlot testID="direct-message-header-identity">',
     );
-    expect(chatSource).toContain('<HeaderIdentitySlot testID="direct-message-header-identity">');
-    expect(chatSource).toContain(
-      "dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'",
-    );
-    expect(chatSource).toContain('seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}');
-    expect(chatSource).toContain('name={displayRoomName}');
+    expect(dmIdentitySource).toContain('name={name}');
     expect(chatSource).toContain('<HeaderIdentitySlot testID="corner-header-agent">');
     expect(chatSource).not.toContain('testID="room-header-identity"');
   });

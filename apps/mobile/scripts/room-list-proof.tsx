@@ -8,7 +8,8 @@ import { WorkspaceActionsMenu } from '../sources/components/buzz/WorkspaceAction
 import { RoomDeckComposeMenu } from '../sources/components/buzz/RoomDeckComposeMenu';
 import { RoomListToolbar } from '../sources/components/buzz/RoomListToolbar';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
-import { IdentityMark } from '../sources/components/buzz/IdentityMark';
+import { DirectMessageHeaderIdentity } from '../sources/components/buzz/DirectMessageHeaderIdentity';
+import { ChannelHeaderTitle } from '../sources/components/buzz/ChannelHeaderTitle';
 import { SYSTEM_IDENTITY_PUBKEY } from '../sources/buzz/system-identity';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
 import { RoomListSectionHeader } from '../sources/components/buzz/RoomListSectionHeader';
@@ -240,14 +241,14 @@ function Proof() {
                 borderBottomColor: t.border,
               }}
             >
-              <IdentityMark
+              <DirectMessageHeaderIdentity
+                isDirectMessage
+                readOnly
+                peerPubkey={SYSTEM_IDENTITY_PUBKEY}
                 kind="human"
-                seed={SYSTEM_IDENTITY_PUBKEY}
                 name="System"
-                size={26}
-                testID="direct-message-header-identity"
               />
-              <Text style={{ ...t.type.hero, color: t.textPrimary }}>System</Text>
+              <ChannelHeaderTitle kind="dm" title="System" />
             </View>
           )}
           {systemMode ? (

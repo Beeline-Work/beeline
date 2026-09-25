@@ -282,7 +282,7 @@ describe('Workbench settings screen', () => {
     expect(entry.props.action).toBe('Connect');
     expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
     act(() => entry.props.trailingPress.onPress());
-    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google');
+    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google-gmail');
     act(() => entry.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
     expect(gmail.props.action).toBe('Connect');

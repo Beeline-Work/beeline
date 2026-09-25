@@ -12,6 +12,7 @@ import {
   googleToolRows,
   connectorExpandedActions,
   connectorInstrument,
+  resolveGoogleConnectTarget,
   type WorkbenchConnector,
 } from '@/buzz/workbench';
 
@@ -35,11 +36,18 @@ export function GoogleEntryRow({
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
+  const tools = googleToolRows(connectors);
+  const targetId = resolveGoogleConnectTarget(connectors);
+  const target = tools.find((tool) => tool.id === targetId) ?? tools[0];
+  // The parent row is not a connector — never pass the folded "google" id.
+  // Status comes from the real google-* tools; soon only when every listed
+  // tool is itself unavailable (Google Workspace is not offered here).
   const instrument = connectorInstrument(
-    entry.available ? entry.status : 'soon',
-    entry.id,
+    tools.some((tool) => tool.available) ? entry.status : 'soon',
+    target?.id,
   );
-  const canConnect = instrument.connect && entry.available;
+  const canConnect =
+    instrument.connect && tools.some((tool) => tool.available);
   const errorText =
     entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined;
 
@@ -63,7 +71,7 @@ export function GoogleEntryRow({
           canConnect
             ? {
                 accessibilityLabel: 'Connect Google Workspace',
-                onPress: () => onPressConnect(GOOGLE_ENTRY_ID),
+                onPress: () => onPressConnect(targetId),
                 testID: 'google-entry-connect',
               }
             : undefined

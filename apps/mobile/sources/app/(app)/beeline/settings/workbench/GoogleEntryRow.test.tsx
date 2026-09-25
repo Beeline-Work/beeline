@@ -107,7 +107,33 @@ it('shows Connect on the parent when no Google tool is connected', async () => {
   expect(parent.props.action).toBe('Connect');
   expect(parent.props.trailingPress.testID).toBe('google-entry-connect');
   await act(async () => parent.props.trailingPress.onPress());
-  expect(onPressConnect).toHaveBeenCalledWith('google');
+  expect(onPressConnect).toHaveBeenCalledWith('google-gmail');
+  await act(async () => renderer.unmount());
+});
+
+it('shows soon on the parent only when every Google tool is unavailable', async () => {
+  const onPressConnect = vi.fn();
+  const connectors: WorkbenchConnector[] = [
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: false },
+    { id: 'google-calendar', name: 'Calendar', description: 'Events', available: false },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: false },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: false },
+  ];
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <GoogleEntryRow
+        connectors={connectors}
+        onPressConnect={onPressConnect}
+        onPressDisconnect={vi.fn()}
+      />,
+    );
+  });
+  const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
+  expect(parent.props.value).toBe('soon');
+  expect(parent.props.action).toBeUndefined();
+  expect(parent.props.trailingPress).toBeUndefined();
+  expect(onPressConnect).not.toHaveBeenCalled();
   await act(async () => renderer.unmount());
 });
 

@@ -18,20 +18,11 @@ vi.mock('react-native', async () => {
   return {
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-    Text: host('Text'),
-    View: host('View'),
-    TouchableOpacity: host('TouchableOpacity'),
-    Animated: {
-      Value: (v: number) => ({
-        _value: v,
-        add: () => ({ _value: v }),
-        interpolate: () => ({ _value: v }),
-      }),
-      timing: () => ({ start: () => undefined }),
-      sequence: () => ({ start: () => undefined }),
-      loop: () => ({ start: () => undefined, stop: () => undefined }),
-      View: host('Animated.View'),
-    },
+    Text: host('Text'), View: host('View'), TouchableOpacity: host('TouchableOpacity'),
+    Animated: { Value: (v: number) => ({ _value: v, add: () => ({ _value: v }),
+      interpolate: () => ({ _value: v }) }), timing: () => ({ start: () => undefined }),
+      sequence: () => ({ start: () => undefined }), loop: () => ({ start: () => undefined,
+        stop: () => undefined }), View: host('Animated.View') },
   };
 });
 vi.mock('@/components/buzz/SettingsRow', async () => {
@@ -44,12 +35,9 @@ import type { WorkbenchConnector } from '@/buzz/workbench';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
-  (
-    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
-      return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
     originalConsoleError(message, ...args);
   });
 });
@@ -59,77 +47,33 @@ it('shows four independent Google install actions and statuses', async () => {
   const onPressConnect = vi.fn();
   const onPressDisconnect = vi.fn();
   const connectors: WorkbenchConnector[] = [
-    {
-      id: 'google-gmail',
-      name: 'Gmail',
-      description: 'Mail',
-      available: true,
-      status: 'connected',
-    },
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: true, status: 'connected' },
     { id: 'google-calendar', name: 'Calendar', description: 'Events', available: true },
-    {
-      id: 'google-drive',
-      name: 'Drive',
-      description: 'Files',
-      available: true,
-      status: 'installing',
-    },
-    {
-      id: 'google-youtube',
-      name: 'YouTube',
-      description: 'Videos',
-      available: true,
-      status: 'error',
-      errorMessage: 'Scope refused',
-    },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: true, status: 'installing' },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true,
+      status: 'error', errorMessage: 'Scope refused' },
   ];
   let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(
-      <GoogleEntryRow
-        connectors={connectors}
-        onPressConnect={onPressConnect}
-        onPressDisconnect={onPressDisconnect}
-      />,
-    );
-  });
+  await act(async () => { renderer = create(<GoogleEntryRow connectors={connectors}
+    onPressConnect={onPressConnect} onPressDisconnect={onPressDisconnect} />); });
   const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
   expect(parent.props.leading).toBeUndefined();
   expect(parent.props.action).toBeUndefined();
   await act(async () => parent.props.onPress());
-  expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe(
-    'connected',
-  );
-  expect(
-    renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.leading.props.avatarUrl,
-  ).toBe('https://server.example.test/v1/connectors/logo/google-drive.svg');
-  expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.value).toBe(
-    'installing',
-  );
-  expect(
-    renderer.root.findByProps({ testID: 'google-tool-google-youtube' }).props.description,
-  ).toBe('Scope refused');
-  expect(
-    renderer.root.findByProps({ testID: 'google-tool-google-youtube-reconnect' }).props.title,
-  ).toBe('Reconnect');
-  expect(
-    renderer.root.findByProps({ testID: 'google-tool-google-youtube-disconnect' }).props.title,
-  ).toBe('Disconnect');
-  await act(async () =>
-    renderer.root
-      .findByProps({
-        testID: 'google-tool-google-youtube-disconnect',
-      })
-      .props.onPress(),
-  );
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe('connected');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.leading.props.avatarUrl)
+    .toBe('https://server.example.test/v1/connectors/logo/google-drive.svg');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.value).toBe('installing');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube' }).props.description).toBe('Scope refused');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube-reconnect' }).props.title).toBe('Reconnect');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube-disconnect' }).props.title).toBe('Disconnect');
+  await act(async () => renderer.root.findByProps({
+    testID: 'google-tool-google-youtube-disconnect',
+  }).props.onPress());
   expect(onPressDisconnect).toHaveBeenCalledWith('google-youtube');
-  await act(async () =>
-    renderer.root
-      .findByProps({
-        testID: 'google-tool-google-calendar',
-      })
-      .props.trailingPress.onPress(),
-  );
+  await act(async () => renderer.root.findByProps({
+    testID: 'google-tool-google-calendar',
+  }).props.trailingPress.onPress());
   expect(onPressConnect).toHaveBeenCalledWith('google-calendar');
   await act(async () => renderer.unmount());
 });
@@ -138,34 +82,10 @@ it('offers YouTube reconnect and disconnect from the adapter while connected', a
   const onPressConnect = vi.fn();
   const onPressDisconnect = vi.fn();
   const connectors: WorkbenchConnector[] = [
-    {
-      id: 'google-gmail',
-      name: 'Gmail',
-      description: 'Mail',
-      available: true,
-      status: 'connected',
-    },
-    {
-      id: 'google-calendar',
-      name: 'Calendar',
-      description: 'Events',
-      available: true,
-      status: 'connected',
-    },
-    {
-      id: 'google-drive',
-      name: 'Drive',
-      description: 'Files',
-      available: true,
-      status: 'connected',
-    },
-    {
-      id: 'google-youtube',
-      name: 'YouTube',
-      description: 'Videos',
-      available: true,
-      status: 'connected',
-    },
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: true, status: 'connected' },
+    { id: 'google-calendar', name: 'Calendar', description: 'Events', available: true, status: 'connected' },
+    { id: 'google-drive', name: 'Drive', description: 'Files', available: true, status: 'connected' },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true, status: 'connected' },
   ];
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -181,12 +101,12 @@ it('offers YouTube reconnect and disconnect from the adapter while connected', a
   expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube' }).props.value).toBe(
     'connected',
   );
-  expect(
-    renderer.root.findAllByProps({ testID: 'google-tool-google-gmail-reconnect' }),
-  ).toHaveLength(0);
-  expect(
-    renderer.root.findByProps({ testID: 'google-tool-google-youtube-reconnect' }).props.title,
-  ).toBe('Reconnect');
+  expect(renderer.root.findAllByProps({ testID: 'google-tool-google-gmail-reconnect' })).toHaveLength(
+    0,
+  );
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube-reconnect' }).props.title).toBe(
+    'Reconnect',
+  );
   expect(
     renderer.root.findByProps({ testID: 'google-tool-google-youtube-disconnect' }).props.title,
   ).toBe('Disconnect');

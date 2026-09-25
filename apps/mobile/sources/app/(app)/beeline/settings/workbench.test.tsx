@@ -138,7 +138,9 @@ describe('Workbench settings screen', () => {
     );
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
+    expect(squire.props.trailingPress.testID).toBe(
+      'workbench-connector-trusty-squire-connect',
+    );
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.leading.props.avatarUrl).toBe(
       'https://server.example.test/v1/connectors/logo/wallet.svg',
@@ -349,11 +351,9 @@ describe('Workbench settings screen', () => {
         .title,
     ).toBe('Disconnect');
     await act(async () => {
-      renderer.root
-        .findByProps({
-          testID: 'workbench-connector-trusty-squire-disconnect',
-        })
-        .props.onPress();
+      renderer.root.findByProps({
+        testID: 'workbench-connector-trusty-squire-disconnect',
+      }).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

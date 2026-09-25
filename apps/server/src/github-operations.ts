@@ -641,6 +641,8 @@ export class GitHubOperations {
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
        WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
+         AND a.brief_revision IS NOT DISTINCT FROM
+           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=a.corner_id)
          AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
       [corner.parent_id, number, pr.headSha, configuredReviewerId],
     );

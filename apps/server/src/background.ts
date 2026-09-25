@@ -1,10 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import {
-  ARTIFACT_TTL_HOURS,
-  MEDIA_SWEEP_INTERVAL_MS,
-  mediaTtlHours,
-} from './media-ttl.js';
+import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
@@ -425,14 +421,49 @@ export class MediaExpiryLoop {
       state: string;
     }>(
       `SELECT id::text id,key,kind,state FROM objects
-       WHERE expires_at < now()
+       WHERE (expires_at < now()
           OR (state='pending' AND created_at < now() - interval '1 hour')
+         ) AND NOT EXISTS (
+           SELECT 1 FROM corner_brief_revisions brief
+           JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
+           CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file
+           WHERE file->>'objectId'=objects.id::text
+         )
        LIMIT 100`,
     );
     let deleted = 0;
     for (const object of candidates.rows) {
       try {
-        await this.objects.storage.deleteObject(object.key);
+        const removed = await this.database.transaction(async (db) => {
+          // A brief's attachment validation takes a share lock on this same
+          // object. Recheck after taking the write lock so an assignment that
+          // committed since the candidate scan keeps its bytes.
+          const current = (
+            await db.query<{ key: string; kind: 'media' | 'artifact'; state: string }>(
+              `SELECT key,kind,state FROM objects WHERE id=$1 FOR UPDATE`,
+              [object.id],
+            )
+          ).rows[0];
+          if (!current) return false;
+          const pinned = await db.query(
+            `SELECT 1 FROM corner_brief_revisions brief
+             JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
+             CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file
+             WHERE file->>'objectId'=$1 LIMIT 1`,
+            [object.id],
+          );
+          if (pinned.rowCount) return false;
+          await this.objects!.storage.deleteObject(current.key);
+          if (current.state === 'ready')
+            await db.query(
+              `INSERT INTO object_expirations(id,retention_hours) VALUES ($1,$2)
+               ON CONFLICT(id) DO NOTHING`,
+              [object.id, current.kind === 'artifact' ? this.artifactTtlHours : this.ttlHours],
+            );
+          await db.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
+          return true;
+        });
+        if (removed) deleted += 1;
       } catch (error) {
         console.warn(
           '[media-ttl] object delete failed, will retry next sweep',
@@ -441,14 +472,6 @@ export class MediaExpiryLoop {
         );
         continue;
       }
-      if (object.state === 'ready')
-        await this.database.query(
-          `INSERT INTO object_expirations(id,retention_hours) VALUES ($1,$2)
-           ON CONFLICT(id) DO NOTHING`,
-          [object.id, object.kind === 'artifact' ? this.artifactTtlHours : this.ttlHours],
-        );
-      await this.database.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
-      deleted += 1;
     }
     return deleted;
   }

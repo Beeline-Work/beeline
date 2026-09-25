@@ -6,6 +6,7 @@ import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
 export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
+export const BEELINE_SPEC_SKILL_NAME = 'beeline-spec';
 
 /**
  * Whether THIS agent is the parent Room's configured reviewer, read from the
@@ -43,9 +44,8 @@ const BEELINE_ROOM_CAPABILITIES = [
   'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Open-ended asks stay tagged prose. Never put Always / Once / No on a preference.',
   'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
-  'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill and follow it. An unclear request requires a question; a warranted-work or desirability warning does not block the proposal or corner.',
-  "Never open a corner from your own reading of a person's ask. For every ask, first reply on one line `Proposed corner: <name> — <objective>`, using the exact title and objective you would pass to open_corner, then stop and wait. If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives and leaves the others proposed. A person's `go`, `yes`, or equivalent opens exactly the proposed corner; if they edit it, their edited text is the objective. Skip this ceremony only when the message itself explicitly commands a corner and states its scope, such as `open a corner and do X` or `go build X in a corner`; open that scope immediately.",
-  'Agreement is not action: never merely acknowledge an ask. Reply with a proposed corner, a question, or a line beginning `parked:` with the reason.',
+  'Before opening a corner, consult beeline-triage and beeline-spec. Include the complete brief and relevant Room file identifiers in open_corner for complex work; the short objective is only a summary.',
+  'Use existing authorization to proceed. Ask one focused question only when an unresolved choice materially changes behavior, scope, irreversible effects, or the intended result. Do not require approval merely because a brief was written or a task is large. Honor an explicit request to review the brief first.',
   'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
@@ -184,6 +184,8 @@ Follow these steps in order. Do not skip or reorder them.
 
 ## 2. P0 - OBJECTIVE FULFILLED, DEMONSTRATED
 
+Read the server-assigned brief and its current revision, including every required file. The short objective and PR description cannot narrow it. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. For each applicable criterion, record met, unmet, unverified, or out of scope, citing observed evidence; out of scope requires a user-authorized revision. A passing narrow test does not prove a broader requirement. Review a deliberate user choice as written, even if it is unusual.
+
 Before judging the implementation, independently repeat the two judgment legs from request triage:
 
 - **Work warranted:** For a bug, reproduce the reported behavior on the target branch. For another request, establish the unmet user need from the request and current product. Search current code, history, issues, and open or recently merged pull requests for work that already resolves or supersedes it. Treat title similarity only as a candidate, not proof of duplication. FAIL confirmed duplicate or obsolete work.
@@ -200,6 +202,9 @@ Before judging the implementation, independently repeat the two judgment legs fr
 - State whether the diff fulfills that objective and only that objective.
 
 ## 3. Empirical pass second
+
+Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty CI rollup is not proof of passing checks. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
+Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head. A reviewer records the review stage; the author records repairs and publication. The record informs the verdict but never replaces approve_merge or pr_checks_status.
 
 - Run the repository typecheck and tests touched by the diff.
 - If the objective names a user path, exercise that path.
@@ -229,6 +234,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 ## 8. Gate and verdict
 
 - Review the exact green head named in your reviewer instruction. If the head moved, do not approve it.
+- Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Give the author stable finding IDs, affected criteria, location, severity, evidence, and repair disposition. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
 - Always use this exact verdict shape:
 
 \`objective quoted:\`
@@ -239,6 +245,8 @@ Before judging the implementation, independently repeat the two judgment legs fr
 \`proof of that reproduction (or none obtained + regression):\`
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
+\`brief revision and criterion evidence:\`
+\`validation stages and evidence:\`
 \`critical findings (block):\`
 \`plausible findings (do not block):\`
 \`net lines:\`
@@ -247,29 +255,49 @@ Before judging the implementation, independently repeat the two judgment legs fr
 Then take exactly one action:
 
 - FAIL: reply \`@author\` with the confirmed findings to fix.
-- PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`@author approved <reviewed sha>, merge\`.
+- PASS: call \`approve_merge\` with the reviewed head SHA and assigned briefRevision (omit the revision only for a legacy corner without a brief), then reply \`@author approved <reviewed sha>, merge\`.
 - Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.
+`;
+}
+
+export function beelineSpecSkillMarkdown(releaseId: string): string {
+  return `---
+name: beeline-spec
+description: Prepare or revise a durable corner assignment from Room decisions before repository work. Do not use for ordinary conversation or unrelated artifact delivery.
+---
+
+<!-- beeline-release: ${releaseId} -->
+
+# Durable corner brief
+
+Write an assignment another session can execute without the parent transcript. Separate human decisions, observed current behavior, agent recommendations, and unresolved questions. Preserve deliberate unusual choices. Do not invent approval from prose.
+
+For an obvious small fix, use a compact brief: outcome, scope, and observable criteria. For complex work, include relevant user stories, stable criterion IDs, exclusions, file references with purpose and authority, failure behavior, and proof at the appropriate boundary. An optional mock is not styling authority unless the user made it so. The short corner objective is navigation text, not a substitute for the brief.
+
+Ask one focused question only when an unresolved choice materially changes the result. Existing authorization permits dispatch within scope; drafting a brief does not create an approval step. If the user explicitly asks to review before work, wait for that review.
+
+Pass the complete brief as open_corner.brief.content. Name relevant files in the manifest with their server object IDs, purpose, and whether each is required. A local path or transcript reference cannot substitute for the file. Read the current brief revision before revising; use revise_corner_brief with a complete replacement and a concise change description. Preserve settled decisions and update affected criteria. The latest revision governs implementation and review.
 `;
 }
 
 export function beelineTriageSkillMarkdown(releaseId: string): string {
   return `---
 name: beeline-triage
-description: Clarify and assess a user request before proposing or opening a Beeline corner, then bind a bugfix to its recorded reproduction. Use immediately before emitting Proposed corner or calling open_corner, and while implementing a bug in a corner.
+description: Clarify and assess a user request before opening a Beeline corner, then bind a bugfix to its recorded reproduction. Use before open_corner and while implementing a bug in a corner.
 ---
 
 <!-- beeline-release: ${releaseId} -->
 
 # Beeline request triage
 
-Run these checks before proposing or opening a corner.
+Run these checks before opening a corner.
 
 ## 1. Is it clear?
 
 - Rewrite the request as a concrete outcome and acceptance criteria.
 - State material exclusions needed to prevent unrequested work.
 - Keep the corner objective complete and within 24 words.
-- If an ambiguity could materially change the outcome, ask one focused question instead of proposing or opening the corner.
+- If an ambiguity could materially change the outcome, ask one focused question before opening the corner.
 
 ## 2. Is work warranted?
 
@@ -287,7 +315,7 @@ Run these checks before proposing or opening a corner.
 
 ## Output
 
-When proposing work, emit the ordinary \`Proposed corner: <name> — <objective>\` line. Add only applicable warnings on following lines:
+When dispatching work, pass the complete brief to open_corner under existing authorization. Ask a focused question first only for a material unresolved choice. Add applicable warnings to the brief:
 
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`

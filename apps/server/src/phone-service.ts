@@ -6,6 +6,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { GoogleOAuth } from './google-oauth.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -1001,7 +1002,10 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: row.role,
-        permissions: { send: row.role !== 'spectator', manage: row.role === 'owner' || row.role === 'admin' },
+        permissions: {
+          send: row.role !== 'spectator',
+          manage: row.role === 'owner' || row.role === 'admin',
+        },
       },
       watchFilters: [],
     };
@@ -1429,6 +1433,26 @@ export class PhoneService {
           )
         ).rows[0]
       : undefined;
+    const cornerBrief = room.parent_id
+      ? await currentCornerBrief(this.database, roomId).catch(() => undefined)
+      : undefined;
+    const cornerValidation = cornerBrief
+      ? await this.database
+          .query<{
+            stage: string;
+            status: string;
+            evidence: string;
+          }>(
+            `SELECT stage.stage,stage.status,stage.evidence FROM corner_validation_stages stage
+       JOIN corner_facts fact ON fact.corner_id=stage.corner_id
+       WHERE stage.corner_id=$1 AND stage.brief_revision=$2
+         AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft')
+       ORDER BY stage.stage`,
+            [roomId, cornerBrief.revision],
+          )
+          .then((result) => result.rows)
+          .catch(() => [])
+      : [];
     const boundApp = room.parent_id
       ? (
           await measured(
@@ -1555,7 +1579,10 @@ export class PhoneService {
         },
         role: room.viewer_role,
         permissions: {
-          send: room.workspace_role !== 'spectator' && !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
+          send:
+            room.workspace_role !== 'spectator' &&
+            !room.archived_at &&
+            !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
           manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
         },
       },
@@ -1565,6 +1592,32 @@ export class PhoneService {
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
+      ...(cornerBrief
+        ? {
+            cornerBrief: {
+              revision: cornerBrief.revision,
+              content: cornerBrief.content,
+              attachments: cornerBrief.attachments.map((file) => ({
+                title: file.title,
+                purpose: file.purpose,
+                required: file.required,
+                url: `${this.publicOrigin}/v1/media/${file.objectId}`,
+              })),
+            },
+          }
+        : {}),
+      ...(cornerBrief
+        ? {
+            cornerValidation: CORNER_VALIDATION_STAGES.map(
+              (stage) =>
+                cornerValidation.find((record) => record.stage === stage) ?? {
+                  stage,
+                  status: 'pending',
+                  evidence: '',
+                },
+            ),
+          }
+        : {}),
       ...((parent ?? room).repository_key && (parent ?? room).repository_remote
         ? {
             repository: {
@@ -1701,7 +1754,10 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
-        permissions: { send: room.workspace_role !== 'spectator' && !room.archived_at, manage: room.workspace_role === 'owner' || room.workspace_role === 'admin' },
+        permissions: {
+          send: room.workspace_role !== 'spectator' && !room.archived_at,
+          manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
+        },
       },
       watchFilters: [],
     };
@@ -2762,7 +2818,8 @@ export class PhoneService {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
-        [viewerId, scope.workspaceId ?? null, scope.roomId ?? null]);
+        [viewerId, scope.workspaceId ?? null, scope.roomId ?? null],
+      );
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
@@ -6587,13 +6644,15 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
-    return this.database.transaction((database) => this.armConnectorPairing(database, {
-      workspaceId: ws.workspace_id,
-      ownerIdentityId: viewerId,
-      connectorType: input.connectorType,
-      helperAgentId: matched.agent_id,
-      machineId,
-    }));
+    return this.database.transaction((database) =>
+      this.armConnectorPairing(database, {
+        workspaceId: ws.workspace_id,
+        ownerIdentityId: viewerId,
+        connectorType: input.connectorType,
+        helperAgentId: matched.agent_id,
+        machineId,
+      }),
+    );
   }
 
   /**
@@ -7169,7 +7228,13 @@ export class PhoneService {
         ? this.workspaceRosterPage(workspaceId, 'human', needle, kind === 'human' ? offset : 0)
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
       loadAgents
-        ? this.workspaceRosterPage(workspaceId, 'agent', needle, kind === 'agent' ? offset : 0, query.ownerId)
+        ? this.workspaceRosterPage(
+            workspaceId,
+            'agent',
+            needle,
+            kind === 'agent' ? offset : 0,
+            query.ownerId,
+          )
         : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
     ]);
     const pageRows = [...peoplePage.rows, ...agentPage.rows];
@@ -7723,7 +7788,17 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
 ]);
 
 const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
-  'leaveWorkspace', 'leaveRoom', 'closeChat', 'reopenChat', 'listMessageBookmarks', 'setMessageBookmark',
-  'readWorkbench', 'readConnectionDetail', 'readWallet', 'readWalletHistory',
- 'getGitHubRepositoryAccess', 'listRoomWorkflows', 'listRoomSchedules',
+  'leaveWorkspace',
+  'leaveRoom',
+  'closeChat',
+  'reopenChat',
+  'listMessageBookmarks',
+  'setMessageBookmark',
+  'readWorkbench',
+  'readConnectionDetail',
+  'readWallet',
+  'readWalletHistory',
+  'getGitHubRepositoryAccess',
+  'listRoomWorkflows',
+  'listRoomSchedules',
 ]);

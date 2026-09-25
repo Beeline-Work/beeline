@@ -59,9 +59,13 @@ describe('corner merge instructions', () => {
     };
     loop.options = {
       repository: {
-        featureBranch: 'feature/widget', targetBranch: 'main', githubToken: 'stale-token',
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        githubToken: 'stale-token',
       },
-      api: { execute }, parentRoomId: 'exact-room', worktreePath: '/unused',
+      api: { execute },
+      parentRoomId: 'exact-room',
+      worktreePath: '/unused',
     };
     await expect(loop.syncBranch()).rejects.toThrow('repository access denied');
     expect(execute).toHaveBeenCalledTimes(3);
@@ -2364,6 +2368,20 @@ describe('thin monolith corner turn', () => {
           cursor: 'latest',
         };
       }
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-id',
+          objective: 'Implement the widget',
+          closeRequested: false,
+          brief: {
+            id: 'corner-id',
+            revision: 2,
+            authorId: runtime.agent.publicKey,
+            sourceRoomId: 'room-id',
+            attachments: [],
+            content: 'A1: preserve the requested widget size. A2: keep the deliberate amber label.',
+          },
+        };
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
     });
@@ -2553,6 +2571,8 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
+      expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
+      expect(call[1]).toContain('A2: keep the deliberate amber label.');
       expect(call[1]).toContain('Your Beeline identity is Bee.');
       expect(call[1]).toContain(
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',

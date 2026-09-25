@@ -281,6 +281,8 @@ describe('monolith integration', () => {
       'postAgentTurnReceipt',
       'retractAgentLiveOutput',
       'createCorner',
+      'reviseCornerBrief',
+      'postCornerValidationStage',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -7674,6 +7676,289 @@ describe('monolith integration', () => {
       [input.requestId, ROOM, firstResult.cornerId, firstResult.cornerId],
     );
     expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
+  });
+
+  it('commits a full brief and its Room file before waking the worker, then preserves the bytes', async () => {
+    const bytes = Buffer.from('approved visual dimensions');
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const mediaId = '65432109-0000-4000-8000-000000000001';
+    const key = `media/${HUMAN}/${sha}`;
+    await objectStorage.putObject(key, bytes, 'text/plain');
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/plain','approved-mock.txt',$4,$5,'ready',now()+interval '1 hour')`,
+      [mediaId, HUMAN, key, bytes.length, sha],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments)
+       VALUES($1,$2,$3,'Approved reference',$4::jsonb)`,
+      [
+        'a'.repeat(64),
+        ROOM,
+        HUMAN,
+        JSON.stringify([{ url: `${origin}/v1/media/${mediaId}`, name: 'approved-mock.txt' }]),
+      ],
+    );
+    const brief = {
+      content:
+        'Outcome: match the approved dimensions.\nA1: render the specified size.\nA2: preserve existing labels.',
+      attachments: [{ objectId: mediaId, purpose: 'approved visual dimensions', required: true }],
+    };
+    const input = {
+      roomId: ROOM,
+      requestId: 'durable-brief-open',
+      name: 'Render size',
+      objective: 'Match the approved dimensions',
+      brief,
+    };
+    const first = await daemonOperation('createCorner', input);
+    expect(first.status).toBe(200);
+    const { cornerId } = (await first.json()) as { cornerId: string };
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
+    const revisions = await database.query<{ revision: number }>(
+      `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`,
+      [cornerId],
+    );
+    expect(revisions.rows).toEqual([{ revision: 1 }]);
+    const restore = await daemonOperation('getCornerRestoreState', { cornerId });
+    expect(await restore.json()).toMatchObject({
+      brief: {
+        revision: 1,
+        content: brief.content,
+        attachments: [
+          { objectId: mediaId, sha256: sha, purpose: 'approved visual dimensions', required: true },
+        ],
+      },
+    });
+    const viewed = await phone.readRoom(cornerId, HUMAN);
+    expect(viewed?.cornerBrief).toMatchObject({
+      revision: 1,
+      content: brief.content,
+      attachments: [{ title: 'approved-mock.txt', purpose: 'approved visual dimensions' }],
+    });
+    expect(
+      (
+        await daemonOperation('postCornerValidationStage', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-stage-old',
+          briefRevision: 1,
+          headSha: 'draft',
+          stage: 'intent',
+          status: 'passed',
+          evidence: 'Checked the original assignment.',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
+      mediaId,
+    ]);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBe(0);
+    expect((await fetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
+    const revision = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-correction',
+      expectedRevision: 1,
+      brief: {
+        content:
+          'Outcome: keep the approved dimensions and use the corrected label.\nA1: render the specified size.\nA2: show Corrected.',
+        change: 'The requester corrected the label.',
+        attachments: brief.attachments,
+      },
+    });
+    expect(revision.status).toBe(200);
+    expect(await revision.json()).toMatchObject({
+      revision: 2,
+      change: 'The requester corrected the label.',
+    });
+    expect(
+      (
+        await database.query<{ revision: number }>(
+          `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ revision: 1 }, { revision: 2 }]);
+    const freshValidation = (await (
+      await daemonOperation('getCornerRestoreState', { cornerId })
+    ).json()) as {
+      validation: Array<{ stage: string; status: string }>;
+    };
+    expect(freshValidation.validation.find((stage) => stage.stage === 'intent')?.status).toBe(
+      'pending',
+    );
+    const history = await daemonOperation('listCornerBriefRevisions', { cornerId });
+    expect(await history.json()).toMatchObject({
+      revisions: [
+        { revision: 2, change: 'The requester corrected the label.' },
+        { revision: 1, content: brief.content },
+      ],
+    });
+    const outsider = 'd'.repeat(64);
+    const isolated = new DaemonService(database, new LiveHub());
+    await expect(
+      isolated.execute('listCornerBriefRevisions', { cornerId }, outsider),
+    ).rejects.toThrow('access denied');
+    await expect(
+      isolated.execute(
+        'reviseCornerBrief',
+        {
+          cornerId,
+          requestId: 'unauthorized-brief',
+          expectedRevision: 2,
+          brief: { content: 'Remove the accepted criterion.' },
+        },
+        outsider,
+      ),
+    ).rejects.toThrow('access denied');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    const stale = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'stale-brief-correction',
+      expectedRevision: 1,
+      brief: { content: 'Stale replacement.' },
+    });
+    expect(stale.status).not.toBe(200);
+    expect(
+      (await database.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]))
+        .rows,
+    ).toHaveLength(2);
+    const recorded = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-intent',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'intent',
+      status: 'passed',
+      evidence: 'Compared the corrected label and approved dimensions against the brief.',
+    });
+    expect(recorded.status).toBe(200);
+    expect(
+      await daemonOperation('getCornerRestoreState', { cornerId }).then((response) =>
+        response.json(),
+      ),
+    ).toMatchObject({
+      validation: expect.arrayContaining([
+        {
+          briefRevision: 2,
+          headSha: 'draft',
+          stage: 'intent',
+          status: 'passed',
+          evidence: 'Compared the corrected label and approved dimensions against the brief.',
+          actorId: AGENT,
+        },
+      ]),
+    });
+    const falsePass = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-no-evidence',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'tests',
+      status: 'passed',
+      evidence: '',
+    });
+    expect(falsePass.status).not.toBe(200);
+    const falseReview = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-false-review',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'review',
+      status: 'passed',
+      evidence: 'Author claims independent review.',
+    });
+    expect(falseReview.status).not.toBe(200);
+    const falseCi = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-false-ci',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'ci',
+      status: 'passed',
+      evidence: 'No CI rollup exists.',
+    });
+    expect(falseCi.status).not.toBe(200);
+    const reviewedHead = '1'.repeat(40);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: { number: 77, url: 'https://github.com/example/repo/pull/77', headSha: reviewedHead },
+      }),
+    ]);
+    expect(
+      (
+        await daemonOperation('postCornerValidationStage', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-stage-tests-head-1',
+          briefRevision: 2,
+          headSha: reviewedHead,
+          stage: 'tests',
+          status: 'passed',
+          evidence: 'Executed the corner behavior test.',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [cornerId, '2'.repeat(40)],
+    );
+    const moved = (await (await daemonOperation('getCornerRestoreState', { cornerId })).json()) as {
+      validation: Array<{ stage: string; status: string }>;
+    };
+    expect(moved.validation.find((stage) => stage.stage === 'tests')?.status).toBe('pending');
+  });
+
+  it('does not open or wake a corner when a required brief file is unavailable', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'missing-brief-file',
+      name: 'Missing reference',
+      objective: 'Use the approved reference',
+      brief: {
+        content: 'A1: use the approved reference.',
+        attachments: [
+          {
+            objectId: '65432109-0000-4000-8000-000000000002',
+            purpose: 'approved reference',
+            required: true,
+          },
+        ],
+      },
+    });
+    expect(response.status).not.toBe(200);
+    expect(
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-brief-file'`))
+        .rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE reason='corner_objective' AND turn_request_id='missing-brief-file'`,
+        )
+      ).rows,
+    ).toEqual([]);
   });
 
   it('creates every independently keyed corner requested by one originating task', async () => {

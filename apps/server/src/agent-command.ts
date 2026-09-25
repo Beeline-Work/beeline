@@ -566,8 +566,12 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     )
       continue;
     if (avatarJob) {
-      if (agent.owner_id !== source.author_id) throw new Error('only the agent owner may generate its avatar (access denied)');
-      const active = await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND avatar_job AND state IN ('pending','claimed')`, [target]);
+      if (agent.owner_id !== source.author_id)
+        throw new Error('only the agent owner may generate its avatar (access denied)');
+      const active = await db.query(
+        `SELECT 1 FROM agent_commands WHERE agent_id=$1 AND avatar_job AND state IN ('pending','claimed')`,
+        [target],
+      );
       if (active.rowCount) throw new Error('avatar generation already active (conflict)');
     }
     await createAgentCommand(db, {
@@ -1425,6 +1429,8 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.brief_revision IS NOT DISTINCT FROM
+             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=corner.id)
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )
@@ -1492,6 +1498,8 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.brief_revision IS NOT DISTINCT FROM
+             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=corner.id)
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )

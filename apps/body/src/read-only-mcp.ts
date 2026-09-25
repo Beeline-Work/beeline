@@ -225,7 +225,10 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-        revision: { type: 'string', description: 'HEAD or a fetched origin/branch; defaults to HEAD.' },
+        revision: {
+          type: 'string',
+          description: 'HEAD or a fetched origin/branch; defaults to HEAD.',
+        },
         path: { type: 'string', description: 'Optional repository-relative path.' },
       },
       additionalProperties: false,
@@ -240,7 +243,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       properties: {
         revision: {
           type: 'string',
-          description: 'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
+          description:
+            'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
         },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
@@ -254,8 +258,14 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.' },
-        to: { type: 'string', description: 'Restricted local revision, including origin/branch; defaults to HEAD.' },
+        from: {
+          type: 'string',
+          description: 'Restricted local revision, including origin/branch; defaults to HEAD~1.',
+        },
+        to: {
+          type: 'string',
+          description: 'Restricted local revision, including origin/branch; defaults to HEAD.',
+        },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
       additionalProperties: false,
@@ -600,7 +610,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" for artifact work without a checkout, or lane="research" for writable repository investigation held open without automatic commit, pull request, merge, or agent closure. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one corner after any material unresolved choice is settled. Supply a complete brief for work whose requirements exceed the short objective. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -617,12 +627,116 @@ const AGENT_TOOLS: ToolDefinition[] = [
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
           description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
         },
+        brief: {
+          type: 'object',
+          required: ['content'],
+          properties: {
+            content: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 65536,
+              description:
+                'Complete assigned requirements and acceptance criteria; never truncate to the objective limit.',
+            },
+            attachments: {
+              type: 'array',
+              maxItems: 16,
+              items: {
+                type: 'object',
+                required: ['objectId', 'purpose', 'required'],
+                properties: {
+                  objectId: { type: 'string', format: 'uuid' },
+                  purpose: { type: 'string', maxLength: 500 },
+                  required: { type: 'boolean' },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        },
         lane: {
           type: 'string',
           enum: ['code', 'no_code', 'research'],
           description:
             'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
         },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'revise_corner_brief',
+    description:
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
+    inputSchema: {
+      type: 'object',
+      required: ['expectedRevision', 'content'],
+      properties: {
+        expectedRevision: { type: 'integer', minimum: 0 },
+        content: { type: 'string', minLength: 1, maxLength: 65536 },
+        change: { type: 'string', maxLength: 1000 },
+        attachments: {
+          type: 'array',
+          maxItems: 16,
+          items: {
+            type: 'object',
+            required: ['objectId', 'purpose', 'required'],
+            properties: {
+              objectId: { type: 'string', format: 'uuid' },
+              purpose: { type: 'string', maxLength: 500 },
+              required: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_corner_brief',
+    description:
+      'Read the current and earlier immutable brief revisions for a corner you belong to. Use before revising or reviewing an assignment. Results are paged newest first.',
+    inputSchema: {
+      type: 'object',
+      required: [],
+      properties: {
+        cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' },
+        beforeRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'record_validation_stage',
+    description:
+      'Record one observed Beeline validation stage for the current brief revision and code head. This is evidence, not merge authorization. Use headSha="draft" before publication; after publication use the exact current PR head. Give a concrete command, observation, finding, or reason.',
+    inputSchema: {
+      type: 'object',
+      required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],
+      properties: {
+        briefRevision: { type: 'integer', minimum: 0 },
+        headSha: { type: 'string' },
+        stage: {
+          type: 'string',
+          enum: [
+            'intent',
+            'base',
+            'review',
+            'tests',
+            'docs',
+            'lint_types',
+            'publication',
+            'ci',
+            'final_authorization',
+          ],
+        },
+        status: {
+          type: 'string',
+          enum: ['pending', 'running', 'passed', 'failed', 'skipped', 'not_applicable'],
+        },
+        evidence: { type: 'string', maxLength: 4000 },
       },
       additionalProperties: false,
     },
@@ -795,6 +909,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
           description: 'The exact 40-character Git head SHA that passed review.',
+        },
+        briefRevision: {
+          type: 'integer',
+          minimum: 1,
+          description: 'The assigned brief revision reviewed; omit only on legacy corners.',
         },
       },
       additionalProperties: false,
@@ -1037,6 +1156,8 @@ export function agentToolsFor(
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
+    if (tool.name === 'revise_corner_brief') return cornerTurn;
+    if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
@@ -1648,6 +1769,9 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     idempotencyKey,
     name,
     objective,
+    ...(args.brief
+      ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
+      : {}),
     lane,
     ...(repository.resolution === 'repository'
       ? {
@@ -1665,10 +1789,58 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     cornerId: created.cornerId,
     name,
     objective,
+    ...(args.brief ? { briefRevision: 1 } : {}),
     // A chat-only Room has no code lane to take, so report what was recorded.
     lane: repository.resolution === 'repository' ? lane : 'no_code',
     status: 'starting',
   });
+}
+
+async function reviseCornerBrief(args: JsonObject): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const requestId = (await activeCommandContext()).requestId;
+  return JSON.stringify(
+    await daemonExecute('reviseCornerBrief', {
+      cornerId,
+      requestId,
+      expectedRevision: args.expectedRevision as number,
+      brief: {
+        content: args.content as string,
+        change: args.change as string | undefined,
+        attachments:
+          args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
+      },
+    }),
+  );
+}
+
+async function readCornerBrief(args: JsonObject): Promise<string> {
+  const cornerId =
+    typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  return JSON.stringify(
+    await daemonExecute('listCornerBriefRevisions', {
+      cornerId,
+      ...(Number.isInteger(args.beforeRevision)
+        ? { beforeRevision: args.beforeRevision as number }
+        : {}),
+    }),
+  );
+}
+
+async function recordValidationStage(args: JsonObject): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const requestId = (await activeCommandContext()).requestId;
+  return JSON.stringify(
+    await daemonExecute('postCornerValidationStage', {
+      cornerId,
+      requestId,
+      briefRevision: args.briefRevision as number,
+      headSha: args.headSha as string,
+      stage: args.stage as import('@beeline/api-contract/daemon').CornerValidationStageName,
+      status: args.status as import('@beeline/api-contract/daemon').CornerValidationStage['status'],
+      evidence: args.evidence as string,
+    }),
+  );
 }
 
 /**
@@ -1844,7 +2016,16 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
   const patchId = await cornerPatchId(cornerId);
-  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha, patchId }));
+  return JSON.stringify(
+    await daemonExecute('approveCornerMerge', {
+      cornerId,
+      headSha,
+      patchId,
+      ...(Number.isInteger(args.briefRevision)
+        ? { briefRevision: args.briefRevision as number }
+        : {}),
+    }),
+  );
 }
 
 export interface WriteScratchFileDeps {
@@ -2861,6 +3042,12 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       );
     case 'open_corner':
       return openCorner(args, toolCallId);
+    case 'revise_corner_brief':
+      return reviseCornerBrief(args);
+    case 'read_corner_brief':
+      return readCornerBrief(args);
+    case 'record_validation_stage':
+      return recordValidationStage(args);
     case 'steer_corner':
       return relayMessage('down', args);
     case 'ask_corner':

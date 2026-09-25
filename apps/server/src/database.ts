@@ -828,6 +828,34 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 
+-- Assignment revisions are immutable; the current revision is the greatest
+-- committed row. Opening and revising insert the row in the command transaction.
+CREATE TABLE IF NOT EXISTS corner_brief_revisions (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  revision integer NOT NULL CHECK (revision > 0),
+  content text NOT NULL CHECK (length(content) BETWEEN 1 AND 65536),
+  change text,
+  author_id text NOT NULL REFERENCES identities(id),
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  source_message_id text,
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, revision)
+);
+CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
+CREATE TABLE IF NOT EXISTS corner_validation_stages (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  brief_revision integer NOT NULL,
+  head_sha text NOT NULL,
+  stage text NOT NULL CHECK (stage IN ('intent','base','review','tests','docs','lint_types','publication','ci','final_authorization')),
+  status text NOT NULL CHECK (status IN ('pending','running','passed','failed','skipped','not_applicable')),
+  evidence text NOT NULL DEFAULT '',
+  actor_id text NOT NULL REFERENCES identities(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
+);
+
 -- Agent-authored, code-free views shared by every member of one corner.
 -- The definition is validated at the daemon boundary and interpreted by the
 -- phone; no executable client payload is stored here.
@@ -879,6 +907,7 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS brief_revision integer;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,

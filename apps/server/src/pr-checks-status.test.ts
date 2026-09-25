@@ -269,6 +269,67 @@ describe('PR-scoped check gate', () => {
     expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, headSha: head });
   });
 
+  it('refuses an old brief revision even when the code head is unchanged', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'A1: complete the full permission matrix',$2,$3)`,
+      [AUTHOR, A, R],
+    );
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: AUTHOR,
+          headSha: SHA,
+        },
+        REVIEWER,
+      ),
+    ).rejects.toThrow('brief revision changed');
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: AUTHOR,
+          headSha: SHA,
+          briefRevision: 1,
+        },
+        REVIEWER,
+      ),
+    ).resolves.toMatchObject({ status: 'approved' });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
+    await db.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id)
+       VALUES($1,2,'A1: complete the matrix. A2: retain audit trail.','Added audit criterion',$2,$3)`,
+      [AUTHOR, A, R],
+    );
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: AUTHOR,
+          headSha: SHA,
+          briefRevision: 1,
+        },
+        REVIEWER,
+      ),
+    ).rejects.toThrow('brief revision changed');
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: AUTHOR,
+          headSha: SHA,
+          briefRevision: 2,
+        },
+        REVIEWER,
+      ),
+    ).resolves.toMatchObject({ status: 'approved' });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
+  });
+
   it('names a configured reviewer who is not a parent member and does not drop the gate', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);

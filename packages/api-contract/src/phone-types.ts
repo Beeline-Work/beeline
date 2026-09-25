@@ -495,6 +495,22 @@ export type RoomView = {
   readonly briefing?: readonly RoomViewMessage[];
   /** Latest corner plan, retained after its live activity rows settle. */
   readonly cornerPlan?: RoomViewActivity['plan'];
+  /** The latest durable assignment; older revisions remain server-owned. */
+  readonly cornerBrief?: {
+    readonly revision: number;
+    readonly content: string;
+    readonly attachments: readonly {
+      readonly title: string;
+      readonly purpose: string;
+      readonly required: boolean;
+      readonly url: string;
+    }[];
+  };
+  readonly cornerValidation?: readonly {
+    readonly stage: string;
+    readonly status: string;
+    readonly evidence: string;
+  }[];
   readonly repository?: RoomRepositoryView;
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */

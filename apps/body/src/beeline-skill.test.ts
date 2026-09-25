@@ -36,7 +36,7 @@ describe('using-beeline Room guidance', () => {
       'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
     );
     expect(beelinePrimer()).toContain(
-      'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill',
+      'Before opening a corner, consult beeline-triage and beeline-spec',
     );
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('no action or corner tools');
@@ -133,9 +133,7 @@ describe('beeline-triage request skill', () => {
   it('clarifies first and warns without blocking on warranted work or desirability', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('## 1. Is it clear?');
-    expect(markdown).toContain(
-      'ask one focused question instead of proposing or opening the corner',
-    );
+    expect(markdown).toContain('ask one focused question before opening the corner');
     expect(markdown).toContain('## 2. Is work warranted?');
     expect(markdown).toContain('try to reproduce the exact user-visible behavior');
     expect(markdown).toContain('open or recently merged pull requests');
@@ -144,8 +142,10 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('Warnings inform the user and implementer; they do not block work.');
   });
 
-  it('uses the existing proposal line and adds only evidence-backed warnings', () => {
-    expect(markdown).toContain('Proposed corner: <name> — <objective>');
+  it('dispatches under existing authorization and adds only evidence-backed warnings', () => {
+    expect(markdown).toContain(
+      'pass the complete brief to open_corner under existing authorization',
+    );
     expect(markdown).toContain('Triage warning — warranted:');
     expect(markdown).toContain('Triage warning — desirable:');
     expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');

@@ -137,6 +137,15 @@ export type DaemonOperationMap = {
   getTargetAgentAuthority: Operation<TargetAgentAuthorityInput, AuthorityDecisionResult>;
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
+  listCornerBriefRevisions: Operation<
+    CornerInput & { readonly beforeRevision?: number },
+    {
+      readonly revisions: readonly CornerBrief[];
+      readonly nextBeforeRevision?: number;
+    }
+  >;
+  reviseCornerBrief: Operation<ReviseCornerBriefInput, CornerBrief>;
+  postCornerValidationStage: Operation<PostCornerValidationStageInput, CornerValidationStage>;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
     {
@@ -167,7 +176,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string },
+    CornerInput & { readonly headSha: string; readonly briefRevision?: number },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;
@@ -434,6 +443,9 @@ export type CornerRestoreResult = {
   readonly cornerId: string;
   /** Immutable objective from the authoritative corner fact. */
   readonly objective: string;
+  /** Current immutable assignment, absent on corners opened before briefs. */
+  readonly brief?: CornerBrief;
+  readonly validation?: readonly CornerValidationStage[];
   /** Human-created corners are title-only; their title supplies runtime context after a tag. */
   readonly title?: string;
   readonly kind?: 'agent' | 'human';
@@ -657,6 +669,8 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly name: string;
     /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
     readonly objective: string;
+    /** Full assignment; the short objective remains a navigation summary. */
+    readonly brief?: CornerBriefDraft;
     readonly repository?: string;
     readonly targetBranch?: string;
     /**
@@ -667,6 +681,67 @@ export type CreateCornerInput = TurnOutputAuthority &
      * `research` keeps a writable worktree under a durable delivery and merge hold.
      */
     readonly lane?: CornerLane;
+  };
+export type CornerBriefAttachment = {
+  readonly objectId: string;
+  readonly title: string;
+  readonly purpose: string;
+  readonly required: boolean;
+  readonly mime: string;
+  readonly sha256: string;
+  readonly size: number;
+};
+export type CornerBriefDraft = {
+  readonly content: string;
+  readonly attachments?: readonly {
+    readonly objectId: string;
+    readonly purpose: string;
+    readonly required: boolean;
+  }[];
+  readonly change?: string;
+};
+export type CornerBrief = {
+  readonly id: string;
+  readonly revision: number;
+  readonly content: string;
+  readonly change?: string;
+  readonly authorId: string;
+  readonly sourceRoomId: string;
+  readonly sourceMessageId?: string;
+  readonly attachments: readonly CornerBriefAttachment[];
+};
+export type ReviseCornerBriefInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly requestId: string;
+    readonly expectedRevision: number;
+    readonly brief: CornerBriefDraft;
+  };
+export type CornerValidationStageName =
+  | 'intent'
+  | 'base'
+  | 'review'
+  | 'tests'
+  | 'docs'
+  | 'lint_types'
+  | 'publication'
+  | 'ci'
+  | 'final_authorization';
+export type CornerValidationStage = {
+  readonly briefRevision: number;
+  readonly headSha: string;
+  readonly stage: CornerValidationStageName;
+  readonly status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'not_applicable';
+  readonly evidence: string;
+  readonly actorId: string;
+};
+export type PostCornerValidationStageInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly requestId: string;
+    readonly briefRevision: number;
+    readonly headSha: string;
+    readonly stage: CornerValidationStageName;
+    readonly status: CornerValidationStage['status'];
+    readonly evidence: string;
   };
 export type CornerResult = { readonly cornerId: string };
 export type CornerLane = 'code' | 'no_code' | 'research';

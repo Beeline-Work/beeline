@@ -1,7 +1,7 @@
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -110,6 +110,7 @@ export function cornerReviewerInstruction(input: {
   openedByAgent: boolean;
   pullRequestNumber?: number;
   headSha?: string;
+  briefRevision?: number;
 }): string | undefined {
   if (
     !input.reviewerHandle ||
@@ -121,7 +122,7 @@ export function cornerReviewerInstruction(input: {
   const author = input.authorHandle?.replace(/^@/, '') || 'author';
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}. Review it now with the beeline-review skill against that exact head. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
 }
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
@@ -152,6 +153,8 @@ export function cornerSelfReviewerInstruction(input: {
 }
 
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
+When a server-assigned brief is present, implement all of its current acceptance criteria and use its file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
+When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
 Follow the beeline-triage skill's bugfix execution contract when the objective reports a defect.
 Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
@@ -1082,6 +1085,7 @@ export class MonolithCornerTurnLoop {
           ...input,
           pullRequestNumber: pr.number,
           headSha: pr.headSha,
+          briefRevision: restore.brief?.revision,
         }),
       ].join('\n');
     } catch {
@@ -1217,7 +1221,7 @@ export class MonolithCornerTurnLoop {
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
               await this.syncBranch();
-              const [conversation, roster, delivered, activeReviewerInstruction] =
+              const [conversation, roster, restored, activeReviewerInstruction] =
                 await trace.measure('context-fetch', () =>
                   Promise.all([
                     api.execute('getRoomConversation', {
@@ -1226,16 +1230,45 @@ export class MonolithCornerTurnLoop {
                       narrationRequestId: requestId,
                     }),
                     this.roster(),
-                    this.attachmentDir && attachments.length
-                      ? deliverAttachments(
-                          attachments,
-                          join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                          this.options.fetchImpl,
-                        )
-                      : Promise.resolve<DeliveredAttachment[]>([]),
+                    api.execute('getCornerRestoreState', { cornerId }),
                     this.activeReviewerInstruction(),
                   ]),
                 );
+              const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
+                (file) => ({
+                  url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
+                  name: file.title,
+                  mimeType: file.mime,
+                  size: file.size,
+                }),
+              );
+              const allAttachments = [...attachments, ...briefAttachments];
+              const delivered: DeliveredAttachment[] =
+                this.attachmentDir && allAttachments.length
+                  ? await deliverAttachments(
+                      allAttachments,
+                      join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                      this.options.fetchImpl,
+                    )
+                  : [];
+              const briefFileLines = await Promise.all(
+                (restored.brief?.attachments ?? []).map(async (file, index) => {
+                  const entry = delivered.find(
+                    (item) => item.attachment === briefAttachments[index],
+                  );
+                  const verified =
+                    entry?.path &&
+                    createHash('sha256')
+                      .update(await readFile(entry.path))
+                      .digest('hex') === file.sha256;
+                  return `- ${file.title} (${file.purpose}; ${file.required ? 'required' : 'optional'}; sha256 ${file.sha256}): ${verified ? entry.path : 'UNAVAILABLE OR CONTENT MISMATCH'}`;
+                }),
+              );
+              const missingRequiredBriefFile = (restored.brief?.attachments ?? []).some(
+                (file, index) =>
+                  file.required &&
+                  briefFileLines[index]?.includes('UNAVAILABLE OR CONTENT MISMATCH'),
+              );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1259,6 +1292,9 @@ export class MonolithCornerTurnLoop {
                 [
                   this.turnIdentityInstructions,
                   `Corner objective:\n${this.options.objective}`,
+                  restored.brief
+                    ? `Assigned corner brief ${restored.brief.id} revision ${restored.brief.revision} (current server revision):\n${restored.brief.content}\n\nAssigned files:\n${briefFileLines.join('\n') || '(none)'}${missingRequiredBriefFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
+                    : 'Legacy corner: no assigned brief; use the objective and corner conversation.',
                   WarmTranscript.render(
                     this.warmTranscript.select(this.sessionId, transcriptRows),
                     'Corner transcript:',

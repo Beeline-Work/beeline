@@ -987,6 +987,30 @@ describe('the ledger — the byline says who is talking', () => {
     expect(status.marginLeft).toBe('auto');
   });
 
+  it('uses readable theme brass for a generated avatar’s brass plate', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'portrait',
+        luminous: true,
+        byline: {
+          name: 'Terra',
+          stamp: '11:38',
+          mark: {
+            seed: 'agent-pubkey-terra',
+            kind: 'agent',
+            avatarUrl:
+              'https://api.example.test/v1/agent-avatars/11111111-1111-4111-8111-111111111111',
+          },
+        },
+        bodyText: 'Ready.',
+        bodyTestID: 'body',
+      }),
+    );
+    const name = merged(renderer.root.findByProps({ testID: 'chat-byline-name' }));
+    expect(name.color).toBe(groknight.accent);
+    expect(name.color).not.toBe(identityPalette('agent-pubkey-terra', 'agent').mid);
+  });
+
   it('keeps the viewer’s name brass, whatever their own hue is', () => {
     const renderer = render(
       React.createElement(LedgerSteer, {

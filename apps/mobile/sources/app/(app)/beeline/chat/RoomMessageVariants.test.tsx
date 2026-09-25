@@ -10,6 +10,7 @@ import {
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
+import { beelineThemes } from '@/buzz/groknight';
 import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
@@ -1103,7 +1104,8 @@ describe('Room message variant components', () => {
       leftAction.root.findByProps({ testID: 'corner-swipe-action-swipe-corner' }).props
         .accessibilityLabel,
     ).toBe('Forward message to a new corner');
-    expect(leftAction.root.findAllByType('CornerGlyph' as never)).toHaveLength(1);
+    const glyph = leftAction.root.findByType('CornerGlyph' as never);
+    expect(glyph.props.color).toBe(beelineThemes.obsidian.accent);
     act(() => swipeable.props.onSwipeableOpen('left'));
     expect(onForwardToNewCorner).toHaveBeenCalledWith(row);
     expect(onReply).not.toHaveBeenCalled();

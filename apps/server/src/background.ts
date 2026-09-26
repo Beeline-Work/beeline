@@ -1,5 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import type { PushActionPayload } from '@beeline/api-contract/phone';
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
@@ -17,10 +18,13 @@ export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
  * sole background leader otherwise stalls attention delivery. */
 export const PUSH_DELIVERY_CONCURRENCY = 8;
 
+/** What a person can do from the notification itself; see `push-actions.ts`. */
+export type PushAction = PushActionPayload;
+
 export interface PushSender {
   send(
     token: string,
-    message: { messageId: string; text: string } & (
+    message: { messageId: string; text: string; action?: PushAction } & (
       | { type: 'test' }
       | {
           workspaceId: string;
@@ -128,6 +132,12 @@ export class PushDeliveryLoop {
       identity_id: string;
       is_release_catchup: boolean;
       platform: 'android' | 'ios';
+      action: 'grant' | 'reply' | null;
+      grant_id: string | null;
+      grant_kind: string | null;
+      grant_target: string | null;
+      grant_agent_name: string | null;
+      author_name: string | null;
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -162,7 +172,29 @@ export class PushDeliveryLoop {
             WHEN m.presentation IN ('system','card') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
-          m.push_token token,m.push_identity_id identity_id,false is_release_catchup,m.created_at
+          m.push_token token,m.push_identity_id identity_id,false is_release_catchup,m.created_at,
+          -- Inline notification actions. A grant card answers from the
+          -- notification only while it asks exactly one thing that is still
+          -- pending, since three buttons cannot answer two asks. A reply is offered
+          -- on messages from people and agents, never on a card, a system line,
+          -- or the read-only @system DM.
+          CASE
+            WHEN m.card_type='grant-request' AND jsonb_typeof(m.card->'grants')='array'
+              AND jsonb_array_length(m.card->'grants')=1
+              AND EXISTS (
+                SELECT 1 FROM agent_grants pending_grant
+                WHERE pending_grant.id::text=m.card->'grants'->0->>'grantId'
+                  AND pending_grant.status='pending'
+              ) THEN 'grant'
+            WHEN m.presentation='message' AND m.card_type IS NULL
+              AND NOT COALESCE(room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text),false)
+              THEN 'reply'
+          END action,
+          m.card->'grants'->0->>'grantId' grant_id,
+          m.card->'grants'->0->>'kind' grant_kind,
+          m.card->'grants'->0->>'target' grant_target,
+          m.card->'agent'->>'name' grant_agent_name,
+          COALESCE(NULLIF(author.name,''),'Someone') author_name
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -198,7 +230,9 @@ export class PushDeliveryLoop {
           notification.room_id::text channel_id,NULL::text corner_id,'message' target,
           'workspace-join' notification_type,
           btrim(notification.text) text,device.device_token token,push_device.identity_id,
-          false is_release_catchup,notification.created_at
+          false is_release_catchup,notification.created_at,
+          NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
+          NULL::text grant_agent_name,NULL::text author_name
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
@@ -218,7 +252,9 @@ export class PushDeliveryLoop {
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
           candidate.corner_id,candidate.target,
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
-          candidate.is_release_catchup,candidate.created_at,device.platform
+          candidate.is_release_catchup,candidate.created_at,device.platform,
+          candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
+          candidate.grant_agent_name,candidate.author_name
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
           AND ${this.iosSender ? "device.platform IN ('android','ios')" : "device.platform='android'"}
@@ -228,7 +264,8 @@ export class PushDeliveryLoop {
         ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
-        notification_type,text,token,identity_id,is_release_catchup,platform
+        notification_type,text,token,identity_id,is_release_catchup,platform,
+        action,grant_id,grant_kind,grant_target,grant_agent_name,author_name
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -251,6 +288,7 @@ export class PushDeliveryLoop {
             target: 'message' | 'corner';
             type: 'message';
             text: string;
+            action?: PushAction;
           };
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
@@ -321,6 +359,7 @@ export class PushDeliveryLoop {
                 target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,
+                ...pushActionFor(candidate),
               },
       });
     }
@@ -368,6 +407,34 @@ export class PushDeliveryLoop {
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
     return delivered;
   }
+}
+
+function pushActionFor(candidate: {
+  action: 'grant' | 'reply' | null;
+  grant_id: string | null;
+  grant_kind: string | null;
+  grant_target: string | null;
+  grant_agent_name: string | null;
+  author_name: string | null;
+}): { action?: PushAction } {
+  if (
+    candidate.action === 'grant' &&
+    candidate.grant_id &&
+    candidate.grant_kind &&
+    candidate.grant_target
+  )
+    return {
+      action: {
+        kind: 'grant',
+        grantId: candidate.grant_id,
+        grantKind: candidate.grant_kind,
+        grantTarget: candidate.grant_target,
+        agentName: candidate.grant_agent_name ?? '',
+      },
+    };
+  if (candidate.action === 'reply')
+    return { action: { kind: 'reply', authorName: candidate.author_name ?? 'Someone' } };
+  return {};
 }
 
 /**

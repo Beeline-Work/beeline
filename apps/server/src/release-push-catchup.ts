@@ -110,7 +110,10 @@ export const RELEASE_CATCHUP_CANDIDATES_SQL = `
     COALESCE(r.parent_id,r.id)::text room_id,r.id::text channel_id,
     r.parent_id::text corner_id,'message' target,
     'message' notification_type,concat_ws(': ',author.name,btrim(m.text)) text,
-    d.token,catchup.identity_id,true is_release_catchup,m.created_at
+    d.token,catchup.identity_id,true is_release_catchup,m.created_at,
+    -- A release notice lives in the read-only @system DM: no inline action.
+    NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
+    NULL::text grant_agent_name,NULL::text author_name
   FROM push_release_catchups catchup
   JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
   JOIN identities recipient ON recipient.id=d.identity_id AND recipient.push_level<>'off'

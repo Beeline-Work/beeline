@@ -9,12 +9,17 @@ import { parse } from 'yaml';
 import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
+  classifyReleaseAttempt,
   COMPONENT_PATH_RULES,
   DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
   evaluateServerCanaryWindow,
   RELEASE_BUDGET_MINUTES,
+  RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
+  RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS,
+  RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS,
+  RELEASE_SOFT_LIMIT_SECONDS,
   RELEASE_COMPONENTS,
   RELEASE_NOTIFY_TIMEOUT_MS,
   RELEASE_NOTIFY_ENDPOINT,
@@ -42,6 +47,106 @@ test('the release planner reads its desktop migration floor from the Tauri versi
     new URL('../apps/mobile/src-tauri/desktop-version.json', import.meta.url), 'utf8',
   )).version;
   assert.equal(DESKTOP_VERSION_BASELINE, desktopVersion);
+});
+
+test('run 36105533369 succeeds with OTA at 10 minutes and the whole run at 28.5 minutes', () => {
+  const triggerEpoch = 1_700_000_000;
+  const replay = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + (28.5 * 60),
+    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + (10 * 60) }],
+  });
+  assert.deepEqual(replay, {
+    outcome: 'success',
+    failureClass: '',
+    otaElapsedSeconds: 600,
+    wholeRunElapsedSeconds: 1710,
+    budgetSeconds: RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
+    softLimitSeconds: RELEASE_SOFT_LIMIT_SECONDS,
+    slow: false,
+    otaCompletedAt: triggerEpoch + 600,
+  });
+
+  const slow = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_SOFT_LIMIT_SECONDS + 1,
+    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + 600 }],
+  });
+  assert.equal(slow.outcome, 'success');
+  assert.equal(slow.failureClass, '');
+  assert.equal(slow.slow, true);
+
+  const missedFixToPhone = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 1,
+    checkpoints: [{
+      component: 'mobile-ota', state: 'checked',
+      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 1,
+    }],
+    incomplete: 'website',
+  });
+  assert.equal(missedFixToPhone.outcome, 'failure');
+  assert.equal(missedFixToPhone.failureClass, 'budget');
+  assert.equal(missedFixToPhone.slow, false);
+});
+
+test('release attempt timing keeps the native allowance and fails closed without an OTA completion timestamp', () => {
+  const triggerEpoch = 1_700_000_000;
+  const native = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_SOFT_LIMIT_SECONDS + 1,
+    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + 1800 }],
+    nativeBuildRan: true,
+  });
+  assert.equal(native.budgetSeconds, RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS);
+  assert.equal(native.outcome, 'success');
+  assert.equal(native.slow, true);
+
+  const missingCompletion = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
+    checkpoints: [{ component: 'mobile-ota', state: 'checked' }],
+  });
+  assert.equal(missingCompletion.otaElapsedSeconds, RELEASE_FIX_TO_PHONE_BUDGET_SECONDS);
+  assert.equal(missingCompletion.failureClass, 'budget');
+
+  const incomplete = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + 60,
+    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + 30 }],
+    incomplete: 'helper,website',
+  });
+  assert.equal(incomplete.failureClass, 'component:helper,website');
+  assert.equal(incomplete.slow, false);
+});
+
+test('a macOS helper release keeps its own 150-minute fix-to-phone allowance', () => {
+  const triggerEpoch = 1_700_000_000;
+  const helperMacos = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS + 60,
+    checkpoints: [{
+      component: 'mobile-ota', state: 'checked',
+      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 30,
+    }],
+    helperMacosBuildRan: true,
+  });
+  assert.equal(helperMacos.budgetSeconds, RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS);
+  assert.equal(helperMacos.failureClass, '');
+  assert.equal(helperMacos.outcome, 'success');
+  // The whole run still exceeded the soft limit, but that only marks it slow.
+  assert.equal(helperMacos.slow, true);
+
+  // With no macOS helper build the same OTA elapsed is already over budget.
+  const withoutHelperMacos = classifyReleaseAttempt({
+    triggerEpoch,
+    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 60,
+    checkpoints: [{
+      component: 'mobile-ota', state: 'checked',
+      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 30,
+    }],
+  });
+  assert.equal(withoutHelperMacos.failureClass, 'budget');
 });
 
 function run(command, args, cwd) {
@@ -799,6 +904,10 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
     const step = workflow.jobs.release_result.steps.find((candidate) => candidate.name === name);
     assert.match(step.if, /no_op != 'true'/);
   }
+  assert.match(
+    workflow.jobs.release_result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads').if,
+    /steps\.result\.outputs\.outcome == 'success'/,
+  );
   assert.match(summary.env.NOTIFICATION_STATE, /steps\.notification\.outputs\.state/);
   const genuineFailure = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Fail the attempt'));
   assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
@@ -814,6 +923,16 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   // identity, and the retry job refuses to fire on it.
   assert.match(release, /needs\.release_result\.outputs\.terminated != 'true'/);
   const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === 'Merge checkpoints and classify the final attempt');
+  const otaCheckpoint = workflow.jobs.mobile_ota.steps.find((step) => step.name === 'Require rollback evidence and write checkpoint');
+  assert.match(otaCheckpoint.run, /completedAt:Number\(completedAt\)/);
+  assert.match(otaCheckpoint.run, /date \+%s/);
+  assert.match(resultStep.run, /unified-release\.mjs classify-attempt/);
+  assert.match(resultStep.run, /--helper-macos-build-ran "\$helper_macos_build_ran"/);
+  assert.match(resultStep.run, /\[ "\$HELPER_MACOS_RESULT" = success \][\s\S]*helper_macos_build_ran=true/);
+  assert.match(resultStep.run, /--checkpoints "\$RUNNER_TEMP\/checkpoints\.json"/);
+  assert.doesNotMatch(resultStep.run, /\[ "\$elapsed" -ge "\$budget_seconds" \]/);
+  assert.equal(summary.env.SLOW, '${{ steps.result.outputs.slow }}');
+  assert.match(summary.run, /Slow: whole run reached/);
   assert.match(resultStep.run, /machinesTouched/);
   assert.match(resultStep.run, /migrationFailed/);
   assert.match(resultStep.run, /server-gates\/gates\.json/);

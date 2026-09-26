@@ -784,8 +784,8 @@ jobs:
           test -f "$ledger" || {
             echo 'mobile OTA promotion produced no rollback ledger' >&2; exit 1;
           }
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef,completedAt]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef,completedAt:Number(completedAt)})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}" "$(date +%s)"
       - uses: actions/upload-artifact@v4
         if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
         with:
@@ -1186,7 +1186,6 @@ jobs:
           incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
           now=$(date +%s)
-          elapsed=$((now - TRIGGER_EPOCH))
           # The 20-minute budget is the fix-to-phone promise (server + OTA). A store
           # binary built in this attempt (local iOS archive+export ~30 min on the Mac
           # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
@@ -1199,13 +1198,32 @@ jobs:
           # is the cost, present whether or not iOS built in this attempt, so a
           # helper release that delivered every component must not be classified
           # "budget" for waiting in it: 150 minutes covers the worst serialized case.
-          budget_seconds=1200
+          # The fix-to-phone clock now runs to the checked OTA checkpoint, not to the
+          # end of the whole run (native/desktop/website legs finish after the phone
+          # already has the update); the whole run keeps a 45-minute soft limit that
+          # only marks the attempt "slow".
+          native_build_ran=false
           if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
-            budget_seconds=3600
+            native_build_ran=true
           fi
+          helper_macos_build_ran=false
           if [ "$HELPER_MACOS_RESULT" = success ]; then
-            budget_seconds=9000
+            helper_macos_build_ran=true
           fi
+          node scripts/unified-release.mjs classify-attempt \
+            --trigger-epoch "$TRIGGER_EPOCH" \
+            --finished-epoch "$now" \
+            --checkpoints "$RUNNER_TEMP/checkpoints.json" \
+            --native-build-ran "$native_build_ran" \
+            --helper-macos-build-ran "$helper_macos_build_ran" \
+            --incomplete "$incomplete" \
+            --output "$RUNNER_TEMP/release-classification.json"
+          failure_class=$(node -e 'process.stdout.write(require(process.argv[1]).failureClass)' "$RUNNER_TEMP/release-classification.json")
+          slow=$(node -e 'process.stdout.write(String(require(process.argv[1]).slow))' "$RUNNER_TEMP/release-classification.json")
+          ota_elapsed=$(node -e 'process.stdout.write(String(require(process.argv[1]).otaElapsedSeconds))' "$RUNNER_TEMP/release-classification.json")
+          whole_run_elapsed=$(node -e 'process.stdout.write(String(require(process.argv[1]).wholeRunElapsedSeconds))' "$RUNNER_TEMP/release-classification.json")
+          budget_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).budgetSeconds))' "$RUNNER_TEMP/release-classification.json")
+          soft_limit_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).softLimitSeconds))' "$RUNNER_TEMP/release-classification.json")
           # Termination rules for the retry loop: a cancelled attempt (including
           # cancel-in-progress), a failed release migration, and any attempt
           # whose server leg touched a Fly Machine are all PERMANENT for this
@@ -1228,13 +1246,6 @@ jobs:
           fi
           terminated=false
           if [ -n "$terminated_reason" ]; then terminated=true; fi
-          if [ "$elapsed" -ge "$budget_seconds" ]; then
-            failure_class=budget
-          elif [ -n "$incomplete" ]; then
-            failure_class="component:$incomplete"
-          else
-            failure_class=''
-          fi
           if [ -n "$failure_class" ]; then
             node scripts/unified-release.mjs finalize --state "$state" --outcome failure --failure-class "$failure_class"
             {
@@ -1242,6 +1253,7 @@ jobs:
               echo "failure_class=$failure_class"
               echo "incomplete=$incomplete"
               echo "no_op=false"
+              echo "slow=false"
             } >> "$GITHUB_OUTPUT"
           else
             {
@@ -1249,9 +1261,14 @@ jobs:
               echo "failure_class="
               echo "incomplete="
               echo "no_op=$no_op"
+              echo "slow=$slow"
             } >> "$GITHUB_OUTPUT"
           fi
           {
+            echo "ota_elapsed_seconds=$ota_elapsed"
+            echo "whole_run_elapsed_seconds=$whole_run_elapsed"
+            echo "fix_to_phone_budget_seconds=$budget_seconds"
+            echo "soft_limit_seconds=$soft_limit_seconds"
             echo "machines_touched=$machines_touched"
             echo "migration_failed=$migration_failed"
             echo "terminated=$terminated"
@@ -1515,6 +1532,11 @@ jobs:
           OUTCOME: ${{ steps.result.outputs.outcome }}
           NO_OP: ${{ steps.result.outputs.no_op }}
           FAILURE_CLASS: ${{ steps.result.outputs.failure_class }}
+          SLOW: ${{ steps.result.outputs.slow }}
+          OTA_ELAPSED_SECONDS: ${{ steps.result.outputs.ota_elapsed_seconds }}
+          WHOLE_RUN_ELAPSED_SECONDS: ${{ steps.result.outputs.whole_run_elapsed_seconds }}
+          FIX_TO_PHONE_BUDGET_SECONDS: ${{ steps.result.outputs.fix_to_phone_budget_seconds }}
+          SOFT_LIMIT_SECONDS: ${{ steps.result.outputs.soft_limit_seconds }}
           SAMPLE: ${{ steps.reliability.outputs.sample }}
           FAILED: ${{ steps.reliability.outputs.failed }}
           RATE: ${{ steps.reliability.outputs.rate }}
@@ -1533,6 +1555,8 @@ jobs:
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
+          console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s / ${process.env.FIX_TO_PHONE_BUDGET_SECONDS}s budget`);
+          if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
           const signingSecrets = [

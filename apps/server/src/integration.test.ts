@@ -5522,6 +5522,79 @@ describe('monolith integration', () => {
     ).toBe(false);
   });
 
+  it('forwards a message into a human corner and starts someone else’s yolo agent without a grant', async () => {
+    const bbcOwner = 'bananaman614305';
+    await phoneToken(bbcOwner);
+    const bbcOwnerId = createHash('sha256').update(`github:${bbcOwner}`).digest('hex');
+    const bbcAgentId = 'd'.repeat(64);
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: bbcOwnerId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: bbcOwnerId });
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','BBC','bbc')`,
+      [bbcAgentId],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$2,true)`, [
+      bbcAgentId,
+      bbcOwnerId,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, bbcAgentId, ROOM],
+    );
+    const sourceId = '7'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: ROOM,
+          messageId: sourceId,
+          text: 'This deserves its own corner',
+        })
+      ).status,
+    ).toBe(200);
+    const opened = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'BBC follow-up',
+      sourceMessageId: sourceId,
+    });
+    expect(opened.status).toBe(200);
+    const { id: cornerId } = (await opened.json()) as { id: string };
+    const taggedId = '8'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: taggedId,
+          text: '@bbc answer this here',
+          mentions: [bbcAgentId],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ agent_id: string; reason: string; state: string }>(
+          `SELECT agent_id,reason,state FROM agent_commands WHERE source_message_id=$1`,
+          [taggedId],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: bbcAgentId, reason: 'human_tag', state: 'pending' }]);
+    expect(
+      (await database.query(`SELECT 1 FROM agent_grants WHERE agent_id=$1`, [bbcAgentId])).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-request'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
   it('renames a human corner through a name-only updateRoom', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
@@ -9164,12 +9237,102 @@ describe('monolith integration', () => {
     ).toEqual(['@owner turned yolo on for @bee · grant requests are now approved automatically']);
   });
   it.each([
+    ['code', false],
+    ['code', true],
+    ['research', false],
+    ['research', true],
+    ['no_code', false],
+    ['no_code', true],
+  ] as const)(
+    'opens a fresh %s corner for a non-owner requester without a grant (yolo=%s)',
+    async (lane, yolo) => {
+      await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+      const token = await phoneToken(`corner-requester-${lane}-${yolo}`);
+      const member = createHash('sha256')
+        .update(`github:corner-requester-${lane}-${yolo}`)
+        .digest('hex');
+      await operation('addWorkspaceMember', {
+        workspaceId: WORKSPACE,
+        memberId: member,
+        role: 'member',
+      });
+      await operation('addRoomMember', { roomId: ROOM, memberId: member });
+      const source = (await (
+        await operation(
+          'sendRoomMessage',
+          { roomId: ROOM, text: '@bee open this corner', mentions: [AGENT] },
+          token,
+        )
+      ).json()) as { messageId: string };
+      const opened = await daemonOperation('createCorner', {
+        roomId: ROOM,
+        requestId: source.messageId,
+        name: `${lane} work`,
+        objective: 'Answer this request',
+        lane,
+        ...(lane === 'no_code' ? {} : { repository: 'owner/widgets', targetBranch: 'main' }),
+        ...(lane === 'no_code'
+          ? {}
+          : {
+              brief: {
+                intentVerbatim: [
+                  { sourceMessageId: source.messageId, snapshot: '@bee open this corner' },
+                ],
+                buildSpec: 'Answer this request',
+                criteria: [{ id: 'AC-1', text: 'Answer this request' }],
+                references: [],
+                approvalBasis: {
+                  kind: 'initiating-command',
+                  sourceMessageId: source.messageId,
+                  snapshot: '@bee open this corner',
+                },
+              },
+            }),
+      });
+      expect(opened.status).toBe(200);
+      const { cornerId } = (await opened.json()) as { cornerId: string };
+      expect(
+        (
+          await database.query(
+            `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+            [cornerId, member],
+          )
+        ).rowCount,
+      ).toBe(1);
+      expect(
+        (
+          await database.query(
+            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_objective'`,
+            [cornerId, AGENT],
+          )
+        ).rowCount,
+      ).toBe(1);
+      expect(
+        (
+          await database.query(`SELECT 1 FROM agent_grants WHERE room_id IN ($1,$2)`, [
+            ROOM,
+            cornerId,
+          ])
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await database.query(
+            `SELECT 1 FROM messages WHERE room_id IN ($1,$2) AND card_type IN ('grant-request','grant-auto')`,
+            [ROOM, cornerId],
+          )
+        ).rows,
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
     [false, false],
     [false, true],
     [true, false],
     [true, true],
   ])(
-    'enforces the repository/resource matrix (yolo=%s ownerRequester=%s)',
+    'enforces the personal-resource matrix (yolo=%s ownerRequester=%s)',
     async (yolo, ownerRequester) => {
       await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
       const token = await phoneToken('matrix-member');
@@ -9192,56 +9355,6 @@ describe('monolith integration', () => {
         )
       ).json()) as { messageId: string };
       const context = { roomId: ROOM, requestId: source.messageId };
-      const repo = await (await daemonOperation('authorizeRepositoryCall', context)).json();
-      expect(repo.allowed).toBe(yolo);
-      if (!yolo) {
-        const card = (
-          await database.query<{ room_id: string }>(`SELECT room_id FROM messages WHERE id=$1`, [
-            repo.messageId,
-          ])
-        ).rows[0]!;
-        expect(card.room_id).toBe(ROOM);
-        await database.query(
-          `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
-          [WORKSPACE, HUMAN],
-        );
-        expect(
-          (await operation('decideAgentGrant', { grantId: repo.grantId, decision: 'always' }))
-            .status,
-        ).toBe(403);
-        expect(
-          (
-            await operation(
-              'decideAgentGrant',
-              { grantId: repo.grantId, decision: 'always' },
-              token,
-            )
-          ).status,
-        ).toBe(200);
-        expect(
-          (await (await daemonOperation('authorizeRepositoryCall', context)).json()).allowed,
-        ).toBe(true);
-      }
-      const host = await (await daemonOperation('authorizeHostCall', context)).json();
-      expect(host.allowed).toBe(yolo && ownerRequester);
-      if (!host.allowed) {
-        expect(
-          (
-            await operation(
-              'decideAgentGrant',
-              { grantId: host.grantId, decision: 'always' },
-              token,
-            )
-          ).status,
-        ).toBe(403);
-        expect(
-          (await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }))
-            .status,
-        ).toBe(200);
-        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(
-          true,
-        );
-      }
       const resource = await (
         await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
       ).json();
@@ -9306,6 +9419,75 @@ describe('monolith integration', () => {
       ).toEqual([]);
     },
   );
+
+  it('rejects obsolete repository grant requests without posting a permission card', async () => {
+    const source = (await (
+      await operation('sendRoomMessage', {
+        roomId: ROOM,
+        text: '@bee open the corner',
+        mentions: [AGENT],
+      })
+    ).json()) as { messageId: string };
+    const asked = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      requestId: source.messageId,
+      kind: 'repository',
+      target: 'owner/widgets',
+      reason: 'open the corner',
+    });
+    expect(asked.status).toBeGreaterThanOrEqual(400);
+    expect(
+      (await database.query(`SELECT 1 FROM agent_grants WHERE kind='repository'`)).rows,
+    ).toEqual([]);
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-request'`, [ROOM])).rows,
+    ).toEqual([]);
+  });
+
+  it('lets an older helper pass both corner authorization calls without a grant card', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const requesterLogin = 'legacy-corner-requester';
+    const requesterToken = await phoneToken(requesterLogin);
+    const requesterId = createHash('sha256').update(`github:${requesterLogin}`).digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: requesterId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
+    const opened = await operation(
+      'createHumanCorner',
+      { roomId: ROOM, title: 'Older helper corner' },
+      requesterToken,
+    );
+    expect(opened.status).toBe(200);
+    const { id: cornerId } = (await opened.json()) as { id: string };
+    const source = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: cornerId, text: '@bee answer here', mentions: [AGENT] },
+        requesterToken,
+      )
+    ).json()) as { messageId: string };
+    for (const name of ['authorizeRepositoryCall', 'authorizeHostCall']) {
+      const response = await daemonOperation(name, {
+        roomId: cornerId,
+        requestId: source.messageId,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ allowed: true });
+      const withoutTurn = await request(`/v1/daemon/operations/${name}`, 'POST', {
+        roomId: cornerId,
+      }, daemonToken);
+      expect(withoutTurn.status).toBe(403);
+    }
+    expect(
+      (await database.query(`SELECT 1 FROM agent_grants WHERE room_id=$1`, [cornerId])).rows,
+    ).toEqual([]);
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`, [cornerId])).rows,
+    ).toEqual([]);
+  });
 
   it('privatizes legacy resource cards and revokes unproven approvals without broadening pending grants', async () => {
     await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
@@ -9471,17 +9653,21 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
-  it('forces both bypasses off in a public Workspace and rejects calls without live command authority', async () => {
+  it('forces the personal-resource bypass off in a public Workspace and rejects calls without live command authority', async () => {
     await database.query(`UPDATE workspaces SET visibility='public' WHERE id=$1`, [WORKSPACE]);
     const source = (await (
       await operation('sendRoomMessage', { roomId: ROOM, text: '@bee work', mentions: [AGENT] })
     ).json()) as { messageId: string };
-    for (const name of ['authorizeRepositoryCall', 'authorizeSquireCall']) {
-      expect(
-        (await (await daemonOperation(name, { roomId: ROOM, requestId: source.messageId })).json())
-          .allowed,
-      ).toBe(false);
-    }
+    expect(
+      (
+        await (
+          await daemonOperation('authorizeSquireCall', {
+            roomId: ROOM,
+            requestId: source.messageId,
+          })
+        ).json()
+      ).allowed,
+    ).toBe(false);
     const response = await fetch(`${origin}/v1/daemon/operations/authorizeResourceCall`, {
       method: 'POST',
       headers: { authorization: `Bearer ${daemonToken}`, 'content-type': 'application/json' },

@@ -26,11 +26,12 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
-  it('rejects generic budget prompts before calling the server', async () => {
+  it.each([
+    { kind: 'budget', target: '$10', reason: 'more tokens' },
+    { kind: 'repository', target: 'acme/widgets', reason: 'edit the repository' },
+  ])('rejects retired $kind prompts before calling the server', async (ask) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
-    await expect(
-      requestGrant({ kind: 'budget', target: '$10', reason: 'more tokens' }, deps({}, ops)),
-    ).rejects.toThrow('kind must be one of');
+    await expect(requestGrant(ask, deps({}, ops))).rejects.toThrow('kind must be one of');
     expect(ops).toEqual([]);
   });
 
@@ -123,23 +124,6 @@ describe('beeline-agent request_grant', () => {
     expect(reply).toContain('ALWAYS, ONCE, or NO');
     expect(reply).toContain("The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private @system DM");
     expect(reply).not.toContain('in this Room');
-  });
-
-  it('names the Room and Workspace managers for a repository approval', async () => {
-    const reply = await requestGrant(
-      { kind: 'repository', target: 'acme/widgets', reason: 'edit the repository' },
-      deps({
-        grantId: 'g-repo',
-        status: 'pending',
-        auto: false,
-        messageId: 'm-repo',
-        approval: { destination: 'room', authority: 'workspace-manager' },
-      }),
-    );
-    expect(reply).toContain(
-      'A Workspace owner or admin must answer ALWAYS, ONCE, or NO on the card in this Room',
-    );
-    expect(reply).not.toContain('Your owner');
   });
 
   it('returns "approved (yolo)" and, for a command, points at run_granted_command', async () => {

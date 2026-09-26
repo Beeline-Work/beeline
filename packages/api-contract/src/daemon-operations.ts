@@ -286,6 +286,7 @@ export type DaemonOperationMap = {
     },
     AuthorizeSquireCallResult
   >;
+  /** Older helpers call these before each corner turn; both are allow-only compatibility routes. */
   authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   authorizeHostCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   listTurnAgentGrants: Operation<AuthorizeSquireCallInput, AgentGrantListResult>;

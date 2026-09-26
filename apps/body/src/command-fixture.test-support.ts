@@ -70,7 +70,6 @@ export function commandFixtureApi(
         return typeof value === 'function' ? value.bind(target) : value;
       }
       return async (name: keyof DaemonOperationMap, input: Record<string, unknown>) => {
-        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall') return { allowed: true };
         if (name === 'getRoomGitHubToken')
           return { token: 'fixture-room-token', expiresAt: Date.now() + 60_000 };
         if (name === 'getAgentCommands') {

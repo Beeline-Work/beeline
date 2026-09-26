@@ -39,10 +39,7 @@ import {
   type WalletSendOutcome,
   type WalletView,
 } from '@beeline/api-contract/wallet';
-import {
-  ensureConnectorDirectMessageRoom,
-  ensureConnectorIdentity,
-} from './workbench.js';
+import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './workbench.js';
 import { systemLine } from './system-line.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
 import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
@@ -94,10 +91,9 @@ export async function walletBinding(
       cdp_user_id: string;
       eoa_address: string;
       solana_address: string | null;
-    }>(
-      `SELECT cdp_user_id,eoa_address,solana_address FROM wallet_bindings WHERE identity_id=$1`,
-      [identityId],
-    )
+    }>(`SELECT cdp_user_id,eoa_address,solana_address FROM wallet_bindings WHERE identity_id=$1`, [
+      identityId,
+    ])
   ).rows[0];
   if (!row) return null;
   return {
@@ -181,7 +177,16 @@ export async function readWalletView(
   await reconcileInbound(database, identityId, workspaceId, source, binding.eoaAddress);
   const coins = await source.balances('base', binding.eoaAddress);
   const chains = [];
-  for (const chain of ['base', 'arbitrum', 'optimism', 'polygon', 'zora', 'bnb', 'avalanche', 'ethereum'] as const) {
+  for (const chain of [
+    'base',
+    'arbitrum',
+    'optimism',
+    'polygon',
+    'zora',
+    'bnb',
+    'avalanche',
+    'ethereum',
+  ] as const) {
     const fee = await source.feeEstimate(chain);
     chains.push({
       id: chain,
@@ -211,57 +216,59 @@ export async function readWalletView(
   };
 }
 
-/** How long a delegated-signing grant stands, in hours. */
-export const WALLET_DELEGATION_TTL_HOURS = Number(
-  process.env.WALLET_DELEGATION_TTL_HOURS ?? 24,
-);
-
 export async function delegationView(
   database: SqlDatabase,
   identityId: string,
 ): Promise<{ active: boolean; expiresAt: number | null }> {
   const row = (
-    await database.query<{ delegation_expires_at: Date | null }>(
-      `SELECT delegation_expires_at FROM wallet_bindings WHERE identity_id=$1`,
+    await database.query<{ delegation_expires_at: Date | null; delegation_standing: boolean }>(
+      `SELECT delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
       [identityId],
     )
   ).rows[0];
   const expiresAt = row?.delegation_expires_at ? row.delegation_expires_at.getTime() : null;
-  return { active: expiresAt !== null && expiresAt > Date.now(), expiresAt };
+  return {
+    active: row?.delegation_standing === true || (expiresAt !== null && expiresAt > Date.now()),
+    expiresAt,
+  };
 }
 
 /**
  * The user (present, on their phone) grants or renews the delegated-signing
- * grant. One user-scoped delegation is active at a time: granting overwrites
- * the previous expiry. A grant or renewal is announced in the @wallet thread
+ * grant. One user-scoped delegation is active at a time: granting replaces
+ * a legacy expiry with a standing grant. A grant is announced in the @wallet thread
  * so the ledger shows WHY agents can spend.
  */
 export async function grantWalletDelegation(
   database: SqlDatabase,
   identityId: string,
   workspaceId: string,
-): Promise<{ expiresAt: number }> {
+): Promise<{ expiresAt: null }> {
   const binding = await walletBinding(database, identityId);
   if (!binding) throw new Error('wallet not created');
-  const expiresAt = Date.now() + WALLET_DELEGATION_TTL_HOURS * 3_600_000;
   await database.query(
-    `UPDATE wallet_bindings SET delegation_expires_at=$2,updated_at=now() WHERE identity_id=$1`,
-    [identityId, new Date(expiresAt)],
+    `UPDATE wallet_bindings SET delegation_expires_at=NULL,delegation_standing=true,updated_at=now() WHERE identity_id=$1`,
+    [identityId],
   );
   const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
+  const roomId = await ensureConnectorDirectMessageRoom(
+    database,
+    workspaceId,
+    'wallet',
+    identityId,
+  );
   await systemLine(database, {
     roomId,
     authorId: connectorId,
     subject: { id: connectorId, kind: 'person', name: 'Wallet' },
     verb: 'granted',
     object: { text: 'agents permission to sign' },
-    consequence: `until ${new Date(expiresAt).toISOString()}`,
+    consequence: 'until revoked',
     presentation: 'card',
     cardType: 'wallet-delegation',
-    card: { expiresAt, ttlHours: WALLET_DELEGATION_TTL_HOURS },
+    card: { standing: true },
   });
-  return { expiresAt };
+  return { expiresAt: null };
 }
 
 /**
@@ -332,7 +339,9 @@ export async function sendFromWallet(
     coins.reduce(
       (sum, coin) =>
         sum +
-        (coin.symbol === holding.symbol ? usdValue(coin) * (1 - needed / available) : usdValue(coin)),
+        (coin.symbol === holding.symbol
+          ? usdValue(coin) * (1 - needed / available)
+          : usdValue(coin)),
       0,
     ),
   );
@@ -450,9 +459,7 @@ export async function reconcileInbound(
     if (entry.direction !== 'in' || !entry.txUrl) continue;
     // A source row has no identity of its own beyond its explorer link and
     // time, so the reconciliation key is that pair.
-    const txId = createHash('sha256')
-      .update(`${entry.txUrl}:${entry.createdAt}`)
-      .digest('hex');
+    const txId = createHash('sha256').update(`${entry.txUrl}:${entry.createdAt}`).digest('hex');
     if (known.has(txId)) continue;
     await recordTransaction(database, identityId, {
       txId,
@@ -472,7 +479,10 @@ export async function reconcileInbound(
 }
 
 function entryAmount(amountText: string): string {
-  return amountText.replace(/^[+\-−]/, '').replace(/\s*[A-Za-z]+$/, '').trim();
+  return amountText
+    .replace(/^[+\-−]/, '')
+    .replace(/\s*[A-Za-z]+$/, '')
+    .trim();
 }
 function entryAsset(amountText: string): string {
   const match = amountText.match(/([A-Za-z]+)\s*$/);
@@ -543,7 +553,12 @@ export async function postLedgerLine(
   entry: WalletLedgerEntry,
 ): Promise<void> {
   const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
+  const roomId = await ensureConnectorDirectMessageRoom(
+    database,
+    workspaceId,
+    'wallet',
+    identityId,
+  );
   await systemLine(database, {
     roomId,
     authorId: connectorId,
@@ -589,7 +604,12 @@ export async function postInsufficientNotice(
   detail: { needed: string; available: string; asset: string; agentName: string | null },
 ): Promise<void> {
   const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
+  const roomId = await ensureConnectorDirectMessageRoom(
+    database,
+    workspaceId,
+    'wallet',
+    identityId,
+  );
   // Bucketed to the minute: a retried attempt inside the window collides and
   // writes nothing, a later attempt announces itself once more.
   const id = createHash('sha256')
@@ -658,7 +678,15 @@ export async function agentWalletTool(
   database: SqlDatabase,
   op: 'state' | 'balance' | 'chains' | 'history' | 'quote' | 'pay' | 'swap',
   agentId: string,
-  input?: { chain?: WalletChainId; limit?: number; asset?: string; amount?: string; fromAsset?: string; toAsset?: string; to?: string },
+  input?: {
+    chain?: WalletChainId;
+    limit?: number;
+    asset?: string;
+    amount?: string;
+    fromAsset?: string;
+    toAsset?: string;
+    to?: string;
+  },
 ): Promise<unknown> {
   const source = walletSource();
   const ctx = await walletAgentContext(database, agentId);
@@ -764,7 +792,14 @@ export async function agentWalletTool(
           balanceAfterUsd: formatUsd(totalUsd),
         };
       } catch (error) {
-        return handleSendFailure(database, ctx, agentId, error, (input?.fromAsset ?? 'usdc').toLowerCase(), input?.amount ?? '');
+        return handleSendFailure(
+          database,
+          ctx,
+          agentId,
+          error,
+          (input?.fromAsset ?? 'usdc').toLowerCase(),
+          input?.amount ?? '',
+        );
       }
     }
   }
@@ -790,7 +825,12 @@ async function agentSend(
       ctx.ownerIdentityId,
       ctx.workspaceId,
       { chain: input.chain, asset: input.asset, amount: input.amount },
-      { needed: input.amount, available, asset: symbol, agentName: await agentName(database, agentId) },
+      {
+        needed: input.amount,
+        available,
+        asset: symbol,
+        agentName: await agentName(database, agentId),
+      },
     );
     return { outcome: 'insufficient', asset: symbol, needed: input.amount, available };
   }
@@ -846,9 +886,16 @@ async function handleSendFailure(
 ): Promise<WalletSendOutcome> {
   const reason = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
   const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(database, ctx.workspaceId, 'wallet', ctx.ownerIdentityId);
+  const roomId = await ensureConnectorDirectMessageRoom(
+    database,
+    ctx.workspaceId,
+    'wallet',
+    ctx.ownerIdentityId,
+  );
   const id = createHash('sha256')
-    .update(`wallet-failed:${ctx.ownerIdentityId}:${asset}:${amount}:${reason}:${Math.floor(Date.now() / 60_000)}`)
+    .update(
+      `wallet-failed:${ctx.ownerIdentityId}:${asset}:${amount}:${reason}:${Math.floor(Date.now() / 60_000)}`,
+    )
     .digest('hex');
   await systemLine(database, {
     roomId,

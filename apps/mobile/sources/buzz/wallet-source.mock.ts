@@ -30,7 +30,7 @@ const MOCK_WALLET: WalletView = {
     { id: 'avalanche', name: 'Avalanche', feeUsd: '$0.03', sponsored: false, hasBalance: false },
   ],
   sponsorship: { usedUsd: '$0.42', limitUsd: '$5.00' },
-  delegation: { active: true, expiresAt: Date.now() + 24 * 3_600_000 },
+  delegation: { active: true, expiresAt: null },
 };
 
 export class MockWalletSource implements WalletSource {
@@ -83,8 +83,8 @@ export class MockWalletSource implements WalletSource {
     };
   }
 
-  async grantDelegation(): Promise<{ expiresAt: number }> {
-    const expiresAt = Date.now() + 24 * 3_600_000;
+  async grantDelegation(): Promise<{ expiresAt: number | null }> {
+    const expiresAt = null;
     this.wallet = { ...this.wallet, delegation: { active: true, expiresAt } };
     return { expiresAt };
   }

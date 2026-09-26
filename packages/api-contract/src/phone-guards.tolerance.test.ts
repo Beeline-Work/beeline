@@ -292,6 +292,17 @@ const cases: Case[] = [
 ];
 
 describe('phone surface readers', () => {
+  it('preserves standing Wallet cards and legacy time-limited cards', () => {
+    expect(
+      readRoomViewMessage({ ...message, walletDelegation: { standing: true } })?.walletDelegation,
+    ).toEqual({ standing: true });
+    expect(
+      readRoomViewMessage({
+        ...message,
+        walletDelegation: { expiresAt: 1_800_000_000, ttlHours: 24 },
+      })?.walletDelegation,
+    ).toEqual({ expiresAt: 1_800_000_000, ttlHours: 24 });
+  });
   for (const entry of cases) {
     describe(entry.name, () => {
       it('keeps the view when an unknown field arrives', () => {

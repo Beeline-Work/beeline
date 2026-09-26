@@ -6877,8 +6877,12 @@ export class PhoneService {
     ).rows;
 
     const walletRow = (
-      await this.database.query<{ created_at: Date; delegation_expires_at: Date | null }>(
-        `SELECT created_at,delegation_expires_at FROM wallet_bindings WHERE identity_id=$1`,
+      await this.database.query<{
+        created_at: Date;
+        delegation_expires_at: Date | null;
+        delegation_standing: boolean;
+      }>(
+        `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
@@ -6900,8 +6904,9 @@ export class PhoneService {
             wallet: {
               createdAt: seconds(walletRow.created_at),
               delegationActive:
-                walletRow.delegation_expires_at !== null &&
-                walletRow.delegation_expires_at.getTime() > Date.now(),
+                walletRow.delegation_standing ||
+                (walletRow.delegation_expires_at !== null &&
+                  walletRow.delegation_expires_at.getTime() > Date.now()),
               delegationExpiresAt: walletRow.delegation_expires_at
                 ? seconds(walletRow.delegation_expires_at)
                 : null,

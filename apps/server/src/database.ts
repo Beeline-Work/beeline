@@ -1912,10 +1912,10 @@ CREATE TABLE IF NOT EXISTS wallet_bindings (
   cdp_user_id text NOT NULL,
   eoa_address text NOT NULL,
   solana_address text,
-  -- Delegated signing grant: the backend signs with the CDP key pair while
-  -- this stands; one user-scoped delegation at a time, expiring by default
-  -- in 24h. NULL until the user grants it the first time.
+  -- NULL expiry means either never granted or standing; the separate flag
+  -- distinguishes them. Legacy time-limited grants keep their timestamps.
   delegation_expires_at timestamptz,
+  delegation_standing boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1945,6 +1945,9 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await database.query(
+    `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
+  );
   await database.query(AGENT_COMMAND_SCHEMA);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
@@ -2158,9 +2161,7 @@ export async function backfillAgentHandles(database: SqlDatabase): Promise<numbe
  * staged rows migrate to `live`; a Workspace with no row gets one. Idempotent:
  * the explicit off switches survive, and re-running touches nothing else.
  */
-export async function backfillInstitutionalMemoryRollout(
-  database: SqlDatabase,
-): Promise<number> {
+export async function backfillInstitutionalMemoryRollout(database: SqlDatabase): Promise<number> {
   const advanced = await database.query(
     `UPDATE institutional_memory_workspace_rollouts
      SET stage='live',updated_at=now()

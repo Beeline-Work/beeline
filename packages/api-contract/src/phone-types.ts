@@ -314,10 +314,12 @@ export type RoomViewMessage = {
     readonly reason?: string;
   };
   /** The delegation grant/renewal fact in the @wallet thread. */
-  readonly walletDelegation?: {
-    readonly expiresAt: number;
-    readonly ttlHours: number;
-  };
+  readonly walletDelegation?:
+    | { readonly standing: true }
+    | {
+        readonly expiresAt: number;
+        readonly ttlHours: number;
+      };
   readonly daemonFact?: {
     readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';
     readonly cornerId: string;

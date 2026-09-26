@@ -538,7 +538,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    # The 169-test PGlite file reached more than 15 GiB RSS in a local run;
+    # This large PGlite file reached more than 15 GiB RSS in a local run;
     # the standard hosted runner cannot hold it. The suite above stays hosted.
     runs-on: [self-hosted, Linux, X64, beeline-prod-host]
     timeout-minutes: 20

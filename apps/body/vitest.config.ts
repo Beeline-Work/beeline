@@ -13,5 +13,12 @@ export default defineConfig({
     // children and need room for a loaded CI host without reverting to the
     // event-loop-blocking spawnSync path this suite guards against.
     testTimeout: 15_000,
+    // Hooks do at least as much work as the tests they bracket: the room
+    // discovery fixtures migrate a database, start a real server, and run a
+    // daemon core in beforeEach, and abort that whole stack plus remove temp
+    // roots in afterEach. Under the same loaded CI host that motivates
+    // testTimeout above, the vitest default 10s hookTimeout failed the suite
+    // on teardown alone; a genuine shutdown hang still fails, just at 30s.
+    hookTimeout: 30_000,
   },
 });

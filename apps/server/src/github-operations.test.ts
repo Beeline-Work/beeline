@@ -217,6 +217,72 @@ describe('GitHub phone operations', () => {
     );
     expect(app.installationToken).toHaveBeenCalledTimes(1);
   });
+  it('keeps a listed repository token available while its installation sync is in progress', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main'),(102,77,'owner/removed','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_resolution,github_installation_id)
+       VALUES($1,$2,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,
+      [room, workspace],
+    );
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [
+        {
+          id: 101,
+          installationId: 77,
+          fullName: 'owner/widgets',
+          defaultBranch: 'main',
+        },
+      ]),
+      installationToken: vi.fn(async () => ({
+        token: 'scoped-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const query = database.query.bind(database);
+    let tokenDuringSync: string | undefined;
+    vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.startsWith('INSERT INTO github_repositories(')) {
+        tokenDuringSync = (await operations.roomToken(room)).token;
+      }
+      return query(sql, values);
+    });
+
+    await operations.processWebhook('installation', {
+      action: 'created',
+      installation: { id: 77 },
+    });
+
+    expect(tokenDuringSync).toBe('scoped-token');
+    expect(await operations.roomToken(room)).toMatchObject({ token: 'scoped-token' });
+    expect(
+      (
+        await database.query<{ repository_id: number; active: boolean }>(
+          `SELECT repository_id,active FROM github_repositories WHERE installation_id=77 ORDER BY repository_id`,
+        )
+      ).rows,
+    ).toEqual([
+      { repository_id: 101, active: true },
+      { repository_id: 102, active: false },
+    ]);
+  });
   it('uses the Room exact-repository token to list and dispatch on the stored default branch', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

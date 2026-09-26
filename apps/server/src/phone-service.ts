@@ -3031,6 +3031,15 @@ export class PhoneService {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
     const scope = input as { workspaceId?: string; roomId?: string };
+    // The spectator guard below casts nonempty scope ids to uuid. Wallet
+    // grants need a plain input error before that generic SQL gate runs.
+    if (
+      name === 'grantWalletDelegation' &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        scope.workspaceId ?? '',
+      )
+    )
+      throw new Error('valid Workspace ID required');
     if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name)) {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
@@ -3386,6 +3395,12 @@ export class PhoneService {
           input as unknown as Input<'sendFromWallet'>,
         )) as Output<Name>;
       case 'grantWalletDelegation':
+        // The wallet is human-owned, but its receipt must stay in a Workspace
+        // where that human is currently a member.
+        await this.requireWorkspaceMember(
+          (input as Input<'grantWalletDelegation'>).workspaceId,
+          viewerId,
+        );
         return (await grantWalletDelegation(
           this.database,
           viewerId,

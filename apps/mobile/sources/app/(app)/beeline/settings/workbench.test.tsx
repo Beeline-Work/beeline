@@ -8,6 +8,10 @@ const layout = vi.hoisted(() => ({ desktop: false }));
 const searchParams = vi.hoisted(() => ({
   params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } as Record<string, string>,
 }));
+const workspace = vi.hoisted(() => ({
+  resolve: vi.fn(async (id?: string): Promise<string | null> => id || 'workspace-1'),
+}));
+vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
 const focus = vi.hoisted(() => ({
   effect: undefined as undefined | (() => void | (() => void)),
 }));
@@ -123,6 +127,7 @@ beforeEach(() => {
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
+  workspace.resolve.mockImplementation(async (id?: string) => id || 'workspace-1');
 });
 
 async function render(): Promise<ReactTestRenderer> {
@@ -236,9 +241,7 @@ describe('Workbench settings screen', () => {
     );
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe(
-      'workbench-connector-trusty-squire-connect',
-    );
+    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.leading.props.avatarUrl).toBe(
       'https://server.example.test/v1/connectors/logo/wallet.svg',
@@ -420,6 +423,57 @@ describe('Workbench settings screen', () => {
     });
   });
 
+  it('resolves a Workspace for the personal Settings entry before opening Wallet', async () => {
+    searchParams.params = { viewerId: 'human-dani' };
+    const renderer = await render();
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
+    await act(async () => {
+      await wallet.props.trailingPress.onPress();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith('');
+    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
+  });
+
+  it('opens an already connected Wallet from a Workspace-bearing chat entry', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => {
+      const view = await read(input);
+      return {
+        ...view,
+        connectors: view.connectors.map((connector) =>
+          connector.id === 'wallet' ? { ...connector, status: 'connected' as const } : connector,
+        ),
+      };
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith('workspace-1');
+    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
+  });
+
+  it('does not create or open Wallet when the viewer has no Workspace', async () => {
+    searchParams.params = { viewerId: 'human-dani' };
+    workspace.resolve.mockResolvedValue(null);
+    const source = new MockWalletSource();
+    const createWallet = vi.spyOn(source, 'createWallet');
+    setWalletSource(source);
+    const renderer = await render();
+    await act(async () => {
+      await renderer.root
+        .findByProps({ testID: 'workbench-connector-wallet-head' })
+        .props.trailingPress.onPress();
+    });
+    expect(createWallet).not.toHaveBeenCalled();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-wallet-workspace-missing' }),
+    ).toBeTruthy();
+  });
+
   it('opens a connection detail on a connection row', async () => {
     const renderer = await render();
     act(() => {
@@ -454,9 +508,11 @@ describe('Workbench settings screen', () => {
         .title,
     ).toBe('Disconnect');
     await act(async () => {
-      renderer.root.findByProps({
-        testID: 'workbench-connector-trusty-squire-disconnect',
-      }).props.onPress();
+      renderer.root
+        .findByProps({
+          testID: 'workbench-connector-trusty-squire-disconnect',
+        })
+        .props.onPress();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

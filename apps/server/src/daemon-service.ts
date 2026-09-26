@@ -424,7 +424,10 @@ export class DaemonService {
           }
           if (name !== 'retractAgentLiveOutput' && name !== 'postAgentTurnReceipt')
             throw new Error('command already completed');
-          return this.writeResult() as Output<Name>;
+          // A durable reply completes the command before its terminal receipt.
+          // That receipt still owns usage and the institutional review enqueue.
+          if (name !== 'postAgentTurnReceipt' || candidate.status !== 'complete')
+            return this.writeResult() as Output<Name>;
         }
         const scoped = new DaemonService(
           db,

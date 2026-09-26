@@ -484,6 +484,49 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).toEqual([{ source_request_id: 'shadow-hook-request', status: 'pending' }]);
   });
 
+  it('enqueues a completed turn after its durable reply already completed the command', async () => {
+    await enrollLive();
+    const requestId = 'reply-before-receipt';
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: MESSAGE,
+      reason: 'human_tag',
+      turnRequestId: requestId,
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'generation-1');
+    await liveDaemon().execute(
+      'postRoomMessage',
+      { roomId: ROOM, requestId, generationId: 'generation-1', text: 'The marker is last.' },
+      AGENT,
+    );
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          command!.id,
+        ])
+      ).rows[0]?.state,
+    ).toBe('complete');
+    expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
+
+    const receipt = {
+      roomId: ROOM,
+      agentId: AGENT,
+      requestId,
+      generationId: 'generation-1',
+      status: 'complete' as const,
+    };
+    await liveDaemon().execute('postAgentTurnReceipt', receipt, AGENT);
+    await liveDaemon().execute('postAgentTurnReceipt', receipt, AGENT);
+    expect(
+      (
+        await database.query<{ source_request_id: string; mode: string }>(
+          `SELECT source_request_id,mode FROM institutional_memory_jobs`,
+        )
+      ).rows,
+    ).toEqual([{ source_request_id: requestId, mode: 'live' }]);
+  });
+
   it('stores validated extraction as shadow evidence without creating or serving memory', async () => {
     await enqueue();
     const claimed = (await claimInstitutionalMemoryJob(database, AGENT, config))!;

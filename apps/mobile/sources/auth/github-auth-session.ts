@@ -28,6 +28,9 @@ const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
 const PENDING_INSTALLATION_COMPLETED_KEY = 'buzzy.github-installation-completed.v1';
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
 const GITHUB_RECOVERY_WAIT_MS = 120_000;
+const REACHABILITY_TIMEOUT_MS = 5_000;
+/** How long completion reads may fail to reach the server before the device counts as offline. */
+const GITHUB_OFFLINE_GIVE_UP_MS = 10_000;
 
 interface PendingGitHubSignInSession {
   state: string;
@@ -303,6 +306,31 @@ function authBaseUrl(runtime: BuzzRuntimeConfig): string {
   return runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
 }
 
+/** A request that never got an HTTP answer: the device, not the server, is the problem. */
+function isUnreachable(error: unknown): boolean {
+  return error instanceof OidcBindError && error.code === 'offline' && error.status === undefined;
+}
+
+/**
+ * Prove the auth server answers before handing the person to a browser. Offline,
+ * the browser can only show its own error page, and closing it would leave this
+ * flow polling a server it cannot reach. Any HTTP answer counts as reachable.
+ */
+async function assertAuthServerReachable(
+  runtime: BuzzRuntimeConfig,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REACHABILITY_TIMEOUT_MS);
+  try {
+    await fetchImpl(`${authBaseUrl(runtime)}/healthz`, { signal: controller.signal });
+  } catch {
+    throw new OidcBindError('offline', 'No network connection');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function recoverySignal(callbackUrl: string, expectedState: string): boolean {
   const url = new URL(callbackUrl);
   if (!isCallbackFor(callbackUrl, githubSignInRedirectUri())) return false;
@@ -381,12 +409,17 @@ async function cancelGitHubRecovery(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3_000);
   try {
-    const response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion/cancel`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ recoveryToken }),
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion/cancel`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryToken }),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new OidcBindError('offline', 'Could not cancel GitHub sign-in');
+    }
     if (!response.ok) {
       throw new OidcBindError('offline', 'Could not cancel GitHub sign-in', response.status);
     }
@@ -440,6 +473,7 @@ interface ResilientGitHubSessionInput {
   fetchImpl?: typeof fetch;
   recoveryWaitMs?: number;
   recoveryPollMs?: number;
+  offlineGiveUpMs?: number;
   callbackGraceMs?: number;
 }
 
@@ -454,8 +488,10 @@ export async function runResilientGitHubSignInSession({
   fetchImpl = githubAuthFetch,
   recoveryWaitMs = GITHUB_RECOVERY_WAIT_MS,
   recoveryPollMs = 200,
+  offlineGiveUpMs = GITHUB_OFFLINE_GIVE_UP_MS,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
+  await assertAuthServerReachable(runtime, fetchImpl);
   const previousRecoveryToken = (await readPendingSession())?.recoveryToken;
   if (
     previousRecoveryToken &&
@@ -493,6 +529,7 @@ export async function runResilientGitHubSignInSession({
   }
 
   const deadline = Date.now() + recoveryWaitMs;
+  let unreachableSince: number | null = null;
   do {
     try {
       const recovered = await fetchGitHubRecoveryChallenge(
@@ -505,12 +542,24 @@ export async function runResilientGitHubSignInSession({
         await persistPendingCallback(challengeCallbackUrl(recovered, state), state);
         return recovered;
       }
+      unreachableSince = null;
     } catch (error) {
       // A slow or interrupted completion read says nothing about the proof. Keep
       // the app-held recovery secret and retry while the server ticket can live.
       if (!(error instanceof OidcBindError) || !error.retryable) {
         await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
         throw error;
+      }
+      // A server that keeps not answering at all means the device went offline:
+      // say so now instead of spinning until the ticket expires.
+      if (isUnreachable(error)) {
+        unreachableSince ??= Date.now();
+        if (Date.now() - unreachableSince >= offlineGiveUpMs) {
+          await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+          throw error;
+        }
+      } else {
+        unreachableSince = null;
       }
     }
     const remainingMs = deadline - Date.now();

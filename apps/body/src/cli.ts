@@ -538,9 +538,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
-        // Phase 0 is dark unless both this host and the server opt in. The
-        // worker waits for interactive idleness and stores shadow evidence;
-        // it never changes Room/corner prompt assembly.
+        // Institutional review is dark unless the host opts into shadow or
+        // live mode. It waits for interactive idleness; the server decides
+        // whether a claimed job is measurement-only or may create an item.
         if (institutionalMemoryShadowEnabled()) {
           institutionalMemoryWorker ??= new InstitutionalMemoryShadowWorker({
             api: daemonApi,

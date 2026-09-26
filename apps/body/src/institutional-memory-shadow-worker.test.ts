@@ -18,7 +18,9 @@ const job: InstitutionalMemoryShadowJob = {
   sourceMessageId: 'message-1',
   requesterIdentityId: 'human-1',
   directMessage: false,
+  mode: 'shadow',
   messages: [{ id: 'message-1', authorId: 'human-1', createdAt: 1_700_000_000, text: 'Use pnpm.' }],
+  existingItems: [],
 };
 
 const proposal: InstitutionalMemoryProposal = {
@@ -54,6 +56,9 @@ describe('institutional memory shadow worker', () => {
     expect(
       institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'true' }),
     ).toBe(true);
+    expect(institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'true' })).toBe(
+      true,
+    );
   });
 
   it('does not claim while interactive work is active', async () => {

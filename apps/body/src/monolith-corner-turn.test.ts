@@ -36,6 +36,7 @@ vi.mock('./corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -59,9 +60,13 @@ describe('corner merge instructions', () => {
     };
     loop.options = {
       repository: {
-        featureBranch: 'feature/widget', targetBranch: 'main', githubToken: 'stale-token',
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        githubToken: 'stale-token',
       },
-      api: { execute }, parentRoomId: 'exact-room', worktreePath: '/unused',
+      api: { execute },
+      parentRoomId: 'exact-room',
+      worktreePath: '/unused',
     };
     await expect(loop.syncBranch()).rejects.toThrow('repository access denied');
     expect(execute).toHaveBeenCalledTimes(3);
@@ -170,46 +175,49 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])('does not start an autonomous harness while %s is pending', async (gate) => {
-    const agent = stored('11'.repeat(32), 'Bee');
-    const execute = vi.fn(async (name: string) =>
-      name === gate
-        ? { allowed: false, status: 'pending' }
-        : { allowed: true, id: 'write', createdAt: 1 },
-    );
-    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
-    const schedule = vi.spyOn(scheduler, 'run');
-    const createAcpClient = vi.fn();
-    const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
-    roots.push(root);
-    const loop = new MonolithCornerTurnLoop({
-      cornerId: 'corner-id',
-      parentRoomId: 'room-id',
-      workspaceId: 'workspace',
-      objective: 'Edit the repository',
-      worktreePath: root,
-      runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
-      config: { agentHomeRoot: root } as BodyConfig,
-      api: { execute } as unknown as DaemonApiClient,
-      scheduler,
-      onPoll: vi.fn(),
-      onFailure: vi.fn(),
-      onCloseRequested: vi.fn(),
-      createAcpClient,
-    });
-    await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
-      'request',
-      'work',
-    );
-    expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
-    expect(schedule).not.toHaveBeenCalled();
-    expect(createAcpClient).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledWith(
-      'postAgentTurnReceipt',
-      expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
-    );
-    await scheduler.dispose();
-  });
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])(
+    'does not start an autonomous harness while %s is pending',
+    async (gate) => {
+      const agent = stored('11'.repeat(32), 'Bee');
+      const execute = vi.fn(async (name: string) =>
+        name === gate
+          ? { allowed: false, status: 'pending' }
+          : { allowed: true, id: 'write', createdAt: 1 },
+      );
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+      const schedule = vi.spyOn(scheduler, 'run');
+      const createAcpClient = vi.fn();
+      const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
+      roots.push(root);
+      const loop = new MonolithCornerTurnLoop({
+        cornerId: 'corner-id',
+        parentRoomId: 'room-id',
+        workspaceId: 'workspace',
+        objective: 'Edit the repository',
+        worktreePath: root,
+        runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
+        config: { agentHomeRoot: root } as BodyConfig,
+        api: { execute } as unknown as DaemonApiClient,
+        scheduler,
+        onPoll: vi.fn(),
+        onFailure: vi.fn(),
+        onCloseRequested: vi.fn(),
+        createAcpClient,
+      });
+      await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
+        'request',
+        'work',
+      );
+      expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(createAcpClient).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledWith(
+        'postAgentTurnReceipt',
+        expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
+      );
+      await scheduler.dispose();
+    },
+  );
 
   it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
@@ -240,7 +248,8 @@ describe('corner merge instructions', () => {
     } as unknown as AgentRuntimeRecord;
     const api = {
       execute: vi.fn(async (name: string) => {
-        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall') return { allowed: true };
+        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
+          return { allowed: true };
         if (name === 'getAgentConfiguration')
           return { commands: [], yoloMode: true, reviewerHandle: 'echo' };
         if (name === 'getWorkspaceRoster')
@@ -2289,6 +2298,7 @@ describe('thin monolith corner turn', () => {
   });
 
   it('starts in edit mode, streams to the corner, and carries the server-check merge gate', async () => {
+    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
     const worktree = join(root, 'worktree');
@@ -2329,6 +2339,7 @@ describe('thin monolith corner turn', () => {
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     let conversationReads = 0;
     let inboxReads = 0;
+    let institutionalReads = 0;
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getAgentConfiguration') {
         return {
@@ -2406,6 +2417,17 @@ describe('thin monolith corner turn', () => {
           cursor: 'latest',
         };
       }
+      if (name === 'getInstitutionalContext') {
+        institutionalReads += 1;
+        const text = `Corner institutional snapshot ${institutionalReads}`;
+        return {
+          snapshotRevision: institutionalReads,
+          text,
+          itemIds: [`corner-memory-${institutionalReads}`],
+          totalBytes: Buffer.byteLength(text),
+          omitted: {},
+        };
+      }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
     });
@@ -2478,6 +2500,7 @@ describe('thin monolith corner turn', () => {
     await scheduler.dispose();
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
+    expect(institutionalReads).toBe(2);
     expect(sessionPrompt).toHaveBeenCalledTimes(3);
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
@@ -2486,6 +2509,8 @@ describe('thin monolith corner turn', () => {
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
     expect(firstPrompt).toContain('Corner transcript:');
+    expect(firstPrompt).toContain('Corner institutional snapshot 1');
+    expect(secondPrompt).toContain('Corner institutional snapshot 2');
     expect(firstPrompt).toContain('[message id: corner-row-1]\nBeeline [message]: corner row 1');
     expect(firstPrompt).toContain('corner row 1');
     expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest trigger:');

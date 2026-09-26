@@ -46,6 +46,7 @@ import {
 import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
+import { institutionalContextForTurn } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
   codegraphIndexDirectory,
@@ -596,10 +597,17 @@ export class MonolithRoomTurnLoop {
       );
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-      }))])];
+      return [
+        ...new Set([
+          ...approved,
+          ...Object.keys(
+            hostImportedMcpDeclarations({
+              operatorHome: this.options.config.operatorHome,
+              agentKind: this.options.config.agentKind,
+            }),
+          ),
+        ]),
+      ];
     } catch {
       return [];
     }
@@ -770,7 +778,11 @@ export class MonolithRoomTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
+    const youtube = youtubeMcpServer(
+      this.options.config,
+      this.options.youtubeAccessToken,
+      resourceAuthFile,
+    );
     if (youtube) servers.push(youtube);
     const hostDeclarations = hostImportedMcpDeclarations({
       operatorHome,
@@ -1067,16 +1079,18 @@ export class MonolithRoomTurnLoop {
                 throw new Error('Room checkout refresh failed before this turn');
               }
               const checkout = this.turnCheckout;
-              const [conversation, roster, delivered, corners] = await trace.measure(
-                'context-fetch',
-                () =>
+              const [conversation, roster, delivered, corners, institutionalContext] =
+                await trace.measure('context-fetch', () =>
                   Promise.all([
                     api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
                     this.roster(),
                     this.deliver(item),
                     api.execute('listRoomCorners', { roomId: this.options.roomId }),
+                    institutionalContextForTurn(api, this.options.roomId, (message) =>
+                      console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
+                    ),
                   ]),
-              );
+                );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1118,6 +1132,7 @@ export class MonolithRoomTurnLoop {
                   ),
                   grantDecision ? resumePrompt(item) : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  institutionalContext.text,
                   (corners.corners ?? []).some((corner) => !corner.archived)
                     ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(
                         (corners.corners ?? []).filter((corner) => !corner.archived),

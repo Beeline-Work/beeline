@@ -122,7 +122,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 3;
+export const REQUIRED_SCHEMA_VERSION = 4;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -618,6 +618,8 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by text REFERENCES identities(id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_document tsvector
+  GENERATED ALWAYS AS (to_tsvector('simple',coalesce(text,''))) STORED;
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a
@@ -885,6 +887,24 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_history_searches (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  output_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  query_hash text NOT NULL CHECK (query_hash ~ '^[0-9a-f]{64}$'),
+  result_message_ids text[] NOT NULL DEFAULT '{}',
+  authorized_room_count integer NOT NULL CHECK (authorized_room_count >= 0),
+  result_count integer NOT NULL CHECK (result_count BETWEEN 0 AND 10),
+  omitted_count integer NOT NULL CHECK (omitted_count >= 0),
+  latency_ms integer NOT NULL CHECK (latency_ms >= 0),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_history_searches_workspace_created_idx
+  ON institutional_history_searches(workspace_id,created_at,id);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1653,6 +1673,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      ON messages(room_id,created_at,id) INCLUDE(author_id)
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
+  );
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_search_document_idx
+     ON messages USING GIN(search_document)
+     WHERE deleted_at IS NULL AND presentation='message'`,
   );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);

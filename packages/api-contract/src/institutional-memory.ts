@@ -11,6 +11,9 @@ export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 8_000;
 export const INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES = 2_500;
 export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
 export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
+export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
+export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
+export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
 
 export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
@@ -209,6 +212,30 @@ export interface ProposeInstitutionalMemoryInput {
 export interface ProposeInstitutionalMemoryResult {
   readonly itemId: string;
   readonly version: number;
+}
+
+export interface SearchInstitutionalHistoryInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface InstitutionalHistoryResult {
+  readonly messageId: string;
+  readonly roomId: string;
+  readonly roomName: string;
+  readonly authorId: string;
+  readonly createdAt: number;
+  readonly snippet: string;
+  readonly rank: number;
+}
+
+export interface SearchInstitutionalHistoryResult {
+  readonly results: readonly InstitutionalHistoryResult[];
+  readonly omitted: number;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

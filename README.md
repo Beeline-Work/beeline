@@ -164,6 +164,7 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `request_grant`                                        | Everywhere      | Ask the correct Room manager or resource owner for access     |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
 | `propose_memory_item`                                  | Live memory     | Propose one sourced fact or requester working preference      |
+| `search_history`                                       | Live memory     | Search history visible to the full output audience            |
 
 ## The app
 

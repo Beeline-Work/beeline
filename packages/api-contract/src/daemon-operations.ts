@@ -16,6 +16,8 @@ import type {
   InstitutionalContextSnapshot,
   ProposeInstitutionalMemoryInput,
   ProposeInstitutionalMemoryResult,
+  SearchInstitutionalHistoryInput,
+  SearchInstitutionalHistoryResult,
 } from './institutional-memory.js';
 import type {
   WalletPayInput,
@@ -121,6 +123,11 @@ export type DaemonOperationMap = {
   proposeInstitutionalMemory: Operation<
     ProposeInstitutionalMemoryInput,
     ProposeInstitutionalMemoryResult
+  >;
+  /** Full-text history search constrained to the complete output audience. */
+  searchInstitutionalHistory: Operation<
+    SearchInstitutionalHistoryInput,
+    SearchInstitutionalHistoryResult
   >;
   getAgentCommands: Operation<
     RoomInput,

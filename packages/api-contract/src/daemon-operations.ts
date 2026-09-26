@@ -324,7 +324,9 @@ export type DaemonOperationMap = {
   >;
   claimRegistryMcpOAuthCode: Operation<
     AgentInput & { readonly connectorId: string; readonly state: string },
-    { readonly status: 'pending' } | { readonly status: 'ready'; readonly code: string }
+    | { readonly status: 'pending' }
+    | { readonly status: 'expired' }
+    | { readonly status: 'ready'; readonly code: string }
   >;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   /**
@@ -1048,6 +1050,12 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
     readonly approvalUrl: string;
     readonly approvalId?: string;
     readonly linkKind: 'approval' | 'passkey' | 'vouch';
+    /**
+     * The provider page this Squire session was driving, when the call carried
+     * one. It names the exact Registry authorization attempt whose owner link
+     * Squire has already relayed; nothing else is deduplicated against it.
+     */
+    readonly signInUrl?: string;
   };
 export type AuthorizeSquireCallResult = {
   readonly allowed: boolean;

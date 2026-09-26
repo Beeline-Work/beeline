@@ -57,7 +57,11 @@ import {
   prepareCodegraphIndex,
 } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
-import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
+import {
+  registryMcpHostBindPaths,
+  registryMcpHostDeclarations,
+  registryMcpHostWires,
+} from './registry-mcp.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
@@ -705,7 +709,7 @@ export class MonolithRoomTurnLoop {
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
-      operatorHome,
+      this.commandContext.path,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
@@ -855,12 +859,10 @@ export class MonolithRoomTurnLoop {
       operatorHome,
       agentKind: this.options.config.agentKind,
     });
-    const grantedRouteServers = grantedHostRouteWires(
-      mountedHostRoutes,
-      operatorHome,
-      { ...hostDeclarations, ...registryHostDeclarations },
-      resourceAuthFile,
-    );
+    const grantedRouteServers = [
+      ...grantedHostRouteWires(grantedHostRoutes, operatorHome, hostDeclarations, resourceAuthFile),
+      ...registryMcpHostWires(registryHostDeclarations),
+    ];
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
     // (`pi-mcp-bridge.ts`). Granted host routes also ride that bridge:

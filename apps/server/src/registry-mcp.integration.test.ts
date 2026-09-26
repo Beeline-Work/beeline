@@ -192,6 +192,7 @@ describe('Registry MCP connection orchestration', () => {
         approvalUrl: 'https://squire.example/approval/one',
         approvalId: 'squire-attempt-two',
         linkKind: 'approval',
+        signInUrl: 'https://mcp.linear.app/authorize?state=opaque-two',
       },
       HELPER,
     );
@@ -211,7 +212,55 @@ describe('Registry MCP connection orchestration', () => {
       ).rows,
     ).toHaveLength(1);
 
+    // An approval Squire emitted while driving some OTHER page is not this
+    // attempt's relay, so the owner still gets this sign-in's one link.
+    await database.query(
+      `UPDATE workspace_connectors
+       SET sign_in=$2::jsonb,registry_handoff_attempt=NULL,registry_squire_relayed_attempt=NULL
+       WHERE id=$1`,
+      [
+        connectorId,
+        JSON.stringify({
+          method: 'oauth',
+          url: 'https://mcp.linear.app/authorize?state=opaque-three',
+          attemptId: 'attempt-three',
+        }),
+      ],
+    );
+    await daemon.execute(
+      'postSquireApproval',
+      {
+        roomId: ROOM,
+        requestId: REQUEST,
+        generationId: GENERATION,
+        tool: 'fetch_credential',
+        title: 'Credential access approval',
+        detail: 'Reveal an unrelated saved credential.',
+        approvalUrl: 'https://squire.example/approval/two',
+        approvalId: 'squire-unrelated',
+        linkKind: 'approval',
+        signInUrl: 'https://unrelated.example/sign-in',
+      },
+      HELPER,
+    );
+    await daemon.execute('connectMcpServer', connectInput(true), HELPER);
+    expect(
+      (
+        await database.query(`SELECT text FROM messages WHERE author_id=$1`, [
+          connectorIdentityId('registry-mcp'),
+        ])
+      ).rows,
+    ).toHaveLength(2);
+
     await daemon.execute('installConnector', { agentId: HELPER, connectorId }, HELPER);
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE author_id=$1 AND room_id=$2`,
+          [connectorIdentityId('registry-mcp'), ROOM],
+        )
+      ).rows,
+    ).toEqual([{ text: 'Linear connected · the requesting agent can continue the original task' }]);
     const connected = await database.query<{ status: string; sign_in: unknown }>(
       `SELECT status,sign_in FROM workspace_connectors WHERE id=$1`,
       [connectorId],
@@ -260,7 +309,7 @@ describe('Registry MCP connection orchestration', () => {
         )
       ).rowCount,
     ).toBe(1);
-    expect(exactFetches).toHaveBeenCalledTimes(5);
+    expect(exactFetches).toHaveBeenCalledTimes(6);
     const transcript = await database.query<{ text: string; card: unknown }>(
       `SELECT text,card FROM messages WHERE room_id IN (
          SELECT id FROM rooms WHERE workspace_id=$1

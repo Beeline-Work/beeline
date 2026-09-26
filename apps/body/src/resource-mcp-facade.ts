@@ -23,7 +23,8 @@ export function resourceFacadeArgs(): string[] {
 }
 
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list']);
-const NON_CONSUMING = new Set([
+/** Discovery and notifications never spend a Once grant. */
+export const NON_CONSUMING = new Set([
   ...DISCOVERY,
   'notifications/initialized',
   'notifications/cancelled',
@@ -171,6 +172,38 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
   return shortString(args[name]);
 }
 
+/**
+ * The absolute page a Squire call was pointed at. It is what correlates an
+ * approval Squire emits later in the same session with the one Registry
+ * authorization attempt whose sign-in page Squire is driving.
+ */
+export function drivenUrlIn(value: unknown, depth = 0): string | undefined {
+  if (depth > 6) return undefined;
+  if (typeof value === 'string') {
+    if (value.length > 2_048 || !/^https?:\/\//i.test(value.trim())) return undefined;
+    try {
+      const url = new URL(value.trim());
+      return url.username || url.password ? undefined : url.toString();
+    } catch {
+      return undefined;
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = drivenUrlIn(entry, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const item = record(value);
+  if (!item) return undefined;
+  for (const entry of Object.values(item)) {
+    const found = drivenUrlIn(entry, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function credentialLabel(args: Record<string, unknown>): string | undefined {
   return (
     stringArg(args, 'name') ??
@@ -256,6 +289,7 @@ export function squireApprovalFromMcp(
 async function postSquireApproval(
   approval: SquireApprovalRelay,
   authFile: string,
+  signInUrl?: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
@@ -276,7 +310,7 @@ async function postSquireApproval(
   await fetchImpl(new URL('/v1/daemon/operations/postSquireApproval', auth.baseUrl), {
     method: 'POST',
     headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ ...context, ...approval }),
+    body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
     signal: AbortSignal.timeout(20_000),
   });
 }
@@ -340,13 +374,14 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   const command = launch.command ?? launch.cmd;
   if (!command && !launch.url) throw new Error('resource transport is unavailable');
   const squireRequests = new Map<string, Record<string, unknown>>();
+  let squireDrivenUrl: string | undefined;
   const observeSquireResponse = async (message: Record<string, unknown>) => {
     if (target !== 'squire' || message.id === undefined) return;
     const key = JSON.stringify(message.id);
     const request = squireRequests.get(key);
     squireRequests.delete(key);
     const approval = squireApprovalFromMcp(request, message);
-    if (approval) await postSquireApproval(approval, authFile).catch(() => {});
+    if (approval) await postSquireApproval(approval, authFile, squireDrivenUrl).catch(() => {});
   };
   const authorizedResponseIds = new Set<string>();
   let child: ReturnType<typeof spawn> | undefined;
@@ -397,8 +432,10 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
       try {
         if (!(await authorizeResourceMessage(message, target, authFile)))
           throw new Error('resource approval required');
-        if (target === 'squire' && message.method === 'tools/call' && message.id !== undefined)
-          squireRequests.set(JSON.stringify(message.id), message);
+        if (target === 'squire' && message.method === 'tools/call') {
+          squireDrivenUrl = drivenUrlIn(record(message.params)?.arguments) ?? squireDrivenUrl;
+          if (message.id !== undefined) squireRequests.set(JSON.stringify(message.id), message);
+        }
         if (command) {
           const started = resourceChild();
           const key = messageIdKey(message.id);

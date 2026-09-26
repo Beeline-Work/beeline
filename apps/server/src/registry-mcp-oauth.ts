@@ -77,11 +77,16 @@ export class RegistryMcpOAuth {
     return true;
   }
 
+  /**
+   * `expired` is the difference between "the person has not signed in yet" and
+   * "this attempt is gone". Without it a helper re-posts a dead authorization
+   * URL forever, because its own pending state file short-circuits discovery.
+   */
   async claim(
     connectorId: string,
     state: string,
     helperAgentId: string,
-  ): Promise<{ status: 'pending' } | { status: 'ready'; code: string }> {
+  ): Promise<{ status: 'pending' } | { status: 'expired' } | { status: 'ready'; code: string }> {
     const row = (
       await this.database.query<{ code: string }>(
         `DELETE FROM registry_mcp_oauth_attempts attempt
@@ -94,6 +99,12 @@ export class RegistryMcpOAuth {
         [state, connectorId, helperAgentId],
       )
     ).rows[0];
-    return row ? { status: 'ready', code: row.code } : { status: 'pending' };
+    if (row) return { status: 'ready', code: row.code };
+    const live = await this.database.query(
+      `SELECT 1 FROM registry_mcp_oauth_attempts
+       WHERE state=$1 AND connector_id=$2::uuid AND expires_at>now()`,
+      [state, connectorId],
+    );
+    return live.rowCount ? { status: 'pending' } : { status: 'expired' };
   }
 }

@@ -2,6 +2,7 @@ import type { RegistryMcpManifest } from '@beeline/api-contract/daemon';
 
 const REGISTRY_ORIGIN = 'https://registry.modelcontextprotocol.io';
 const SEARCH_TTL_MS = 60_000;
+const SEARCH_CACHE_MAX_ENTRIES = 200;
 const MAX_BODY_BYTES = 512 * 1024;
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -127,7 +128,10 @@ export class McpRegistryClient {
     );
     const key = `${term.toLowerCase()}\n${limit}`;
     const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached) {
+      if (cached.expiresAt > Date.now()) return cached.value;
+      this.cache.delete(key);
+    }
     const url = new URL('/v0.1/servers', this.origin);
     url.search = new URLSearchParams({
       search: term,
@@ -144,6 +148,10 @@ export class McpRegistryClient {
         : [];
     const value = rows.flatMap((row) => normalizeRegistryServer(row) ?? []).slice(0, limit);
     this.cache.set(key, { expiresAt: Date.now() + SEARCH_TTL_MS, value });
+    for (const stale of this.cache.keys()) {
+      if (this.cache.size <= SEARCH_CACHE_MAX_ENTRIES) break;
+      this.cache.delete(stale);
+    }
     return value;
   }
 

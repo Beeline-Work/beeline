@@ -5,6 +5,7 @@ import type {
   WorkbenchConnector,
   WorkbenchConnectorId,
   WorkbenchHelper,
+  WorkbenchRowId,
   WorkbenchView,
 } from './workbench';
 import {
@@ -70,9 +71,9 @@ function toConnector(entry: {
   approvedTools?: readonly string[];
   row?: ConnectorViewDto;
 }): WorkbenchConnector {
-  const id = (entry.id ?? entry.connectorType) as WorkbenchConnectorId;
+  const id: WorkbenchRowId = entry.id ?? entry.connectorType;
   const fixedDescription =
-    CONNECTOR_DESCRIPTIONS[entry.connectorType as keyof typeof CONNECTOR_DESCRIPTIONS] ?? '';
+    CONNECTOR_DESCRIPTIONS[entry.connectorType as WorkbenchConnectorId] ?? '';
   const approvedTools = entry.row?.approvedTools ?? entry.approvedTools;
   return {
     id,
@@ -162,28 +163,28 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       })),
       connectors: [
         ...dto.catalog.map((entry) => {
-        // Wallet creation is a direct human operation, not a helper
-        // connector install. The server catalog's helper availability does
-        // not govern whether this row can act.
-        if (entry.connectorType === 'wallet') {
-          return {
-            id: 'wallet' as const,
+          // Wallet creation is a direct human operation, not a helper
+          // connector install. The server catalog's helper availability does
+          // not govern whether this row can act.
+          if (entry.connectorType === 'wallet') {
+            return {
+              id: 'wallet' as const,
+              name: entry.name,
+              description: CONNECTOR_DESCRIPTIONS.wallet,
+              available: true,
+              status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
+            };
+          }
+          return toConnector({
+            connectorType: entry.connectorType,
             name: entry.name,
-            description: CONNECTOR_DESCRIPTIONS.wallet,
-            available: true,
-            status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
-          };
-        }
-        return toConnector({
-          connectorType: entry.connectorType,
-          name: entry.name,
-          available: entry.available,
-          approvedTools: entry.approvedTools,
+            available: entry.available,
+            approvedTools: entry.approvedTools,
             row: dto.connectors.find(
               (candidate) => candidate.connectorType === entry.connectorType,
             ),
-        });
-      }),
+          });
+        }),
         ...dto.connectors
           .filter((row) => row.connectorType === 'registry-mcp' && row.registryServerName)
           .map((row) =>

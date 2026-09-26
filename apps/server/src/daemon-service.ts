@@ -1676,7 +1676,6 @@ export class DaemonService {
           authorId: connectorIdentityId('registry-mcp'),
           subject: { kind: 'system', name: row.display_name ?? 'MCP server' },
           verb: 'connected',
-          object: row.display_name ?? 'MCP server',
           consequence: 'the requesting agent can continue the original task',
           kind: 'connector-offer-decided',
           commandId: row.install_command_id,
@@ -3796,6 +3795,11 @@ export class DaemonService {
       (!input.approvalId.trim() || input.approvalId.length > 240)
     )
       throw new Error('Squire approval id is invalid');
+    if (
+      input.signInUrl !== undefined &&
+      (!input.signInUrl.trim() || input.signInUrl.length > 2_048)
+    )
+      throw new Error('Squire sign-in URL is invalid');
     let approvalUrl: URL;
     try {
       approvalUrl = new URL(input.approvalUrl);
@@ -3879,16 +3883,17 @@ export class DaemonService {
       },
     });
     // A Registry OAuth turn whose Squire call produced this approval link has
-    // already delivered the one owner link. Mark that exact authorization
-    // attempt so the direct provider-link fallback cannot send a second one.
-    if (this.authorizedCommand?.id) {
+    // already delivered the one owner link. Only the row whose OWN sign-in page
+    // Squire was driving is marked, so a second registry row in the same turn —
+    // or an unrelated Squire approval — never suppresses its own owner handoff.
+    if (input.signInUrl) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET registry_squire_relayed_attempt=sign_in->>'attemptId',updated_at=now()
          WHERE connector_type='registry-mcp' AND status='installing'
-           AND install_agent_id=$1 AND install_room_id=$2 AND install_command_id=$3
-           AND sign_in->>'attemptId' IS NOT NULL`,
-        [agentId, input.roomId, this.authorizedCommand.id],
+           AND install_agent_id=$1 AND install_room_id=$2
+           AND sign_in->>'attemptId' IS NOT NULL AND sign_in->>'url'=$3`,
+        [agentId, input.roomId, input.signInUrl],
       );
     }
     if (line.inserted)
@@ -5161,29 +5166,21 @@ export class DaemonService {
         [context.owner.pubkey, context.workspaceId],
       )
     ).rows;
-    const registryServers = paired.flatMap((row) => {
-      const dynamic = row as typeof row & {
-        id?: string;
-        registry_server_name?: string | null;
-        registry_version?: string | null;
-        display_name?: string | null;
-        website_url?: string | null;
-      };
-      return dynamic.registry_server_name && dynamic.registry_version
+    const registryServers = paired.flatMap((row) =>
+      row.registry_server_name && row.registry_version
         ? [
             {
-              connectorId: dynamic.id ?? '',
-              serverName: dynamic.registry_server_name,
-              version: dynamic.registry_version,
-              displayName: dynamic.display_name ?? dynamic.registry_server_name,
-              status: dynamic.status,
-              ...(dynamic.website_url ? { websiteUrl: dynamic.website_url } : {}),
-              onThisMachine:
-                (dynamic.machine_id ?? dynamic.helper_agent_id) === context.machine.machineId,
+              connectorId: row.id,
+              serverName: row.registry_server_name,
+              version: row.registry_version,
+              displayName: row.display_name ?? row.registry_server_name,
+              status: row.status,
+              ...(row.website_url ? { websiteUrl: row.website_url } : {}),
+              onThisMachine: (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
             },
           ]
-        : [];
-    });
+        : [],
+    );
     return {
       addressee: {
         identityId: context.addressee.pubkey,

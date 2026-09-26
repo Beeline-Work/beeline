@@ -139,9 +139,6 @@ export function rewriteHostMcpDeclaration(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...declaration };
   delete next[MCP_ROUTE_CLASS_KEY];
-  const explicitResourceTarget =
-    typeof next.beeline_resource_target === 'string' ? next.beeline_resource_target : undefined;
-  delete next.beeline_resource_target;
   const launch = isSquireDeclaration(name, declaration) ? squireFacadeLaunch(hostHome) : undefined;
   const routeEnv = launch?.env ?? hostRouteEnv(hostHome);
   const gooseShape = 'cmd' in declaration && !('command' in declaration);
@@ -153,8 +150,7 @@ export function rewriteHostMcpDeclaration(
   if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
   else next.env = { ...recordValue(declaration.env), ...routeEnv };
   if (resourceAuthFile) {
-    const target =
-      explicitResourceTarget ?? (isSquireDeclaration(name, declaration) ? 'squire' : name);
+    const target = isSquireDeclaration(name, declaration) ? 'squire' : name;
     const env = {
       ...recordValue(next.env),
       ...recordValue(next.envs),

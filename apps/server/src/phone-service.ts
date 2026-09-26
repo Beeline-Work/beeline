@@ -6626,6 +6626,8 @@ export class PhoneService {
     return { accepted: true };
   }
   private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string) {
+    if (input.platform && !['ios', 'android', 'macos', 'windows', 'linux'].includes(input.platform))
+      throw new Error('invalid platform');
     await this.database.query(
       `INSERT INTO device_update_receipts(identity_id,device_id,receipt) VALUES($1,$2,$3::jsonb) ON CONFLICT(identity_id,device_id) DO UPDATE SET receipt=EXCLUDED.receipt,reported_at=now()`,
       [viewerId, input.deviceId, JSON.stringify(input)],

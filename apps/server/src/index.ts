@@ -283,6 +283,7 @@ async function main() {
     connectionPresence,
     review,
     releaseNotify,
+    dashboardSecret: process.env.BEELINE_DASHBOARD_SECRET,
     livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     mediaMaximumBytes: mediaExpiryMediaMaximumBytes,
     objectService,

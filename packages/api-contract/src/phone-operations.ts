@@ -490,6 +490,7 @@ export type PushDeviceInput = {
 export type PushRegistrationResult = { readonly accepted: boolean };
 export type RunningUpdateInput = {
   readonly deviceId: string;
+  readonly platform?: 'ios' | 'android' | 'macos' | 'windows' | 'linux';
   readonly updateId?: string;
   readonly channel?: string;
   readonly group?: string;

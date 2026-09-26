@@ -63,6 +63,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
     if (getBuzzRuntimeConfig().monolithEnabled) {
       await monolithPhoneOperation('reportRunningUpdate', {
         deviceId: await installationDeviceId(),
+        platform: Platform.OS as 'ios' | 'android',
         ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
         ...(Updates.channel ? { channel: Updates.channel } : {}),
         ...(runningUpdateGroup(Updates.manifest)

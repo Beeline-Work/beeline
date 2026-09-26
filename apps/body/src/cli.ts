@@ -398,7 +398,23 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   };
   let stoppingStatus = 'daemon stopped';
   try {
-    registryMcpBroker = new RegistryMcpHostBroker(config.operatorHome);
+    registryMcpBroker = new RegistryMcpHostBroker(
+      config.operatorHome,
+      fetch,
+      // The one per-call gate a Registry route has: the server's existing
+      // requester-aware resource approval, asked here because the broker
+      // socket — not the harness MCP client — is what every caller reaches.
+      async ({ roomId, requestId, generationId, target, consume }) =>
+        (
+          await daemonApi.execute('authorizeResourceCall', {
+            roomId,
+            requestId,
+            generationId,
+            target,
+            consume,
+          })
+        ).allowed === true,
+    );
     await registryMcpBroker.start();
     process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
     let lifecycleRestartDrain: Promise<void> | undefined;

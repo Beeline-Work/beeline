@@ -12,7 +12,7 @@
  */
 import { connectorAdapter } from '@beeline/api-contract/workbench';
 
-export type FixedWorkbenchConnectorId =
+export type WorkbenchConnectorId =
   | 'trusty-squire'
   | 'wallet'
   | 'tailscale'
@@ -21,7 +21,11 @@ export type FixedWorkbenchConnectorId =
   | 'google-drive'
   | 'google-youtube'
   | 'composio';
-export type WorkbenchConnectorId = string;
+/**
+ * A catalog row is keyed by its fixed connector id; a dynamically connected
+ * Registry MCP row is keyed by its own connector uuid instead.
+ */
+export type WorkbenchRowId = WorkbenchConnectorId | (string & {});
 
 export function isGoogleToolConnectorId(
   id: string,
@@ -32,7 +36,7 @@ export function isGoogleToolConnectorId(
 export type WorkbenchConnectorStatus = 'disconnected' | 'installing' | 'connected' | 'error';
 
 export type WorkbenchConnector = {
-  id: WorkbenchConnectorId;
+  id: WorkbenchRowId;
   name: string;
   description: string;
   /** `soon` connectors are listed for the section's shape and never act. */
@@ -98,7 +102,7 @@ export type WorkbenchHelper = {
 /** The one-sentence user story under each catalog row before anything is
  *  paired (board revision 2, PR #1351). The Google tools share the entry's
  *  one covering sentence. */
-export const CONNECTOR_DESCRIPTIONS: Record<FixedWorkbenchConnectorId, string> = {
+export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
   'trusty-squire':
     'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
   wallet:

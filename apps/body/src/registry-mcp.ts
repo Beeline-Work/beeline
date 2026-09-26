@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { createRequire } from 'node:module';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createConnection, createServer, type Server } from 'node:net';
+import { createConnection, createServer, isIPv4, isIPv6, type Server } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -11,6 +12,7 @@ import type {
   ConnectorStep,
   RegistryMcpRoute,
 } from '@beeline/api-contract/daemon';
+import { NON_CONSUMING } from './resource-mcp-facade.js';
 
 export const REGISTRY_MCP_BROKER_FLAG = '--registry-mcp-broker';
 
@@ -72,6 +74,66 @@ function safeUrl(value: unknown): string | undefined {
 
 function base64url(bytes: Buffer): string {
   return bytes.toString('base64url');
+}
+
+/**
+ * A remote connector may not point its login at the operator's own machine.
+ * LAN (10/8, 172.16/12, 192.168/16) and tailnet (100.64/10) addresses stay
+ * reachable; only this host's own loopback is refused, and only when the
+ * connector's own server is somewhere else. A connector that IS on loopback
+ * (a local development remote) keeps using loopback for itself.
+ */
+export const OWN_MACHINE_REFUSAL = "the connector's login points at your own machine, refused.";
+
+class OwnMachineRefusal extends Error {
+  constructor() {
+    super(OWN_MACHINE_REFUSAL);
+  }
+}
+
+export type HostLookup = (hostname: string) => Promise<readonly string[]>;
+
+const resolveHostAddresses: HostLookup = async (hostname) =>
+  (await lookup(hostname, { all: true })).map((entry) => entry.address);
+
+function isLoopbackAddress(value: string): boolean {
+  const address = value
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/%.*$/, '');
+  const mapped = address.startsWith('::ffff:') ? address.slice(7) : address;
+  if (isIPv4(mapped)) return mapped.split('.')[0] === '127';
+  return isIPv6(address) && (address === '::1' || /^(?:0{1,4}:){7}0{0,3}1$/.test(address));
+}
+
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host.endsWith('.localhost') || isLoopbackAddress(host);
+}
+
+/** Post-DNS: a name that resolves onto this machine's loopback is this machine. */
+export async function ownMachine(
+  hostname: string,
+  resolveHost: HostLookup = resolveHostAddresses,
+): Promise<boolean> {
+  if (isLoopbackHost(hostname)) return true;
+  const literal = hostname.replace(/^\[|\]$/g, '');
+  if (isIPv4(literal) || isIPv6(literal)) return false;
+  try {
+    return (await resolveHost(hostname)).some(isLoopbackAddress);
+  } catch {
+    return false;
+  }
+}
+
+async function assertNotOwnMachine(
+  url: string,
+  remoteIsOwnMachine: boolean,
+  resolveHost: HostLookup,
+): Promise<string> {
+  if (!remoteIsOwnMachine && (await ownMachine(new URL(url).hostname, resolveHost)))
+    throw new OwnMachineRefusal();
+  return url;
 }
 
 export function registryMcpStatePath(connectorId: string, home = homedir()): string {
@@ -144,6 +206,7 @@ export async function installRegistryMcp(input: {
   assignment: Extract<ConnectorAssignment, { kind: 'install' }>;
   home?: string;
   transport?: typeof fetch;
+  resolveHost?: HostLookup;
 }): Promise<RegistryInstallResult> {
   const { assignment } = input;
   const manifest = assignment.registryManifest;
@@ -157,6 +220,11 @@ export async function installRegistryMcp(input: {
       errorMessage: 'Registry remote configuration is incomplete',
     };
   const transport = input.transport ?? fetch;
+  const resolveHost = input.resolveHost ?? resolveHostAddresses;
+  const remoteUrl = remote.url;
+  const pinnedName = serverName;
+  const pinnedVersion = version;
+  const remoteIsOwnMachine = await ownMachine(new URL(remoteUrl).hostname, resolveHost);
   const path = registryMcpStatePath(assignment.connectorId, input.home);
   const stored = readState(path);
   if (
@@ -177,13 +245,17 @@ export async function installRegistryMcp(input: {
       connectorId: assignment.connectorId,
       state: stored.state,
     });
-    if (claimed.status !== 'ready' || typeof claimed.code !== 'string')
+    if (claimed.status !== 'ready' || typeof claimed.code !== 'string') {
+      // A gone attempt row is not "the person has not signed in yet": re-posting
+      // its dead URL forever is the wedge, so fall through to fresh discovery.
+      if (claimed.status === 'expired') return discover();
       return {
         status: 'installing',
         steps: steps('connect'),
         authorizationUrl: stored.authorizationUrl,
         attemptId: stored.attemptId,
       };
+    }
     try {
       const response = await transport(stored.tokenEndpoint, {
         method: 'POST',
@@ -224,137 +296,150 @@ export async function installRegistryMcp(input: {
     }
   }
 
-  try {
-    const initialize = await transport(remote.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-03-26',
-          capabilities: {},
-          clientInfo: { name: 'Beeline', version: '1' },
+  return discover();
+
+  async function discover(): Promise<RegistryInstallResult> {
+    try {
+      const initialize = await transport(remoteUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
         },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (initialize.ok) {
-      writeState(path, {
-        status: 'connected',
-        connectorId: assignment.connectorId,
-        serverName,
-        version,
-        remoteUrl: remote.url,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'Beeline', version: '1' },
+          },
+        }),
+        signal: AbortSignal.timeout(20_000),
       });
-      return { status: 'connected', steps: steps('done') };
+      if (initialize.ok) {
+        writeState(path, {
+          status: 'connected',
+          connectorId: assignment.connectorId,
+          serverName: pinnedName,
+          version: pinnedVersion,
+          remoteUrl: remoteUrl,
+        });
+        return { status: 'connected', steps: steps('done') };
+      }
+      if (initialize.status !== 401) throw new Error('remote refused initialization');
+      const resourceMetadataUrl = safeUrl(
+        challengeParameter(initialize.headers.get('www-authenticate'), 'resource_metadata'),
+      );
+      if (!resourceMetadataUrl) throw new Error('protected-resource metadata is missing');
+      await assertNotOwnMachine(resourceMetadataUrl, remoteIsOwnMachine, resolveHost);
+      const resourceResponse = await transport(resourceMetadataUrl, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!resourceResponse.ok) throw new Error('protected-resource metadata is unavailable');
+      const resource = await jsonResponse(resourceResponse);
+      const authorizationServer = Array.isArray(resource.authorization_servers)
+        ? safeUrl(resource.authorization_servers[0])
+        : undefined;
+      if (!authorizationServer) throw new Error('authorization server metadata is missing');
+      await assertNotOwnMachine(authorizationServer, remoteIsOwnMachine, resolveHost);
+      const metadataUrl = new URL(
+        '/.well-known/oauth-authorization-server',
+        authorizationServer,
+      ).toString();
+      const metadataResponse = await transport(metadataUrl, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!metadataResponse.ok) throw new Error('authorization server metadata is unavailable');
+      const metadata = await jsonResponse(metadataResponse);
+      const authorizationEndpoint = safeUrl(metadata.authorization_endpoint);
+      const tokenEndpoint = safeUrl(metadata.token_endpoint);
+      const registrationEndpoint = safeUrl(metadata.registration_endpoint);
+      if (!authorizationEndpoint || !tokenEndpoint || !registrationEndpoint)
+        throw new Error('dynamic client registration is not supported');
+      for (const endpoint of [authorizationEndpoint, tokenEndpoint, registrationEndpoint])
+        await assertNotOwnMachine(endpoint, remoteIsOwnMachine, resolveHost);
+      if (
+        Array.isArray(metadata.code_challenge_methods_supported) &&
+        !metadata.code_challenge_methods_supported.includes('S256')
+      )
+        throw new Error('S256 PKCE is not supported');
+      const rendezvous = await input.api.execute('beginRegistryMcpOAuth', {
+        agentId: input.agentId,
+        connectorId: assignment.connectorId,
+      });
+      if (typeof rendezvous.state !== 'string' || typeof rendezvous.redirectUri !== 'string')
+        throw new Error('OAuth callback is unavailable');
+      const registration = await transport(registrationEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'Beeline',
+          redirect_uris: [rendezvous.redirectUri],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!registration.ok) throw new Error('dynamic client registration was refused');
+      const client = await jsonResponse(registration);
+      if (typeof client.client_id !== 'string')
+        throw new Error('dynamic client registration returned no client id');
+      const verifier = base64url(randomBytes(48));
+      const challenge = base64url(createHash('sha256').update(verifier).digest());
+      const scope = Array.isArray(resource.scopes_supported)
+        ? resource.scopes_supported
+            .filter((item): item is string => typeof item === 'string')
+            .join(' ')
+        : challengeParameter(initialize.headers.get('www-authenticate'), 'scope');
+      const authorizationUrl = new URL(authorizationEndpoint);
+      authorizationUrl.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: rendezvous.redirectUri,
+        state: rendezvous.state,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        ...(scope ? { scope } : {}),
+        resource: safeUrl(resource.resource) ?? remoteUrl,
+      }).toString();
+      const attemptId = base64url(randomBytes(18));
+      writeState(path, {
+        status: 'pending',
+        connectorId: assignment.connectorId,
+        serverName: pinnedName,
+        version: pinnedVersion,
+        remoteUrl: remoteUrl,
+        state: rendezvous.state,
+        redirectUri: rendezvous.redirectUri,
+        verifier,
+        tokenEndpoint,
+        clientId: client.client_id,
+        ...(typeof client.client_secret === 'string' ? { clientSecret: client.client_secret } : {}),
+        authorizationUrl: authorizationUrl.toString(),
+        attemptId,
+      });
+      return {
+        status: 'installing',
+        steps: steps('connect'),
+        authorizationUrl: authorizationUrl.toString(),
+        attemptId,
+      };
+    } catch (error) {
+      const message =
+        error instanceof OwnMachineRefusal
+          ? error.message
+          : 'This remote does not support standard dynamic-registration OAuth with S256 PKCE';
+      return { status: 'error', steps: steps('discover', message), errorMessage: message };
     }
-    if (initialize.status !== 401) throw new Error('remote refused initialization');
-    const resourceMetadataUrl = safeUrl(
-      challengeParameter(initialize.headers.get('www-authenticate'), 'resource_metadata'),
-    );
-    if (!resourceMetadataUrl) throw new Error('protected-resource metadata is missing');
-    const resourceResponse = await transport(resourceMetadataUrl, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!resourceResponse.ok) throw new Error('protected-resource metadata is unavailable');
-    const resource = await jsonResponse(resourceResponse);
-    const authorizationServer = Array.isArray(resource.authorization_servers)
-      ? safeUrl(resource.authorization_servers[0])
-      : undefined;
-    if (!authorizationServer) throw new Error('authorization server metadata is missing');
-    const metadataUrl = new URL(
-      '/.well-known/oauth-authorization-server',
-      authorizationServer,
-    ).toString();
-    const metadataResponse = await transport(metadataUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!metadataResponse.ok) throw new Error('authorization server metadata is unavailable');
-    const metadata = await jsonResponse(metadataResponse);
-    const authorizationEndpoint = safeUrl(metadata.authorization_endpoint);
-    const tokenEndpoint = safeUrl(metadata.token_endpoint);
-    const registrationEndpoint = safeUrl(metadata.registration_endpoint);
-    if (!authorizationEndpoint || !tokenEndpoint || !registrationEndpoint)
-      throw new Error('dynamic client registration is not supported');
-    if (
-      Array.isArray(metadata.code_challenge_methods_supported) &&
-      !metadata.code_challenge_methods_supported.includes('S256')
-    )
-      throw new Error('S256 PKCE is not supported');
-    const rendezvous = await input.api.execute('beginRegistryMcpOAuth', {
-      agentId: input.agentId,
-      connectorId: assignment.connectorId,
-    });
-    if (typeof rendezvous.state !== 'string' || typeof rendezvous.redirectUri !== 'string')
-      throw new Error('OAuth callback is unavailable');
-    const registration = await transport(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        client_name: 'Beeline',
-        redirect_uris: [rendezvous.redirectUri],
-        grant_types: ['authorization_code', 'refresh_token'],
-        response_types: ['code'],
-        token_endpoint_auth_method: 'none',
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!registration.ok) throw new Error('dynamic client registration was refused');
-    const client = await jsonResponse(registration);
-    if (typeof client.client_id !== 'string')
-      throw new Error('dynamic client registration returned no client id');
-    const verifier = base64url(randomBytes(48));
-    const challenge = base64url(createHash('sha256').update(verifier).digest());
-    const scope = Array.isArray(resource.scopes_supported)
-      ? resource.scopes_supported
-          .filter((item): item is string => typeof item === 'string')
-          .join(' ')
-      : challengeParameter(initialize.headers.get('www-authenticate'), 'scope');
-    const authorizationUrl = new URL(authorizationEndpoint);
-    authorizationUrl.search = new URLSearchParams({
-      response_type: 'code',
-      client_id: client.client_id,
-      redirect_uri: rendezvous.redirectUri,
-      state: rendezvous.state,
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
-      ...(scope ? { scope } : {}),
-      resource: safeUrl(resource.resource) ?? remote.url,
-    }).toString();
-    const attemptId = base64url(randomBytes(18));
-    writeState(path, {
-      status: 'pending',
-      connectorId: assignment.connectorId,
-      serverName,
-      version,
-      remoteUrl: remote.url,
-      state: rendezvous.state,
-      redirectUri: rendezvous.redirectUri,
-      verifier,
-      tokenEndpoint,
-      clientId: client.client_id,
-      ...(typeof client.client_secret === 'string' ? { clientSecret: client.client_secret } : {}),
-      authorizationUrl: authorizationUrl.toString(),
-      attemptId,
-    });
-    return {
-      status: 'installing',
-      steps: steps('connect'),
-      authorizationUrl: authorizationUrl.toString(),
-      attemptId,
-    };
-  } catch {
-    const message =
-      'This remote does not support standard dynamic-registration OAuth with S256 PKCE';
-    return { status: 'error', steps: steps('discover', message), errorMessage: message };
   }
 }
 
 export function registryMcpBrokerLaunch(
   connectorId: string,
+  turnContextPath: string,
   brokerSocket = process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET,
 ): {
   command: string;
@@ -363,59 +448,68 @@ export function registryMcpBrokerLaunch(
 } {
   const socketPath = brokerSocket;
   if (!socketPath) throw new Error('Registry MCP broker is unavailable');
+  const env = {
+    BEELINE_REGISTRY_MCP_BROKER_SOCKET: socketPath,
+    BEELINE_REGISTRY_MCP_CONNECTOR: connectorId,
+    BEELINE_TURN_CONTEXT_FILE: turnContextPath,
+  };
   const meta = import.meta.url;
   if (meta.startsWith('beeline:')) {
     if (!process.argv[1]) throw new Error('Registry MCP broker entry is unavailable');
-    return {
-      command: process.execPath,
-      args: [process.argv[1], REGISTRY_MCP_BROKER_FLAG],
-      env: {
-        BEELINE_REGISTRY_MCP_BROKER_SOCKET: socketPath,
-        BEELINE_REGISTRY_MCP_CONNECTOR: connectorId,
-      },
-    };
+    return { command: process.execPath, args: [process.argv[1], REGISTRY_MCP_BROKER_FLAG], env };
   }
   const js = fileURLToPath(new URL('./registry-mcp.js', meta));
-  if (existsSync(js))
-    return {
-      command: process.execPath,
-      args: [js],
-      env: {
-        BEELINE_REGISTRY_MCP_BROKER_SOCKET: socketPath,
-        BEELINE_REGISTRY_MCP_CONNECTOR: connectorId,
-      },
-    };
+  if (existsSync(js)) return { command: process.execPath, args: [js], env };
   const ts = fileURLToPath(new URL('./registry-mcp.ts', meta));
   return {
     command: process.execPath,
     args: ['--import', createRequire(meta).resolve('tsx'), ts],
-    env: {
-      BEELINE_REGISTRY_MCP_BROKER_SOCKET: socketPath,
-      BEELINE_REGISTRY_MCP_CONNECTOR: connectorId,
-    },
+    env,
   };
 }
 
+/**
+ * A Registry route is NOT wrapped in the resource façade: the daemon-owned
+ * broker holds the only provider grant and authorizes every call itself
+ * ({@link RegistryMcpHostBroker.request}), including the one a sandbox can
+ * make straight at the socket. A second façade gate would spend a Once grant
+ * twice and refuse the very call the owner just approved.
+ */
 export function registryMcpHostDeclarations(
   routes: readonly RegistryMcpRoute[] | undefined,
-  _home = homedir(),
+  turnContextPath: string,
   brokerSocket = process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET,
 ): Record<string, Record<string, unknown>> {
   return Object.fromEntries(
     (routes ?? []).map((route) => {
-      const launch = registryMcpBrokerLaunch(route.connectorId, brokerSocket);
-      return [
-        route.routeName,
-        {
-          command: launch.command,
-          args: launch.args,
-          env: launch.env,
-          beeline_route: 'host',
-          beeline_resource_target: route.target,
-        },
-      ];
+      const launch = registryMcpBrokerLaunch(route.connectorId, turnContextPath, brokerSocket);
+      return [route.routeName, { command: launch.command, args: launch.args, env: launch.env }];
     }),
   );
+}
+
+/** The same declarations as session MCP wires, for harnesses mounted over ACP. */
+export function registryMcpHostWires(declarations: Record<string, Record<string, unknown>>): Array<{
+  name: string;
+  command: string;
+  args: string[];
+  env?: Array<{ name: string; value: string }>;
+}> {
+  return Object.entries(declarations).flatMap(([name, declaration]) => {
+    const command = typeof declaration.command === 'string' ? declaration.command : '';
+    if (!command) return [];
+    const env = Object.entries(
+      (declaration.env as Record<string, string> | undefined) ?? {},
+    ).flatMap(([key, value]) => (typeof value === 'string' ? [{ name: key, value }] : []));
+    return [
+      {
+        name,
+        command,
+        args: Array.isArray(declaration.args) ? (declaration.args as string[]) : [],
+        ...(env.length ? { env } : {}),
+      },
+    ];
+  });
 }
 
 /** The broker socket is the only host path a Registry route needs inside a sandbox. */
@@ -454,13 +548,55 @@ async function refresh(state: ConnectedState, transport: typeof fetch): Promise<
   };
 }
 
-type BrokerRequest = { connectorId: string; line: string };
+export type RegistryMcpTurnContext = {
+  readonly roomId: string;
+  readonly requestId: string;
+  readonly generationId: string;
+};
+
+/** The existing per-call resource gate (`authorizeResourceCall`), nothing new. */
+export type RegistryMcpCallAuthorizer = (
+  input: RegistryMcpTurnContext & { readonly target: string; readonly consume: boolean },
+) => Promise<boolean>;
+
+export const REGISTRY_MCP_APPROVAL_REFUSAL =
+  'Resource access requires approval from its owner for this requester, or the resource is unavailable.';
+
+export const REGISTRY_MCP_UNAVAILABLE =
+  'Registry MCP provider is unavailable; reconnect it in Workbench.';
+
+class RegistryMcpRefusal extends Error {
+  constructor() {
+    super(REGISTRY_MCP_APPROVAL_REFUSAL);
+  }
+}
+
+type BrokerRequest = { connectorId: string; line: string; turn?: RegistryMcpTurnContext };
+
+function readTurnContext(value: unknown): RegistryMcpTurnContext | undefined {
+  const turn = value as Partial<RegistryMcpTurnContext> | undefined;
+  return turn &&
+    typeof turn.roomId === 'string' &&
+    turn.roomId.length > 0 &&
+    typeof turn.requestId === 'string' &&
+    turn.requestId.length > 0 &&
+    typeof turn.generationId === 'string' &&
+    turn.generationId.length > 0
+    ? { roomId: turn.roomId, requestId: turn.requestId, generationId: turn.generationId }
+    : undefined;
+}
 
 function brokerSocketPath(home = homedir()): string {
   return join(home, '.beeline', 'registry-mcp-broker', `${process.pid}.sock`);
 }
 
-/** The daemon-owned broker: provider grants never enter a harness process or its configuration. */
+/**
+ * The daemon-owned broker: provider grants never enter a harness process or
+ * its configuration. The socket is bound read-write into the sandbox, so this
+ * — not the harness's MCP client — is where every call is authorized: the
+ * caller names a turn, and the server's own requester-aware resource gate
+ * decides. A caller that names no active turn reaches no provider at all.
+ */
 export class RegistryMcpHostBroker {
   readonly socketPath: string;
   private server?: Server;
@@ -469,16 +605,22 @@ export class RegistryMcpHostBroker {
   constructor(
     private readonly home = homedir(),
     private readonly transport: typeof fetch = fetch,
+    private readonly authorize?: RegistryMcpCallAuthorizer,
     socketPath = brokerSocketPath(home),
   ) {
     this.socketPath = socketPath;
   }
 
-  async request(connectorId: string, line: string): Promise<string[]> {
+  async request(
+    connectorId: string,
+    line: string,
+    turn: RegistryMcpTurnContext | undefined,
+  ): Promise<string[]> {
     if (line.length > 1024 * 1024) throw new Error('Registry MCP request is too large');
     const path = registryMcpStatePath(connectorId, this.home);
     let state = readState(path);
     if (state?.status !== 'connected') throw new Error('Registry MCP connection is unavailable');
+    await this.authorizeCall(state, line, turn);
     const refreshed = await refresh(state, this.transport);
     if (refreshed !== state) {
       state = refreshed;
@@ -509,6 +651,29 @@ export class RegistryMcpHostBroker {
     return body.trim() ? [body.trim()] : [];
   }
 
+  /** Reuses the server's own owner/yolo/grant matrix; it adds no rule of its own. */
+  private async authorizeCall(
+    state: ConnectedState,
+    line: string,
+    turn: RegistryMcpTurnContext | undefined,
+  ): Promise<void> {
+    const context = readTurnContext(turn);
+    if (!this.authorize || !context) throw new RegistryMcpRefusal();
+    let method: unknown;
+    try {
+      method = (JSON.parse(line) as { method?: unknown }).method;
+    } catch {
+      throw new RegistryMcpRefusal();
+    }
+    if (typeof method !== 'string') throw new RegistryMcpRefusal();
+    const allowed = await this.authorize({
+      ...context,
+      target: `registry-mcp:${state.serverName}`,
+      consume: !NON_CONSUMING.has(method),
+    });
+    if (!allowed) throw new RegistryMcpRefusal();
+  }
+
   async start(): Promise<void> {
     if (this.server) return;
     mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
@@ -526,12 +691,16 @@ export class RegistryMcpHostBroker {
             const request = JSON.parse(buffer) as BrokerRequest;
             if (typeof request.connectorId !== 'string' || typeof request.line !== 'string')
               throw new Error('invalid broker request');
+            const messages = await this.request(request.connectorId, request.line, request.turn);
+            socket.end(`${JSON.stringify({ messages })}\n`);
+          } catch (error) {
             socket.end(
-              `${JSON.stringify({ messages: await this.request(request.connectorId, request.line) })}\n`,
-            );
-          } catch {
-            socket.end(
-              `${JSON.stringify({ error: 'Registry MCP provider is unavailable; reconnect it in Workbench.' })}\n`,
+              `${JSON.stringify({
+                error:
+                  error instanceof RegistryMcpRefusal
+                    ? REGISTRY_MCP_APPROVAL_REFUSAL
+                    : REGISTRY_MCP_UNAVAILABLE,
+              })}\n`,
             );
           }
         })();
@@ -583,11 +752,17 @@ async function brokerRequest(socketPath: string, request: BrokerRequest): Promis
   });
 }
 
-/** Stdio MCP bridge. It sees only a local socket capability, never provider credentials. */
+/**
+ * Stdio MCP bridge. It sees only a local socket capability, never provider
+ * credentials, and it names the turn it is running inside so the broker can
+ * put the call through the owner's existing resource approval.
+ */
 export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void {
   const socketPath = env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
   const connectorId = env.BEELINE_REGISTRY_MCP_CONNECTOR;
-  if (!socketPath || !connectorId) throw new Error('Registry MCP broker is unavailable');
+  const turnContextPath = env.BEELINE_TURN_CONTEXT_FILE;
+  if (!socketPath || !connectorId || !turnContextPath)
+    throw new Error('Registry MCP broker is unavailable');
   let pending = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
   lines.on('line', (line) => {
@@ -598,10 +773,20 @@ export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void
       } catch {
         return;
       }
+      let turn: RegistryMcpTurnContext | undefined;
       try {
-        for (const message of await brokerRequest(socketPath, { connectorId, line }))
-          process.stdout.write(`${message}\n`);
+        turn = readTurnContext(JSON.parse(readFileSync(turnContextPath, 'utf8')));
       } catch {
+        turn = undefined;
+      }
+      try {
+        for (const message of await brokerRequest(socketPath, {
+          connectorId,
+          line,
+          ...(turn ? { turn } : {}),
+        }))
+          process.stdout.write(`${message}\n`);
+      } catch (error) {
         if (request.id !== undefined) {
           process.stdout.write(
             `${JSON.stringify({
@@ -609,7 +794,7 @@ export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void
               id: request.id,
               error: {
                 code: -32002,
-                message: 'Registry MCP provider is unavailable; reconnect it in Workbench.',
+                message: error instanceof Error ? error.message : REGISTRY_MCP_UNAVAILABLE,
               },
             })}\n`,
           );

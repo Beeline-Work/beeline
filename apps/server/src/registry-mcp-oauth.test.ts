@@ -50,5 +50,14 @@ it('lets only the paired helper claim one short-lived callback code', async () =
     status: 'ready',
     code: 'provider-code',
   });
-  expect(await oauth.claim(CONNECTOR, started.state, HELPER)).toEqual({ status: 'pending' });
+  // The spent attempt is gone, and a gone attempt is expired, not pending:
+  // the helper mints a fresh authorization instead of re-posting a dead URL.
+  expect(await oauth.claim(CONNECTOR, started.state, HELPER)).toEqual({ status: 'expired' });
+});
+
+it('reports an authorization attempt nobody started as expired', async () => {
+  const oauth = new RegistryMcpOAuth(database, 'https://beeline.example');
+  expect(await oauth.claim(CONNECTOR, 'never-issued-state', HELPER)).toEqual({
+    status: 'expired',
+  });
 });

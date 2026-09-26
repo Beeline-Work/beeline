@@ -154,6 +154,42 @@ lines.on('line', async (line) => {
   return binary;
 }
 
+async function createDatabaseSnapshot(): Promise<Blob | File> {
+  const database = new PgliteDatabase();
+  try {
+    await migrate(database);
+    await new (await import('@beeline/auth/store')).AuthStore(
+      database as unknown as TransactionalDatabase,
+    ).migrate();
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
+      [HUMAN, AGENT],
+    );
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
+       VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
+      [AGENT, HUMAN, JSON.stringify({ name: 'Bee', instructions: 'Answer briefly.' })],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
+      [WORKSPACE, HUMAN, AGENT, ROOM],
+    );
+    return await database.snapshot();
+  } finally {
+    await database.close();
+  }
+}
+
+// The full server + auth migration dominates this suite's hook budget under CI
+// contention. Build it once during collection, then restore an isolated in-memory
+// database for every test rather than repeating the migrations in every hook.
+const DATABASE_SNAPSHOT = await createDatabaseSnapshot();
+
 describe('fresh Room discovery through the live membership wake', () => {
   let database: PgliteDatabase;
   let origin: string;
@@ -190,29 +226,7 @@ describe('fresh Room discovery through the live membership wake', () => {
   }
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
-    await new (await import('@beeline/auth/store')).AuthStore(
-      database as unknown as TransactionalDatabase,
-    ).migrate();
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
-      [HUMAN, AGENT],
-    );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
-       VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
-      [AGENT, HUMAN, JSON.stringify({ name: 'Bee', instructions: 'Answer briefly.' })],
-    );
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
-      ROOM,
-      WORKSPACE,
-    ]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
-      [WORKSPACE, HUMAN, AGENT, ROOM],
-    );
+    database = PgliteDatabase.fromSnapshot(DATABASE_SNAPSHOT);
     auth = new TokenAuth(database, async (proof) => ({
       subject: proof === 'proof' ? 'owner' : proof,
       login: proof === 'proof' ? 'owner' : proof,

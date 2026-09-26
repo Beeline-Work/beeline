@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -175,6 +176,7 @@ export default function BuzzChannels() {
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -870,11 +872,12 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               activeCommunityId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: activeCommunityId },
                     } as never)
                 : undefined

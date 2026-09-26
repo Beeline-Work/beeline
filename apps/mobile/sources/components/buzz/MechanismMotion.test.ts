@@ -112,25 +112,19 @@ describe('the mechanism reveal', () => {
     // whole. That contrast is how a reader tells voice from receipt without
     // reading either, so the row enters from hidden rather than simply being
     // there.
-    const renderer = render(
-      React.createElement(HullMechanismReveal, { live: true }, child()),
-    );
+    const renderer = render(React.createElement(HullMechanismReveal, { live: true }, child()));
     expect(pulses(renderer)[0]!.props.style.at(-1).opacity).toBe(0);
   });
 
   it('does not replay the pop for a settled row scrolled back into view', () => {
     // The transcript's FlatList recycles rows constantly. A one-time arrival
     // signal that fires on every remount is a twitch, not a signal.
-    const renderer = render(
-      React.createElement(HullMechanismReveal, { live: false }, child()),
-    );
+    const renderer = render(React.createElement(HullMechanismReveal, { live: false }, child()));
     expect(pulses(renderer)[0]!.props.style.at(-1).opacity).toBe(1);
   });
 
   it('dips once when the row demotes out of its live form, and never on arrival', () => {
-    const renderer = render(
-      React.createElement(HullMechanismReveal, { live: true }, child()),
-    );
+    const renderer = render(React.createElement(HullMechanismReveal, { live: true }, child()));
     expect(motion.sequence).not.toHaveBeenCalled();
 
     act(() => {

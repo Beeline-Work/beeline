@@ -237,6 +237,9 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['setMessageBookmark']['input']>().toHaveProperty('bookmarked');
     expectTypeOf<PhoneOperationMap['deleteRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['listMessageBookmarks']['output']>().toHaveProperty('bookmarks');
+    expectTypeOf<PhoneOperationMap['readNeedsYou']['output']>().toHaveProperty('items');
+    expectTypeOf<PhoneOperationMap['countNeedsYou']['output']>().toHaveProperty('count');
+    expectTypeOf<PhoneOperationMap['clearNeedsYou']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
     expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');

@@ -632,6 +632,18 @@ CREATE TABLE IF NOT EXISTS message_bookmarks (
 );
 CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_idx
   ON message_bookmarks(workspace_id,identity_id,created_at DESC);
+-- The Needs-you tray's only stored facts, per person: when they first saw a
+-- cell (its 24-hour clock, shared by every device) and when they cleared it
+-- by tapping or dismissing. Which messages are cells is read live
+-- (needs-you.ts), never stored.
+CREATE TABLE IF NOT EXISTS needs_you_marks (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  cleared_at timestamptz,
+  PRIMARY KEY(identity_id,message_id)
+);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
@@ -1625,6 +1637,8 @@ ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
   CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository'));
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS agent_grants_pending_idx ON agent_grants(workspace_id)
+  WHERE status='pending';
 
 -- Immutable evidence for the requester-aware policy upgrade. This deliberately
 -- has no foreign keys: deleting a Workspace or agent must not erase what the
@@ -1738,6 +1752,19 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit 
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS website_url text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_agent_id text REFERENCES identities(id) ON DELETE SET NULL;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_room_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
+-- agent_commands is installed immediately after this base schema and its
+-- ids are text, so this provenance pointer deliberately follows the existing
+-- grant command pointer instead of introducing an early cross-schema FK.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_command_id text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_handoff_attempt text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relayed_attempt text;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,
@@ -1752,13 +1779,28 @@ CREATE TABLE IF NOT EXISTS google_oauth_grants (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
 );
+CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
+  state text PRIMARY KEY,
+  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  code text,
+  expires_at timestamptz NOT NULL
+);
 
 -- Per-machine unique: one connector per (workspace, owner, type, machine).
 -- NULL machine_id (legacy agents before this migration) are each their own
 -- machine; PostgreSQL treats NULL as distinct in unique indexes.
+-- Both DROPs name indexes nothing here creates, so each is a one-time
+-- conversion and every later migrate() leaves the live index in place. A
+-- drop-and-recreate under the SAME name would reopen a window on every
+-- release in which an ON CONFLICT upsert can infer no arbiter index.
 DROP INDEX IF EXISTS workspace_connectors_owner_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_machine_unique
-  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id);
+DROP INDEX IF EXISTS workspace_connectors_machine_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_fixed_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id)
+  WHERE connector_type <> 'registry-mcp';
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_registry_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, machine_id, registry_server_name)
+  WHERE connector_type = 'registry-mcp';
 CREATE INDEX IF NOT EXISTS workspace_connectors_helper_idx
   ON workspace_connectors(helper_agent_id);
 
@@ -1927,6 +1969,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
     `CREATE INDEX CONCURRENTLY messages_search_document_idx
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
+  );
+  // The Needs-you tray finds undecided grant cards without reading transcripts.
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_grant_request_idx
+     ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
   );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);

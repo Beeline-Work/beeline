@@ -43,6 +43,11 @@ import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
+  REGISTRY_MCP_BROKER_FLAG,
+  RegistryMcpHostBroker,
+  runRegistryMcpBroker,
+} from './registry-mcp.js';
+import {
   InstitutionalMemoryShadowWorker,
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
@@ -69,7 +74,7 @@ import {
   runConnectFinishCommand,
 } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import { BUBBLEWRAP_INSTALL_BUDGET_MS, ensureBwrapSandbox } from './bwrap-sandbox.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -249,12 +254,23 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
-  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
+  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Settled exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
-  // the boundary before any Room comes online.
-  const sandbox = detectBwrapSandbox({ ...(runtime.sandbox ? { policy: runtime.sandbox } : {}) });
+  // the boundary before any Room comes online. Absent bubblewrap is installed
+  // on this one pass: a Room shell is approved only inside that sandbox, so
+  // without it the helper silently has no shell at all. That install does not
+  // come out of the unit's own start budget — an unreachable apt mirror would
+  // otherwise time the unit out and restart into the same install forever — so
+  // the start deadline is extended first, and only when a package command is
+  // really about to run.
+  const sandbox = await ensureBwrapSandbox({
+    ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
+    stateDir: dirname(configPath),
+    beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
+  });
   if (sandbox.path) config.bwrapPath = sandbox.path;
+  else if (sandbox.shellDetail) config.shellUnavailableDetail = sandbox.shellDetail;
   // Owner-configured credential masks ride the runtime record; the
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
@@ -371,6 +387,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let registryMcpBroker: RegistryMcpHostBroker | undefined;
   let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   const refreshCatalog = (): Promise<void> => {
@@ -392,6 +409,25 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   };
   let stoppingStatus = 'daemon stopped';
   try {
+    registryMcpBroker = new RegistryMcpHostBroker(
+      config.operatorHome,
+      fetch,
+      // The one per-call gate a Registry route has: the server's existing
+      // requester-aware resource approval, asked here because the broker
+      // socket — not the harness MCP client — is what every caller reaches.
+      async ({ roomId, requestId, generationId, target, consume }) =>
+        (
+          await daemonApi.execute('authorizeResourceCall', {
+            roomId,
+            requestId,
+            generationId,
+            target,
+            consume,
+          })
+        ).allowed === true,
+    );
+    await registryMcpBroker.start();
+    process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
     let lifecycleRestartDrain: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
@@ -551,6 +587,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,
+          registryHome: config.operatorHome,
           log: (message) => console.log(`[body] connector: ${message}`),
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
@@ -607,6 +644,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   } finally {
     clearInterval(scratchSweepTimer);
     connectorLoop?.stop();
+    delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
+    await registryMcpBroker?.stop();
     institutionalMemoryWorker?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid record while it still names THIS process — a
@@ -626,6 +665,10 @@ async function main(): Promise<void> {
   }
   if (command === RESOURCE_FACADE_FLAG) {
     runResourceFacade();
+    return;
+  }
+  if (command === REGISTRY_MCP_BROKER_FLAG) {
+    runRegistryMcpBroker();
     return;
   }
   if (command === SQUIRE_FACADE_FLAG) {

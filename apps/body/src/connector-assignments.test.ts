@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
+import { installRegistryMcp } from './registry-mcp.js';
 import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
@@ -70,8 +71,7 @@ async function settle(): Promise<void> {
 }
 
 const connectedInstall =
-  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) =>
-  async (options) => {
+  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) => async (options) => {
     const steps = [
       { id: 'prereq', label: 'prerequisites', status: 'done' as const },
       { id: 'install', label: 'trusty-squire 1.4.2 installed', status: 'done' as const },
@@ -85,9 +85,265 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('ends a Registry sign-in nobody completed instead of re-arming forever', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: 'registry-1',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+    };
+    const api = apiMock([assignment]);
+    const timers: (() => void)[] = [];
+    const cancelled: unknown[] = [];
+    const attemptEndsAt = 1_000 + 10 * 60_000;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installRegistry: async () => ({
+        status: 'installing',
+        steps: [],
+        authorizationUrl: 'https://mcp.linear.app/authorize?state=a',
+        attemptId: 'attempt-one',
+        attemptExpiresAt: attemptEndsAt,
+      }),
+      schedule: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      cancel: (handle) => {
+        cancelled.push(handle);
+      },
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const started = 1_000;
+      clock.mockReturnValue(started);
+      await loop.runOnce();
+      await settle();
+      expect(timers.length).toBe(1);
+
+      // Still inside the ceremony's life: the watch keeps re-arming.
+      clock.mockReturnValue(attemptEndsAt - 1);
+      await loop.runOnce();
+      await settle();
+      const waiting = api.calls.filter((call) => call.op === 'postConnectorStatus');
+      expect(waiting.at(-1)?.input.errorMessage).toBeUndefined();
+      expect(waiting.at(-1)?.input.signIn).toBeDefined();
+      expect(cancelled).toEqual([]);
+
+      // Past the SERVER's attempt expiry the row ends and says why, rather
+      // than spending a claim round trip and a row UPDATE every two seconds
+      // for the daemon's life.
+      clock.mockReturnValue(attemptEndsAt);
+      await loop.runOnce();
+      await settle();
+      const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(expired?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+      expect(expired?.input.signIn).toBeNull();
+      expect(cancelled).toEqual([1]);
+
+      // And the row is done: a later pass arms no further watch.
+      clock.mockReturnValue(attemptEndsAt + 60_000);
+      await loop.runOnce();
+      await settle();
+      expect(timers.length).toBe(1);
+    } finally {
+      clock.mockRestore();
+      loop.stop();
+    }
+  });
+
+  it('ends a real expired Registry attempt before another authorization page can be minted', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-ceremony-'));
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: '22222222-2222-4222-8222-222222222222',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+      pairingGeneration: 1,
+    };
+    let assignments: ConnectorAssignment[] = [assignment];
+    let begins = 0;
+    let claimsExpired = false;
+    const posts: Record<string, unknown>[] = [];
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        if (op === 'getConnectorAssignments') return { assignments };
+        if (op === 'beginRegistryMcpOAuth')
+          return {
+            state: `state-${++begins}`,
+            redirectUri: 'https://beeline.example/callback',
+            expiresAt: Date.now() + 600_000,
+          };
+        if (op === 'claimRegistryMcpOAuthCode')
+          return claimsExpired
+            ? { status: 'expired' }
+            : { status: 'pending', expiresAt: Date.now() + 600_000 };
+        if (op === 'postConnectorStatus') {
+          posts.push(input);
+          if (input.errorMessage) assignments = [];
+          return {};
+        }
+        throw new Error(`unexpected ${op}`);
+      },
+    };
+    const transport = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://mcp.linear.app/mcp')
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate': 'Bearer resource_metadata="https://mcp.linear.app/resource"',
+          },
+        });
+      if (url === 'https://mcp.linear.app/resource')
+        return Response.json({ authorization_servers: ['https://mcp.linear.app'] });
+      if (url === 'https://mcp.linear.app/.well-known/oauth-authorization-server')
+        return Response.json({
+          authorization_endpoint: 'https://mcp.linear.app/authorize',
+          token_endpoint: 'https://mcp.linear.app/token',
+          registration_endpoint: 'https://mcp.linear.app/register',
+          code_challenge_methods_supported: ['S256'],
+        });
+      if (url === 'https://mcp.linear.app/register') return Response.json({ client_id: 'client' });
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      registryHome: home,
+      installRegistry: (input) =>
+        installRegistryMcp({ ...input, transport, resolveHost: async () => ['93.184.216.34'] }),
+      schedule: () => 1,
+      cancel: () => {},
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(1);
+      expect(posts.at(-1)?.signIn).toMatchObject({ attemptId: expect.any(String) });
+
+      claimsExpired = true;
+      await loop.runOnce();
+      await settle();
+      expect(posts.at(-1)).toMatchObject({ errorMessage: CEREMONY_EXPIRED, signIn: null });
+      expect(begins).toBe(1);
+
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(1);
+
+      assignments = [{ ...assignment, pairingGeneration: 2 }];
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(2);
+      expect(posts.at(-1)?.signIn).toMatchObject({ url: expect.stringContaining('state=state-2') });
+    } finally {
+      loop.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a re-paired Registry connector starts a fresh ceremony after the old one expired', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: 'registry-1',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+      pairingGeneration: 1,
+    };
+    const calls: ExecuteCall[] = [];
+    const timers: (() => void)[] = [];
+    let assignmentValue = assignment;
+    let attemptId = 'attempt-one';
+    const api = {
+      calls,
+      async execute(op: string, input: Record<string, unknown>) {
+        calls.push({ op, input });
+        if (op === 'getConnectorAssignments') return { assignments: [assignmentValue] };
+        return {};
+      },
+    };
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installRegistry: async () => ({
+        status: 'installing',
+        steps: [],
+        authorizationUrl: `https://mcp.linear.app/authorize?state=${attemptId}`,
+        attemptId,
+        attemptExpiresAt: Date.now() + 10 * 60_000,
+      }),
+      schedule: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      cancel: () => {},
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValue(1_000);
+      await loop.runOnce();
+      await settle();
+
+      // The first ceremony runs out on the server's clock and is ended.
+      clock.mockReturnValue(1_000 + 10 * 60_000);
+      await loop.runOnce();
+      await settle();
+      const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(expired?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+
+      // A human re-pairs: generation 2 re-arms the row. The latched expiry of
+      // generation 1 must not swallow it — the helper publishes a FRESH
+      // sign-in page and the row keeps waiting.
+      assignmentValue = { ...assignment, pairingGeneration: 2 };
+      attemptId = 'attempt-two';
+      clock.mockReturnValue(1_000 + 10 * 60_000 + 60_000);
+      await loop.runOnce();
+      await settle();
+      const reArmed = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(reArmed?.input.errorMessage).toBeUndefined();
+      expect(reArmed?.input.signIn?.url).toBe('https://mcp.linear.app/authorize?state=attempt-two');
+      expect(reArmed?.input.pairingGeneration).toBe(2);
+    } finally {
+      clock.mockRestore();
+      loop.stop();
+    }
+  });
+
   it('publishes the Composio owner link and completes only after the server confirms it', async () => {
     const assignment: ConnectorAssignment = {
-      kind: 'install', connectorId: 'composio-1', connectorType: 'composio', pairingGeneration: 4,
+      kind: 'install',
+      connectorId: 'composio-1',
+      connectorType: 'composio',
+      pairingGeneration: 4,
     };
     const calls: ExecuteCall[] = [];
     let linked = false;
@@ -95,9 +351,10 @@ describe('ConnectorAssignmentLoop', () => {
       async execute(op: string, input: Record<string, unknown>) {
         calls.push({ op, input });
         if (op === 'getConnectorAssignments') return { assignments: [assignment] };
-        if (op === 'getComposioLink') return linked
-          ? { status: 'connected' }
-          : { status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_1' };
+        if (op === 'getComposioLink')
+          return linked
+            ? { status: 'connected' }
+            : { status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_1' };
         return {};
       },
     };
@@ -105,8 +362,13 @@ describe('ConnectorAssignmentLoop', () => {
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
-      install: async () => { throw new Error('Squire must not run'); },
-      schedule: (fn) => { timers.push(fn); return fn; },
+      install: async () => {
+        throw new Error('Squire must not run');
+      },
+      schedule: (fn) => {
+        timers.push(fn);
+        return fn;
+      },
       cancel: () => {},
     });
     await loop.runOnce();
@@ -114,7 +376,9 @@ describe('ConnectorAssignmentLoop', () => {
     expect(calls).toContainEqual({
       op: 'postConnectorStatus',
       input: {
-        agentId: 'agent-1', connectorId: 'composio-1', pairingGeneration: 4,
+        agentId: 'agent-1',
+        connectorId: 'composio-1',
+        pairingGeneration: 4,
         steps: [{ label: 'Link github', status: 'running' }],
         signIn: { method: 'oauth', url: 'https://app.composio.dev/link/lt_1' },
       },
@@ -274,7 +538,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({ errorMessage: 'npx failed' });
   });
 
@@ -292,7 +559,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({
       signIn: { method: 'streamed-page', url: 'https://squire.example/vnc' },
     });
@@ -326,9 +596,7 @@ describe('ConnectorAssignmentLoop', () => {
   });
 
   it('leaves revoke queued when the provider drop fails', async () => {
-    const api = apiMock([
-      { kind: 'revoke-grants', connectorId: 'conn-1', reference: 'cred_a' },
-    ]);
+    const api = apiMock([{ kind: 'revoke-grants', connectorId: 'conn-1', reference: 'cred_a' }]);
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
@@ -470,8 +738,9 @@ describe('ConnectorAssignmentLoop', () => {
       await settle();
       expect(started).toBe(1);
       expect(
-        api.calls.some((call) =>
-          call.op === 'installConnector' && call.input.connectorId === 'conn-1'),
+        api.calls.some(
+          (call) => call.op === 'installConnector' && call.input.connectorId === 'conn-1',
+        ),
       ).toBe(true);
     } finally {
       connect.abort();
@@ -632,7 +901,9 @@ describe('ConnectorAssignmentLoop', () => {
   });
 
   it('routes Google tool connectors through the Google installer without vault reporting', async () => {
-    const api = apiMock([{ kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' }]);
+    const api = apiMock([
+      { kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' },
+    ]);
     const googleCalls: string[] = [];
     const squireCalls: string[] = [];
     const loop = new ConnectorAssignmentLoop({
@@ -719,14 +990,17 @@ describe('ConnectorAssignmentLoop', () => {
       async execute(op: string, input: Record<string, unknown>) {
         calls.push({ op, input });
         if (op === 'getConnectorAssignments') return { assignments };
-        if (op === 'getGoogleOAuthGrant') return input.connectorId === 'ready'
-          ? { status: 'ready', credentials: { accessToken: 'old-token' } }
-          : { status: 'pending' };
+        if (op === 'getGoogleOAuthGrant')
+          return input.connectorId === 'ready'
+            ? { status: 'ready', credentials: { accessToken: 'old-token' } }
+            : { status: 'pending' };
         return {};
       },
     };
     const loop = new ConnectorAssignmentLoop({
-      api: api as never, agentId: 'agent-1', mcp,
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
       installGoogle: async (_kind, _onProgress, resolve) => {
         const grant = await resolve!();
         return grant.source === 'pending'
@@ -736,10 +1010,14 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(calls.filter((call) => call.op === 'getGoogleOAuthGrant').map((call) =>
-      call.input.connectorId)).toEqual(['ready', 'retry']);
-    expect(calls.filter((call) => call.op === 'installConnector').map((call) =>
-      call.input.connectorId)).toEqual(['ready']);
+    expect(
+      calls
+        .filter((call) => call.op === 'getGoogleOAuthGrant')
+        .map((call) => call.input.connectorId),
+    ).toEqual(['ready', 'retry']);
+    expect(
+      calls.filter((call) => call.op === 'installConnector').map((call) => call.input.connectorId),
+    ).toEqual(['ready']);
     loop.stop();
   });
 
@@ -757,7 +1035,13 @@ describe('ConnectorAssignmentLoop', () => {
         if (connectorType === 'google-gmail') {
           return {
             status: 'error' as const,
-            steps: [{ label: 'authorized with Google', status: 'failed' as const, reason: 'scope refused' }],
+            steps: [
+              {
+                label: 'authorized with Google',
+                status: 'failed' as const,
+                reason: 'scope refused',
+              },
+            ],
             errorMessage: 'scope refused',
           };
         }
@@ -770,9 +1054,7 @@ describe('ConnectorAssignmentLoop', () => {
     await settle();
     expect(installed).toEqual(['google-drive']);
     expect(
-      api.calls.some(
-        (call) => call.op === 'installConnector' && call.input.connectorId === 'g2',
-      ),
+      api.calls.some((call) => call.op === 'installConnector' && call.input.connectorId === 'g2'),
     ).toBe(true);
     expect(
       api.calls.some(
@@ -831,8 +1113,12 @@ describe('ConnectorAssignmentLoop', () => {
       { kind: 'uninstall', connectorId: 'yt', connectorType: 'google-youtube' },
       { kind: 'refresh-google-grant', connectorId: 'mail', connectorType: 'google-gmail' },
     ]);
-    const loop = new ConnectorAssignmentLoop({ api: api as never,
-      agentId: 'agent-1', googleHome: home, mcp });
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      googleHome: home,
+      mcp,
+    });
     await loop.runOnce();
     expect(existsSync(path)).toBe(false);
     loop.stop();

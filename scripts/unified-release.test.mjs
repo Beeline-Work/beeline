@@ -870,6 +870,58 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-helper/);
   assert.match(source, /stage_server:[\s\S]*stage_helper:[\s\S]*stage_mobile_ota:/);
   assert.match(source, /stage_server == 'pending'/);
+  // A retry whose earlier attempt already produced the complete merged helper
+  // artifact skips the cold Mac cargo builds and reuses it; a fresh identity
+  // (no artifact under this name) builds the Mac bundles exactly as before. The
+  // reuse decision is made once in initialize and consumed everywhere else, so
+  // nothing downstream can reach a second, disagreeing answer.
+  const helperReuse = workflow.jobs.initialize.steps.find((step) => step.id === 'helper_reuse');
+  assert.match(helperReuse.uses, /actions\/github-script@v7/);
+  // `built` is the ordinary retry state the reuse path exists for: the merged
+  // artifact and the built checkpoint land together, so a later leg is what
+  // failed. Gating on `pending` alone would leave the lookup firing only in the
+  // seconds between those two uploads.
+  assert.match(helperReuse.if, /contains\(fromJSON\('\["pending","built"\]'\), steps\.plan\.outputs\.stage_helper\)/);
+  assert.match(workflow.jobs.initialize.outputs.helper_reuse_run_id, /steps\.helper_reuse\.outputs\.run_id/);
+  const darwinDownloads = workflow.jobs.helper.steps.filter(
+    (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
+  );
+  assert.equal(darwinDownloads.length, 2);
+  // The Mac merge inputs travel only when helper_macos produced them, so
+  // daemon-leg's own assertion still names them when they are absent.
+  const helperBuild = workflow.jobs.helper.steps.find(
+    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'build',
+  );
+  assert.match(helperBuild.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
+  for (const key of ['darwin_arm64_bundle_dir', 'darwin_x64_bundle_dir']) {
+    assert.match(helperBuild.with[key], /needs\.helper_macos\.result == 'success'/, key);
+  }
+  const daemonLeg = parse(readFileSync(new URL('../.github/actions/daemon-leg/action.yml', import.meta.url), 'utf8'));
+  assert.equal(daemonLeg.inputs.reuse_run_id.default, '');
+  assert.equal(daemonLeg.runs.steps.filter((step) => step.id === 'reuse').length, 0);
+  const buildSteps = daemonLeg.runs.steps.filter((step) => String(step.if).includes("inputs.phase == 'build'"));
+  // Exactly one build step downloads the reused bytes; every other build step
+  // except the shared artifact upload is the fresh-build path and stays off.
+  assert.deepEqual(
+    buildSteps.map((step) => {
+      if (String(step.if).includes("inputs.reuse_run_id != ''")) return 'reuse';
+      if (String(step.if).includes("inputs.reuse_run_id == ''")) return 'build';
+      return 'always';
+    }),
+    ['reuse', 'build', 'build', 'build', 'build', 'build', 'always'],
+  );
+  // A `built` retry never re-uploads the artifact into its own run, so promote
+  // reads it back from the run that did, falling back to this run when the
+  // build phase produced it here.
+  const promoteDownload = daemonLeg.runs.steps.find(
+    (step) => step.uses === 'actions/download-artifact@v4' && String(step.if).includes("inputs.phase == 'promote'"),
+  );
+  assert.match(promoteDownload.with['run-id'], /inputs\.reuse_run_id \|\| github\.run_id/);
+  assert.ok(promoteDownload.with['github-token']);
+  const helperPromote = workflow.jobs.helper.steps.find(
+    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'promote',
+  );
+  assert.match(helperPromote.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
   assert.match(source, /\["pending","built"\][\s\S]*stage_server/);
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);
@@ -1085,6 +1137,170 @@ test('canonical routine release guidance is a single no-input dispatch', () => {
   assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(guide, /Pass no inputs/);
   assert.match(agents, /with no release worker and no inputs/);
+});
+
+// GitHub's `if` expressions, evaluated over the operators these gates actually
+// use. Anything outside that vocabulary throws rather than quietly reading as
+// false, so a rewritten gate cannot pass this by being unrecognised.
+function evaluateWorkflowCondition(expression, context) {
+  const translated = String(expression)
+    .replace(/\s+/g, ' ')
+    .replaceAll('cancelled()', 'false')
+    .replace(/contains\(fromJSON\('(\[[^']*\])'\), ([^)]+)\)/g, '($1).includes($2)');
+  for (const call of translated.matchAll(/([A-Za-z_]\w*)\s*\(/g)) {
+    if (call[1] !== 'includes') throw new Error(`unsupported expression function ${call[1]}() in: ${expression}`);
+  }
+  for (const path of translated.matchAll(/\b(inputs|needs|steps)((?:\.\w+)+)/g)) {
+    const value = path[2].slice(1).split('.').reduce((node, key) => node?.[key], context[path[1]]);
+    if (value === undefined) throw new Error(`expression reads unset ${path[1]}${path[2]}: ${expression}`);
+  }
+  return Boolean(new Function('inputs', 'needs', 'steps', `return (${translated});`)(
+    context.inputs, context.needs, context.steps,
+  ));
+}
+
+test('every helper stage has either a reused artifact or a Mac rebuild, never neither', () => {
+  const workflow = parse(
+    readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
+  );
+  const { helper_macos: macos, helper } = workflow.jobs;
+  const buildPhase = helper.steps.find(
+    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'build',
+  );
+  const promotePhase = helper.steps.find(
+    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'promote',
+  );
+  const darwinDownload = helper.steps.find(
+    (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
+  );
+  const builtCheckpoint = helper.steps.find((step) => step.name === 'Checkpoint the helper build');
+
+  function resolve({ stage, reuseRunId }) {
+    const initialize = {
+      result: 'success',
+      outputs: { run_helper: 'true', stage_helper: stage, helper_reuse_run_id: reuseRunId },
+    };
+    const inputs = { plan_only: false };
+    const macosRuns = evaluateWorkflowCondition(macos.if, { inputs, needs: { initialize }, steps: {} });
+    // helper_macos only exists to produce the Mac bundles, so a run of it is a
+    // rebuild; anything else leaves its result 'skipped'.
+    const needs = { initialize, helper_macos: { result: macosRuns ? 'success' : 'skipped' } };
+    const context = { inputs, needs, steps: {} };
+    return {
+      rebuilds: macosRuns,
+      helperRuns: evaluateWorkflowCondition(helper.if, context),
+      downloadsMacBundles: evaluateWorkflowCondition(darwinDownload.if, context),
+      merges: evaluateWorkflowCondition(buildPhase.if, context),
+      checkpointsBuilt: evaluateWorkflowCondition(builtCheckpoint.if, context),
+      promotes: evaluateWorkflowCondition(promotePhase.if, context),
+    };
+  }
+
+  // A fresh identity builds the Mac bundles exactly as before.
+  assert.deepEqual(resolve({ stage: 'pending', reuseRunId: '' }), {
+    rebuilds: true, helperRuns: true, downloadsMacBundles: true, merges: true, checkpointsBuilt: true, promotes: true,
+  });
+  // The intent's case: a retry whose merged artifact already exists skips the
+  // contended Mac entirely and promotes the reused bytes.
+  for (const stage of ['pending', 'built']) {
+    const reused = resolve({ stage, reuseRunId: '4242' });
+    assert.equal(reused.rebuilds, false, stage);
+    assert.equal(reused.helperRuns, true, stage);
+    assert.equal(reused.downloadsMacBundles, false, stage);
+    assert.equal(reused.promotes, true, stage);
+  }
+  // Reproduces the dead end: a `built` retry whose lookup came back empty (a
+  // transient list error, or an expired/deleted artifact) used to skip the Mac
+  // build AND the merge, leaving promote to read an artifact no run held.
+  assert.deepEqual(resolve({ stage: 'built', reuseRunId: '' }), {
+    rebuilds: true, helperRuns: true, downloadsMacBundles: true, merges: true, checkpointsBuilt: true, promotes: true,
+  });
+  // Past the stages that owe bytes, the helper leg only records its verdict.
+  const promoted = resolve({ stage: 'promoted', reuseRunId: '' });
+  assert.equal(promoted.rebuilds, false);
+  assert.equal(promoted.helperRuns, true);
+  assert.equal(promoted.merges, false);
+  assert.equal(promoted.promotes, false);
+  // No stage may promote without this run merging the bytes or naming the run
+  // that already did.
+  for (const stage of ['pending', 'built', 'promoted']) {
+    for (const reuseRunId of ['', '4242']) {
+      const paths = resolve({ stage, reuseRunId });
+      assert.ok(
+        !paths.promotes || paths.merges || reuseRunId !== '',
+        `${stage}/${reuseRunId || 'no reuse'} promotes with neither merged nor reused bytes`,
+      );
+    }
+  }
+});
+
+test('a helper release riding a reused artifact is not classified a budget failure', () => {
+  const workflow = parse(
+    readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
+  );
+  const classify = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
+  const repoRoot = dirname(dirname(RELEASE_SCRIPT));
+  const identity = { version: 'v0.0.9', sourceSha: NEW_SHA };
+
+  // Run the release_result classifier exactly as the job does: a fully
+  // delivered attempt whose wall clock passed the 20-minute default budget.
+  function classifyDeliveredAttempt(overrides) {
+    const root = mkdtempSync(join(tmpdir(), 'beeline-release-budget-'));
+    try {
+      const state = initializeRelease(identity);
+      for (const component of RELEASE_COMPONENTS) {
+        for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, component, stage);
+      }
+      mkdirSync(join(root, 'release'), { recursive: true });
+      writeFileSync(join(root, 'release', 'unified-release.json'), JSON.stringify(state));
+      const output = join(root, 'github-output');
+      writeFileSync(output, '');
+      execFileSync('bash', ['-c', classify.run], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          RUNNER_TEMP: root,
+          GITHUB_OUTPUT: output,
+          TRIGGER_EPOCH: String(Math.floor(Date.now() / 1000) - 2000),
+          SERVER_RESULT: 'skipped',
+          HELPER_RESULT: 'success',
+          HELPER_MACOS_RESULT: 'skipped',
+          HELPER_REUSE_RUN_ID: '',
+          MOBILE_OTA_RESULT: 'skipped',
+          RELEASE_PROOF_RESULT: 'skipped',
+          MOBILE_NATIVE_ANDROID_RESULT: 'skipped',
+          MOBILE_NATIVE_IOS_RESULT: 'skipped',
+          DESKTOP_RESULT: 'skipped',
+          WEBSITE_RESULT: 'skipped',
+          ...overrides,
+        },
+      });
+      return Object.fromEntries(
+        readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => {
+          const index = line.indexOf('=');
+          return [line.slice(0, index), line.slice(index + 1)];
+        }),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  // Before this rule the same delivered attempt was recorded as a failure the
+  // moment the Mac leg was the one thing that did not need to run.
+  assert.equal(classifyDeliveredAttempt({}).failure_class, 'budget');
+  assert.equal(classifyDeliveredAttempt({ HELPER_MACOS_RESULT: 'success' }).outcome, 'success');
+  const reused = classifyDeliveredAttempt({ HELPER_REUSE_RUN_ID: '4242' });
+  assert.equal(reused.outcome, 'success');
+  assert.equal(reused.failure_class, '');
+  // The widening belongs to a helper leg that actually delivered, not to the
+  // mere existence of a reusable artifact.
+  assert.equal(
+    classifyDeliveredAttempt({ HELPER_RESULT: 'skipped', HELPER_REUSE_RUN_ID: '4242' }).failure_class,
+    'budget',
+  );
 });
 
 test('the emulator release proof gates OTA promotion', () => {

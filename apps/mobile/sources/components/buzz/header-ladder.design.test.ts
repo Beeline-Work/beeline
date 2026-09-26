@@ -208,8 +208,8 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(handle![0]).toContain('borderTopLeftRadius: theme.buzz.radius');
     expect(handle![0]).toContain('borderBottomLeftRadius: theme.buzz.radius');
     expect(handle![0]).not.toMatch(/alignSelf:\s*'stretch'|borderRight/);
-    expect(workPaneHandleSource).toContain("backgroundColor: theme.buzz.bgHighlight");
-    expect(workPaneHandleSource).toContain("color: theme.buzz.accent");
+    expect(workPaneHandleSource).toContain('backgroundColor: theme.buzz.bgHighlight');
+    expect(workPaneHandleSource).toContain('color: theme.buzz.accent');
     expect(workPaneHandleSource).toContain('width: 0');
   });
 

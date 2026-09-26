@@ -7,7 +7,7 @@ import {
   ToolOutputSheet,
   TOOL_OUTPUT_SHEET_MAX_WIDTH,
 } from '../sources/components/buzz/ToolOutputSheet';
-import { BookmarksGlyph } from '../sources/components/buzz/BookmarksGlyph';
+import { TrayGlyph } from '../sources/components/buzz/TrayGlyph';
 import { ChevronGlyph } from '../sources/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '../sources/components/buzz/CornerGlyph';
 import { MembersGlyph } from '../sources/components/buzz/MembersGlyph';
@@ -36,7 +36,7 @@ function Surface() {
       />
       {/* Every drawn mark, painted on the same page as the sheet: each one
           used to log an unrecognized-prop error the moment it mounted. */}
-      <BookmarksGlyph color="#ffffff" />
+      <TrayGlyph color="#ffffff" />
       <ChevronGlyph color="#ffffff" direction="down" />
       <CornerGlyph color="#ffffff" />
       <MembersGlyph color="#ffffff" />

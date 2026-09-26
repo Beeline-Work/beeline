@@ -10,6 +10,7 @@ import type {
   InviteView,
   MessageBookmarkView,
   MessageReactionEmoji,
+  NeedsYouItemView,
 } from './phone-types.js';
 import type {
   CreateWalletInput,
@@ -41,6 +42,12 @@ export type PhoneOperationMap = {
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
+  /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
+  readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
+  /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
+  countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
+  /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
+  clearNeedsYou: { input: ClearNeedsYouInput; output: void };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -234,6 +241,9 @@ export type SetMessageBookmarkInput = RoomInput & {
 };
 export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
+export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
+export type NeedsYouCountResult = { readonly count: number };
+export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string };
 /**
  * Stop one turn in progress.
  *
@@ -250,6 +260,13 @@ export type CancelAgentTurnInput = RoomInput & {
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
   readonly appInstallationId?: string;
+  /**
+   * The parent-Room message this corner was opened from (the mobile
+   * swipe-right forward). When it names a message in that Room, the server
+   * writes one `corner-open` card carrying it, which the phone renders as the
+   * marker beneath that message.
+   */
+  readonly sourceMessageId?: string;
 };
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;

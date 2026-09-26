@@ -5,7 +5,11 @@ import { artifactWebViewProps, type ArtifactSource } from './artifact-webview';
 const guard = { allow: vi.fn(() => true) };
 
 function props(source: ArtifactSource['source'], scrollEnabled?: boolean) {
-  return artifactWebViewProps({ source, guard, ...(scrollEnabled !== undefined ? { scrollEnabled } : {}) });
+  return artifactWebViewProps({
+    source,
+    guard,
+    ...(scrollEnabled !== undefined ? { scrollEnabled } : {}),
+  });
 }
 
 describe('the one sandbox prop table', () => {

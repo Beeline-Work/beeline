@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const pageHeader = readFileSync(new URL('./PageHeader.tsx', import.meta.url), 'utf8');
 const bookmarks = readFileSync(
-  new URL('../../app/(app)/beeline/bookmarks.tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/tray.tsx', import.meta.url),
   'utf8',
 );
 const workbench = readFileSync(
@@ -36,7 +36,9 @@ describe('the one page header', () => {
 
   it('is the one header Bookmarks and Workbench render', () => {
     expect(bookmarks).toContain('<PageHeader');
-    expect(bookmarks).toContain('trailing={`${bookmarks.length} SAVED`}');
+    expect(bookmarks).toContain(
+      'trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}',
+    );
     expect(bookmarks).not.toContain('PRIVATE');
     expect(bookmarks).not.toContain('styles.header');
     expect(workbench).toContain('<PageHeader');

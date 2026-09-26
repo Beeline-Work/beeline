@@ -277,6 +277,10 @@ export type DaemonOperationMap = {
   listTurnAgentGrants: Operation<AuthorizeSquireCallInput, AgentGrantListResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
   readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;
+  /** Search the official MCP Registry. This changes no state. */
+  searchMcpRegistry: Operation<SearchMcpRegistryInput, SearchMcpRegistryResult>;
+  /** Connect an exact, freshly fetched Registry server on this helper. */
+  connectMcpServer: Operation<ConnectMcpServerInput, ConnectMcpServerResult>;
   /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
   offerConnector: Operation<OfferConnectorInput, OfferConnectorResult>;
   installConnector: Operation<InstallConnectorInput, WriteResult>;
@@ -324,6 +328,16 @@ export type DaemonOperationMap = {
         readonly scopes: readonly string[];
       };
     }
+  >;
+  beginRegistryMcpOAuth: Operation<
+    AgentInput & { readonly connectorId: string },
+    { readonly state: string; readonly redirectUri: string; readonly expiresAt: number }
+  >;
+  claimRegistryMcpOAuthCode: Operation<
+    AgentInput & { readonly connectorId: string; readonly state: string },
+    | { readonly status: 'pending'; readonly expiresAt: number }
+    | { readonly status: 'expired' }
+    | { readonly status: 'ready'; readonly code: string }
   >;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   /**
@@ -589,7 +603,58 @@ export type AgentConfigurationResult = {
   readonly yoloMode: boolean;
   /** Live reviewer configured on a corner's parent Room; absent for self-review. */
   readonly reviewerHandle?: string;
+  /** Connected Registry remotes mounted through the Body-owned credential broker. */
+  readonly registryMcpRoutes?: readonly RegistryMcpRoute[];
 };
+export type RegistryMcpRemote = {
+  readonly type: 'streamable-http' | 'sse';
+  readonly url: string;
+};
+export type RegistryMcpPackage = {
+  readonly registryType?: string;
+  readonly identifier?: string;
+  readonly version?: string;
+  readonly transport?: string;
+};
+export type RegistryMcpManifest = {
+  readonly name: string;
+  readonly version: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly websiteUrl?: string;
+  readonly repository?: { readonly url?: string; readonly source?: string };
+  readonly remotes: readonly RegistryMcpRemote[];
+  readonly packages: readonly RegistryMcpPackage[];
+  /** Declared secret input names only. Values never cross this contract. */
+  readonly secretInputNames: readonly string[];
+};
+export type RegistryMcpRoute = {
+  readonly connectorId: string;
+  readonly serverName: string;
+  readonly displayName: string;
+  readonly routeName: string;
+  readonly target: string;
+};
+export type SearchMcpRegistryInput = RoomInput & {
+  readonly query: string;
+  readonly limit?: number;
+};
+export type SearchMcpRegistryResult = { readonly servers: readonly RegistryMcpManifest[] };
+export type ConnectMcpServerInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly serverName: string;
+    readonly version: string;
+    readonly reason: string;
+    readonly handoffToOwner?: boolean;
+  };
+export type ConnectMcpServerResult =
+  | { readonly status: 'connected' | 'connecting'; readonly connectorId: string }
+  | {
+      readonly status: 'needs_sign_in';
+      readonly connectorId: string;
+      readonly authorizationUrl: string;
+    }
+  | { readonly status: 'unsupported'; readonly reason: string };
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
   readonly observedAt?: number;
@@ -1007,6 +1072,12 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
     readonly approvalUrl: string;
     readonly approvalId?: string;
     readonly linkKind: 'approval' | 'passkey' | 'vouch';
+    /**
+     * The provider page this Squire session was driving, when the call carried
+     * one. It names the exact Registry authorization attempt whose owner link
+     * Squire has already relayed; nothing else is deduplicated against it.
+     */
+    readonly signInUrl?: string;
   };
 export type AuthorizeSquireCallResult = {
   readonly allowed: boolean;
@@ -1059,6 +1130,15 @@ export type AgentWorkbenchView = {
     readonly service: string | null;
     readonly label: string;
     readonly state: 'active' | 'error';
+  }[];
+  readonly registryServers: readonly {
+    readonly connectorId: string;
+    readonly serverName: string;
+    readonly version: string;
+    readonly displayName: string;
+    readonly status: 'installing' | 'connected' | 'error' | 'disconnected';
+    readonly websiteUrl?: string;
+    readonly onThisMachine: boolean;
   }[];
   /** This agent's own machine, where an accepted offer would install. */
   readonly machine: { readonly machineId: string; readonly name: string };
@@ -1133,6 +1213,8 @@ export type ConnectorBrowserLocation =
 export type ConnectorSignIn = {
   readonly method: 'streamed-page' | 'oauth';
   readonly url: string;
+  /** Opaque attempt identity used only to deduplicate provider handoff. */
+  readonly attemptId?: string;
   /** Where the page opened, when the connect report said. */
   readonly browserLocation?: ConnectorBrowserLocation;
 };
@@ -1287,7 +1369,8 @@ export type ConnectorKind =
   | 'google-calendar'
   | 'google-drive'
   | 'google-youtube'
-  | 'composio';
+  | 'composio'
+  | 'registry-mcp';
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
@@ -1296,6 +1379,9 @@ export type ConnectorAssignment =
       readonly connectorId: string;
       readonly connectorType: ConnectorKind;
       readonly pairingGeneration?: number;
+      readonly registryServerName?: string;
+      readonly registryVersion?: string;
+      readonly registryManifest?: RegistryMcpManifest;
     }
   | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
   | {

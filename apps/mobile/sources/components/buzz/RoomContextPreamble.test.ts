@@ -82,18 +82,14 @@ describe('RoomContextPreamble', () => {
     const renderer = render(React.createElement(RoomContextPreamble, { entries }));
     const quoted = renderer.root
       .findAllByType('Text')
-      .filter((node: { props: { testID?: string } }) =>
-        node.props.testID?.endsWith('-entry'),
-      );
+      .filter((node: { props: { testID?: string } }) => node.props.testID?.endsWith('-entry'));
     expect(quoted).toHaveLength(0);
     expect(summaryText(renderer, '-summary')).toBe('⋯ 2 earlier messages from the Room');
     expect(summaryText(renderer, '-affordance')).toContain('tap to expand');
   });
 
   it('says "message" for one and "messages" for more', () => {
-    const one = render(
-      React.createElement(RoomContextPreamble, { entries: [entries[0]] }),
-    );
+    const one = render(React.createElement(RoomContextPreamble, { entries: [entries[0]] }));
     expect(summaryText(one, '-summary')).toBe('⋯ 1 earlier message from the Room');
   });
 

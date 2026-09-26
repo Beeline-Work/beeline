@@ -221,7 +221,9 @@ describe('BeelineGlyphPaint', () => {
       }),
     );
     expect(dark.root.findByType('AnimatedPath').props.stroke).toBe(glyphPaintInk(true));
-    expect(dark.root.findByType('AnimatedPath').props.stroke).not.toBe(beelineThemes.obsidian.accent);
+    expect(dark.root.findByType('AnimatedPath').props.stroke).not.toBe(
+      beelineThemes.obsidian.accent,
+    );
 
     themeRef.current = { buzz: beelineThemes.bone };
     const light = render(

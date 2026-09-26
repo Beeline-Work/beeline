@@ -6,7 +6,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { verifyPagesUpdate } from './verify-pages-update.mjs';
+import { verifyPagesUpdate, updaterWorkspacePackages } from './verify-pages-update.mjs';
 
 // Executable miniature bundle: exercise the production updater's HTTP,
 // checksum, tar extraction, activation, stable forwarder and CLI smoke path.
@@ -38,6 +38,36 @@ async function fixture(root) {
   };
   return { file, bytes, sha256, manifest };
 }
+
+test('the Pages leg builds every workspace package the update proof bundles', async () => {
+  // Run 36249580309: the website job ran pages-leg on a website-only release,
+  // its proof bundled apps/body/src/self-update.ts after nothing but `npm ci`,
+  // and esbuild could not resolve the workspace packages that graph reaches
+  // (their `exports` are built dist/ files). The helper leg used to build them
+  // by accident, so the leg only failed once a release skipped it.
+  const required = await updaterWorkspacePackages();
+  assert.ok(
+    required.includes('@beeline/api-contract') && required.includes('@beeline/nostr'),
+    `the update proof must still exercise the workspace packages from the regression; got ${required.join(', ')}`,
+  );
+  const action = await readFile(
+    new URL('../.github/actions/pages-leg/action.yml', import.meta.url),
+    'utf8',
+  );
+  const install = action.indexOf('run: npm ci');
+  const verify = action.indexOf('scripts/verify-pages-update.mjs');
+  assert.ok(install >= 0, 'the Pages leg must install dependencies');
+  assert.ok(verify > install, 'the update proof must run after npm ci');
+  for (const name of required) {
+    const step = `npm run build -w ${name}`;
+    const at = action.indexOf(step);
+    assert.ok(at >= 0, `pages-leg must ${step} before its update proof`);
+    assert.ok(
+      at > install && at < verify,
+      `${step} must build the workspace package between npm ci and the proof`,
+    );
+  }
+});
 
 test('round trip applies exact bytes, and refuses stale, corrupt and redirected hosts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pages-update-'));

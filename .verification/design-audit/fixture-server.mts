@@ -9,7 +9,7 @@
  * row, a transcript carrying every message presentation, a corner with an
  * objective, agents with server-assigned faces, and a Members roster.
  *
- * Run:  node --import tsx .verification/design-audit/fixture-server.ts
+ * Run:  node --import tsx .verification/design-audit/fixture-server.mts
  * It prints one JSON line with the origin and the session tokens the browser
  * needs in sessionStorage, then stays up until killed.
  */
@@ -243,6 +243,69 @@ for (const [workspace, room, identity, role] of members) {
      ON CONFLICT DO NOTHING`,
     [workspace, room, identity, role],
   );
+}
+
+// AUDIT_AGENT_PROFILES=1 adds the three agent profiles the captain photographed:
+// Candy and Charles owned by the viewer (the owner's edit view), BBC owned by
+// the peer (a Workspace manager's view). Charles runs Cursor, whose own catalog
+// carries GPT models beside Claude ones — enough rows to prove the bounded list.
+if (process.env.AUDIT_AGENT_PROFILES === '1') {
+  const [candy, bbc, charles] = ['c', 'd', 'e'].map((char) => char.repeat(64));
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle,face_id)
+     VALUES($1,'agent','Candy','candy','cat'),($2,'agent','BBC','bbc','heron'),
+           ($3,'agent','Charles','charles','bear')
+     ON CONFLICT(id) DO NOTHING`,
+    [candy, bbc, charles],
+  );
+  const catalog = (ids: string[], current: string) =>
+    JSON.stringify([
+      {
+        id: 'model',
+        category: 'model',
+        currentValue: current,
+        options: ids.map((id) => ({ id, name: id })),
+      },
+      {
+        id: 'reasoning_effort',
+        category: 'reasoning_effort',
+        currentValue: 'high',
+        options: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }],
+      },
+    ]);
+  const cursorModels = [
+    'claude-opus-5-thinking-high',
+    'claude-sonnet-5',
+    ...['High', 'High Fast', 'Extra High', 'Extra High Fast', 'None', 'None Fast', 'Low'].map(
+      (effort) => `GPT-5.6 Sol 1M ${effort}`,
+    ),
+    'GPT-5.6 Luna 1M High',
+    'GPT-5.6 Sol 1M',
+    'GPT-5.6 Sol 1M Max',
+  ];
+  await database.query(
+    `INSERT INTO agents(agent_id,owner_id,selected_model,selected_effort,model_catalog)
+     VALUES($1,$4,'claude-opus-5','high',$5::jsonb),
+           ($2,$6,'gpt-5.6-sol','high',$7::jsonb),
+           ($3,$4,'claude-opus-5-thinking-high','high',$8::jsonb)
+     ON CONFLICT(agent_id) DO NOTHING`,
+    [
+      candy,
+      bbc,
+      charles,
+      VIEWER,
+      catalog(['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'], 'claude-opus-5'),
+      PEER,
+      catalog(['gpt-5.6-sol', 'gpt-5.6-luna'], 'gpt-5.6-sol'),
+      catalog(cursorModels, 'claude-opus-5-thinking-high'),
+    ],
+  );
+  for (const agent of [candy, bbc, charles])
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
+       ON CONFLICT DO NOTHING`,
+      [WORKSPACE, agent],
+    );
 }
 
 // The profile's read-only grant ledger shows the profiled member's settled

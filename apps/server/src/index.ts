@@ -25,6 +25,8 @@ import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { GoogleOAuth } from './google-oauth.js';
+import { McpRegistryClient } from './mcp-registry.js';
+import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
@@ -208,6 +210,8 @@ async function main() {
           process.env.BEELINE_GOOGLE_TOKEN_KEY,
         )
       : undefined;
+  const mcpRegistry = new McpRegistryClient();
+  const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage
     ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
         storage: objectStorage,
@@ -244,6 +248,8 @@ async function main() {
       ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
       : undefined,
     institutionalMemory,
+    mcpRegistry,
+    registryMcpOAuth,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -263,6 +269,7 @@ async function main() {
   const server = createBeelineServer({
     database,
     googleOAuth,
+    registryMcpOAuth,
     healthDatabase,
     auth,
     phone,

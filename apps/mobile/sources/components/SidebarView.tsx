@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
@@ -179,7 +180,8 @@ export const SidebarView = React.memo(function SidebarView() {
   // A corner promoted into the main pane still belongs beneath its parent
   // Room in the permanent list. The route's parent hint is presentation-only,
   // but it is enough to keep that already-loaded navigation family expanded.
-  const activeRoomId = firstParam(routeParams.parent) ?? selectedRoomId(pathname);
+  const promotedCornerParentId = firstParam(routeParams.parent);
+  const activeRoomId = promotedCornerParentId ?? selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
@@ -322,17 +324,20 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
+  // A corner route expands its parent. Opening a Room itself leaves its corner
+  // list collapsed; the row's corner glyph toggles that list.
   React.useEffect(() => {
+    const parentId = promotedCornerParentId;
     if (
-      !activeRoomId ||
-      !(surface?.chats.find((item) => item.room.id === activeRoomId)?.cornerCount ?? 0)
+      !parentId ||
+      !(surface?.chats.find((item) => item.room.id === parentId)?.cornerCount ?? 0)
     ) {
       return;
     }
     setExpandedRoomIds((current) =>
-      current.has(activeRoomId) ? current : new Set([...current, activeRoomId]),
+      current.has(parentId) ? current : new Set([...current, parentId]),
     );
-  }, [activeRoomId, surface?.chats]);
+  }, [promotedCornerParentId, surface?.chats]);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
   // is the same boolean (`role !== 'member'`). Do not invent a second gate.
@@ -341,7 +346,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
-  const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
+  const traySelected = pathname.startsWith('/beeline/tray');
+  const needsYouCount = useNeedsYouCount(workspaceId, surface);
   const profileSettingsSelected =
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
@@ -463,11 +469,11 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <WorkspaceActionsMenu
-                    bookmarksSelected={bookmarksSelected}
+                    traySelected={traySelected}
                     canManageWorkspace={canManageWorkspace}
-                    onBookmarks={() =>
+                    onTray={() =>
                       router.push({
-                        pathname: '/beeline/bookmarks',
+                        pathname: '/beeline/tray',
                         params: { communityId: workspaceId },
                       } as Href)
                     }
@@ -561,13 +567,14 @@ export const SidebarView = React.memo(function SidebarView() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            bookmarksSelected={bookmarksSelected}
+            traySelected={traySelected}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               workspaceId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: workspaceId },
                     } as Href)
                 : undefined

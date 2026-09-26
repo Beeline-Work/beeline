@@ -1,12 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const bookmarks = readFileSync(new URL('./bookmarks.tsx', import.meta.url), 'utf8');
+const bookmarks = readFileSync(new URL('./tray.tsx', import.meta.url), 'utf8');
 const channels = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
-const toolbar = readFileSync(
-  new URL('../../../components/buzz/RoomListToolbar.tsx', import.meta.url),
-  'utf8',
-);
 const chat = readFileSync(new URL('./chat/_chat-surface.tsx', import.meta.url), 'utf8');
 const inspector = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
@@ -18,20 +14,10 @@ const ledger = readFileSync(
   'utf8',
 );
 
-describe('private bookmark surfaces', () => {
-  it('opens phone and desktop bookmarks from the conversation toolbar', () => {
+describe('the tray: Needs you and Saved', () => {
+  it('keeps the old bookmark cell out of the Room list', () => {
     expect(channels).not.toContain('bookmarks-cell');
     expect(channels).not.toContain('bookmarkCount');
-    expect(channels).toContain('<RoomListToolbar');
-    expect(toolbar).toContain('testID={desktop ? \'desktop-bookmarks\' : \'workspace-bookmarks\'}');
-    expect(toolbar).toContain('<BookmarksGlyph');
-    expect(channels).toContain("pathname: '/beeline/bookmarks'");
-    const sidebar = readFileSync(
-      new URL('../../../components/SidebarView.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(sidebar).toContain('<RoomListToolbar');
-    expect(sidebar).toContain("pathname: '/beeline/bookmarks'");
   });
 
   it('offers the toggle in mobile and desktop message actions and marks saved timestamps', () => {
@@ -42,7 +28,7 @@ describe('private bookmark surfaces', () => {
   });
 
   it('opens the exact original and pages beyond the cached tail', () => {
-    expect(bookmarks).toContain('notificationMessageId: bookmark.messageId');
+    expect(bookmarks).toContain('notificationMessageId: target.messageId');
     expect(chat).toContain(
       "if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();",
     );
@@ -61,8 +47,7 @@ describe('private bookmark surfaces', () => {
     expect(inspector).toContain('desktop-work-focused-message');
   });
 
-  it('names the header count without a PRIVATE label', () => {
-    expect(bookmarks).toContain('trailing={`${bookmarks.length} SAVED`}');
+  it('names the workspace in the header without a PRIVATE label', () => {
     expect(bookmarks).toContain('eyebrow={workspaceName');
     expect(bookmarks).not.toContain('PRIVATE');
   });

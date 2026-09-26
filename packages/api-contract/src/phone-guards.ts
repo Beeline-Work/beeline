@@ -869,7 +869,9 @@ function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact
       item.type !== 'corner-open') ||
     !uuid(item.cornerId) ||
     typeof item.objective !== 'string' ||
-    !item.objective.trim()
+    // The objective titles a legacy card; a person-opened corner has none and
+    // is titled by its name instead. A card must carry one of the two.
+    (!item.objective.trim() && !(typeof item.name === 'string' && item.name.trim()))
   ) {
     return null;
   }
@@ -903,6 +905,12 @@ function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact
     cornerId: item.cornerId,
     objective: item.objective,
     ...field('name', typeof item.name === 'string' ? item.name : undefined),
+    ...field(
+      'sourceMessageId',
+      typeof item.sourceMessageId === 'string' && item.sourceMessageId
+        ? item.sourceMessageId
+        : undefined,
+    ),
     ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
     ...field('pullRequest', projectedPull),
     ...field(

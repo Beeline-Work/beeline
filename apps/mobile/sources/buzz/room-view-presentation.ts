@@ -329,6 +329,8 @@ export type ChatDisplayMessage = {
   relay?: RoomViewMessage['relay'];
   relayReports?: ChatDisplayMessage[];
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
+  /** Corners opened from this message, anchored beneath it (`buzz/corner-markers.ts`). */
+  cornerMarkers?: ChatDisplayMessage[];
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
   /** Trusty Squire's own approval page, relayed into its owner DM. */

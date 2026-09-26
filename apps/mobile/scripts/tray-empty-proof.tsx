@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
-import BookmarksScreen from '../sources/app/(app)/beeline/bookmarks';
+import TrayScreen from '../sources/app/(app)/beeline/tray';
 
 const desktop = new URLSearchParams(location.search).get('surface') === 'desktop';
 
@@ -14,10 +14,18 @@ const report = (text: string) => {
 };
 
 async function read() {
-  createRoot(document.getElementById('root')!).render(<BookmarksScreen />);
+  createRoot(document.getElementById('root')!).render(<TrayScreen />);
   // The list loads, finds nothing saved, and paints its empty block.
   await pause();
   await pause();
+
+  // Needs you is empty on its own, and says so without hiding Saved.
+  const nothing = document.querySelector<HTMLElement>('[data-testid="needs-you-empty"]');
+  assert(nothing != null, 'the Needs you empty block never painted');
+  assert(
+    (nothing!.textContent ?? '').includes('Nothing needs you'),
+    `Needs you empty block reads: ${nothing!.textContent}`,
+  );
 
   const empty = document.querySelector<HTMLElement>('[data-testid="bookmarks-empty"]');
   assert(empty != null, 'the empty block never painted');
@@ -42,7 +50,7 @@ async function read() {
 }
 
 async function readRow() {
-  createRoot(document.getElementById('root')!).render(<BookmarksScreen />);
+  createRoot(document.getElementById('root')!).render(<TrayScreen />);
   await pause();
   await pause();
 

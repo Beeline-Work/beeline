@@ -1005,9 +1005,31 @@ describe('the workspace_connectors machine_id migration ordering', () => {
     // Verify the unique index on machine_id exists
     const indexes = await database.query<{ indexname: string }>(
       `SELECT indexname FROM pg_indexes
-       WHERE tablename='workspace_connectors' AND indexname='workspace_connectors_machine_unique'`,
+       WHERE tablename='workspace_connectors'
+         AND indexname='workspace_connectors_fixed_machine_unique'`,
     );
     expect(indexes.rows.length).toBe(1);
+  });
+
+  it('keeps the connector uniqueness index in place across releases', async () => {
+    const database = new PgliteDatabase();
+    try {
+      await migrate(database);
+      const oid = async () =>
+        (
+          await database.query<{ oid: number }>(
+            `SELECT c.oid FROM pg_class c WHERE c.relname='workspace_connectors_fixed_machine_unique'`,
+          )
+        ).rows[0]?.oid;
+      const first = await oid();
+      expect(first).toBeDefined();
+      // A re-run must not drop and rebuild it: while it is gone
+      // `pairConnector`'s ON CONFLICT has no arbiter index to infer.
+      await migrate(database);
+      expect(await oid()).toBe(first);
+    } finally {
+      database.close();
+    }
   });
 });
 

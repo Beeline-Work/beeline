@@ -58,9 +58,11 @@ import {
   prepareCodegraphIndex,
 } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
+  isMcpShapedPermissionRequest,
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
@@ -76,7 +78,7 @@ import {
   type EmptyTurnExplanation,
 } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
+import { harnessHonorsSessionSystemPrompt, roomShellCapability } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -116,14 +118,11 @@ type HumanMessage = Pick<
 >;
 
 /**
- * Rooms and corners share one rule: every MCP tool call from a server the
- * host mounted into the session is approved, and nothing that is not an MCP
- * tool call (shell, native reads/writes, unstructured requests) crosses. The
- * read-only sandbox is the boundary, not the tool list. A host-classified
- * server is kept out of the isolated harness home until an owner grant
- * rewrites the route in; a call that reaches an ungated host identity stays
- * refused here. Granted names drop out of that host list so every capability
- * on that server crosses.
+ * Rooms and corners share one rule for MCP: every tool call from a server the
+ * host mounted into the session is approved. A host-classified server is kept
+ * out of the isolated harness home until an owner grant rewrites the route in;
+ * a call that reaches an ungated host identity stays refused here. Granted
+ * names drop out of that host list so every capability on that server crosses.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
@@ -134,13 +133,53 @@ export function isRoomMcpPermissionRequest(
   return isMountedMcpToolPermissionRequest(request, mountedServers);
 }
 
-/** The Room ACP client applies this host-owned MCP allowlist fail-closed. */
-export function roomMcpPermissionDecision(
+/**
+ * A shell command, read from the only thing that identifies one: the `execute`
+ * kind the harness itself declares. claude-agent-acp marks its native `Bash`
+ * that way, which is the whole of what a Room shell needs; a title or a command
+ * line that happens to contain the word `bash` is prose, not an identity, and
+ * classifying on it moved the boundary with the user's wording. An MCP-shaped
+ * request is never re-read as a shell: it was already decided above, so a
+ * command line wearing an inspection tool's title stays refused instead of
+ * crossing as the shell it also is.
+ */
+function isRoomShellPermissionRequest(
   request: AcpPermissionRequest,
-  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
-  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
+  hostServers: readonly string[],
+): boolean {
+  if (request.toolCall?.kind !== 'execute') return false;
+  return !isMcpShapedPermissionRequest(request, hostServers);
+}
+
+/**
+ * The Room ACP client applies this host-owned decision fail-closed: a mounted
+ * MCP tool call is approved, a shell command is approved while the OS sandbox
+ * wraps this session, and nothing else crosses (native reads/writes,
+ * unstructured requests).
+ *
+ * Shell is conditioned on the sandbox because the sandbox IS the Room's
+ * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
+ * and masks no credential path, so an approved command would write anywhere the
+ * daemon account can. Codex keeps its own offline read-only mode in exactly
+ * that case (`harness-capabilities.ts`), so requiring the wrap is what parity
+ * means. `ensureBwrapSandbox` installs bubblewrap at daemon start so this is a
+ * capability the host gains rather than a refusal it lives with, and the
+ * session primer states the outcome either way.
+ */
+export function roomPermissionDecision(
+  request: AcpPermissionRequest,
+  options: {
+    mountedServers?: readonly string[];
+    hostServers?: readonly string[];
+    /** `config.bwrapPath`, set only when the sandbox self-test passed. */
+    shellSandboxed?: boolean;
+  } = {},
 ): AcpPermissionDecision {
-  return isRoomMcpPermissionRequest(request, mountedServers, hostServers) ? 'allow' : 'reject';
+  const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
+  const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
+  if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
+  if (!options.shellSandboxed) return 'reject';
+  return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
 }
 
 /**
@@ -603,6 +642,7 @@ export class MonolithRoomTurnLoop {
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
@@ -610,11 +650,17 @@ export class MonolithRoomTurnLoop {
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: [
+              ...grantedHostRoutes,
+              ...registryRoutes.map((route) => route.routeName),
+            ],
+          }),
+          ...registryRoutes.map((route) => route.routeName),
+        ],
         this.sessionCodegraphReady,
       ),
     });
@@ -687,6 +733,11 @@ export class MonolithRoomTurnLoop {
         ? { model: selectionModel, effort: selectionEffort }
         : undefined;
     const operatorHome = this.options.config.operatorHome ?? homedir();
+    const registryHostDeclarations = registryMcpHostDeclarations(
+      configuration.registryMcpRoutes,
+      this.commandContext.path,
+    );
+    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -702,7 +753,8 @@ export class MonolithRoomTurnLoop {
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
-          grantedHostRoutes,
+          grantedHostRoutes: mountedHostRoutes,
+          extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
@@ -762,11 +814,14 @@ export class MonolithRoomTurnLoop {
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: mountedHostRoutes,
+          }),
+          ...Object.keys(registryHostDeclarations),
+        ],
         codegraphReady,
       ),
     });
@@ -784,8 +839,9 @@ export class MonolithRoomTurnLoop {
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
-            grantedHostRoutes,
+            grantedHostRoutes: mountedHostRoutes,
           }),
+          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
@@ -830,9 +886,9 @@ export class MonolithRoomTurnLoop {
       agentKind: this.options.config.agentKind,
     });
     const grantedRouteServers = grantedHostRouteWires(
-      grantedHostRoutes,
+      mountedHostRoutes,
       operatorHome,
-      hostDeclarations,
+      { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
@@ -861,7 +917,7 @@ export class MonolithRoomTurnLoop {
         operatorHome: this.options.config.operatorHome,
         agentKind: this.options.config.agentKind,
       }),
-      grantedHostRoutes,
+      mountedHostRoutes,
     );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
@@ -873,10 +929,12 @@ export class MonolithRoomTurnLoop {
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
-      permissionHandler: async (request) => {
-        if (!isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'reject';
-        return 'allow';
-      },
+      permissionHandler: async (request) =>
+        roomPermissionDecision(request, {
+          mountedServers,
+          hostServers,
+          shellSandboxed: Boolean(this.options.config.bwrapPath),
+        }),
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,
@@ -914,10 +972,27 @@ export class MonolithRoomTurnLoop {
             branch: repositoryState.targetBranch || 'main',
           }
         : undefined;
+    // Whether this session runs shell commands is a fact about the harness AND
+    // the sandbox: Codex executes them in its own read-only mode with no wrap at
+    // all, while a harness that asks depends on the gate above. An unmeasured
+    // harness states nothing (`roomShellCapability`).
+    const shellCapability = roomShellCapability(harnessLabel, {
+      osSandbox: Boolean(this.options.config.bwrapPath),
+    });
     const capabilityContext = beelineCapabilityContextForHarness(
       command,
       repositoryInfo,
       directMessage,
+      shellCapability === 'runs'
+        ? { available: true }
+        : shellCapability === 'refused'
+          ? {
+              available: false,
+              ...(this.options.config.shellUnavailableDetail
+                ? { detail: this.options.config.shellUnavailableDetail }
+                : {}),
+            }
+          : undefined,
     );
     this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
       ? ''

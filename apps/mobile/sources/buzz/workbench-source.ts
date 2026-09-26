@@ -2,6 +2,7 @@ import type {
   ConnectionDetailView,
   ConnectorInstallState,
   ConnectorInstallStep,
+  WorkbenchApp,
   WorkbenchConnector,
   WorkbenchConnectorId,
   WorkbenchHelper,
@@ -56,6 +57,15 @@ export interface WorkbenchSource {
     pending?: number;
   }>;
   disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void>;
+  /** The one front door: the server resolves the route; the helper's agent
+   * completes any sign-in through Trusty Squire. */
+  connectApp(input: {
+    workspaceId: string;
+    app: string;
+    helperId: string;
+    reconnect?: boolean;
+  }): Promise<{ appId: string }>;
+  disconnectApp(input: { workspaceId: string; appId: string }): Promise<void>;
 }
 
 type WorkbenchDto = PhoneOperationMap['readWorkbench']['output'];
@@ -63,24 +73,16 @@ type ConnectorViewDto = WorkbenchDto['connectors'][number];
 type ConnectionViewDto = WorkbenchDto['connections'][number];
 
 function toConnector(entry: {
-  id?: string;
   connectorType: string;
   name: string;
-  description?: string;
   available: boolean;
-  approvedTools?: readonly string[];
   row?: ConnectorViewDto;
 }): WorkbenchConnector {
-  const id: WorkbenchRowId = entry.id ?? entry.connectorType;
-  const fixedDescription =
-    CONNECTOR_DESCRIPTIONS[entry.connectorType as WorkbenchConnectorId] ?? '';
-  const approvedTools = entry.row?.approvedTools ?? entry.approvedTools;
+  const id: WorkbenchRowId = entry.connectorType;
   return {
     id,
     name: entry.name,
-    description: approvedTools?.length
-      ? `${entry.description ?? fixedDescription} Approved tools: ${approvedTools.join(', ')}.`
-      : (entry.description ?? fixedDescription),
+    description: CONNECTOR_DESCRIPTIONS[entry.connectorType as WorkbenchConnectorId] ?? '',
     available: entry.available,
     ...(entry.row
       ? {
@@ -179,27 +181,28 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
             connectorType: entry.connectorType,
             name: entry.name,
             available: entry.available,
-            approvedTools: entry.approvedTools,
             row: dto.connectors.find(
               (candidate) => candidate.connectorType === entry.connectorType,
             ),
           });
         }),
-        ...dto.connectors
-          .filter((row) => row.connectorType === 'registry-mcp' && row.registryServerName)
-          .map((row) =>
-            toConnector({
-              id: row.connectorId,
-              connectorType: row.connectorType,
-              name: row.displayName ?? row.registryServerName ?? 'MCP server',
-              description: row.websiteUrl
-                ? `${row.registryServerName}@${row.registryVersion ?? 'pinned'} · ${row.websiteUrl}`
-                : `${row.registryServerName}@${row.registryVersion ?? 'pinned'}`,
-              available: true,
-              row,
-            }),
-          ),
       ],
+      // A Registry server is an app now: its row is the app's, never a
+      // second dynamic tool row.
+      apps: (dto.apps ?? []).map((app): WorkbenchApp => ({
+        id: app.appId,
+        key: app.appKey,
+        name: app.name,
+        ...(app.domain ? { domain: app.domain } : {}),
+        transport: app.transport,
+        status: app.status,
+        ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
+        ...(app.helperName ? { helperName: app.helperName } : {}),
+        ...(app.helperId ? { helperId: app.helperId } : {}),
+        ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
+        useCount: app.useCount,
+        ...(app.lastUsedAt !== undefined ? { lastUsedAt: app.lastUsedAt } : {}),
+      })),
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }
@@ -328,6 +331,25 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       workspaceId: input.workspaceId,
       connectorId: row.connectorId,
     });
+  }
+
+  async connectApp(input: {
+    workspaceId: string;
+    app: string;
+    helperId: string;
+    reconnect?: boolean;
+  }): Promise<{ appId: string }> {
+    const result = await monolithPhoneOperation('connectWorkbenchApp', {
+      workspaceId: input.workspaceId,
+      app: input.app,
+      helperAgentId: input.helperId,
+      ...(input.reconnect ? { reconnect: true } : {}),
+    });
+    return { appId: result.appId };
+  }
+
+  async disconnectApp(input: { workspaceId: string; appId: string }): Promise<void> {
+    await monolithPhoneOperation('disconnectWorkbenchApp', input);
   }
 }
 

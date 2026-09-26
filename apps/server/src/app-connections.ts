@@ -428,6 +428,7 @@ export async function readOwnerApps(
       status: derived.status,
       ...(derived.errorMessage ? { errorMessage: derived.errorMessage } : {}),
       ...(row.helper_name ? { helperName: row.helper_name } : {}),
+      ...(row.machine_id ? { helperId: row.machine_id } : {}),
       ...(derived.connectionReference
         ? { connectionReference: derived.connectionReference }
         : {}),

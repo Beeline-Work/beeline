@@ -514,6 +514,88 @@ describe('weekly institutional curator', () => {
     expect(await itemState(STALE)).toBe('stale');
   });
 
+  it('refuses to consolidate onto a superseded memory item', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','supersede-proof')`,
+      [CURATOR_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    // A turn review supersedes TARGET: it goes stale at its SAME version while
+    // a newer row takes its canonical key, so the CAS alone still passes.
+    const successor = '30000000-0000-4000-8000-000000000331';
+    await database.query(`UPDATE institutional_memory_items SET state='stale' WHERE id=$1`, [
+      TARGET,
+    ]);
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+          source_message_id,audience_kind,confidence,version,supersedes_id,
+          created_by_command_id,updated_at)
+       VALUES($1,$2,'workspace_fact',NULL,'release-marker','Write the marker last, always.',
+              'active',$3,$4,'workspace',0.97,2,$5,'supersede-command',$6)`,
+      [successor, WORKSPACE, ROOM, MESSAGE, TARGET, NOW],
+    );
+
+    const candidate = (id: string, key: string, state: 'active' | 'stale') => ({
+      id,
+      targetType: 'memory_item' as const,
+      version: 1,
+      state,
+      key,
+      text: 'A release invariant.',
+      sourceRoomId: ROOM,
+      sourceMessageId: MESSAGE,
+      requesterIdentityId: HUMAN,
+    });
+
+    await expect(
+      database.transaction((db) =>
+        applyInstitutionalCuratorProposal(db, {
+          workspaceId: WORKSPACE,
+          jobId: CURATOR_JOB,
+          sourceMessageId: MESSAGE,
+          context: {
+            partition: 'workspace-facts',
+            candidates: [
+              candidate(TARGET, 'release-marker', 'stale'),
+              candidate(DUPLICATE, 'schema-marker', 'active'),
+            ],
+          },
+          proposal: {
+            proposalVersion: 1,
+            partition: 'workspace-facts',
+            actions: [
+              {
+                action: 'consolidate',
+                targetType: 'memory_item',
+                targetId: TARGET,
+                baseVersion: 1,
+                duplicateIds: [DUPLICATE],
+                body: 'Write the release marker last.',
+                rationale: 'These two describe one release invariant.',
+              },
+            ],
+          },
+          usage: { inputBytes: 10, outputBytes: 10, model: 'test', extractorVersion: 'test' },
+        }),
+      ),
+    ).rejects.toThrow(/superseded/);
+
+    // Exactly one active row keeps the canonical key, and it is the successor.
+    expect(
+      (
+        await database.query<{ id: string }>(
+          `SELECT id FROM institutional_memory_items
+           WHERE workspace_id=$1 AND canonical_key='release-marker' AND state='active'
+             AND deleted_at IS NULL`,
+          [WORKSPACE],
+        )
+      ).rows.map((row) => row.id),
+    ).toEqual([successor]);
+  });
+
   it('records a curator retain without restarting the staleness clock', async () => {
     await database.query(
       `INSERT INTO institutional_memory_jobs
@@ -587,6 +669,31 @@ describe('weekly institutional curator', () => {
         )
       ).rows[0]?.state,
     ).toBe('stale');
+  });
+
+  it('fills the candidate window by curation age, not by kind', async () => {
+    // Enough recently-curated profile rows to exhaust the 1000-row window: an
+    // ordering led by kind reads no workspace_fact row at all.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+          source_message_id,audience_kind,confidence,version,created_by_command_id,
+          updated_at,curated_at)
+       SELECT gen_random_uuid(),$1,'human_profile_fact',$2,'bulk-'||series,
+              'A bulk preference.','active',$3,$4,'human_profile',0.5,1,'bulk-seed',$5,$5
+       FROM generate_series(1,1000) series`,
+      [WORKSPACE, HUMAN, ROOM, MESSAGE, NOW],
+    );
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+
+    expect(
+      (
+        await database.query<{ context: { partition: string } }>(
+          `SELECT context FROM institutional_memory_jobs WHERE trigger_kind='curator'`,
+        )
+      ).rows.map((job) => job.context.partition),
+    ).toContain('workspace-facts');
   });
 
   it('rotates the weekly job budget across partitions instead of a fixed prefix', async () => {

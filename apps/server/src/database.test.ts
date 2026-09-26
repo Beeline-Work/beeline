@@ -175,6 +175,26 @@ describe('message search vectors', () => {
     expect(await searchable()).toBe(0);
     expect(await backfillMessageSearchDocuments(database, 10)).toBe(25);
     expect(await searchable()).toBe(25);
+    // A filled table's single probe must not read the heap: the partial index
+    // over unfilled rows is empty, so it answers without touching messages.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text)
+       SELECT 'bulk-'||lpad(series::text,5,'0'),$1,$2,'bulk message '||series
+       FROM generate_series(1,3000) series`,
+      [room, 'a'.repeat(64)],
+    );
+    await database.query(`ANALYZE messages`);
+    const probePlan = JSON.stringify(
+      (
+        await database.query<Record<string, unknown>>(
+          `EXPLAIN (FORMAT JSON)
+           SELECT id FROM messages WHERE id>'' AND search_document IS NULL ORDER BY id LIMIT 2000`,
+        )
+      ).rows[0]?.['QUERY PLAN'],
+    );
+    expect(probePlan).toContain('messages_search_document_backfill_idx');
+    expect(probePlan).not.toContain('"Node Type":"Seq Scan"');
+
     // A filled table costs one query, not a window walk on every release.
     let queries = 0;
     const counted: SqlDatabase = {

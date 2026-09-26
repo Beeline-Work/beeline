@@ -1826,6 +1826,13 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
+  // Without this the drained backfill's first probe is a full heap read of the
+  // busiest table on every release. It indexes only unfilled rows, so it is
+  // empty once the backfill completes and the trigger keeps it that way.
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_search_document_backfill_idx
+     ON messages(id) WHERE search_document IS NULL`,
+  );
   const searchDocuments = await backfillMessageSearchDocuments(database);
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);

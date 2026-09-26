@@ -344,8 +344,8 @@ async function curatorPartitions(
      JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
      JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
      WHERE item.workspace_id=$1 AND item.state IN ('active','stale') AND item.deleted_at IS NULL
-     ORDER BY item.kind,item.subject_identity_id,item.source_room_id,
-              item.curated_at ASC NULLS FIRST,item.updated_at DESC,item.id
+     ORDER BY item.curated_at ASC NULLS FIRST,item.kind,item.subject_identity_id,
+              item.source_room_id,item.updated_at DESC,item.id
      LIMIT 1000`,
     [workspaceId],
   );
@@ -372,7 +372,7 @@ async function curatorPartitions(
      JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
      WHERE skill.workspace_id=$1 AND skill.state IN ('active','stale')
        AND version.source_deleted_at IS NULL
-     ORDER BY skill.source_room_id,skill.curated_at ASC NULLS FIRST,skill.updated_at DESC,skill.id
+     ORDER BY skill.curated_at ASC NULLS FIRST,skill.source_room_id,skill.updated_at DESC,skill.id
      LIMIT 1000`,
     [workspaceId],
   );
@@ -629,6 +629,33 @@ export async function applyInstitutionalCuratorProposal(
       throw new Error('institutional curator duplicate targets are invalid');
     }
     if (action.targetType === 'memory_item') {
+      // The same per-key lock applyMemoryProposal takes, in the same order
+      // relative to the row lock, so neither writer can leave two active rows
+      // under one canonical key.
+      const identity = (
+        await database.query<{
+          kind: string;
+          subject_identity_id: string | null;
+          canonical_key: string;
+          audience_kind: string;
+        }>(
+          `SELECT kind,subject_identity_id,canonical_key,audience_kind
+           FROM institutional_memory_items
+           WHERE workspace_id=$1 AND id=$2 AND deleted_at IS NULL`,
+          [input.workspaceId, action.targetId],
+        )
+      ).rows[0];
+      if (!identity) throw new Error('institutional curator memory target is unavailable');
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        [
+          'institutional-memory-item',
+          input.workspaceId,
+          identity.kind,
+          identity.subject_identity_id ?? '',
+          identity.canonical_key,
+          identity.audience_kind,
+        ].join(':'),
+      ]);
       const rows = await database.query<{
         id: string;
         kind: 'workspace_fact' | 'human_profile_fact';
@@ -663,6 +690,9 @@ export async function applyInstitutionalCuratorProposal(
       }
       if (action.action === 'archive' && current.state !== 'stale') {
         throw new Error('institutional curator memory must become stale before archive');
+      }
+      if (action.action === 'consolidate' && current.state !== 'active') {
+        throw new Error('institutional curator memory consolidation target is superseded');
       }
       if (action.action === 'consolidate') {
         if (PROHIBITED_CURATOR_SECRET_PATTERNS.some((pattern) => pattern.test(action.body!))) {

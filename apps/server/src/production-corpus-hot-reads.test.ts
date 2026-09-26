@@ -272,6 +272,22 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     expect(broad.capped).toBe(true);
     expect(broad.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - broad.results.length);
     expect(wallMs).toBeLessThan(HOT_READ_BUDGETS_MS['history-search']);
+    // Across 35,100 rows the bound must keep the NEWEST matches, not whatever
+    // the bitmap scan emitted first.
+    const oldestKeptAt = (
+      await database.query<{ created_at: Date }>(
+        `SELECT min(created_at) created_at FROM (
+           SELECT created_at FROM messages
+           WHERE deleted_at IS NULL AND presentation='message'
+             AND search_document @@ websearch_to_tsquery('simple','production corpus message')
+           ORDER BY created_at DESC,id DESC LIMIT $1) newest`,
+        [INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX],
+      )
+    ).rows[0]?.created_at;
+    const floorSeconds = Math.floor((oldestKeptAt?.getTime() ?? 0) / 1_000);
+    expect(floorSeconds).toBeGreaterThan(0);
+    for (const result of broad.results)
+      expect(result.createdAt).toBeGreaterThanOrEqual(floorSeconds);
     const telemetry = (
       await database.query<{ omitted_count: number; matches_capped: boolean }>(
         `SELECT omitted_count,matches_capped FROM institutional_history_searches

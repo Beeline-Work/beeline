@@ -203,11 +203,23 @@ export async function enqueueInstitutionalMemoryMergeReview(
     await database.query<{
       workspace_id: string;
       requester_identity_id: string;
+      checks: string | null;
+      outcome: string | null;
+      approved_by: string | null;
+      approved_head_sha: string | null;
+      approved_pull_request_number: number | null;
+      approved_at: Date | null;
+      approved_force: boolean | null;
     }>(
       `SELECT corner.workspace_id,
-              COALESCE(fact.commissioned_by,requester.identity_id) requester_identity_id
+              COALESCE(fact.commissioned_by,requester.identity_id) requester_identity_id,
+              fact.lifecycle->>'checks' checks,fact.lifecycle->>'outcome' outcome,
+              approval.approved_by,approval.head_sha approved_head_sha,
+              approval.pull_request_number approved_pull_request_number,
+              approval.approved_at,approval.force approved_force
        FROM rooms corner
        JOIN corner_facts fact ON fact.corner_id=corner.id
+       LEFT JOIN corner_merge_approvals approval ON approval.corner_id=corner.id
        LEFT JOIN LATERAL (
          SELECT membership.identity_id
          FROM memberships membership
@@ -279,6 +291,19 @@ export async function enqueueInstitutionalMemoryMergeReview(
     pullRequestTitle: input.pullRequestTitle,
     commits: input.commits,
     files: input.files,
+    checks: source.checks ?? 'unknown',
+    ...(source.outcome ? { outcome: source.outcome } : {}),
+    reviewerVerdict: source.approved_by
+      ? {
+          approvedBy: source.approved_by,
+          approvedAt: Math.floor((source.approved_at?.getTime() ?? 0) / 1_000),
+          force: source.approved_force ?? false,
+          ...(source.approved_head_sha ? { headSha: source.approved_head_sha } : {}),
+          ...(source.approved_pull_request_number !== null
+            ? { pullRequestNumber: source.approved_pull_request_number }
+            : {}),
+        }
+      : null,
     ...(priorSkill
       ? {
           priorSkill: {

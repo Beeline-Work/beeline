@@ -99,7 +99,10 @@ function snippet(text: string, query: string): string {
 
 /**
  * Search only messages whose source Room is visible to the requester, the
- * answering agent, and every current human member of the output Room.
+ * answering agent, and every current human member of the output Room. Matching
+ * is bounded to the NEWEST INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX matches, which
+ * are then ranked, so a broad query stays cheap and deterministic instead of
+ * ranking whatever rows the plan happened to emit first.
  */
 export async function searchInstitutionalHistory(
   database: SqlDatabase,
@@ -145,20 +148,24 @@ export async function searchInstitutionalHistory(
       `WITH ${AUTHORIZED_ROOMS_CTE}, search_query AS (
          SELECT websearch_to_tsquery('simple',$5) query
        ), matches AS (
-         SELECT message.id message_id,message.room_id,room.name room_name,
-                message.author_id,message.text,message.created_at,
-                ts_rank_cd(message.search_document,search_query.query)::double precision rank
+         SELECT message.id
          FROM search_query
          JOIN messages message ON message.search_document @@ search_query.query
          JOIN authorized_rooms authorized ON authorized.id=message.room_id
-         JOIN rooms room ON room.id=message.room_id
          WHERE message.deleted_at IS NULL AND message.presentation='message'
            AND length(trim(message.text))>0
+         ORDER BY message.created_at DESC,message.id DESC
          LIMIT $6
        )
-       SELECT matches.*,count(*) OVER() matched_count
+       SELECT message.id message_id,message.room_id,room.name room_name,
+              message.author_id,message.text,message.created_at,
+              ts_rank_cd(message.search_document,search_query.query)::double precision rank,
+              count(*) OVER() matched_count
        FROM matches
-       ORDER BY rank DESC,created_at DESC,message_id DESC
+       JOIN messages message ON message.id=matches.id
+       JOIN rooms room ON room.id=message.room_id
+       CROSS JOIN search_query
+       ORDER BY rank DESC,message.created_at DESC,message.id DESC
        LIMIT $7`,
       [
         command.room_id,

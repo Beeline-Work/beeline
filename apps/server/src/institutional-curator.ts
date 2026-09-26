@@ -16,6 +16,85 @@ export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
 export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
 /** The per-turn institutional context budget the rollout gate holds p95 to. */
 export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
+/** How long one presence observation still counts as an available helper host. */
+export const HOST_AVAILABILITY_EVIDENCE_MS = 90_000;
+
+/**
+ * An authorized helper host that could serve this Workspace right now: a
+ * current Workspace-member agent on a known machine whose authenticated
+ * presence evidence is still fresh.
+ */
+const WORKSPACE_HOST_AVAILABLE_SQL = `EXISTS (
+    SELECT 1
+    FROM memberships member
+    JOIN agents agent ON agent.agent_id=member.identity_id AND agent.machine_id IS NOT NULL
+    JOIN live_outputs presence
+      ON presence.agent_id=member.identity_id AND presence.kind='presence'
+    WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+      AND presence.body->>'status'='online'
+      AND presence.updated_at>=$2::timestamptz-interval '${HOST_AVAILABILITY_EVIDENCE_MS} milliseconds'
+  )`;
+
+/** Seconds since `anchor` in which no authorized helper host was available. */
+function unavailableSecondsSql(anchor: string): string {
+  return `(SELECT COALESCE(sum(extract(epoch FROM (
+              LEAST(gap.ended_at,$2::timestamptz)-GREATEST(gap.started_at,${anchor})))),0)
+           FROM institutional_host_availability_gaps gap
+           WHERE gap.workspace_id=$1 AND gap.ended_at>${anchor}
+             AND gap.started_at<$2::timestamptz)`;
+}
+
+/** True once `anchor` is older than `$<days>` days of MEASURED availability. */
+function agedBeyondSql(anchor: string, days: string): string {
+  return `extract(epoch FROM ($2::timestamptz-${anchor}))
+            -${unavailableSecondsSql(anchor)}>=${days}*86400`;
+}
+
+const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
+const SKILL_AGE_ANCHOR = `GREATEST(skill.updated_at,COALESCE(skill.last_served_at,skill.updated_at))`;
+
+/**
+ * Sample whether an authorized helper host can serve this Workspace and record
+ * the span since the previous sample when it could not. One contiguous outage
+ * stays one row.
+ */
+export async function recordWorkspaceHostAvailability(
+  database: SqlDatabase,
+  workspaceId: string,
+  now: Date,
+): Promise<boolean> {
+  const state = (
+    await database.query<{ available: boolean; observed_at: Date | null }>(
+      `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,rollout.availability_observed_at observed_at
+       FROM institutional_memory_workspace_rollouts rollout
+       WHERE rollout.workspace_id=$1`,
+      [workspaceId, now],
+    )
+  ).rows[0];
+  if (!state) return true;
+  const since = state.observed_at;
+  if (!state.available && since && since.getTime() < now.getTime()) {
+    const extended = await database.query(
+      `UPDATE institutional_host_availability_gaps SET ended_at=$3
+       WHERE id=(SELECT id FROM institutional_host_availability_gaps
+                 WHERE workspace_id=$1 AND ended_at=$2 ORDER BY started_at DESC LIMIT 1)`,
+      [workspaceId, since, now],
+    );
+    if (!extended.rowCount) {
+      await database.query(
+        `INSERT INTO institutional_host_availability_gaps(id,workspace_id,started_at,ended_at)
+         VALUES($1,$2,$3,$4)`,
+        [randomUUID(), workspaceId, since, now],
+      );
+    }
+  }
+  await database.query(
+    `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=$2
+     WHERE workspace_id=$1`,
+    [workspaceId, now],
+  );
+  return state.available;
+}
 
 const PROHIBITED_CURATOR_SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
@@ -166,22 +245,20 @@ async function deterministicLifecycle(
   const staleItems = await database.query(
     `UPDATE institutional_memory_items item SET state='stale',updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND item.updated_at<$2::timestamptz-$3*interval '1 day'
-       AND (item.last_served_at IS NULL OR item.last_served_at<$2::timestamptz-$3*interval '1 day')`,
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, staleAfterDays],
   );
   const archivedItems = await database.query(
     `UPDATE institutional_memory_items item SET state='archived',updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='stale' AND item.deleted_at IS NULL
-       AND item.updated_at<$2::timestamptz-$3*interval '1 day'
-       AND (item.last_served_at IS NULL OR item.last_served_at<$2::timestamptz-$3*interval '1 day')`,
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, archiveAfterDays],
   );
   await database.query(
     `UPDATE institutional_memory_items item
      SET body='',deleted_at=$2,updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='archived' AND item.deleted_at IS NULL
-       AND item.updated_at<$2::timestamptz-$3*interval '1 day'`,
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, retentionDays],
   );
 
@@ -204,29 +281,19 @@ async function deterministicLifecycle(
   const staleSkills = await database.query(
     `UPDATE workspace_skills skill SET state='stale',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='active'
-       AND skill.updated_at<$2::timestamptz-$3*interval '1 day'
-       AND (skill.last_served_at IS NULL OR skill.last_served_at<$2::timestamptz-$3*interval '1 day')
-       AND NOT EXISTS (
-         SELECT 1 FROM workspace_skill_uses use
-         WHERE use.skill_id=skill.id AND use.created_at>=$2::timestamptz-$3*interval '1 day'
-       )`,
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, staleAfterDays],
   );
   const archivedSkills = await database.query(
     `UPDATE workspace_skills skill SET state='archived',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='stale'
-       AND skill.updated_at<$2::timestamptz-$3*interval '1 day'
-       AND (skill.last_served_at IS NULL OR skill.last_served_at<$2::timestamptz-$3*interval '1 day')
-       AND NOT EXISTS (
-         SELECT 1 FROM workspace_skill_uses use
-         WHERE use.skill_id=skill.id AND use.created_at>=$2::timestamptz-$3*interval '1 day'
-       )`,
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, archiveAfterDays],
   );
   await database.query(
     `DELETE FROM workspace_skills skill
      WHERE skill.workspace_id=$1 AND skill.state='archived'
-       AND skill.updated_at<$2::timestamptz-$3*interval '1 day'`,
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, retentionDays],
   );
   return {
@@ -375,6 +442,7 @@ export async function runInstitutionalCuratorCycle(
     const cycleKey = `weekly:${week}`;
     let workspaceQueued: number;
     try {
+      await recordWorkspaceHostAvailability(database, rollout.workspace_id, now);
       workspaceQueued = await database.transaction(async (db) => {
         await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
           `institutional-memory:${rollout.workspace_id}`,

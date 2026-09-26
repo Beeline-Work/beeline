@@ -172,6 +172,29 @@ describe('authorized institutional history search', () => {
     expect(capped.results).toHaveLength(10);
     expect(capped.capped).toBe(true);
     expect(capped.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10);
+
+    // The bound keeps the NEWEST matches, so the oldest 25 can never be ranked.
+    const newestWindow = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM messages
+         WHERE deleted_at IS NULL AND presentation='message'
+           AND search_document @@ websearch_to_tsquery('simple','release marker')
+         ORDER BY created_at DESC,id DESC LIMIT $1`,
+        [INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX],
+      )
+    ).rows.map((row) => row.id);
+    expect(newestWindow).not.toContain('bulk-0001');
+    for (const result of capped.results) expect(newestWindow).toContain(result.messageId);
+
+    const repeated = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    expect(repeated.results.map((result) => result.messageId)).toEqual(
+      capped.results.map((result) => result.messageId),
+    );
     expect(
       (
         await database.query<{ matches_capped: boolean; omitted_count: number }>(

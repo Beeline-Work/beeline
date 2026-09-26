@@ -122,7 +122,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 5;
+export const REQUIRED_SCHEMA_VERSION = 6;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1021,10 +1021,26 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
+  availability_observed_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (archive_after_days > stale_after_days),
   CHECK (retention_days >= archive_after_days)
 );
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
+
+-- Every span in which no authorized helper host could serve this Workspace.
+-- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
+-- past retention only because a host was offline while the calendar advanced.
+CREATE TABLE IF NOT EXISTS institutional_host_availability_gaps (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz NOT NULL,
+  CHECK (ended_at > started_at)
+);
+CREATE INDEX IF NOT EXISTS institutional_host_availability_gaps_workspace_idx
+  ON institutional_host_availability_gaps(workspace_id,ended_at,started_at);
 
 CREATE TABLE IF NOT EXISTS institutional_curator_cycles (
   id uuid PRIMARY KEY,

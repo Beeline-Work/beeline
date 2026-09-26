@@ -10,6 +10,7 @@ import {
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
   applyInstitutionalCuratorProposal,
   institutionalObjectiveDashboard,
+  recordWorkspaceHostAvailability,
   runInstitutionalCuratorCycle,
 } from './institutional-curator.js';
 import { PgliteDatabase } from './test-support.js';
@@ -386,6 +387,59 @@ describe('weekly institutional curator', () => {
       p95ContextTokens: 900,
       rolloutReady: true,
     });
+  });
+
+  it('does not age memory or procedures while no helper host was available', async () => {
+    const offlineStart = new Date(NOW.getTime() - 40 * 86_400_000);
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,current_version,revision,source_room_id,
+        repository,target_commit,updated_at)
+       VALUES($1,$2,'idle-procedure','An unused procedure',1,1,$3,'Beeline-Work/beeline',$4,$5)`,
+      [SKILL, WORKSPACE, ROOM, 'f'.repeat(40), offlineStart],
+    );
+
+    // Two samples with no online helper host record the whole span as a gap.
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, offlineStart)).toBe(false);
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, NOW)).toBe(false);
+    expect(
+      (
+        await database.query<{ started_at: Date; ended_at: Date }>(
+          `SELECT started_at,ended_at FROM institutional_host_availability_gaps
+           WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows,
+    ).toEqual([{ started_at: offlineStart, ended_at: NOW }]);
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    const stateOf = async (table: 'institutional_memory_items' | 'workspace_skills', id: string) =>
+      (await database.query<{ state: string }>(`SELECT state FROM ${table} WHERE id=$1`, [id]))
+        .rows[0]?.state;
+    // DUPLICATE was last touched 40 calendar days ago but 0 available days ago.
+    expect(await stateOf('institutional_memory_items', DUPLICATE)).toBe('active');
+    expect(await stateOf('workspace_skills', SKILL)).toBe('active');
+
+    // The host comes back and serves for another 31 days, so aging resumes.
+    const resumed = new Date(NOW.getTime() + 31 * 86_400_000);
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+       VALUES($1,$2,'presence','presence',$3::jsonb,$4)`,
+      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: resumed.getTime() }), resumed],
+    );
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, resumed)).toBe(true);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM institutional_host_availability_gaps WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rowCount,
+    ).toBe(1);
+
+    await runInstitutionalCuratorCycle(database, liveConfig, resumed);
+    expect(await stateOf('institutional_memory_items', DUPLICATE)).toBe('stale');
+    expect(await stateOf('workspace_skills', SKILL)).toBe('stale');
   });
 
   it('keeps weekly curator jobs inside the shared daily Workspace cap', async () => {

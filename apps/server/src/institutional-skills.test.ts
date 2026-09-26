@@ -105,6 +105,12 @@ afterEach(async () => {
 
 describe('merge-derived restricted Workspace procedures', () => {
   it('synthesizes, indexes, authorizes, loads, and measures one procedure', async () => {
+    await database.query(
+      `INSERT INTO corner_merge_approvals
+       (corner_id,approved_by,force,pull_request_number,head_sha)
+       VALUES($1,$2,false,1,$3)`,
+      [CORNER, WORKER, TARGET_COMMIT],
+    );
     await database.transaction((db) =>
       enqueueInstitutionalMemoryMergeReview(db, {
         cornerId: CORNER,
@@ -123,7 +129,18 @@ describe('merge-derived restricted Workspace procedures', () => {
     expect(job).toMatchObject({
       triggerKind: 'merge_review',
       sourceRoomId: CORNER,
-      context: { repository: 'Beeline-Work/beeline', targetCommit: TARGET_COMMIT },
+      context: {
+        repository: 'Beeline-Work/beeline',
+        targetCommit: TARGET_COMMIT,
+        checks: 'passing',
+        outcome: 'landed',
+        reviewerVerdict: {
+          approvedBy: WORKER,
+          force: false,
+          headSha: TARGET_COMMIT,
+          pullRequestNumber: 1,
+        },
+      },
     });
     expect(job.messages.map((message) => message.id)).toContain('review-finding');
 

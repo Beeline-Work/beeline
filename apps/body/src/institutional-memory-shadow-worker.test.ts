@@ -80,6 +80,27 @@ describe('institutional memory shadow worker', () => {
     ).toContain('"targetCommit":"abc123"');
   });
 
+  it('carries the recorded CI result and reviewer verdict into the merge-review evidence', () => {
+    const prompt = institutionalMemoryExtractionPrompt({
+      ...job,
+      triggerKind: 'merge_review',
+      context: {
+        repository: 'Beeline-Work/beeline',
+        targetCommit: 'abc123',
+        checks: 'failing',
+        reviewerVerdict: { approvedBy: 'agent-1', force: true, headSha: 'abc123' },
+      },
+    });
+    const [, encoded] = prompt.split('Completed corner evidence:\n');
+    const evidence = JSON.parse(encoded ?? '{}') as {
+      context: { checks?: string; reviewerVerdict?: Record<string, unknown> };
+    };
+    expect(evidence.context).toMatchObject({
+      checks: 'failing',
+      reviewerVerdict: { approvedBy: 'agent-1', force: true, headSha: 'abc123' },
+    });
+  });
+
   it('does not claim while interactive work is active', async () => {
     const execute = vi.fn();
     const worker = new InstitutionalMemoryShadowWorker({

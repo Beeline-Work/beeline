@@ -665,6 +665,113 @@ describe('weekly institutional curator', () => {
     expect(await itemState(STALE)).toBe('stale');
   });
 
+  it("does not restart a stale duplicate's archive clock or erase its stale serves", async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','dup-clock-proof')`,
+      [CURATOR_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    // STALE was staled long enough ago to archive this cycle, and was served
+    // while already stale — a genuine stale serve the rate must keep counting.
+    const before = (
+      await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM institutional_memory_items WHERE id=$1`,
+        [STALE],
+      )
+    ).rows[0];
+    await database.query(
+      `INSERT INTO institutional_context_serves
+       (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,
+        mode,served,total_bytes,estimated_tokens,item_ids,created_at)
+       VALUES($1,$2,$3,'dup-clock-serve',$4,1,'live',true,600,150,ARRAY[$5]::uuid[],$6)`,
+      [randomUUID(), WORKSPACE, ROOM, HUMAN, STALE, NOW],
+    );
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      servedItems: 1,
+      staleServedItems: 1,
+    });
+
+    const candidate = (id: string, key: string, state: 'active' | 'stale') => ({
+      id,
+      targetType: 'memory_item' as const,
+      version: 1,
+      state,
+      key,
+      text: 'A release invariant.',
+      sourceRoomId: ROOM,
+      sourceMessageId: MESSAGE,
+      requesterIdentityId: HUMAN,
+    });
+    const consolidate = (duplicateIds: readonly string[]) =>
+      database.transaction((db) =>
+        applyInstitutionalCuratorProposal(db, {
+          workspaceId: WORKSPACE,
+          jobId: CURATOR_JOB,
+          sourceMessageId: MESSAGE,
+          context: {
+            partition: 'workspace-facts',
+            candidates: [
+              candidate(TARGET, 'release-marker', 'active'),
+              candidate(STALE, 'old-active', 'stale'),
+              // A week-old context can still name a row the curator has since
+              // archived; the apply path, not the context, must refuse it.
+              candidate(ARCHIVED, 'expired', 'stale'),
+            ],
+          },
+          proposal: {
+            proposalVersion: 1,
+            partition: 'workspace-facts',
+            actions: [
+              {
+                action: 'consolidate',
+                targetType: 'memory_item',
+                targetId: TARGET,
+                baseVersion: 1,
+                duplicateIds: [...duplicateIds],
+                body: 'Write the release marker last.',
+                rationale: 'These two describe one release invariant.',
+              },
+            ],
+          },
+          usage: { inputBytes: 10, outputBytes: 10, model: 'test', extractorVersion: 'test' },
+        }),
+      );
+
+    // An archived id in a week-old job context cannot be walked back to stale.
+    await expect(consolidate([ARCHIVED])).rejects.toThrow(/unavailable/);
+
+    await consolidate([STALE]);
+    expect(
+      (
+        await database.query<{ updated_at: Date; curated_at: Date | null; state: string }>(
+          `SELECT updated_at,curated_at,state FROM institutional_memory_items WHERE id=$1`,
+          [STALE],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      updated_at: before?.updated_at,
+      curated_at: expect.any(Date),
+      state: 'stale',
+    });
+    // The serve happened while it was stale, and still reads that way.
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      servedItems: 1,
+      staleServedItems: 1,
+    });
+    // The archive countdown never restarted, so this cycle still archives it.
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT state FROM institutional_memory_items WHERE id=$1`,
+          [STALE],
+        )
+      ).rows[0]?.state,
+    ).toBe('archived');
+  });
+
   it('refuses to consolidate onto a superseded memory item', async () => {
     await database.query(
       `INSERT INTO institutional_memory_jobs

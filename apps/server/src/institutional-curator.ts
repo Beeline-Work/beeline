@@ -848,6 +848,7 @@ export async function applyInstitutionalCuratorProposal(
                 target_commit,path,content_hash
          FROM institutional_memory_items
          WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL
+           AND state IN ('active','stale')
          FOR UPDATE`,
         [input.workspaceId, allIds],
       );
@@ -879,7 +880,9 @@ export async function applyInstitutionalCuratorProposal(
           throw new Error('institutional curator cannot merge audience partitions');
         }
         await database.query(
-          `UPDATE institutional_memory_items SET state='stale',curated_at=now(),updated_at=now()
+          `UPDATE institutional_memory_items
+           SET state='stale',curated_at=now(),
+               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
            WHERE id=ANY($1::uuid[])`,
           [allIds],
         );
@@ -1007,7 +1010,9 @@ export async function applyInstitutionalCuratorProposal(
         // checks sum ACTIVE bytes, so counting rows this consolidation is about
         // to stale would refuse the merge exactly when it would free space.
         await database.query(
-          `UPDATE workspace_skills SET state='stale',curated_at=now(),updated_at=now()
+          `UPDATE workspace_skills
+           SET state='stale',curated_at=now(),
+               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
            WHERE id=ANY($1::uuid[])`,
           [action.duplicateIds],
         );

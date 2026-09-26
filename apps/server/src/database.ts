@@ -944,7 +944,6 @@ CREATE TABLE IF NOT EXISTS institutional_history_searches (
   requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   query_hash text NOT NULL CHECK (query_hash ~ '^[0-9a-f]{64}$'),
-  result_message_ids text[] NOT NULL DEFAULT '{}',
   authorized_room_count integer NOT NULL CHECK (authorized_room_count >= 0),
   result_count integer NOT NULL CHECK (result_count BETWEEN 0 AND 10),
   omitted_count integer NOT NULL CHECK (omitted_count >= 0),

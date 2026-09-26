@@ -198,9 +198,9 @@ export async function searchInstitutionalHistory(
     await db.query(
       `INSERT INTO institutional_history_searches
        (id,workspace_id,output_room_id,request_id,requester_identity_id,agent_id,
-        query_hash,result_message_ids,authorized_room_count,result_count,omitted_count,
+        query_hash,authorized_room_count,result_count,omitted_count,
         matches_capped,latency_ms)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         randomUUID(),
         authority.workspace_id,
@@ -209,7 +209,6 @@ export async function searchInstitutionalHistory(
         authority.requester_identity_id,
         command.agent_id,
         createHash('sha256').update(query).digest('hex'),
-        result.map((item) => item.messageId),
         authorizedRoomCount,
         result.length,
         Math.max(0, matched - result.length),

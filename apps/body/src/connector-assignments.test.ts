@@ -102,6 +102,7 @@ describe('ConnectorAssignmentLoop', () => {
     const api = apiMock([assignment]);
     const timers: (() => void)[] = [];
     const cancelled: unknown[] = [];
+    const attemptEndsAt = 1_000 + 10 * 60_000;
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
@@ -111,6 +112,7 @@ describe('ConnectorAssignmentLoop', () => {
         steps: [],
         authorizationUrl: 'https://mcp.linear.app/authorize?state=a',
         attemptId: 'attempt-one',
+        attemptExpiresAt: attemptEndsAt,
       }),
       schedule: (fn) => {
         timers.push(fn);
@@ -129,7 +131,7 @@ describe('ConnectorAssignmentLoop', () => {
       expect(timers.length).toBe(1);
 
       // Still inside the ceremony's life: the watch keeps re-arming.
-      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS - 1);
+      clock.mockReturnValue(attemptEndsAt - 1);
       await loop.runOnce();
       await settle();
       const waiting = api.calls.filter((call) => call.op === 'postConnectorStatus');
@@ -137,9 +139,10 @@ describe('ConnectorAssignmentLoop', () => {
       expect(waiting.at(-1)?.input.signIn).toBeDefined();
       expect(cancelled).toEqual([]);
 
-      // Past it the row ends and says why, rather than spending a claim
-      // round trip and a row UPDATE every two seconds for the daemon's life.
-      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS);
+      // Past the SERVER's attempt expiry the row ends and says why, rather
+      // than spending a claim round trip and a row UPDATE every two seconds
+      // for the daemon's life.
+      clock.mockReturnValue(attemptEndsAt);
       await loop.runOnce();
       await settle();
       const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
@@ -148,10 +151,86 @@ describe('ConnectorAssignmentLoop', () => {
       expect(cancelled).toEqual([1]);
 
       // And the row is done: a later pass arms no further watch.
-      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS + 60_000);
+      clock.mockReturnValue(attemptEndsAt + 60_000);
       await loop.runOnce();
       await settle();
       expect(timers.length).toBe(1);
+    } finally {
+      clock.mockRestore();
+      loop.stop();
+    }
+  });
+
+  it('a re-paired Registry connector starts a fresh ceremony after the old one expired', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: 'registry-1',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+      pairingGeneration: 1,
+    };
+    const calls: ExecuteCall[] = [];
+    const timers: (() => void)[] = [];
+    let assignmentValue = assignment;
+    let attemptId = 'attempt-one';
+    const api = {
+      calls,
+      async execute(op: string, input: Record<string, unknown>) {
+        calls.push({ op, input });
+        if (op === 'getConnectorAssignments') return { assignments: [assignmentValue] };
+        return {};
+      },
+    };
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installRegistry: async () => ({
+        status: 'installing',
+        steps: [],
+        authorizationUrl: `https://mcp.linear.app/authorize?state=${attemptId}`,
+        attemptId,
+        attemptExpiresAt: Date.now() + 10 * 60_000,
+      }),
+      schedule: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      cancel: () => {},
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValue(1_000);
+      await loop.runOnce();
+      await settle();
+
+      // The first ceremony runs out on the server's clock and is ended.
+      clock.mockReturnValue(1_000 + 10 * 60_000);
+      await loop.runOnce();
+      await settle();
+      const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(expired?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+
+      // A human re-pairs: generation 2 re-arms the row. The latched expiry of
+      // generation 1 must not swallow it — the helper publishes a FRESH
+      // sign-in page and the row keeps waiting.
+      assignmentValue = { ...assignment, pairingGeneration: 2 };
+      attemptId = 'attempt-two';
+      clock.mockReturnValue(1_000 + 10 * 60_000 + 60_000);
+      await loop.runOnce();
+      await settle();
+      const reArmed = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(reArmed?.input.errorMessage).toBeUndefined();
+      expect(reArmed?.input.signIn?.url).toBe('https://mcp.linear.app/authorize?state=attempt-two');
+      expect(reArmed?.input.pairingGeneration).toBe(2);
     } finally {
       clock.mockRestore();
       loop.stop();

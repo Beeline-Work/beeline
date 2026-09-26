@@ -320,11 +320,11 @@ export type DaemonOperationMap = {
   >;
   beginRegistryMcpOAuth: Operation<
     AgentInput & { readonly connectorId: string },
-    { readonly state: string; readonly redirectUri: string }
+    { readonly state: string; readonly redirectUri: string; readonly expiresAt: number }
   >;
   claimRegistryMcpOAuthCode: Operation<
     AgentInput & { readonly connectorId: string; readonly state: string },
-    | { readonly status: 'pending' }
+    | { readonly status: 'pending'; readonly expiresAt: number }
     | { readonly status: 'expired' }
     | { readonly status: 'ready'; readonly code: string }
   >;

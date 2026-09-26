@@ -40,12 +40,16 @@ it('lets only the paired helper claim one short-lived callback code', async () =
   const oauth = new RegistryMcpOAuth(database, 'https://beeline.example');
   const started = await oauth.begin(CONNECTOR, HELPER);
   expect(started.redirectUri).toBe('https://beeline.example/v1/registry-mcp/oauth/callback');
-  expect(await oauth.claim(CONNECTOR, started.state, HELPER)).toEqual({ status: 'pending' });
+  // The server's attempt clock is published so the helper ceremony can time
+  // out against it instead of guessing its own window.
+  expect(started.expiresAt).toBeGreaterThan(Date.now());
+  const pending = await oauth.claim(CONNECTOR, started.state, HELPER);
+  expect(pending.status).toBe('pending');
+  if (pending.status === 'pending') expect(pending.expiresAt).toBeGreaterThan(Date.now());
   expect(await oauth.complete(started.state, 'provider-code')).toBe(true);
   expect(await oauth.complete(started.state, 'duplicate-code')).toBe(false);
-  expect(await oauth.claim(CONNECTOR, started.state, 'c'.repeat(64))).toEqual({
-    status: 'pending',
-  });
+  const foreignClaim = await oauth.claim(CONNECTOR, started.state, 'c'.repeat(64));
+  expect(foreignClaim.status).toBe('pending');
   expect(await oauth.claim(CONNECTOR, started.state, HELPER)).toEqual({
     status: 'ready',
     code: 'provider-code',

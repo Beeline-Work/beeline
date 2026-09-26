@@ -940,8 +940,8 @@ export class MonolithRoomTurnLoop {
         : shellCapability === 'refused'
           ? {
               available: false,
-              ...(this.options.config.sandboxUnavailableDetail
-                ? { detail: this.options.config.sandboxUnavailableDetail }
+              ...(this.options.config.shellUnavailableDetail
+                ? { detail: this.options.config.shellUnavailableDetail }
                 : {}),
             }
           : undefined,

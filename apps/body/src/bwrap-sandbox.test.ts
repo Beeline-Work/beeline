@@ -1045,62 +1045,96 @@ describe('feature detection falls back rather than failing the daemon', () => {
     });
 
     /**
-     * Several helper units restarting together send every one of them here at
-     * once: the losers' apt-lock failure says nothing about this host, so they
-     * wait for the winner rather than running unwrapped for their whole life.
+     * A sibling helper that won the package-manager lock leaves a `bwrap` this
+     * one adopts on its next start, because detection runs before the marker is
+     * ever read — no waiting on a sibling, and no day-long lockout either.
      */
-    it('waits for the helper holding the package lock, then adopts its install', async () => {
+    it("adopts a sibling's install on the next start after losing the lock", async () => {
       const host = hostPath(['apt-get']);
       const state = stateDir();
       try {
-        let clock = 0;
-        let sleeps = 0;
-        const result = await ensureBwrapSandbox({
+        const lost = await ensureBwrapSandbox({
           env: host.env,
           platform: 'linux',
           stateDir: state.path,
-          now: () => clock,
-          sleep: async (ms) => {
-            clock += ms;
-            sleeps += 1;
-            if (sleeps === 3) host.install('bwrap');
-          },
-          // The real detection is what decides; here it answers from the same
-          // PATH the sibling's install lands on.
-          detect: () => (existsSync(resolve(host.dir, 'bwrap')) ? usable : missing),
-          // The sibling holds the lock for the whole window, so every stage this
-          // helper runs loses it.
+          now: () => 4_000,
+          detect: () => missing,
           run: async () => ({ code: 100, output: APT_LISTS_LOCK_HELD }),
         });
-        expect(sleeps).toBe(3);
-        expect(result.path).toBe('/usr/bin/bwrap');
-        expect(state.markedAt()).toBeUndefined();
+        expect(lost.path).toBeUndefined();
+
+        host.install('bwrap');
+        let ran = false;
+        const next = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000,
+          detect: () => usable,
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(next.path).toBe('/usr/bin/bwrap');
+        // No package command, and the earlier failure's marker had no say in it:
+        // detection runs before the marker is ever read.
+        expect(ran).toBe(false);
+        expect(state.markedAt()).toBe(4_000);
       } finally {
         state.cleanup();
         host.cleanup();
       }
     });
 
-    it('gives up unsandboxed when the lock frees and bwrap is still missing', async () => {
+    /**
+     * An install that exits 0 without leaving `bwrap` on this unit's PATH is the
+     * one state the marker exists to bound: unmarked, it runs apt again before
+     * READY on every restart, forever.
+     */
+    it('remembers an install that exited 0 and left no bwrap behind', async () => {
       const host = hostPath(['apt-get']);
       const state = stateDir();
       try {
-        let clock = 0;
         const result = await ensureBwrapSandbox({
           env: host.env,
           platform: 'linux',
           stateDir: state.path,
-          now: () => clock,
-          sleep: async (ms) => {
-            clock += ms;
-          },
+          now: () => 8_000,
           detect: () => missing,
-          run: async () => ({ code: 100, output: APT_LISTS_LOCK_HELD }),
+          run: async () => ({ code: 0, output: '' }),
         });
         expect(result.path).toBeUndefined();
-        expect(result.advisory).toContain('Unable to lock directory');
-        // A lost lock is a fact about the sibling, not this host, so the next
-        // start still retries rather than sitting out a day on its word.
+        expect(result.shellDetail).toContain('bubblewrap is not installed');
+        expect(state.markedAt()).toBe(8_000);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * A `bwrap` that landed and cannot unshare is not a missing package, so it
+     * keeps no marker: the cheap present-but-failed early return serves every
+     * later start without running apt at all.
+     */
+    it('keeps no marker when the installed bwrap fails its self-test', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 9_000,
+          detect: () => ({ advisory: 'UNAVAILABLE: /usr/bin/bwrap self-test failed (exit 1)' }),
+          run: async (command, args) => {
+            if (args.includes('install')) host.install('bwrap');
+            return { code: 0, output: '' };
+          },
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('failed its start-up self-test');
         expect(state.markedAt()).toBeUndefined();
       } finally {
         state.cleanup();

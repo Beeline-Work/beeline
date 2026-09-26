@@ -165,8 +165,12 @@ export interface BodyConfig {
    * cannot run one instead of retrying (`beeline-skill.ts`), and a model is told
    * to relay it into a Room every Workspace member reads, so it carries no host
    * posture, resolved path, or installer output.
+   *
+   * Named for that audience, because `runUpdateFunctionalProbe` takes an
+   * operator-facing input that carries the FULL advisory and the two are wired a
+   * few lines apart in `cli.ts`: one sentence is public, the other is not.
    */
-  sandboxUnavailableDetail?: string;
+  shellUnavailableDetail?: string;
   /**
    * Extra filesystem paths whose contents are masked ABSENT from sandboxed ACP
    * children, on top of the built-in known credential homes

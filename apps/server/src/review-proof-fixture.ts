@@ -39,10 +39,10 @@ export async function ensureReviewWorkspace(
   database: SqlDatabase,
   reviewerId: string,
 ): Promise<void> {
-  await database.query(
-    `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
-    [REVIEW_WORKSPACE_ID, REVIEW_WORKSPACE_NAME],
-  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, [
+    REVIEW_WORKSPACE_ID,
+    REVIEW_WORKSPACE_NAME,
+  ]);
   const joined = await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      VALUES($1,NULL,$2,'owner')
@@ -58,6 +58,19 @@ export async function ensureReviewWorkspace(
       workspaceJoined: true,
     });
   await ensureFirstRoom(database, REVIEW_WORKSPACE_ID, reviewerId);
+  // A fixture seeded before this Workspace existed lives in the retired
+  // Welcome Workspace. It is the reviewer's alone (invite-only, no agent), so
+  // it moves here: the release proof opens this Workspace's deck and must
+  // find the corner on it, and the Welcome retirement must not take it.
+  const fixtureIds = [REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID];
+  await database.query(
+    `UPDATE rooms SET workspace_id=$2 WHERE id=ANY($1::uuid[]) AND workspace_id<>$2`,
+    [fixtureIds, REVIEW_WORKSPACE_ID],
+  );
+  await database.query(
+    `UPDATE memberships SET workspace_id=$2 WHERE room_id=ANY($1::uuid[]) AND workspace_id<>$2`,
+    [fixtureIds, REVIEW_WORKSPACE_ID],
+  );
   await ensureReviewProofFixture(database, reviewerId, REVIEW_WORKSPACE_ID);
 }
 
@@ -72,8 +85,7 @@ export async function ensureReviewProofFixture(
      ON CONFLICT(id) DO NOTHING`,
     [REVIEW_PROOF_ROOM_ID, workspaceId, reviewerId, REVIEW_PROOF_ROOM_NAME],
   );
-  // A fixture seeded before the review Workspace existed still lives in its
-  // original Workspace; memberships follow the Room's own workspace_id.
+  // Memberships follow the Room's own workspace_id.
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1

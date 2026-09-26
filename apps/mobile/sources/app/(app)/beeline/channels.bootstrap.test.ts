@@ -29,15 +29,29 @@ describe('Room deck bootstrap', () => {
     expect(source).not.toContain('suppressPaint=');
   });
 
-  it('renders a terminal state when the server returns zero Workspaces', () => {
+  it('sends a person with zero Workspaces to the create-or-join choice, only on a live read', () => {
     const emptyState = source.slice(
       source.indexOf('if (workspaceList?.workspaces.length === 0)'),
       source.indexOf('if (!chatList && !error)'),
     );
-    expect(emptyState).toContain('testID="workspace-list-empty"');
-    expect(emptyState).toContain('No Rooms yet');
-    expect(emptyState).toContain('label="CREATE WORKSPACE"');
-    expect(emptyState).not.toContain('LOADING ROOMS');
+    // Never a dead end: the deck shows its loader while the choice replaces it.
+    expect(emptyState).toContain('<RoomDeckLoadingView');
+    expect(emptyState).not.toContain('No Rooms yet');
+    // A cached empty list cannot route anyone; only the server read can.
+    expect(source).toContain('setWorkspacesConfirmed(true)');
+    expect(source).toContain(
+      'const noWorkspace = workspacesConfirmed && workspaceList?.workspaces.length === 0;',
+    );
+    expect(source).toContain("if (noWorkspace) router.replace('/beeline/community');");
+  });
+
+  it('lets an invite opened before sign-in win over every other landing', () => {
+    const boot = source.slice(
+      source.indexOf('const nextIdentity = await loadBuzzIdentity();'),
+      source.indexOf('const nextRelayUrl = await getEffectiveRelayUrl();'),
+    );
+    expect(boot).toContain('const pendingInvite = await loadPendingInvite();');
+    expect(boot).toContain("pathname: '/join/[token]', params: { token: pendingInvite }");
   });
 
   it('puts start-Room and connect-Agent buttons directly on the empty Room deck', () => {

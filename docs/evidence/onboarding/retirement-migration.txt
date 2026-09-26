@@ -1,0 +1,4 @@
+[migration] welcome retirement: {"status":"retired","greeterAgentId":"7639006208b84bee614ca685a026961cde5655e16bcdc770d814286f26bf268d","members":3,"welcomeOnlyPeople":1}
+[migration] server and auth schemas are current
+[migration] welcome retirement: {"status":"already-complete","detail":{"status":"retired","members":3,"greeterAgentId":"7639006208b84bee614ca685a026961cde5655e16bcdc770d814286f26bf268d","welcomeOnlyPeople":1}}
+[migration] server and auth schemas are current

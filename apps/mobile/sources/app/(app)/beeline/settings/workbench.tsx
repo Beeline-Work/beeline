@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { TourTarget } from '@/components/buzz/tour/TourTarget';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
@@ -205,9 +206,11 @@ export default function WorkbenchScreen() {
       {header}
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
-          <Text style={styles.sectionLabel} testID="workbench-tools-head">
-            Tools
-          </Text>
+          <TourTarget tip="workbench">
+            <Text style={styles.sectionLabel} testID="workbench-tools-head">
+              Tools
+            </Text>
+          </TourTarget>
           {connectors.map((connector, index) => {
             const instrument = connectorInstrument(
               connector.available ? connector.status : 'soon',

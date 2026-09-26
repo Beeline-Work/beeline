@@ -89,6 +89,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
+        <Stack.Screen name="beeline/create-workspace" options={{ headerShown: false }} />
         <Stack.Screen
           name="beeline/agents"
           options={{

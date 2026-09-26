@@ -2918,8 +2918,8 @@ export class PhoneService {
    * announcement, run once the wizard's one rename window has closed (kept or
    * renamed). `renameConnectedAgent` may have already retitled the identity by
    * the time this runs, so `joinRooms` reads its final name straight off
-   * `identities` — the same order a human already follows, since GitHub
-   * sign-in seals a person's name before `landInWelcomeWorkspace` ever runs.
+   * `identities` — the same order a human follows, whose name is sealed at
+   * GitHub sign-in before they ever join a Workspace.
    */
   async finishAgentConnectPairing(input: {
     code: string;

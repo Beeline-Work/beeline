@@ -347,6 +347,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
+import { ProductTourRoomCue } from '@/components/buzz/tour/TourTarget';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -1940,6 +1941,64 @@ export function BuzzChatSurface({
   const focusComposer = useCallback(() => {
     scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
+  // The first Room teaches by doing: each starter fills the live composer
+  // (tagging the Room's first agent when there is one) or opens the invite.
+  const firstRoomAgent = useMemo(
+    () =>
+      roomSurface?.members.find(
+        (member) => member.identity.kind === 'agent' && Boolean(member.identity.handle),
+      )?.identity,
+    [roomSurface?.members],
+  );
+  const fillComposer = useCallback(
+    (text: string) => {
+      if (firstRoomAgent?.handle && text.startsWith(`@${firstRoomAgent.handle}`)) {
+        selectedAgentMentionsRef.current.set(firstRoomAgent.handle, firstRoomAgent.pubkey);
+        selectedMentionsRef.current.set(firstRoomAgent.handle, firstRoomAgent.pubkey);
+      }
+      inputTextRef.current = text;
+      setInputText(text);
+      setInputSelection({ start: text.length, end: text.length });
+      scheduleAnimationFrame(() => composerRef.current?.focus());
+    },
+    [firstRoomAgent],
+  );
+  const starterPrompts = useMemo(() => {
+    if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
+      return undefined;
+    const tag = firstRoomAgent?.handle ? `@${firstRoomAgent.handle} ` : '';
+    return [
+      {
+        lead: 'Ask an agent',
+        detail: 'to turn an idea into a plan',
+        onPress: () => fillComposer(`${tag}Help me turn this idea into a plan: `),
+        testID: 'starter-ask-agent',
+      },
+      {
+        lead: 'Open a corner',
+        detail: 'for focused work with its own branch',
+        onPress: () => fillComposer(`${tag}Open a corner to `),
+        testID: 'starter-open-corner',
+      },
+      {
+        lead: 'Invite someone',
+        detail: 'who should see the result',
+        onPress: () =>
+          router.push({
+            pathname: '/beeline/members',
+            params: { ...(activeCommunityId ? { communityId: activeCommunityId } : {}), action: 'invite' },
+          } as never),
+        testID: 'starter-invite',
+      },
+    ];
+  }, [
+    activeCommunityId,
+    emptyLedgerVariant,
+    fillComposer,
+    firstRoomAgent?.handle,
+    roomSurface?.viewer.permissions.send,
+    viewerIsAgent,
+  ]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
   // dependency-free so it never re-creates renderItem — see the memo note on
@@ -5234,6 +5293,9 @@ export function BuzzChatSurface({
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
+        <ProductTourRoomCue
+          ready={Boolean(roomSurface) && !isCorner && !isDirectMessage && !viewerIsAgent}
+        />
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -5486,6 +5548,7 @@ export function BuzzChatSurface({
                       name={isDirectMessage ? displayRoomName : undefined}
                       objective={isCorner ? cornerObjectiveText : undefined}
                       onPress={focusComposer}
+                      starterPrompts={starterPrompts}
                     />
                   </View>
                 ) : (
@@ -5615,6 +5678,7 @@ export function BuzzChatSurface({
                   name={isDirectMessage ? displayRoomName : undefined}
                   objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
+                  starterPrompts={starterPrompts}
                 />
               </View>
             }

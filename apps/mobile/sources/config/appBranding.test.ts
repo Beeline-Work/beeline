@@ -188,7 +188,7 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
     expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
-    expect(inviteScreen).toContain('Return to Beeline');
+    expect(inviteScreen).toContain('Choose another way in');
     expect(inviteScreen).not.toMatch(/Return to buzzy/i);
   });
 

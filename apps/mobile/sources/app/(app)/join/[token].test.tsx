@@ -14,13 +14,24 @@ const controls = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
   runtimeConfig: vi.fn(),
   replace: vi.fn(),
+  enterWorkspaceRoom: vi.fn(),
+  savePendingInvite: vi.fn(),
+  clearPendingInvite: vi.fn(),
+  offerProductTour: vi.fn(),
+  identity: vi.fn(),
 }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View') };
+  return {
+    Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
+    Text: host('Text'),
+    TouchableOpacity: host('TouchableOpacity'),
+    View: host('View'),
+  };
 });
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
@@ -36,8 +47,23 @@ vi.mock('expo-linking', () => ({ useURL: () => null }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://server.example'),
-  loadBuzzIdentity: vi.fn(async () => IDENTITY),
+  loadBuzzIdentity: controls.identity,
 }));
+vi.mock('@/buzz/enter-workspace', () => ({ enterWorkspaceRoom: controls.enterWorkspaceRoom }));
+vi.mock('@/buzz/pending-invite', () => ({
+  savePendingInvite: controls.savePendingInvite,
+  clearPendingInvite: controls.clearPendingInvite,
+}));
+vi.mock('@/buzz/product-tour', () => ({ offerProductTour: controls.offerProductTour }));
+vi.mock('@/buzz/vocabulary', () => ({ WORKSPACE_LABEL: 'Workspace' }));
+vi.mock('@/components/buzz/MonoHull', async () => {
+  const ReactModule = await import('react');
+  return { BrassButton: (props: any) => ReactModule.createElement('BrassButton', props) };
+});
+vi.mock('@/components/buzz/IdentityMark', async () => {
+  const ReactModule = await import('react');
+  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
+});
 vi.mock('@/buzz/community-invite', () => ({
   parseCommunityInviteToken: () => TOKEN,
   resolveCommunityInviteRelayUrl: () => 'https://server.example',
@@ -101,18 +127,47 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
+function text(renderer: ReactTestRenderer): string {
+  return renderer.root
+    .findAll((node: any) => node.type === 'Text')
+    .map((node: any) =>
+      ([] as unknown[])
+        .concat(node.props.children)
+        .filter((part) => typeof part === 'string')
+        .join(''),
+    )
+    .join('\n');
+}
+
 describe('CommunityInviteJoin', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    controls.identity.mockResolvedValue(IDENTITY);
     controls.runtimeConfig.mockReturnValue({ monolithEnabled: false });
-    controls.invite.mockResolvedValue({ name: 'Builders' });
-    controls.workspaces.mockResolvedValue({ workspaces: [] });
-    controls.redeemInvite.mockResolvedValue({ workspaceId: 'workspace-1' });
+    controls.invite.mockResolvedValue({
+      name: 'Builders',
+      expiresAt: 2_000_000_000,
+      inviter: { name: 'Mara Reyes', handle: 'mara', role: 'owner' },
+      memberCount: 8,
+      agentCount: 4,
+    });
+    controls.redeemInvite.mockResolvedValue({
+      joined: true,
+      workspaceId: 'workspace-1',
+      roomId: 'general-1',
+    });
     controls.saveActiveCommunityId.mockResolvedValue(undefined);
   });
 
-  it('redeems through the monolith even with a stale false runtime config', async () => {
+  it('names the Workspace and who invited you, then joins into its first Room', async () => {
     const renderer = await render();
+    expect(text(renderer)).toContain('Join Builders');
+    expect(text(renderer)).toContain(
+      'Mara Reyes invited you to a workspace with 8 people and 4 agents.',
+    );
+    expect(text(renderer)).toContain('@mara · Workspace owner');
+    // Resolving the invite spends the copy parked through sign-in.
+    expect(controls.clearPendingInvite).toHaveBeenCalled();
 
     await act(async () => {
       await renderer.root.findByProps({ testID: 'confirm-community-join' }).props.onPress();
@@ -120,30 +175,44 @@ describe('CommunityInviteJoin', () => {
 
     expect(controls.redeemInvite).toHaveBeenCalledWith('redeemInvite', { token: TOKEN });
     expect(controls.saveActiveCommunityId).toHaveBeenCalledWith('person-1', 'workspace-1');
-    expect(controls.replace).toHaveBeenCalledWith({
-      pathname: '/beeline/channels',
-      params: { communityId: 'workspace-1' },
-    });
+    expect(controls.offerProductTour).toHaveBeenCalledWith('person-1');
+    expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith('workspace-1', 'general-1');
     expect(controls.runtimeConfig).not.toHaveBeenCalled();
     expect(controls.createBuzzClient).not.toHaveBeenCalled();
   });
 
-  it('leaves a resurfaced invite immediately when this identity already accepted it', async () => {
-    controls.invite.mockResolvedValue({
-      name: 'Builders',
-      joinedWorkspaceId: 'workspace-1',
-    });
-
+  it('keeps the invite through sign-in when nobody is signed in yet', async () => {
+    controls.identity.mockResolvedValue(null);
     await render();
+    expect(controls.savePendingInvite).toHaveBeenCalledWith(TOKEN);
+    expect(controls.replace).toHaveBeenCalledWith('/beeline/onboarding');
+    expect(controls.invite).not.toHaveBeenCalled();
+  });
 
-    expect(controls.invite).toHaveBeenCalledWith(TOKEN);
-    expect(controls.workspaces).not.toHaveBeenCalled();
+  it('leaves a resurfaced invite immediately when this identity already accepted it', async () => {
+    controls.invite.mockResolvedValue({ name: 'Builders', joinedWorkspaceId: 'workspace-1' });
+    await render();
     expect(controls.redeemInvite).not.toHaveBeenCalled();
     expect(controls.saveActiveCommunityId).toHaveBeenCalledWith('person-1', 'workspace-1');
-    expect(controls.replace).toHaveBeenCalledWith({
-      pathname: '/beeline/channels',
-      params: { communityId: 'workspace-1' },
-    });
+    expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith('workspace-1', null);
+  });
+
+  it('shows its own repair state for a dead invite, with a way to the choice', async () => {
+    controls.invite.mockRejectedValue(new Error('invite not found'));
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'invite-unavailable' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(controls.clearPendingInvite).toHaveBeenCalled();
+    renderer.root.findByProps({ testID: 'invite-other-way' }).props.onPress();
+    expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
+  });
+
+  it('sends "This isn’t my invite" to the choice screen without joining', async () => {
+    const renderer = await render();
+    renderer.root.findByProps({ testID: 'invite-not-mine' }).props.onPress();
+    expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
+    expect(controls.redeemInvite).not.toHaveBeenCalled();
   });
 
   it('starts only one redemption when acceptance is pressed repeatedly', async () => {

@@ -15,6 +15,7 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
+import { loadPendingInvite } from '@/buzz/pending-invite';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
@@ -45,6 +46,7 @@ import {
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -176,6 +178,8 @@ export default function BuzzChannels() {
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
+  // Only a live read (never a cached one) may say "you have no Workspace".
+  const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
@@ -356,6 +360,13 @@ export default function BuzzChannels() {
         router.replace('/beeline/onboarding');
         return;
       }
+      // An invite opened before sign-in outranks every other landing.
+      const pendingInvite = await loadPendingInvite();
+      if (pendingInvite) {
+        if (!cancelled)
+          router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
+        return;
+      }
       const nextRelayUrl = await getEffectiveRelayUrl();
       if (cancelled) return;
       const nextTransport = new BuzzRigTransport(nextIdentity);
@@ -400,6 +411,7 @@ export default function BuzzChannels() {
         fetch: () => http.workspaces(),
         apply: (value) => {
           setWorkspaceList(value);
+          setWorkspacesConfirmed(true);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -765,6 +777,11 @@ export default function BuzzChannels() {
     transport,
   ]);
 
+  const noWorkspace = workspacesConfirmed && workspaceList?.workspaces.length === 0;
+  useEffect(() => {
+    if (noWorkspace) router.replace('/beeline/community');
+  }, [noWorkspace]);
+
   const connectAgent = useCallback(async () => {
     if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
     setAgentConnectVisible(true);
@@ -815,17 +832,9 @@ export default function BuzzChannels() {
   );
 
   if (workspaceList?.workspaces.length === 0) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]} testID="workspace-list-empty">
-        <Text style={styles.emptyTitle}>No Rooms yet</Text>
-        <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
-        <MonoButton
-          label="CREATE WORKSPACE"
-          onPress={() => router.push('/beeline/community' as Href)}
-          testID="empty-create-workspace"
-        />
-      </View>
-    );
+    // No Workspace: the create-or-join choice is the landing (the effect
+    // above replaces this screen once a live read confirms it).
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
   if (!chatList && !error) {
     return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
@@ -1030,31 +1039,34 @@ export default function BuzzChannels() {
                   pathname: '/beeline/corners/[roomId]',
                   params: { roomId: item.room.id },
                 } as never);
+              const tourTarget = first && section === chatSections[0] && !viewerIsAgent;
               const row = (
-                <View
-                  style={[
-                    styles.rowSurface,
-                    first && styles.rowSurfaceFirst,
-                    last && styles.rowSurfaceLast,
-                  ]}
-                >
-                  <ConversationRow
-                    item={item}
-                    viewer={chatList.viewer.pubkey}
-                    now={ageNow}
-                    onPress={() => {
-                      swipeableRefs.current.get(item.room.id)?.close();
-                      openRoom(item.room.id);
-                    }}
-                    pinned={pinned.includes(item.room.id)}
-                    onPin={() => void togglePin(item.room.id)}
-                    onToggleCorners={openCorners}
-                    onLongPressCorners={
-                      viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
-                    }
-                    testID={`room-${item.room.id}`}
-                  />
-                </View>
+                <MaybeTourTarget enabled={tourTarget} tip="rooms">
+                  <View
+                    style={[
+                      styles.rowSurface,
+                      first && styles.rowSurfaceFirst,
+                      last && styles.rowSurfaceLast,
+                    ]}
+                  >
+                    <ConversationRow
+                      item={item}
+                      viewer={chatList.viewer.pubkey}
+                      now={ageNow}
+                      onPress={() => {
+                        swipeableRefs.current.get(item.room.id)?.close();
+                        openRoom(item.room.id);
+                      }}
+                      pinned={pinned.includes(item.room.id)}
+                      onPin={() => void togglePin(item.room.id)}
+                      onToggleCorners={openCorners}
+                      onLongPressCorners={
+                        viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                      }
+                      testID={`room-${item.room.id}`}
+                    />
+                  </View>
+                </MaybeTourTarget>
               );
               return (
                 <View style={[styles.roomCell, last && styles.roomCellLast]}>

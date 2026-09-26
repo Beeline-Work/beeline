@@ -144,7 +144,7 @@ describe('the review identity', () => {
     ).toBe(0);
   });
 
-  it('keeps a proof fixture seeded in the retired Welcome Workspace where it lives', async () => {
+  it('moves a proof fixture seeded in the retired Welcome Workspace into its own', async () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
       DEFAULT_WORKSPACE_ID,
     ]);
@@ -156,16 +156,23 @@ describe('the review identity', () => {
       ensureReviewProofFixture(tx, REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID),
     );
     await auth.exchangeReviewIdentity();
-    const fixture = await database.query<{ room_id: string; workspace_id: string }>(
-      `SELECT m.room_id,m.workspace_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-       WHERE m.identity_id=$1 AND m.room_id IN ($2,$3) AND r.workspace_id=m.workspace_id
-       ORDER BY m.room_id`,
+    const fixture = await database.query<{ room: string; member: string }>(
+      `SELECT r.workspace_id room,m.workspace_id member FROM rooms r
+       JOIN memberships m ON m.room_id=r.id AND m.identity_id=$1
+       WHERE r.id IN ($2,$3) ORDER BY r.id`,
       [REVIEW_IDENTITY_ID, REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
     );
-    expect(fixture.rows.map((row) => row.workspace_id)).toEqual([
-      DEFAULT_WORKSPACE_ID,
-      DEFAULT_WORKSPACE_ID,
+    expect(fixture.rows).toEqual([
+      { room: REVIEW_WORKSPACE_ID, member: REVIEW_WORKSPACE_ID },
+      { room: REVIEW_WORKSPACE_ID, member: REVIEW_WORKSPACE_ID },
     ]);
+    // The deck the proof opens (newest Workspace first) is this one, with the corner.
+    const phone = new PhoneService(database, 'http://placeholder');
+    const deck = await phone.readChats(REVIEW_WORKSPACE_ID, REVIEW_IDENTITY_ID);
+    expect(deck!.chats.find((chat) => chat.room.id === REVIEW_PROOF_ROOM_ID)?.cornerCount).toBe(1);
+    expect((await phone.readWorkspaces(REVIEW_IDENTITY_ID)).workspaces[0]?.id).toBe(
+      REVIEW_WORKSPACE_ID,
+    );
   });
 
   it('seeds the release-proof fixture: one invite-only room with one live corner on the deck', async () => {

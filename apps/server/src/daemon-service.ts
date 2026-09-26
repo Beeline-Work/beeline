@@ -4005,10 +4005,7 @@ export class DaemonService {
       [input.roomId, agentId, input.requestId],
     );
     const causeId = active.rows[0]?.request_id;
-    if (!causeId)
-      throw new Error(
-        'an event is emitted from inside a turn; this agent has no turn running here',
-      );
+    if (!causeId) throw new Error('invalid event: this agent has no turn running here');
     const self = await this.database.query<{ name: string }>(
       `SELECT COALESCE(NULLIF(name,''),'An agent') name FROM identities WHERE id=$1`,
       [agentId],

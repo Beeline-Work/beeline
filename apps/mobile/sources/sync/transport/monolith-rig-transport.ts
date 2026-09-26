@@ -389,8 +389,11 @@ export class MonolithRigTransport {
   removeRoomMember(roomId: string, memberId: string) {
     return this.operation('removeRoomMember', { roomId, memberId }).then(() => undefined);
   }
-  leaveRoom(roomId: string) {
-    return this.operation('leaveRoom', { roomId }).then(() => undefined);
+  leaveRoom(roomId: string, confirmDelete = false) {
+    return this.operation('leaveRoom', {
+      roomId,
+      ...(confirmDelete ? { confirmDelete: true as const } : {}),
+    }).then(() => undefined);
   }
   closeChat(roomId: string) {
     return this.operation('closeChat', { roomId }).then(() => undefined);

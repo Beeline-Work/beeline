@@ -53,6 +53,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
+import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type ChannelRole,
@@ -1641,7 +1642,6 @@ export function BuzzChatSurface({
       ),
     [roomMembers],
   );
-  const lifecycleAction = canManageWorkspace ? ('delete' as const) : null;
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -3988,40 +3988,37 @@ export function BuzzChatSurface({
     });
   }, [activeCommunityId]);
 
-  const handleRoomLifecycle = useCallback(async () => {
-    if (!transport || !canManageWorkspace || !lifecycleAction || roomLifecycleBusy) return;
-    const deleting = lifecycleAction === 'delete';
-    const confirmed = await Modal.confirm(
-      deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
-      deleting
-        ? `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`
-        : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
-      {
-        cancelText: 'Cancel',
-        confirmText: deleting ? `Delete ${ROOM_LABEL}` : `Leave ${ROOM_LABEL}`,
-        destructive: true,
-      },
-    );
-    if (!confirmed) return;
+  const handleRoomLifecycle = useCallback(async (action: 'delete' | 'leave') => {
+    if (!transport || (action === 'delete' && !canManageWorkspace) || roomLifecycleBusy) return;
+    const deleting = action === 'delete';
     setRoomLifecycleBusy(true);
     setMembershipError(null);
-    const operation = deleting ? transport.deleteRoom(decodedId) : transport.leaveRoom(decodedId);
-    void operation
-      .then(() => {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        returnToRoomList();
-      })
-      .catch((err) => {
-        setMembershipError(
-          `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
-        );
-      })
-      .finally(() => setRoomLifecycleBusy(false));
+    try {
+      if (deleting) {
+        const confirmed = await Modal.confirm(`Delete ${displayRoomName}?`,
+          `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`, {
+            cancelText: 'Cancel', confirmText: `Delete ${ROOM_LABEL}`, destructive: true,
+          });
+        if (!confirmed) return;
+        await transport.deleteRoom(decodedId);
+      } else {
+        const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
+        const left = await leaveRoomWithConfirmation(title, roomSurface?.leaveDeletesRoom === true,
+          (confirmDelete) => transport.leaveRoom(decodedId, confirmDelete));
+        if (!left) return;
+      }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      returnToRoomList();
+    } catch (err) {
+      setMembershipError(`Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`);
+    } finally {
+      setRoomLifecycleBusy(false);
+    }
   }, [
     decodedId,
     displayRoomName,
     canManageWorkspace,
-    lifecycleAction,
+    roomSurface?.leaveDeletesRoom,
     returnToRoomList,
     roomLifecycleBusy,
     transport,
@@ -5482,8 +5479,7 @@ export function BuzzChatSurface({
             {!parentChannelId &&
               !isDirectMessage &&
               !viewerIsAgent &&
-              !isArchived &&
-              lifecycleAction && (
+              !isArchived && (
                 <TouchableOpacity
                   accessibilityLabel={`${ROOM_LABEL} actions`}
                   accessibilityRole="button"
@@ -6483,27 +6479,26 @@ export function BuzzChatSurface({
             testID="room-schedules-action"
           />
         )}
-        {lifecycleAction === 'delete' ? (
+        {canManageWorkspace && (
           <HullActionSheetRow
             accessibilityLabel={`Delete ${ROOM_LABEL}`}
             description={`Permanently remove this ${ROOM_LABEL}.`}
             destructive
             disabled={roomLifecycleBusy}
             label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
-            onPress={handleRoomLifecycle}
+            onPress={() => void handleRoomLifecycle('delete')}
             testID="delete-room-action"
           />
-        ) : lifecycleAction === 'leave' ? (
-          <HullActionSheetRow
-            accessibilityLabel={`Leave ${ROOM_LABEL}`}
-            description="Other members keep their access."
-            destructive
-            disabled={roomLifecycleBusy}
-            label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
-            onPress={handleRoomLifecycle}
-            testID="leave-room-action"
-          />
-        ) : null}
+        )}
+        <HullActionSheetRow
+          accessibilityLabel={`Leave ${ROOM_LABEL}`}
+          description={roomSurface?.leaveDeletesRoom ? 'Leaving deletes it for everyone.' : 'Other members keep their access.'}
+          destructive
+          disabled={roomLifecycleBusy}
+          label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
+          onPress={() => void handleRoomLifecycle('leave')}
+          testID="leave-room-action"
+        />
         {(renameError || membershipError) && (
           <View accessibilityRole="alert" style={styles.membershipError}>
             <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>

@@ -269,6 +269,7 @@ interface RoomRow {
   reviewer_agent_id: string | null;
   created_at: Date;
   updated_at: Date;
+  leave_deletes_room?: boolean;
 }
 interface MessageRow {
   id: string;
@@ -1088,6 +1089,7 @@ export class PhoneService {
     const rooms = await this.database.query<
       RoomRow & {
         member_count: string;
+        leave_deletes_room: boolean;
         latest_id: string | null;
         latest_text: string | null;
         latest_attachments: MessageRow['attachments'] | null;
@@ -1119,6 +1121,16 @@ export class PhoneService {
       `
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
+        NOT EXISTS (
+          SELECT 1 FROM memberships other_room
+          JOIN memberships other_workspace ON other_workspace.workspace_id=r.workspace_id
+            AND other_workspace.room_id IS NULL
+            AND other_workspace.identity_id=other_room.identity_id
+            AND other_workspace.removed_at IS NULL
+            AND other_workspace.role IN ('owner','admin')
+          WHERE other_room.room_id=r.id AND other_room.removed_at IS NULL
+            AND other_room.identity_id<>$2
+        ) leave_deletes_room,
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
         $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
@@ -1302,6 +1314,10 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        leaveDeletesRoom:
+          !row.direct_participants &&
+          (current.role === 'owner' || current.role === 'admin') &&
+          row.leave_deletes_room,
         ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
@@ -1648,6 +1664,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(messages, attachmentFacts),
+      ...(!room.parent_id ? { leaveDeletesRoom: room.leave_deletes_room === true } : {}),
       ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
@@ -1909,6 +1926,16 @@ export class PhoneService {
         `WITH authorized_room AS (
            SELECT room.*,membership.role viewer_role,
              workspace_member.role workspace_role,
+             (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
+               SELECT 1 FROM memberships other_room
+               JOIN memberships other_workspace ON other_workspace.workspace_id=room.workspace_id
+                 AND other_workspace.room_id IS NULL
+                 AND other_workspace.identity_id=other_room.identity_id
+                 AND other_workspace.removed_at IS NULL
+                 AND other_workspace.role IN ('owner','admin')
+               WHERE other_room.room_id=room.id AND other_room.removed_at IS NULL
+                 AND other_room.identity_id<>$2
+             )) leave_deletes_room,
              NULL::jsonb read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=room.id
@@ -3137,7 +3164,7 @@ export class PhoneService {
         await this.deleteRoom((input as Input<'deleteRoom'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'leaveRoom':
-        await this.leaveRoom((input as Input<'leaveRoom'>).roomId, viewerId);
+        await this.leaveRoom(input as Input<'leaveRoom'>, viewerId);
         return undefined as Output<Name>;
       case 'closeChat':
         await this.closeChat((input as Input<'closeChat'>).roomId, viewerId);
@@ -4909,12 +4936,19 @@ export class PhoneService {
   private async deleteRoom(roomId: string, viewerId: string) {
     const room = await this.requireTopLevelRoom(roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    await this.database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
+    await this.deleteRoomRows(this.database, roomId);
   }
-  private async leaveRoom(roomId: string, viewerId: string) {
+  private async deleteRoomRows(database: SqlDatabase, roomId: string) {
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
+  }
+  private async leaveRoom(input: Input<'leaveRoom'>, viewerId: string) {
+    const { roomId } = input;
     const room = await this.requireTopLevelRoom(roomId);
     const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
+      // Serialize two managers leaving the same Room before checking whether
+      // either departure destroys it.
+      await database.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
       const membership = (
         await database.query<{ workspace_role: 'owner' | 'admin' | 'member' | 'spectator' }>(
           `SELECT workspace_member.role workspace_role
@@ -4931,7 +4965,22 @@ export class PhoneService {
       ).rows[0];
       if (!membership) throw new Error('room membership required');
       if (membership.workspace_role === 'owner' || membership.workspace_role === 'admin') {
-        throw new Error('workspace managers cannot leave Rooms');
+        const others = await database.query(
+          `SELECT 1 FROM memberships room_member
+           JOIN memberships workspace_member ON workspace_member.workspace_id=$2
+             AND workspace_member.room_id IS NULL
+             AND workspace_member.identity_id=room_member.identity_id
+             AND workspace_member.removed_at IS NULL
+             AND workspace_member.role IN ('owner','admin')
+           WHERE room_member.room_id=$1 AND room_member.identity_id<>$3
+             AND room_member.removed_at IS NULL LIMIT 1`,
+          [roomId, room.workspace_id, viewerId],
+        );
+        if (!others.rowCount) {
+          if (input.confirmDelete !== true) throw new Error('last_admin_confirmation_required');
+          await this.deleteRoomRows(database, roomId);
+          return;
+        }
       }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,

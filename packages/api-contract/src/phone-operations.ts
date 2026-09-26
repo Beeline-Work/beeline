@@ -88,7 +88,7 @@ export type PhoneOperationMap = {
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
-  leaveRoom: { input: RoomInput; output: void };
+  leaveRoom: { input: RoomInput & { readonly confirmDelete?: true }; output: void };
   closeChat: { input: RoomInput; output: void };
   reopenChat: { input: RoomInput; output: void };
   addRoomMember: { input: RoomMemberInput; output: MembershipResult };

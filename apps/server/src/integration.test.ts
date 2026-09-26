@@ -1430,7 +1430,9 @@ describe('monolith integration', () => {
     const chat = async (token: string | undefined, roomId: string) => {
       const view = (await (
         await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, token)
-      ).json()) as { chats: Array<{ room: { id: string }; closed?: boolean }> };
+      ).json()) as {
+        chats: Array<{ room: { id: string }; closed?: boolean; leaveDeletesRoom?: boolean }>;
+      };
       return view.chats.find((item) => item.room.id === roomId);
     };
 
@@ -1485,14 +1487,44 @@ describe('monolith integration', () => {
       ).rows,
     ).toEqual([{ active: true }]);
 
-    const ownerLeave = await operation('leaveRoom', { roomId: failedRoom.id });
-    expect(ownerLeave.status).toBe(403);
-    expect(await ownerLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    // A non-last admin can leave without deleting the Room or asking to delete it.
     const adminLeave = await operation('leaveRoom', { roomId: failedRoom.id }, adminToken);
-    expect(adminLeave.status).toBe(403);
-    expect(await adminLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    expect(adminLeave.status).toBe(204);
     expect(await chat(undefined, failedRoom.id)).toBeDefined();
-    expect(await chat(adminToken, failedRoom.id)).toBeDefined();
+    expect(await chat(adminToken, failedRoom.id)).toBeUndefined();
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [failedRoom.id])).rowCount,
+    ).toBe(1);
+
+    // The last manager's first attempt cannot delete before a destructive
+    // confirmation, even if the UI's previous roster snapshot was stale.
+    const unconfirmed = await operation('leaveRoom', { roomId: failedRoom.id });
+    expect(unconfirmed.status).toBe(400);
+    expect(await unconfirmed.json()).toEqual({ error: 'last_admin_confirmation_required' });
+    expect(await chat(aliceToken, failedRoom.id)).toBeDefined();
+    expect(
+      (await operation('leaveRoom', { roomId: failedRoom.id, confirmDelete: true })).status,
+    ).toBe(204);
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [failedRoom.id])).rowCount,
+    ).toBe(0);
+    expect(await chat(aliceToken, failedRoom.id)).toBeUndefined();
+
+    const adminLastRoom = (await (
+      await operation('createRoom', { workspaceId, name: 'admin-last-room' })
+    ).json()) as { id: string };
+    expect((await chat(adminToken, adminLastRoom.id))?.leaveDeletesRoom).toBe(false);
+    expect((await operation('leaveRoom', { roomId: adminLastRoom.id })).status).toBe(204);
+    expect((await chat(adminToken, adminLastRoom.id))?.leaveDeletesRoom).toBe(true);
+    expect((await phone.readRoom(adminLastRoom.id, adminId))?.leaveDeletesRoom).toBe(true);
+    expect(
+      (await operation('leaveRoom', { roomId: adminLastRoom.id, confirmDelete: true }, adminToken))
+        .status,
+    ).toBe(204);
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [adminLastRoom.id])).rowCount,
+    ).toBe(0);
+    expect(await chat(aliceToken, adminLastRoom.id)).toBeUndefined();
 
     const dm = (await (
       await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })

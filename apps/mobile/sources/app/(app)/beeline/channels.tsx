@@ -24,6 +24,7 @@ import {
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -223,7 +224,6 @@ export default function BuzzChannels() {
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
-  const canLeaveRooms = chatList?.workspace.role === 'member';
   const [query, setQuery] = useState('');
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
@@ -317,14 +317,13 @@ export default function BuzzChannels() {
       }
       const heading = roomRowName(item);
       const title = `${heading.sigil}${heading.name}`;
-      const confirmed = await Modal.confirm(`Leave ${title}?`, 'Other members keep their access.', {
-        cancelText: 'No',
-        confirmText: 'Yes',
-        destructive: true,
-      });
-      if (!confirmed) return;
       try {
-        await transport.leaveRoom(item.room.id);
+        const left = await leaveRoomWithConfirmation(
+          title,
+          item.leaveDeletesRoom === true,
+          (confirmDelete) => transport.leaveRoom(item.room.id, confirmDelete),
+        );
+        if (!left) return;
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         chatScheduler.current?.force();
       } catch (reason) {
@@ -333,15 +332,6 @@ export default function BuzzChannels() {
     },
     [transport],
   );
-
-  const explainRoomLeaveConstraint = useCallback((item: ChatListItem) => {
-    const heading = roomRowName(item);
-    const title = `${heading.sigil}${heading.name}`;
-    Modal.alert(
-      `Cannot leave ${title}`,
-      'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.',
-    );
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1069,7 +1059,7 @@ export default function BuzzChannels() {
                       rightThreshold={ROW_HEIGHT}
                       renderRightActions={() => (
                         <View style={styles.chatActions}>
-                          {!item.directMessage && canLeaveRooms && (
+                          {!item.directMessage && (
                             <View style={styles.swipeAction}>
                               <TouchableOpacity
                                 accessibilityLabel={`Leave ${title}`}
@@ -1078,20 +1068,6 @@ export default function BuzzChannels() {
                                 onPress={() => handleLeaveRoom(item)}
                                 style={styles.swipeActionButton}
                                 testID={`room-leave-action-${item.room.id}`}
-                              >
-                                <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                          {!item.directMessage && canManageWorkspace && (
-                            <View style={styles.swipeAction}>
-                              <TouchableOpacity
-                                accessibilityLabel={`Cannot leave ${title}`}
-                                accessibilityRole="button"
-                                hitSlop={LEAVE_TILE_HIT_SLOP}
-                                onPress={() => explainRoomLeaveConstraint(item)}
-                                style={styles.swipeActionButton}
-                                testID={`room-leave-constraint-${item.room.id}`}
                               >
                                 <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
                               </TouchableOpacity>

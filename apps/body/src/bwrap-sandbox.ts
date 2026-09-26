@@ -296,6 +296,16 @@ export interface BwrapAvailability {
   path?: string;
   /** One operator-facing line explaining the state. Always present. */
   advisory: string;
+  /**
+   * The ONE sentence a Room/DM session prompt may state about a missing
+   * sandbox: a fixed reason plus the operator's one-line fix where one applies.
+   * Set only by `ensureBwrapSandbox`, which knows which branch it took.
+   *
+   * Deliberately not `advisory`: a model is told to say this in a reply every
+   * Workspace member can read, so it must carry no host posture, no resolved
+   * path, no AppArmor remediation, and no installer output.
+   */
+  shellDetail?: string;
 }
 
 /** What one session may reach, before it is turned into bwrap argv. */
@@ -628,6 +638,12 @@ export function detectBwrapSandbox(
 /** The one command an operator runs when Beeline could not install bubblewrap itself. */
 export const BUBBLEWRAP_INSTALL_FIX = 'sudo apt-get install -y bubblewrap';
 
+/**
+ * …and the same instruction for a host with no apt-get, where naming a command
+ * would be guessing at a package manager nobody confirmed is here.
+ */
+export const BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER = "install this host's bubblewrap package";
+
 export type SandboxInstallResult = {
   readonly code: number | null;
   readonly output: string;
@@ -641,12 +657,25 @@ export type SandboxInstallRunner = (
 const INSTALL_TIMEOUT_MS = 2 * 60_000;
 const INSTALL_OUTPUT_LIMIT = 32 * 1024;
 
+/**
+ * Worst case for the refresh + install pair, for a caller that has to keep this
+ * off a start-up deadline it does not own (`cli.ts` extends the systemd start
+ * timeout by exactly this before the first package command runs).
+ */
+export const BUBBLEWRAP_INSTALL_BUDGET_MS = 2 * INSTALL_TIMEOUT_MS + 15_000;
+
 export const runSandboxInstallCommand: SandboxInstallRunner = (command, args) =>
   new Promise((resolve) => {
     execFile(
       command,
       [...args],
-      { timeout: INSTALL_TIMEOUT_MS, maxBuffer: INSTALL_OUTPUT_LIMIT * 2 },
+      {
+        timeout: INSTALL_TIMEOUT_MS,
+        maxBuffer: INSTALL_OUTPUT_LIMIT * 2,
+        // A dpkg prompt on a host with a held conffile would otherwise sit on
+        // its stdin until the timeout kills the whole attempt.
+        env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' },
+      },
       (error, stdout, stderr) => {
         const code =
           error && 'code' in error && typeof error.code === 'number'
@@ -670,20 +699,59 @@ function lastLine(output: string, fallback: string): string {
   );
 }
 
+/**
+ * One install attempt, as the unprivileged helper account: `sudo -n` only,
+ * because the agent runs as a systemd `--user` unit and never as root.
+ *
+ * `apt-get update` runs first — a host whose cache predates the package's
+ * arrival answers "Unable to locate package" on every daemon start otherwise —
+ * and a missing `apt-get` is reported as the unsupported host it is rather than
+ * as a failed apt command, so the advisory never prescribes a command this host
+ * cannot run.
+ */
 async function installBubblewrap(
   run: SandboxInstallRunner,
   platform: NodeJS.Platform,
-  getuid: (() => number) | undefined,
-): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  env: NodeJS.ProcessEnv,
+): Promise<{ readonly ok: true } | { readonly ok: false; reason: string; fix: string }> {
   if (platform !== 'linux') {
-    return { ok: false, reason: 'bubblewrap is packaged for Linux only' };
+    return {
+      ok: false,
+      reason: 'bubblewrap is packaged for Linux only',
+      fix: BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER,
+    };
   }
-  const args = ['install', '-y', 'bubblewrap'];
-  const install =
-    getuid?.() === 0 ? await run('apt-get', args) : await run('sudo', ['-n', 'apt-get', ...args]);
+  if (!executableOnPath('apt-get', env)) {
+    return {
+      ok: false,
+      reason: 'this host has no apt-get, so Beeline has no package manager to install it with',
+      fix: BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER,
+    };
+  }
+  const refresh = await run('sudo', ['-n', 'apt-get', 'update']);
+  if (refresh.code !== 0) {
+    return {
+      ok: false,
+      reason: lastLine(refresh.output, `apt-get update exited ${refresh.code}`),
+      fix: BUBBLEWRAP_INSTALL_FIX,
+    };
+  }
+  const install = await run('sudo', ['-n', 'apt-get', 'install', '-y', 'bubblewrap']);
   if (install.code === 0) return { ok: true };
-  return { ok: false, reason: lastLine(install.output, `exit ${install.code}`) };
+  return {
+    ok: false,
+    reason: lastLine(install.output, `apt-get install exited ${install.code}`),
+    fix: BUBBLEWRAP_INSTALL_FIX,
+  };
 }
+
+/** Fixed prompt sentences: no host posture, no paths, no installer output. */
+const SHELL_DETAIL_SANDBOX_OFF =
+  'A shell cannot run here because this helper’s OS sandbox is turned off by its operator.';
+const SHELL_DETAIL_SELF_TEST =
+  'A shell cannot run here because this host’s OS sandbox failed its start-up self-test.';
+const shellDetailNotInstalled = (fix: string): string =>
+  `A shell cannot run here because bubblewrap is not installed and Beeline could not install it — ${fix}, then restart the agent.`;
 
 /**
  * The OS sandbox this host can actually provide, installing bubblewrap once
@@ -694,9 +762,15 @@ async function installBubblewrap(
  * without `bwrap` has no Room shell at all — which is worth one install
  * attempt, the same way the Tailscale connector installs its own client rather
  * than asking a person to. Re-detection afterwards is the real self-test, not
- * `--version`: an installed `bwrap` that cannot unshare is still no sandbox.
+ * `--version` and not the installer's exit code: an installed `bwrap` that
+ * cannot unshare is still no sandbox, and an install the runner reported as
+ * failed (killed at the timeout, output over the buffer) may have completed —
+ * so detection always runs again and its verdict wins.
  * `sandbox: 'off'` is an operator decision and installs nothing, and a `bwrap`
  * that is present but failed its self-test is not a missing package.
+ *
+ * `beforeInstall` fires once, only when a package command is actually about to
+ * run: the caller owns whatever deadline that spend comes out of.
  */
 export async function ensureBwrapSandbox(
   options: {
@@ -706,7 +780,7 @@ export async function ensureBwrapSandbox(
     /** Test seam: the same one-shot detection the daemon runs at start. */
     detect?: typeof detectBwrapSandbox;
     platform?: NodeJS.Platform;
-    getuid?: () => number;
+    beforeInstall?: () => void | Promise<void>;
   } = {},
 ): Promise<BwrapAvailability> {
   const detect = options.detect ?? detectBwrapSandbox;
@@ -720,22 +794,33 @@ export async function ensureBwrapSandbox(
   const override = env.BUZZY_BODY_SANDBOX;
   const policy = isSandboxPolicy(override) ? override : (options.policy ?? DEFAULT_SANDBOX_POLICY);
   const shellConsequence = 'A Room shell stays refused while the OS sandbox is unavailable.';
-  if (policy === 'off' || executableOnPath('bwrap', env)) {
-    return { advisory: `${detected.advisory} ${shellConsequence}` };
+  if (policy === 'off') {
+    return {
+      advisory: `${detected.advisory} ${shellConsequence}`,
+      shellDetail: SHELL_DETAIL_SANDBOX_OFF,
+    };
   }
+  if (executableOnPath('bwrap', env)) {
+    return {
+      advisory: `${detected.advisory} ${shellConsequence}`,
+      shellDetail: SHELL_DETAIL_SELF_TEST,
+    };
+  }
+  await options.beforeInstall?.();
   const installed = await installBubblewrap(
     options.run ?? runSandboxInstallCommand,
     options.platform ?? process.platform,
-    options.getuid ?? process.getuid,
+    env,
   );
+  const after = detect(detectInput);
+  if (after.path) return after;
   if (!installed.ok) {
     return {
       advisory:
         `${detected.advisory} ${shellConsequence} Automatic bubblewrap install failed: ` +
         `${installed.reason}; run \`${BUBBLEWRAP_INSTALL_FIX}\` on this host and restart the agent.`,
+      shellDetail: shellDetailNotInstalled(installed.fix),
     };
   }
-  const after = detect(detectInput);
-  if (after.path) return after;
-  return { advisory: `${after.advisory} ${shellConsequence}` };
+  return { advisory: `${after.advisory} ${shellConsequence}`, shellDetail: SHELL_DETAIL_SELF_TEST };
 }

@@ -159,10 +159,12 @@ export interface BodyConfig {
    */
   bwrapPath?: string;
   /**
-   * The operator-facing advisory explaining why `bwrapPath` is absent, from
-   * `ensureBwrapSandbox` at daemon start. A Room session prompt states it so a
-   * model asked for something needing a shell can say why it cannot run one
-   * instead of retrying (`beeline-skill.ts`).
+   * ONE bounded sentence saying why `bwrapPath` is absent — `shellDetail` from
+   * `ensureBwrapSandbox`, never its operator advisory. A Room session prompt
+   * states it so a model asked for something needing a shell can say why it
+   * cannot run one instead of retrying (`beeline-skill.ts`), and a model is told
+   * to relay it into a Room every Workspace member reads, so it carries no host
+   * posture, resolved path, or installer output.
    */
   sandboxUnavailableDetail?: string;
   /**

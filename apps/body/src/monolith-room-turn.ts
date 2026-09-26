@@ -76,7 +76,7 @@ import {
   type EmptyTurnExplanation,
 } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
+import { harnessHonorsSessionSystemPrompt, roomShellCapability } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -924,18 +924,27 @@ export class MonolithRoomTurnLoop {
             branch: repositoryState.targetBranch || 'main',
           }
         : undefined;
+    // Whether this session runs shell commands is a fact about the harness AND
+    // the sandbox: Codex executes them in its own read-only mode with no wrap at
+    // all, while a harness that asks depends on the gate above. An unmeasured
+    // harness states nothing (`roomShellCapability`).
+    const shellCapability = roomShellCapability(command, {
+      osSandbox: Boolean(this.options.config.bwrapPath),
+    });
     const capabilityContext = beelineCapabilityContextForHarness(
       command,
       repositoryInfo,
       directMessage,
-      this.options.config.bwrapPath
+      shellCapability === 'runs'
         ? { available: true }
-        : {
-            available: false,
-            ...(this.options.config.sandboxUnavailableDetail
-              ? { detail: this.options.config.sandboxUnavailableDetail }
-              : {}),
-          },
+        : shellCapability === 'refused'
+          ? {
+              available: false,
+              ...(this.options.config.sandboxUnavailableDetail
+                ? { detail: this.options.config.sandboxUnavailableDetail }
+                : {}),
+            }
+          : undefined,
     );
     this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
       ? ''

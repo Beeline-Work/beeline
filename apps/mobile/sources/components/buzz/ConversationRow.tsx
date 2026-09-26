@@ -63,115 +63,123 @@ export function ConversationRow({
   }));
 
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onPin}
-      accessibilityRole="button"
-      accessibilityHint="Long press to toggle this conversation's pin"
-      accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
-      accessibilityState={selected ? { selected: true } : undefined}
-      accessibilityActions={[
-        { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
-      ]}
-      onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'pin') onPin();
-      }}
-      style={({ pressed }) => [
+    <View
+      style={[
         styles.row,
-        desktop && styles.desktopRow,
-        !desktop && styles.mobileRow,
         selected && styles.selected,
-        pressed && styles.pressed,
       ]}
-      testID={testID}
     >
-      <View style={styles.copy}>
-        <View style={styles.heading}>
-          {pinned && (
-            <View style={styles.pin} testID={`${testID}-pinned`}>
-              <PinGlyph color={styles.sigil.color} size={10} />
-            </View>
-          )}
-          <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
-            <Text style={styles.sigil}>{name.sigil}</Text>
-            {name.name}
-          </Text>
-        </View>
-        <View style={styles.previewLine}>
-          <Text
-            numberOfLines={1}
-            style={[
-              styles.preview,
-              item.unread && !reason && styles.unreadPreview,
-              reason && styles.reason,
-            ]}
-            testID={`${testID}-preview`}
-          >
-            {reason ? (
-              reason
-            ) : (
-              <>
-                {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
-                  <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
-                    {preview.attribution === 'self' ? 'you' : `@${preview.handle}`}
-                    <Text style={styles.quiet}>{'\u00a0\u00b7\u00a0'}</Text>
-                  </Text>
-                )}
-                {preview.text}
-              </>
+      <Pressable
+        onPress={onPress}
+        onLongPress={onPin}
+        accessibilityRole="button"
+        accessibilityHint="Long press to toggle this conversation's pin"
+        accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
+        accessibilityState={selected ? { selected: true } : undefined}
+        accessibilityActions={[
+          { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
+        ]}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === 'pin') onPin();
+        }}
+        style={({ pressed }) => [
+          styles.rowPressable,
+          desktop && styles.desktopRow,
+          !desktop && styles.mobileRow,
+          pressed && styles.pressed,
+        ]}
+        testID={testID}
+      >
+        <View style={styles.copy}>
+          <View style={styles.heading}>
+            {pinned && (
+              <View style={styles.pin} testID={`${testID}-pinned`}>
+                <PinGlyph color={styles.sigil.color} size={10} />
+              </View>
             )}
-          </Text>
-          <Text style={styles.age}>
-            {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
-          </Text>
-        </View>
-      </View>
-      <View style={styles.statusCell}>
-        <View style={styles.statusSlot}>
-          {status && (
-            <View
-              accessibilityLabel={status}
-              accessibilityRole="image"
-              style={[styles.statusMark, needsYou && styles.needsRing]}
-              testID={`${testID}-${needsYou ? 'needs-you' : 'unread'}`}
+            <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+              <Text style={styles.sigil}>{name.sigil}</Text>
+              {name.name}
+            </Text>
+          </View>
+          <View style={styles.previewLine}>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.preview,
+                item.unread && !reason && styles.unreadPreview,
+                reason && styles.reason,
+              ]}
+              testID={`${testID}-preview`}
             >
-              <View style={styles.dot} />
-            </View>
-          )}
+              {reason ? (
+                reason
+              ) : (
+                <>
+                  {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
+                    <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
+                      {preview.attribution === 'self' ? 'you' : `@${preview.handle}`}
+                      <Text style={styles.quiet}>{'\u00a0\u00b7\u00a0'}</Text>
+                    </Text>
+                  )}
+                  {preview.text}
+                </>
+              )}
+            </Text>
+            <Text style={styles.age}>
+              {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.statusSlot}>
-          {hasCorners && (
-            <Pressable
-              accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
-              accessibilityRole="button"
-              accessibilityState={{ expanded: cornersExpanded }}
-              hitSlop={8}
-              onPress={(event) => {
-                event.stopPropagation();
-                onToggleCorners?.();
-              }}
-              style={styles.cornerToggle}
-              testID={`${testID}-corners`}
-            >
-              <Animated.View style={cornerRotationStyle}>
-                <CornerGlyph size={13} />
-              </Animated.View>
-            </Pressable>
-          )}
+        <View style={styles.statusCell}>
+          <View style={styles.statusSlot}>
+            {status && (
+              <View
+                accessibilityLabel={status}
+                accessibilityRole="image"
+                style={[styles.statusMark, needsYou && styles.needsRing]}
+                testID={`${testID}-${needsYou ? 'needs-you' : 'unread'}`}
+              >
+                <View style={styles.dot} />
+              </View>
+            )}
+          </View>
+          <View style={styles.statusSlot} />
         </View>
-      </View>
-    </Pressable>
+      </Pressable>
+      {hasCorners && (
+        <Pressable
+          accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: cornersExpanded }}
+          hitSlop={8}
+          onPress={onToggleCorners}
+          style={[
+            styles.cornerToggle,
+            desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle,
+          ]}
+          testID={`${testID}-corners`}
+        >
+          <Animated.View style={cornerRotationStyle}>
+            <CornerGlyph size={13} />
+          </Animated.View>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   row: {
     minHeight: 62,
+    backgroundColor: 'transparent',
+  },
+  rowPressable: {
+    minHeight: 62,
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: 9,
     flexDirection: 'row',
     gap: 12,
-    backgroundColor: 'transparent',
   },
   desktopRow: { minHeight: 62, paddingLeft: 20 },
   mobileRow: { minHeight: 68, paddingHorizontal: 14, paddingVertical: 10 },
@@ -226,7 +234,15 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.buzz.accent,
   },
-  cornerToggle: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
+  cornerToggle: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  desktopCornerToggle: { right: theme.buzz.space.md, bottom: 12 },
+  mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,
     borderLeftWidth: 1,

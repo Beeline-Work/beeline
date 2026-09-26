@@ -14,6 +14,7 @@ import { navigateToBuzzTargetFromNotification } from '@/utils/notificationRoutin
 import { Typography } from '@/constants/Typography';
 
 const DISPLAY_MS = 4_000;
+const DEVELOPMENT_NOTIFICATION_EVENT = 'beeline:foreground-notification';
 
 export function ForegroundNotificationBanner({
   top,
@@ -70,6 +71,22 @@ export function ForegroundNotificationBanner({
       subscription.remove();
       if (timer.current) clearTimeout(timer.current);
     };
+  }, [present]);
+
+  React.useEffect(() => {
+    if (!__DEV__ || typeof window === 'undefined') return;
+    // Expo does not emit notification-received events on web. Keep a development-only
+    // bridge so the real responsive app can exercise this native-first surface in Chrome.
+    const receive = (event: Event) => {
+      const notification = (
+        event as CustomEvent<Parameters<typeof foregroundBannerEntry>[0]>
+      ).detail;
+      const next = foregroundBannerEntry(notification);
+      if (!next || next.target.channelId === getOpenBuzzChannelId()) return;
+      present(next);
+    };
+    window.addEventListener(DEVELOPMENT_NOTIFICATION_EVENT, receive);
+    return () => window.removeEventListener(DEVELOPMENT_NOTIFICATION_EVENT, receive);
   }, [present]);
 
   const pan = React.useMemo(

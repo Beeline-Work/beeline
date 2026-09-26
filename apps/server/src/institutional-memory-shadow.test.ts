@@ -121,7 +121,6 @@ function shadowDaemon(): DaemonService {
     undefined,
     undefined,
     undefined,
-    undefined,
     config,
   );
 }
@@ -135,7 +134,6 @@ function liveDaemon(): DaemonService {
     false,
     undefined,
     false,
-    undefined,
     undefined,
     undefined,
     undefined,

@@ -8,6 +8,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
+import { backfillRegistryApps } from './app-connections.js';
 import {
   backfillInheritedCornerMemberships,
   syncTopLevelSharedRoomRoles,
@@ -122,7 +123,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 8;
+export const REQUIRED_SCHEMA_VERSION = 9;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1757,11 +1758,19 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_session_id text;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit text;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
+-- Composio is retired: apps connect through the one front door
+-- (\`connect_app\`). A persisted Composio row is only a pointer to a session at
+-- Composio, and no helper can serve it any more — a surviving \`installing\`
+-- row would even reach a new helper as an unknown install — so the row, its
+-- synthetic \`composio:<toolkit>\` connections and their receipts go. Every
+-- other connector's rows, keys and receipts are untouched, and the retired
+-- identity's receipt DMs stay readable (\`RETIRED_CONNECTOR_KINDS\`).
+DELETE FROM workspace_connectors WHERE connector_type='composio';
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_session_id;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_toolkit;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_ready;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_started_at;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_scope;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
@@ -1897,6 +1906,54 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
+-- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
+-- owner, whatever serves it: an official hosted MCP server (its Registry
+-- connector row), or Trusty Squire through an API key or the browser. The
+-- route decisions and every authorized use are ledgers of their own.
+CREATE TABLE IF NOT EXISTS workspace_apps (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  app_key text NOT NULL,
+  display_name text NOT NULL,
+  domain text,
+  transport text NOT NULL
+    CHECK (transport IN ('registry-mcp','squire-api','squire-browser')),
+  route text NOT NULL
+    CHECK (route IN ('workbench','registry-mcp','squire-api','squire-browser')),
+  connector_id uuid REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  machine_id text,
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','disconnected')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (workspace_id, owner_identity_id, app_key)
+);
+CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
+CREATE TABLE IF NOT EXISTS workspace_app_routes (
+  id uuid PRIMARY KEY,
+  app_id uuid NOT NULL REFERENCES workspace_apps(id) ON DELETE CASCADE,
+  route text NOT NULL,
+  transport text NOT NULL,
+  reason text NOT NULL,
+  requested_by text REFERENCES identities(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_app_routes_app_idx
+  ON workspace_app_routes(app_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS workspace_app_usage (
+  id uuid PRIMARY KEY,
+  app_id uuid NOT NULL REFERENCES workspace_apps(id) ON DELETE CASCADE,
+  agent_id text REFERENCES identities(id) ON DELETE SET NULL,
+  room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,
+  requester_id text,
+  transport text NOT NULL,
+  operation text NOT NULL,
+  grant_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_app_usage_app_idx
+  ON workspace_app_usage(app_id, created_at DESC);
+
 -- Wallet connector: the binding row (this account owns that wallet), never a
 -- secret. The one app-wide Coinbase credential lives in server secrets, and
 -- cdp_user_id holds the deterministic CDP account name (server-wallet model, not
@@ -2008,6 +2065,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
+  await backfillRegistryApps(database);
   await upgradeGrantPolicy(database);
 }
 

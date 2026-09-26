@@ -11,7 +11,6 @@ import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { GoogleOAuth } from './google-oauth.js';
-import { ComposioClient } from './connector-composio.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
@@ -189,247 +188,46 @@ describe('workbench connectors', () => {
     return paired.connectorId;
   }
 
-  it('links Composio to one owner, scopes helper tools, and records that owner’s use', async () => {
-    const oldKey = process.env.BEELINE_COMPOSIO_API_KEY;
-    const oldScope = process.env.BEELINE_COMPOSIO_SCOPE;
-    process.env.BEELINE_COMPOSIO_API_KEY = 'test-project-key';
-    process.env.BEELINE_COMPOSIO_SCOPE = JSON.stringify({
-      toolkits: ['github'],
-      tools: { github: ['GITHUB_GET_AN_ISSUE'] },
-    });
-    try {
-      let linked = false;
-      const requests: { url: string; body?: Record<string, unknown> }[] = [];
-      const remote = vi.fn(async (input: string, init?: RequestInit) => {
-        const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-        requests.push({ url: input, body });
-        const data = input.endsWith('/tool_router/session')
-          ? { session_id: 'trs_owner' }
-          : input.includes('/toolkits?')
-            ? { items: [{ slug: 'github', ...(linked ? { connected_account: { status: 'ACTIVE', user_id: HUMAN } } : {}) }] }
-            : input.endsWith('/link')
-              ? { redirect_url: 'https://app.composio.dev/link/lt_owner' }
-              : { data: { issue: 42 }, log_id: 'log_owner' };
-        return { ok: true, json: async () => data } as Response;
-      });
-      const scoped = new DaemonService(
-        database, new LiveHub(), undefined, undefined, false, undefined,
-        false, undefined, undefined, undefined,
-        new ComposioClient('test-project-key', remote as typeof fetch),
-      );
-      const sibling = 'd'.repeat(64);
-      await database.query(`UPDATE agents SET machine_id='owner-machine' WHERE agent_id=$1`, [HELPER]);
-      await database.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Second bee','second-bee')`,
-        [sibling],
-      );
-      await database.query(
-        `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'owner-machine')`,
-        [sibling, HUMAN],
-      );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,NULL,$2,'member')`,
-        [WORKSPACE, sibling],
-      );
-      const paired = await phone.pairConnector({
-        workspaceId: WORKSPACE, connectorType: 'composio', helperAgentId: HELPER,
-      }, HUMAN);
-      await expect(phone.pairConnector({
-        workspaceId: WORKSPACE, connectorType: 'composio', helperAgentId: HELPER,
-      }, RECIPIENT)).rejects.toThrow();
-      const assignments = await scoped.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
-      expect(assignments.assignments).toContainEqual(expect.objectContaining({
-        kind: 'install', connectorId: paired.connectorId, connectorType: 'composio',
-      }));
-      const link = await scoped.execute('getComposioLink', {
-        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
-      }, HELPER);
-      expect(link).toEqual({
-        status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_owner',
-      });
-      expect(requests[0]!.body).toEqual(expect.objectContaining({
-        user_id: HUMAN,
-        toolkits: { enabled: ['github'] },
-        tools: { github: { enabled: ['GITHUB_GET_AN_ISSUE'] } },
-      }));
-      await expect(scoped.execute('installConnector', {
-        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
-      }, HELPER)).rejects.toThrow('not connected');
-      linked = true;
-      expect(await scoped.execute('getComposioLink', {
-        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
-      }, HELPER)).toEqual({ status: 'connected' });
-      await scoped.execute('installConnector', {
-        agentId: HELPER, connectorId: paired.connectorId, pairingGeneration: 1,
-      }, HELPER);
-      const connection = await database.query<{ owner_identity_id: string; reference: string }>(
-        `SELECT owner_identity_id,reference FROM workspace_connections WHERE connector_id=$1::uuid`,
-        [paired.connectorId],
-      );
-      expect(connection.rows).toEqual([{ owner_identity_id: HUMAN, reference: 'composio:github' }]);
-
-      const roomId = '77777777-7777-4777-8777-777777777777';
-      await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Tools')`,
-        [roomId, WORKSPACE, HUMAN]);
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
-        [WORKSPACE, roomId, HUMAN, RECIPIENT, HELPER, sibling],
-      );
-      for (const [sourceId, requester] of [['owner-source', HUMAN], ['other-source', RECIPIENT]]) {
+  it('retires persisted Composio rows and keeps every other connector’s keys', async () => {
+    const squireId = await pairOwnerConnector();
+    const composioId = randomUUID();
+    await database.query(
+      `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
+         helper_agent_id,machine_id,status)
+       VALUES($1,$2,$3,'composio',$4,$4,'installing')`,
+      [composioId, WORKSPACE, HUMAN, HELPER],
+    );
+    await database.query(
+      `INSERT INTO workspace_connections(id,connector_id,owner_identity_id,reference,service)
+       VALUES($1,$2,$3,'composio:github','github')`,
+      [randomUUID(), composioId, HUMAN],
+    );
+    await migrate(database);
+    expect(
+      (
         await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'use a tool')`,
-          [sourceId, roomId, requester],
-        );
-        await database.query(
-          `INSERT INTO agent_commands(
-            id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
-            root_command_id,root_source_message_id,agent_depth,state,generation_id
-          ) VALUES($1,$2,$3,$4,$5,'input','human_tag',$1,$4,0,'claimed','generation-1')`,
-          [`command-${sourceId}`, roomId, HELPER, sourceId, sourceId],
-        );
-      }
-      const unrelatedGrant = await scoped.execute('authorizeResourceCall', {
-        roomId,
-        requestId: 'other-source',
-        generationId: 'generation-1',
-        target: 'unrelated-resource',
-      }, HELPER);
-      expect(unrelatedGrant).toEqual(expect.objectContaining({ allowed: false, status: 'pending' }));
-      await phone.execute('decideAgentGrant', {
-        grantId: unrelatedGrant.grantId!, decision: 'always',
-      }, HUMAN);
-      const firstResume = (await database.query<{
-        turn_request_id: string;
-        root_source_message_id: string;
-        source_author_id: string;
-      }>(
-        `SELECT command.turn_request_id,command.root_source_message_id,
-                source.author_id source_author_id
-         FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.action='resume'
-         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-        [roomId, HELPER],
-      )).rows[0]!;
-      expect(firstResume).toEqual(expect.objectContaining({
-        root_source_message_id: 'other-source',
-        source_author_id: HUMAN,
-      }));
-      await database.query(
-        `UPDATE agent_commands SET state='claimed',generation_id='generation-resume-1'
-         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
-        [roomId, HELPER, firstResume.turn_request_id],
-      );
-      const resumedContext = {
-        roomId,
-        requestId: firstResume.turn_request_id,
-        generationId: 'generation-resume-1',
-      };
-      const remoteCallsBeforeDenied = requests.length;
-      const toolsDenied = await scoped.execute('getComposioTools', resumedContext, HELPER);
-      expect(toolsDenied).toEqual(expect.objectContaining({ status: 'permission-required' }));
-      expect(await scoped.execute('executeComposioTool', {
-        ...resumedContext,
-        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
-      }, HELPER)).toEqual(toolsDenied);
-      expect(requests).toHaveLength(remoteCallsBeforeDenied);
-      const composioGrant = (await database.query<{
-        id: string;
-        requested_by: string;
-        status: string;
-      }>(
-        `SELECT id,requested_by,status FROM agent_grants
-         WHERE agent_id=$1 AND room_id=$2 AND kind='mcp' AND target='composio'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [HELPER, roomId],
-      )).rows[0]!;
-      expect(composioGrant).toEqual({
-        id: (toolsDenied as { grantId: string }).grantId,
-        requested_by: RECIPIENT,
-        status: 'pending',
-      });
-      await phone.execute('decideAgentGrant', {
-        grantId: composioGrant.id, decision: 'always',
-      }, HUMAN);
-      const approvedResume = (await database.query<{ turn_request_id: string }>(
-        `SELECT turn_request_id FROM agent_commands
-         WHERE room_id=$1 AND agent_id=$2 AND action='resume' AND root_source_message_id='other-source'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [roomId, HELPER],
-      )).rows[0]!;
-      await database.query(
-        `UPDATE agent_commands SET state='claimed',generation_id='generation-resume-2'
-         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
-        [roomId, HELPER, approvedResume.turn_request_id],
-      );
-      const approvedContext = {
-        roomId,
-        requestId: approvedResume.turn_request_id,
-        generationId: 'generation-resume-2',
-      };
-      expect((await scoped.execute('getComposioTools', approvedContext, HELPER)).connectorId)
-        .toBe(paired.connectorId);
-      expect(await scoped.execute('executeComposioTool', {
-        ...approvedContext,
-        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
-      }, HELPER)).toEqual({ data: { issue: 42 }, logId: 'log_owner' });
-      process.env.BEELINE_COMPOSIO_SCOPE = JSON.stringify({
-        toolkits: ['github'], tools: { github: ['GITHUB_DELETE_REPO'] },
-      });
-      await database.query(
-        `INSERT INTO agent_commands(
-          id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
-          root_command_id,root_source_message_id,agent_depth,state,generation_id
-        ) VALUES('sibling-command',$1,$2,'owner-source','sibling-turn','input','human_tag',
-          'sibling-command','owner-source',0,'claimed','generation-1')`,
-        [roomId, sibling],
-      );
-      expect((await scoped.execute('getComposioTools', {
-        roomId, requestId: 'sibling-turn', generationId: 'generation-1',
-      }, sibling)).connectorId).toBe(paired.connectorId);
-      expect(await scoped.execute('getComposioTools', {
-        roomId, requestId: 'owner-source', generationId: 'generation-1',
-      }, HELPER)).toEqual({
-        connectorId: paired.connectorId,
-        toolkits: ['github'],
-        tools: { github: ['GITHUB_GET_AN_ISSUE'] },
-      });
-      await expect(scoped.execute('executeComposioTool', {
-        roomId, requestId: 'owner-source', generationId: 'generation-1',
-        toolkit: 'github', tool: 'GITHUB_DELETE_REPO', arguments: {},
-      }, HELPER)).rejects.toThrow('out of scope');
-      expect(await scoped.execute('executeComposioTool', {
-        roomId, requestId: 'owner-source', generationId: 'generation-1',
-        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: { issue_number: 42 },
-      }, HELPER)).toEqual({ data: { issue: 42 }, logId: 'log_owner' });
-      const receipts = await database.query<{ owner_identity_id: string; operation: string }>(
-        `SELECT owner_identity_id,operation FROM connection_receipts WHERE connection_id=(
-          SELECT id FROM workspace_connections WHERE connector_id=$1::uuid)`,
-        [paired.connectorId],
-      );
-      expect(receipts.rows).toEqual([
-        { owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' },
-        { owner_identity_id: HUMAN, operation: 'GITHUB_GET_AN_ISSUE' },
-      ]);
-      expect((await connectionReceiptCards()).some((card) => card.author_id === connectorIdentityId('composio')))
-        .toBe(false);
-      const remoteCalls = requests.length;
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, HUMAN],
-      );
-      await expect(scoped.execute('executeComposioTool', {
-        roomId, requestId: 'owner-source', generationId: 'generation-1',
-        toolkit: 'github', tool: 'GITHUB_GET_AN_ISSUE', arguments: {},
-      }, HELPER)).rejects.toThrow('access denied');
-      expect(requests).toHaveLength(remoteCalls);
-    } finally {
-      if (oldKey === undefined) delete process.env.BEELINE_COMPOSIO_API_KEY;
-      else process.env.BEELINE_COMPOSIO_API_KEY = oldKey;
-      if (oldScope === undefined) delete process.env.BEELINE_COMPOSIO_SCOPE;
-      else process.env.BEELINE_COMPOSIO_SCOPE = oldScope;
-    }
+          `SELECT id FROM workspace_connectors WHERE connector_type='composio'`,
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query<{ reference: string }>(
+          `SELECT reference FROM workspace_connections WHERE owner_identity_id=$1`,
+          [HUMAN],
+        )
+      ).rows,
+    ).toEqual([{ reference: 'github.com/acme/tooling' }]);
+    expect(
+      (await database.query(`SELECT status FROM workspace_connectors WHERE id=$1`, [squireId]))
+        .rows,
+    ).toEqual([{ status: 'connected' }]);
+    const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      catalog: { connectorType: string }[];
+    };
+    expect(view.catalog.map((entry) => entry.connectorType)).not.toContain('composio');
+    const helperAssignments = await daemonOperation('getConnectorAssignments', {});
+    expect(JSON.stringify(helperAssignments.body)).not.toContain('composio');
   });
 
   it('writes owner-approved Squire ledger grants for every owner agent on the machine', async () => {

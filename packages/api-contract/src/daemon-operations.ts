@@ -1,3 +1,4 @@
+import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
 import type { ServerEventKind, SystemEvent } from './system-events.js';
 import type {
   AgentGrantEscalation,
@@ -268,8 +269,20 @@ export type DaemonOperationMap = {
    * card in the owner's Trusty Squire DM and returns pending.
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
+  /**
+   * Per-call personal-resource gate. A call that belongs to a connected app —
+   * a Registry route, or a Squire call whose `appKeys` name one — is
+   * authorized as `app:<key>` and recorded in that app's usage ledger.
+   */
   authorizeResourceCall: Operation<
-    AuthorizeSquireCallInput & { readonly target: string; readonly consume?: boolean },
+    AuthorizeSquireCallInput & {
+      readonly target: string;
+      readonly consume?: boolean;
+      /** The app keys a Squire call names (`squireCallAppKeys`). */
+      readonly appKeys?: readonly string[];
+      /** The MCP tool (or method) being called, for the usage ledger. */
+      readonly operation?: string;
+    },
     AuthorizeSquireCallResult
   >;
   authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
@@ -281,6 +294,8 @@ export type DaemonOperationMap = {
   searchMcpRegistry: Operation<SearchMcpRegistryInput, SearchMcpRegistryResult>;
   /** Connect an exact, freshly fetched Registry server on this helper. */
   connectMcpServer: Operation<ConnectMcpServerInput, ConnectMcpServerResult>;
+  /** The one front door: connect an app by the route the server resolves. */
+  connectApp: Operation<ConnectAppInput, ConnectAppResult>;
   /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
   offerConnector: Operation<OfferConnectorInput, OfferConnectorResult>;
   installConnector: Operation<InstallConnectorInput, WriteResult>;
@@ -292,31 +307,6 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
-  getComposioLink: Operation<
-    AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
-    | { readonly status: 'connected' }
-    | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
-  >;
-  getComposioTools: Operation<
-    RoomInput & { readonly requestId: string; readonly generationId: string },
-    | {
-        readonly connectorId: string;
-        readonly toolkits: readonly string[];
-        readonly tools: Readonly<Record<string, readonly string[]>>;
-      }
-    | { readonly status: 'permission-required'; readonly grantId?: string }
-  >;
-  executeComposioTool: Operation<
-    RoomInput & {
-      readonly requestId: string;
-      readonly generationId: string;
-      readonly toolkit: string;
-      readonly tool: string;
-      readonly arguments: Record<string, unknown>;
-    },
-    | { readonly data: unknown; readonly logId?: string }
-    | { readonly status: 'permission-required'; readonly grantId?: string }
-  >;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {
@@ -656,6 +646,31 @@ export type ConnectMcpServerResult =
       readonly authorizationUrl: string;
     }
   | { readonly status: 'unsupported'; readonly reason: string };
+export type ConnectAppInput = TurnOutputAuthority &
+  RoomInput & {
+    /** The app's name or website, e.g. `Linear` or `linear.app`. */
+    readonly app: string;
+    readonly reason: string;
+    /** Re-resolve the route from the top, for an app in error. */
+    readonly reconnect?: boolean;
+    /** Squire found no API for this app: move its API route to the browser. */
+    readonly noApi?: boolean;
+  };
+export type ConnectAppResult = {
+  readonly status: ConnectAppStatus;
+  readonly appId?: string;
+  readonly app: string;
+  readonly appKey?: string;
+  /** The route this call chose, when it chose one; absent when it kept one. */
+  readonly route?: AppRoute;
+  /** What serves the app now. */
+  readonly transport?: AppTransport;
+  readonly connectorId?: string;
+  /** The provider sign-in page Squire should open (never pasted into chat). */
+  readonly authorizationUrl?: string;
+  /** Server-owned next step, in one or two sentences. */
+  readonly next: string;
+};
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
   readonly observedAt?: number;
@@ -1141,6 +1156,13 @@ export type AgentWorkbenchView = {
     readonly websiteUrl?: string;
     readonly onThisMachine: boolean;
   }[];
+  /** The owner's apps (`connect_app`): one entry per app, whatever serves it. */
+  readonly apps?: readonly {
+    readonly appKey: string;
+    readonly name: string;
+    readonly transport: AppTransport;
+    readonly status: ConnectAppStatus;
+  }[];
   /** This agent's own machine, where an accepted offer would install. */
   readonly machine: { readonly machineId: string; readonly name: string };
 };
@@ -1370,7 +1392,6 @@ export type ConnectorKind =
   | 'google-calendar'
   | 'google-drive'
   | 'google-youtube'
-  | 'composio'
   | 'registry-mcp';
 
 /** The helper's work queue (server → helper delivery). */

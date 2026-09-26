@@ -17,6 +17,7 @@ import {
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { ProfileActions } from '@/components/buzz/ProfileActions';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -182,36 +183,43 @@ export function HumanProfile({
         )}
         {member && (
           <>
-            <ProfileIdentity identity={member.identity} role={member.role} />
-            {!self && (
-              <SettingsRow
-                title="Message"
-                tone="action"
-                chevron="right"
-                disabled={busy}
-                testID="human-profile-message"
-                onPress={() =>
-                  void perform(async () => {
-                    if (!(await confirmDiscard())) return;
-                    const room = await monolithPhoneOperation('resolveDirectMessage', {
-                      workspaceId,
-                      participantId: memberId,
-                    });
-                    allowNavigation.current = true;
-                    navigateToRoom(router, room.id);
-                  })
-                }
-              />
-            )}
-            {canEditRole && !editing && (
-              <SettingsRow
-                title="Edit"
-                tone="action"
-                disabled={busy}
-                onPress={() => setEditing(true)}
-                testID="edit-person-role"
-              />
-            )}
+            <ProfileIdentity
+              identity={member.identity}
+              role={member.role}
+              actions={
+                !self ? (
+                  <ProfileActions
+                    actions={[
+                      {
+                        label: 'Message',
+                        disabled: busy,
+                        testID: 'human-profile-message',
+                        onPress: () =>
+                          void perform(async () => {
+                            if (!(await confirmDiscard())) return;
+                            const room = await monolithPhoneOperation('resolveDirectMessage', {
+                              workspaceId,
+                              participantId: memberId,
+                            });
+                            allowNavigation.current = true;
+                            navigateToRoom(router, room.id);
+                          }),
+                      },
+                      ...(canEditRole && !editing
+                        ? [
+                            {
+                              label: 'Edit',
+                              disabled: busy,
+                              onPress: () => setEditing(true),
+                              testID: 'edit-person-role',
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                ) : undefined
+              }
+            />
             {self && (
               <SettingsRow
                 title="Edit your profile"

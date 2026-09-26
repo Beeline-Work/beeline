@@ -21,6 +21,7 @@ export function ProfileIdentity({
   identityMarkTestID,
   onAvatarPress,
   onHandlePress,
+  actions,
 }: {
   identity: RoomViewIdentity;
   ownerHandle?: string;
@@ -34,6 +35,7 @@ export function ProfileIdentity({
   identityMarkTestID?: string;
   onAvatarPress?: () => void;
   onHandlePress?: () => void;
+  actions?: React.ReactNode;
 }) {
   const portrait = (
     <View style={styles.seat}>
@@ -100,6 +102,7 @@ export function ProfileIdentity({
           {role}
         </Text>
       )}
+      {actions}
     </View>
   );
 }

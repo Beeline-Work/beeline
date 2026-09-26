@@ -9,6 +9,7 @@ import { MonoButton } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { SettingsRow } from './SettingsRow';
 import { PageHeader } from './PageHeader';
+import { ProfileActions } from './ProfileActions';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
 
@@ -140,45 +141,49 @@ export function AgentProfileView({
         )}
         {identity && (
           <>
-            <ProfileIdentity identity={identity} ownerHandle={detail.owner?.handle} />
+            <ProfileIdentity
+              identity={identity}
+              ownerHandle={detail.owner?.handle}
+              actions={
+                <ProfileActions
+                  actions={[
+                    {
+                      label: 'Message',
+                      onPress: onMessage,
+                      testID: 'agent-profile-message',
+                    },
+                    ...(canEdit
+                      ? editing
+                        ? [
+                            {
+                              label: 'Cancel',
+                              disabled: saving,
+                              onPress: onCancel,
+                              testID: 'cancel-agent-edit',
+                            },
+                            {
+                              label: saving ? 'Saving…' : 'Save',
+                              disabled: saving,
+                              onPress: onSave,
+                              testID: 'save-agent-soul',
+                            },
+                          ]
+                        : [
+                            {
+                              label: 'Edit',
+                              onPress: onEdit,
+                              testID: 'edit-agent-soul',
+                            },
+                          ]
+                      : []),
+                  ]}
+                />
+              }
+            />
             <SettingsRow
               title="Model / difficulty"
               value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
             />
-            <View style={styles.actions}>
-              <SettingsRow
-                title="Message"
-                tone="action"
-                onPress={onMessage}
-                testID="agent-profile-message"
-              />
-              {canEdit &&
-                (editing ? (
-                  <>
-                    <SettingsRow
-                      title="Cancel"
-                      tone="action"
-                      disabled={saving}
-                      onPress={onCancel}
-                      testID="cancel-agent-edit"
-                    />
-                    <SettingsRow
-                      title={saving ? 'Saving…' : 'Save'}
-                      tone="action"
-                      disabled={saving}
-                      onPress={onSave}
-                      testID="save-agent-soul"
-                    />
-                  </>
-                ) : (
-                  <SettingsRow
-                    title="Edit"
-                    tone="action"
-                    onPress={onEdit}
-                    testID="edit-agent-soul"
-                  />
-                ))}
-            </View>
             {editing && (
               <TextInput
                 accessibilityLabel="Agent name"
@@ -298,7 +303,6 @@ export function AgentProfileView({
 }
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
-  actions: { paddingTop: theme.buzz.space.sm },
   content: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.xxl },
   identity: {
     paddingVertical: theme.buzz.space.lg,

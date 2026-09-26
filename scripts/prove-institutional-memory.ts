@@ -144,7 +144,6 @@ async function main(): Promise<void> {
     undefined,
     (input) => github.prChecksStatus(input),
     undefined,
-    undefined,
     recordInstitutionalMemory,
   );
   const auth = new TokenAuth(database, async (ticket) =>

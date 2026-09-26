@@ -122,7 +122,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 2;
+export const REQUIRED_SCHEMA_VERSION = 3;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -687,9 +687,8 @@ ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_status_check
 CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_turns_room_created ON agent_turns(room_id,created_at DESC);
 
--- Institutional memory phase 0: server-owned shadow evidence. Nothing in
--- these tables is read into a Room or corner prompt. A daemon id records who
--- processed a job; it is never an ownership or visibility axis.
+-- Institutional memory: server-owned evidence and live items. A daemon id
+-- records who processed a job; it is never an ownership or visibility axis.
 CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -729,8 +728,10 @@ CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
   created_at timestamptz NOT NULL DEFAULT now(),
   claimed_at timestamptz,
   completed_at timestamptz,
+  source_deleted_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
   ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
   WHERE status IN ('pending','retry','claimed');
@@ -743,7 +744,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   kind text NOT NULL CHECK (kind IN ('workspace_fact','human_profile_fact')),
   subject_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
   canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
-  body text NOT NULL CHECK (octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000),
+  body text NOT NULL,
   state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
   source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -752,7 +753,8 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
   version integer NOT NULL CHECK (version > 0),
   supersedes_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL,
-  created_by_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  created_by_command_id text,
   repository text,
   target_commit text,
   path text,
@@ -760,17 +762,43 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   last_served_at timestamptz,
+  deleted_at timestamptz,
+  CONSTRAINT institutional_memory_items_body_check CHECK (
+    (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
+    (deleted_at IS NOT NULL AND body='')
+  ),
+  CONSTRAINT institutional_memory_items_creator_check
+    CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL)),
   CHECK (
     (kind='workspace_fact' AND subject_identity_id IS NULL AND audience_kind='workspace') OR
     (kind='human_profile_fact' AND subject_identity_id IS NOT NULL AND audience_kind='human_profile')
   )
 );
+ALTER TABLE institutional_memory_items ALTER COLUMN created_by_job_id DROP NOT NULL;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_body_check;
+ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_body_check CHECK (
+  (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
+  (deleted_at IS NOT NULL AND body='')
+);
+ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
+ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
+  CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
   ) WHERE state='active';
 CREATE INDEX IF NOT EXISTS institutional_memory_items_workspace_state_idx
   ON institutional_memory_items(workspace_id,state,updated_at DESC,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_item_sources (
+  item_id uuid NOT NULL REFERENCES institutional_memory_items(id) ON DELETE CASCADE,
+  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  PRIMARY KEY(item_id,message_id)
+);
+CREATE INDEX IF NOT EXISTS institutional_memory_item_sources_message_idx
+  ON institutional_memory_item_sources(message_id,item_id);
 
 CREATE TABLE IF NOT EXISTS institutional_context_serves (
   id uuid PRIMARY KEY,
@@ -816,6 +844,13 @@ CREATE TABLE IF NOT EXISTS institutional_memory_outcomes (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (serve_id IS NOT NULL OR job_id IS NOT NULL)
 );
+ALTER TABLE institutional_memory_outcomes
+  DROP CONSTRAINT IF EXISTS institutional_memory_outcomes_kind_check;
+ALTER TABLE institutional_memory_outcomes
+  ADD CONSTRAINT institutional_memory_outcomes_kind_check CHECK (kind IN (
+    'shadow_extracted','memory_extracted','turn_completed','ci_green','merged',
+    'repeat_correction','repeat_review_finding'
+  ));
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
 

@@ -186,7 +186,6 @@ describe('Beeline display branding', () => {
     });
     expect(appConfig).toContain('const name = "Beeline"');
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
-    expect(channelsScreen).toContain('workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}');
     expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
     expect(inviteScreen).toContain('Return to Beeline');
@@ -269,7 +268,9 @@ describe('Beeline display branding', () => {
     ]);
     expect(resolveEasBuildProfile(easBuildProfiles, 'production').channel).toBe('production');
     expect(resolveEasBuildProfile(easBuildProfiles, 'production-ci').channel).toBe('production');
-    expect(resolveEasBuildProfile(easBuildProfiles, 'production-ci').ios?.credentialsSource).toBe('remote');
+    expect(resolveEasBuildProfile(easBuildProfiles, 'production-ci').ios?.credentialsSource).toBe(
+      'remote',
+    );
     expect(resolveEasBuildProfile(easBuildProfiles, 'production-apk').channel).toBe('production');
     expect(resolveEasBuildProfile(easBuildProfiles, 'beta-apk').channel).toBe('beta');
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {

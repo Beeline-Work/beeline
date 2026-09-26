@@ -133,7 +133,10 @@ import {
   completeInstitutionalMemoryJob,
   enqueueInstitutionalMemoryTurnReview,
   failInstitutionalMemoryJob,
+  getInstitutionalContext,
   heartbeatInstitutionalMemoryJob,
+  proposeInstitutionalMemory,
+  recordInstitutionalMemoryTurnOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 
@@ -270,6 +273,8 @@ export class DaemonService {
       'openRoomPoll',
       'putCornerApp',
       'requestCornerAppOpen',
+      'getInstitutionalContext',
+      'proposeInstitutionalMemory',
     ]);
     if (
       !this.commandTransaction &&
@@ -496,6 +501,13 @@ export class DaemonService {
                 config: this.institutionalMemoryShadow,
               });
             }
+            await recordInstitutionalMemoryTurnOutcome(
+              db,
+              scopedRoom!,
+              command.turn_request_id,
+              candidate.status === 'complete',
+              String(candidate.status),
+            );
           }
         }
         return result;
@@ -574,6 +586,35 @@ export class DaemonService {
           this.institutionalMemoryShadow,
         );
         return this.writeResult() as Output<Name>;
+      case 'getInstitutionalContext':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional context requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          return {
+            snapshotRevision: 0,
+            text: '',
+            itemIds: [],
+            totalBytes: 0,
+            omitted: {},
+          } as Output<Name>;
+        }
+        return (await getInstitutionalContext(
+          this.database,
+          this.authorizedCommand,
+        )) as Output<Name>;
+      case 'proposeInstitutionalMemory':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional memory proposal requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await proposeInstitutionalMemory(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'proposeInstitutionalMemory'>,
+        )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -5871,6 +5912,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   heartbeatInstitutionalMemoryJob: true,
   completeInstitutionalMemoryJob: true,
   failInstitutionalMemoryJob: true,
+  getInstitutionalContext: true,
+  proposeInstitutionalMemory: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

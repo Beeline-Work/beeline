@@ -9,6 +9,8 @@ import {
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
   githubFullNameFromInput,
   githubRepositoryLinkagePlan,
+  groupRepoCandidatesByOwner,
+  repoShortName,
 } from '@/buzz/room-repo-picker';
 import { OwnerGrantNeededCard, type OwnerGrantNeeded } from './OwnerGrantNeededCard';
 import { Typography } from '@/constants/Typography';
@@ -28,9 +30,13 @@ export type RepoPickerProps = {
    */
   ownerGrant?: OwnerGrantNeeded | null;
   onSelect: (candidate: RepoCandidate) => void;
+  onSelectNoRepository?: () => void;
+  noRepositoryInset?: number;
   onAddAccount?: (owner?: string) => void;
   onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
+  /** Open a host-owned creation step instead of the picker's inline editor. */
+  onStartCreateRepository?: () => void;
   /** Present only when the current viewer may unlink a bound Room repository. */
   onUnlink?: () => void;
   unlinkRepositoryName?: string | null;
@@ -66,9 +72,12 @@ export const RepoPicker = memo(function RepoPicker({
   notice,
   ownerGrant,
   onSelect,
+  onSelectNoRepository,
+  noRepositoryInset = 0,
   onAddAccount,
   onManageInstallation,
   onCreateRepository,
+  onStartCreateRepository,
   onUnlink,
   unlinkRepositoryName,
   onAskOwnerGrant,
@@ -85,7 +94,6 @@ export const RepoPicker = memo(function RepoPicker({
     GitHubRepositoryLinkagePlan,
     { kind: 'available' }
   > | null>(null);
-  const normalizedQuery = query.trim().toLowerCase();
   const visible = useMemo(
     () => filterRepoCandidates(candidates, query, installations),
     [candidates, query, installations],
@@ -93,26 +101,20 @@ export const RepoPicker = memo(function RepoPicker({
   const activeInstallations = installations.filter(
     (installation) => installation.status === 'active',
   );
-  const sections = useMemo(
-    () =>
-      [
-        ...installations.map((installation) => ({
-          key: `install-${installation.installationId}`,
-          installation,
-          data: visible.filter(
-            (candidate) => candidate.githubInstallationId === installation.installationId,
-          ),
-        })),
-        {
-          key: 'ungrouped',
-          installation: null,
-          data: visible.filter((candidate) => !candidate.githubInstallationId),
-        },
-      ].filter((section) => normalizedQuery.length > 0 || section.data.length > 0),
-    [installations, normalizedQuery, visible],
-  );
-  // An empty search keeps showing every account header (including 0-repo or
-  // suspended installations); a non-empty query drops groups with no hits.
+  const sections = useMemo(() => {
+    const loginByOwner = new Map(
+      installations.map((installation) => [installation.accountLogin.toLowerCase(), installation]),
+    );
+    return groupRepoCandidatesByOwner(visible).map((group) => ({
+      key: group.owner ? `owner-${group.owner.toLowerCase()}` : 'ungrouped',
+      owner: group.owner,
+      installation: group.owner ? (loginByOwner.get(group.owner.toLowerCase()) ?? null) : null,
+      data: group.data,
+    }));
+  }, [installations, visible]);
+  // Headings are the repository owner. One GitHub App installation can grant
+  // repos from several owners; grouping by installationId parked those under
+  // the install account. Search already dropped empty groups.
   const pastedFullName = githubFullNameFromInput(query);
   const showLoadingPlaceholders = busy && visible.length === 0 && !error && !pastedFullName;
   const exactCandidate = pastedFullName
@@ -136,8 +138,9 @@ export const RepoPicker = memo(function RepoPicker({
     [candidates, exactCandidate, installations, pastedFullName, uncoveredOwners],
   );
 
-  const candidateRow = (candidate: RepoCandidate) => (
+  const candidateRow = (candidate: RepoCandidate, owner: string | null) => (
     <TouchableOpacity
+      accessibilityLabel={candidate.name}
       accessibilityRole="button"
       disabled={busy}
       key={candidate.key}
@@ -146,7 +149,7 @@ export const RepoPicker = memo(function RepoPicker({
       testID={`${testIDPrefix}-candidate-${candidate.key}`}
     >
       <Text numberOfLines={1} style={styles.candidateName}>
-        {candidate.name}
+        {repoShortName(candidate, owner)}
       </Text>
       {candidate.key === currentKey && <Text style={styles.candidateCheck}>✓</Text>}
     </TouchableOpacity>
@@ -171,6 +174,20 @@ export const RepoPicker = memo(function RepoPicker({
         style={styles.search}
         value={query}
       />
+      {onSelectNoRepository && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={onSelectNoRepository}
+          style={[
+            styles.noRepositoryRow,
+            { marginHorizontal: -noRepositoryInset, paddingHorizontal: noRepositoryInset },
+          ]}
+          testID={`${testIDPrefix}-no-repository`}
+        >
+          <Text style={styles.noRepositoryLabel}>No repository</Text>
+          {!currentKey && <Text style={styles.candidateCheck}>✓</Text>}
+        </TouchableOpacity>
+      )}
       {ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}
       <SectionList
         keyboardShouldPersistTaps="handled"
@@ -192,15 +209,20 @@ export const RepoPicker = memo(function RepoPicker({
           ) : null
         }
         nestedScrollEnabled
-        renderItem={({ item }) => candidateRow(item)}
+        renderItem={({ item, section }) => candidateRow(item, section.owner)}
         renderSectionHeader={({ section }) =>
-          section.installation ? (
-            <View style={styles.groupHeader}>
-              <Text style={styles.groupName}>{section.installation.accountLogin}</Text>
+          section.owner ? (
+            <View
+              style={styles.groupHeader}
+              testID={`${testIDPrefix}-group-${section.owner.toLowerCase()}`}
+            >
+              <Text accessibilityRole="header" style={styles.groupName}>
+                {section.owner}
+              </Text>
               <Text style={styles.groupMeta}>
-                {section.installation.status === 'active'
-                  ? `${section.installation.repositoryCount} REPOS`
-                  : section.installation.status.toUpperCase()}
+                {section.installation && section.installation.status !== 'active'
+                  ? section.installation.status.toUpperCase()
+                  : `${section.data.length} ${section.data.length === 1 ? 'REPO' : 'REPOS'}`}
               </Text>
             </View>
           ) : null
@@ -278,6 +300,10 @@ export const RepoPicker = memo(function RepoPicker({
             accessibilityRole="button"
             disabled={busy}
             onPress={() => {
+              if (onStartCreateRepository) {
+                onStartCreateRepository();
+                return;
+              }
               setCreating((value) => !value);
               setCreateInstallationId(
                 (current) => current ?? activeInstallations[0]!.installationId,
@@ -286,9 +312,9 @@ export const RepoPicker = memo(function RepoPicker({
             style={styles.actionRow}
             testID={`${testIDPrefix}-create-repo`}
           >
-            <Text style={styles.actionText}>＋ Create a new repo</Text>
+            <Text style={styles.actionText}>＋ Create repository</Text>
           </TouchableOpacity>
-          {creating && (
+          {creating && !onStartCreateRepository && (
             <View style={styles.createForm}>
               <View style={styles.accountChoices}>
                 {activeInstallations.map((installation) => (
@@ -388,6 +414,19 @@ const styles = StyleSheet.create((theme) => {
     },
     container: { flexShrink: 1, minHeight: 0 },
     containerFill: { flex: 1 },
+    noRepositoryRow: {
+      minHeight: 54,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.border,
+    },
+    noRepositoryLabel: {
+      ...Typography.default(),
+      ...groknight.type.body,
+      color: groknight.textPrimary,
+      flex: 1,
+    },
     candidateScroll: {
       // Height-bounded so a 100+ repo account scrolls instead of rendering past
       // the fold; six 42px rows, see REPO_CANDIDATE_LIST_MAX_HEIGHT.
@@ -407,13 +446,19 @@ const styles = StyleSheet.create((theme) => {
     candidateScrollFill: { flex: 1, flexShrink: 1, minHeight: 0 },
     groupHeader: {
       flexDirection: 'row',
+      alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 8,
-      paddingTop: 12,
-      paddingBottom: 4,
+      gap: groknight.space.sm,
+      paddingTop: groknight.space.md,
+      paddingBottom: groknight.space.xs,
     },
-    groupName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
-    groupMeta: { ...Typography.mono(), color: groknight.textMuted, fontSize: 9 },
+    groupName: {
+      ...Typography.default('semiBold'),
+      ...groknight.type.sectionHead,
+      color: groknight.textMuted,
+      flex: 1,
+    },
+    groupMeta: { ...groknight.type.meta, color: groknight.textMuted },
     candidateRow: {
       flexDirection: 'row',
       alignItems: 'center',

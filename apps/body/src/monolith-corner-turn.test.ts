@@ -36,6 +36,7 @@ vi.mock('./corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -2304,6 +2305,7 @@ describe('thin monolith corner turn', () => {
   });
 
   it('starts in edit mode, streams to the corner, and carries the server-check merge gate', async () => {
+    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
     const worktree = join(root, 'worktree');
@@ -2344,6 +2346,7 @@ describe('thin monolith corner turn', () => {
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     let conversationReads = 0;
     let inboxReads = 0;
+    let institutionalReads = 0;
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getAgentConfiguration') {
         return {
@@ -2468,6 +2471,17 @@ describe('thin monolith corner turn', () => {
             revisionHash: 'a'.repeat(64),
           },
         };
+      if (name === 'getInstitutionalContext') {
+        institutionalReads += 1;
+        const text = `Corner institutional snapshot ${institutionalReads}`;
+        return {
+          snapshotRevision: institutionalReads,
+          text,
+          itemIds: [`corner-memory-${institutionalReads}`],
+          totalBytes: Buffer.byteLength(text),
+          omitted: {},
+        };
+      }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
     });
@@ -2540,6 +2554,7 @@ describe('thin monolith corner turn', () => {
     await scheduler.dispose();
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
+    expect(institutionalReads).toBe(2);
     expect(sessionPrompt).toHaveBeenCalledTimes(3);
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
@@ -2548,6 +2563,8 @@ describe('thin monolith corner turn', () => {
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
     expect(firstPrompt).toContain('Corner transcript:');
+    expect(firstPrompt).toContain('Corner institutional snapshot 1');
+    expect(secondPrompt).toContain('Corner institutional snapshot 2');
     expect(firstPrompt).toContain('[message id: corner-row-1]\nBeeline [message]: corner row 1');
     expect(firstPrompt).toContain('corner row 1');
     expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest trigger:');

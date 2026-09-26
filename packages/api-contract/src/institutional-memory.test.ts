@@ -41,6 +41,26 @@ describe('institutional memory proposal contract', () => {
     ).toMatchObject({ memoryKind: 'human_profile_fact', subjectIdentityId: 'human-1' });
   });
 
+  it('accepts a stated working preference without misclassifying it as a correction', () => {
+    expect(
+      parseInstitutionalMemoryProposal({
+        ...workspaceFact,
+        candidateType: 'preference_candidate',
+        memoryKind: 'human_profile_fact',
+        subjectIdentityId: 'human-1',
+        audience: 'human_profile',
+        classification: {
+          stillTrueForAnotherRequester: false,
+          rationale: 'This is how this requester likes progress updates formatted.',
+        },
+      }),
+    ).toMatchObject({
+      candidateType: 'preference_candidate',
+      memoryKind: 'human_profile_fact',
+      subjectIdentityId: 'human-1',
+    });
+  });
+
   it('rejects widened audiences, agent-like third scopes, unknown fields, and oversized UTF-8', () => {
     expect(() =>
       parseInstitutionalMemoryProposal({

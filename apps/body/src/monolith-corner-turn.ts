@@ -48,6 +48,7 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
+import { institutionalContextForTurn } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
   codegraphMcpServer,
@@ -1319,19 +1320,27 @@ export class MonolithCornerTurnLoop {
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
               await this.syncBranch();
-              const [conversation, roster, restored, activeReviewerInstruction] =
-                await trace.measure('context-fetch', () =>
-                  Promise.all([
-                    api.execute('getRoomConversation', {
-                      roomId: cornerId,
-                      limit: 200,
-                      narrationRequestId: requestId,
-                    }),
-                    this.roster(),
-                    api.execute('getCornerRestoreState', { cornerId }),
-                    this.activeReviewerInstruction(),
-                  ]),
-                );
+              const [
+                conversation,
+                roster,
+                restored,
+                activeReviewerInstruction,
+                institutionalContext,
+              ] = await trace.measure('context-fetch', () =>
+                Promise.all([
+                  api.execute('getRoomConversation', {
+                    roomId: cornerId,
+                    limit: 200,
+                    narrationRequestId: requestId,
+                  }),
+                  this.roster(),
+                  api.execute('getCornerRestoreState', { cornerId }),
+                  this.activeReviewerInstruction(),
+                  institutionalContextForTurn(api, cornerId, (message) =>
+                    console.warn(`[thin-core] corner ${cornerId}: ${message}`),
+                  ),
+                ]),
+              );
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
                 (file) => ({
                   url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
@@ -1399,6 +1408,7 @@ export class MonolithCornerTurnLoop {
                     'New in the corner since your last turn (the earlier transcript is already in this session):',
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  institutionalContext.text,
                   activeReviewerInstruction,
                   [
                     ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),

@@ -1909,6 +1909,19 @@ describe('monolith integration', () => {
       { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
       HUMAN,
     );
+    const memoryItemId = '95000000-0000-4000-8000-000000000001';
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+          audience_kind,confidence,version,created_by_command_id)
+       VALUES($1,$2,'workspace_fact','message.delete-proof','Delete this source.',$3,$4,
+          'workspace',0.9,1,'integration-delete-command')`,
+      [memoryItemId, WORKSPACE, ROOM, authorMessageId],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_item_sources(item_id,message_id) VALUES($1,$2)`,
+      [memoryItemId, authorMessageId],
+    );
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
 
     const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
@@ -1920,6 +1933,14 @@ describe('monolith integration', () => {
     expect(
       (await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks,
     ).toContainEqual(expect.objectContaining({ messageId: authorMessageId, available: false }));
+    expect(
+      (
+        await database.query<{ state: string; body: string; deleted_at: Date | null }>(
+          `SELECT state,body,deleted_at FROM institutional_memory_items WHERE id=$1`,
+          [memoryItemId],
+        )
+      ).rows[0],
+    ).toMatchObject({ state: 'archived', body: '' });
 
     const managerMessageId = 'e'.repeat(64);
     await phone.execute(

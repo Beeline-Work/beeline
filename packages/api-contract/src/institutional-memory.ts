@@ -1,10 +1,4 @@
-/**
- * Institutional-memory shadow extraction contract.
- *
- * Phase 0 deliberately stops at a structured proposal. A host model may
- * classify a sourced lesson, but the server stores it as shadow evidence and
- * never turns it into prompt text or authority.
- */
+/** Institutional-memory extraction, storage, and bounded prompt contract. */
 export const INSTITUTIONAL_MEMORY_PROPOSAL_VERSION = 1 as const;
 export const INSTITUTIONAL_MEMORY_BODY_MAX_BYTES = 4_000;
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
@@ -14,8 +8,12 @@ export const INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH = 120;
 export const INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 8_000;
+export const INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES = 2_500;
+export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
+export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
 
-export type InstitutionalMemoryCandidateType = 'correction_candidate' | 'fact_candidate';
+export type InstitutionalMemoryCandidateType =
+  'correction_candidate' | 'fact_candidate' | 'preference_candidate';
 export type InstitutionalMemoryKind = 'workspace_fact' | 'human_profile_fact';
 export type InstitutionalMemoryAudience = 'workspace' | 'human_profile';
 export type InstitutionalMemoryItemState = 'active' | 'stale' | 'archived';
@@ -43,7 +41,7 @@ export interface InstitutionalMemoryJobLedgerEntry {
   readonly error?: string;
 }
 
-/** Server-owned item shape reserved in Phase 0; shadow extraction never writes one. */
+/** Server-owned sourced item. Processing agent ids are attribution, never scope. */
 export interface InstitutionalMemoryItem {
   readonly id: string;
   readonly workspaceId: string;
@@ -59,7 +57,9 @@ export interface InstitutionalMemoryItem {
   readonly confidence: number;
   readonly version: number;
   readonly supersedesItemId?: string;
-  readonly createdByJobId: string;
+  readonly createdByJobId?: string;
+  readonly createdByCommandId?: string;
+  readonly deletedAt?: number;
 }
 
 /** One immutable measurement row. Shadow rows must have served=false and zero bytes. */
@@ -154,7 +154,12 @@ export interface InstitutionalMemoryShadowJob {
   readonly sourceMessageId: string;
   readonly requesterIdentityId: string;
   readonly directMessage: boolean;
+  readonly mode: 'shadow' | 'live';
   readonly messages: readonly InstitutionalMemoryShadowMessage[];
+  readonly existingItems: readonly Pick<
+    InstitutionalMemoryItem,
+    'id' | 'kind' | 'subjectIdentityId' | 'canonicalKey' | 'body' | 'version'
+  >[];
 }
 
 export type ClaimInstitutionalMemoryJobResult =
@@ -176,6 +181,34 @@ export interface FailInstitutionalMemoryJobInput {
   readonly leaseToken: string;
   readonly error: string;
   readonly retryable: boolean;
+}
+
+export interface InstitutionalContextSnapshot {
+  readonly snapshotRevision: number;
+  /** Empty means memory was unavailable or nothing was relevant. */
+  readonly text: string;
+  readonly itemIds: readonly string[];
+  readonly totalBytes: number;
+  readonly omitted: Readonly<Record<string, number>>;
+}
+
+export interface ProposeInstitutionalMemoryInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly memoryKind: InstitutionalMemoryKind;
+  readonly canonicalKey: string;
+  readonly body: string;
+  readonly sourceMessageIds: readonly string[];
+  readonly correction: boolean;
+  readonly confidence: number;
+  readonly cas: InstitutionalMemoryProposalCas;
+}
+
+export interface ProposeInstitutionalMemoryResult {
+  readonly itemId: string;
+  readonly version: number;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -231,7 +264,8 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
   }
   if (
     proposal.candidateType !== 'correction_candidate' &&
-    proposal.candidateType !== 'fact_candidate'
+    proposal.candidateType !== 'fact_candidate' &&
+    proposal.candidateType !== 'preference_candidate'
   ) {
     throw new Error('institutional memory candidate type is invalid');
   }
@@ -304,6 +338,9 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
   }
   if (proposal.candidateType === 'fact_candidate' && !workspaceFact) {
     throw new Error('institutional memory fact candidates must be workspace facts');
+  }
+  if (proposal.candidateType === 'preference_candidate' && workspaceFact) {
+    throw new Error('institutional memory preference candidates must be human profile facts');
   }
   const subjectIdentityId =
     proposal.subjectIdentityId === undefined

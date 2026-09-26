@@ -28,6 +28,15 @@ describe('direct message helper surface', () => {
       'approve_merge',
     );
   });
+
+  it('advertises the memory proposal tool only when live memory is enabled', () => {
+    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain(
+      'propose_memory_item',
+    );
+    expect(
+      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
+    ).toContain('propose_memory_item');
+  });
 });
 
 describe('corner lifecycle tool surfaces', () => {

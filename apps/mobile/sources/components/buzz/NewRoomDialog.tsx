@@ -1,54 +1,24 @@
-import React from 'react';
-import { ScrollView, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Keyboard, Platform, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
-import {
-  HULL_DIALOG_LAYOUT,
-  HullDialog,
-  HullDialogInput,
-  hullDialogMinimumHeight,
-} from './HullDialog';
+import { HullDialogInput } from './HullDialog';
+import { HullActionSheetModal, HULL_SHEET_INSET } from './HullActionSheet';
 import { RepoPicker } from './RepoPicker';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-
-const DIALOG_VIEWPORT_GUTTER = 48;
-const PICKER_DIALOG_HEIGHT = 520;
-const NEW_ROOM_FORM_LAYOUT = {
-  contentPaddingTop: 16,
-  controlsGap: 8,
-  fieldLabelLineHeight: 15,
-  hintLineHeight: 19,
-  repoRowHeight: 44,
-  repoRowMarginTop: 10,
-  visibilityRowHeight: 44,
-} as const;
-const NEW_ROOM_FORM_CONTENT_HEIGHT =
-  NEW_ROOM_FORM_LAYOUT.contentPaddingTop +
-  NEW_ROOM_FORM_LAYOUT.fieldLabelLineHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  HULL_DIALOG_LAYOUT.inputMarginTop +
-  HULL_DIALOG_LAYOUT.inputMinHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.hintLineHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.repoRowMarginTop +
-  NEW_ROOM_FORM_LAYOUT.repoRowHeight +
-  NEW_ROOM_FORM_LAYOUT.controlsGap +
-  NEW_ROOM_FORM_LAYOUT.visibilityRowHeight;
-const FORM_DIALOG_MIN_HEIGHT = hullDialogMinimumHeight(NEW_ROOM_FORM_CONTENT_HEIGHT, true);
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 type Props = {
   visible: boolean;
-  workspaceName: string;
   roomName: string;
   setRoomName: (name: string) => void;
   inviteOnly: boolean;
   setInviteOnly: (value: boolean) => void;
   creatingRoom: boolean;
+  creatingRepository?: boolean;
   createRoom: () => void;
   onClose: () => void;
   pendingRepo: RepoCandidate | null;
@@ -59,22 +29,22 @@ type Props = {
   repoCandidates: RepoCandidate[];
   repoInstallations: GitHubInstallationAccess[];
   repoPickerError: string | null;
-  /** Progress line for the GitHub install session that shares the picker's state. */
   repoPickerNotice?: string | null;
-  /** Connect a NEW GitHub account/organization (the App's install page). */
   handleAddGitHubAccount?: () => void;
-  /** Adjust an existing installation's repository selection on GitHub. */
   handleManageGitHubInstallation?: (installation: GitHubInstallationAccess) => void;
+  handleCreateRepository?: (installationId: number, name: string) => Promise<void>;
 };
+
+const validRepositoryName = (name: string) => /^[A-Za-z0-9._-]{1,100}$/.test(name);
 
 export function NewRoomDialog({
   visible,
-  workspaceName,
   roomName,
   setRoomName,
   inviteOnly,
   setInviteOnly,
   creatingRoom,
+  creatingRepository = false,
   createRoom,
   onClose,
   pendingRepo,
@@ -88,104 +58,171 @@ export function NewRoomDialog({
   repoPickerNotice,
   handleAddGitHubAccount,
   handleManageGitHubInstallation,
+  handleCreateRepository,
 }: Props) {
   const { theme } = useUnistyles();
-  const { height } = useWindowDimensions();
-  const availableDialogHeight = Math.max(0, height - DIALOG_VIEWPORT_GUTTER);
-  const dialogMinHeight = Math.min(
-    showRepoPicker ? PICKER_DIALOG_HEIGHT : FORM_DIALOG_MIN_HEIGHT,
-    availableDialogHeight,
-  );
-  const roomControls = (
-    <View style={styles.roomControls}>
-      <Text style={styles.fieldLabel}>Room name</Text>
-      <HullDialogInput
-        accessibilityLabel={`${ROOM_LABEL} name`}
-        autoFocus
-        editable={!creatingRoom}
-        onChangeText={setRoomName}
-        onSubmitEditing={() => void createRoom()}
-        placeholder="#room-name"
-        testID="create-room-name"
-        value={roomName}
-      />
-      {!validRoomSlug(roomName) && (
-        <Text testID="create-room-name-hint" style={styles.hint}>
-          {ROOM_SLUG_HINT}
-        </Text>
-      )}
-      <TouchableOpacity
-        accessibilityRole="button"
-        disabled={creatingRoom}
-        onPress={() => void handleToggleRepoPicker()}
-        style={styles.repoRow}
-        testID="create-room-repo-row"
-      >
-        <Text style={styles.repoRowLabel}>REPO</Text>
-        <Text numberOfLines={1} style={styles.repoRowValue}>
-          {showRepoPicker
-            ? 'Choose a repository'
-            : pendingRepo
-              ? `▢ ${pendingRepo.name}`
-              : 'No repository (chat only)'}
-        </Text>
-        <ChevronGlyph
-          color={styles.repoRowChevron.color}
-          direction={showRepoPicker ? 'down' : 'right'}
-          size={CHEVRON_ROW_SIZE}
-        />
-      </TouchableOpacity>
-      <View style={styles.visibilityRow}>
-        <Text style={styles.visibilityLabel}>Invite-only</Text>
-        <Switch
-          accessibilityLabel="Invite-only Room"
-          disabled={creatingRoom}
-          onValueChange={setInviteOnly}
-          testID="create-room-invite-only"
-          thumbColor={theme.buzz.textPrimary}
-          trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-          value={inviteOnly}
-        />
-      </View>
-    </View>
-  );
+  const [creatingRepoStep, setCreatingRepoStep] = useState(false);
+  const [repositoryName, setRepositoryName] = useState('');
+  const [installationId, setInstallationId] = useState<number | null>(null);
+  const [choosingAccount, setChoosingAccount] = useState(false);
+  const activeInstallations = repoInstallations.filter((item) => item.status === 'active');
+  const selectedInstallation =
+    activeInstallations.find((item) => item.installationId === installationId) ??
+    activeInstallations[0];
+
+  useEffect(() => {
+    if (visible && showRepoPicker) return;
+    setCreatingRepoStep(false);
+    setRepositoryName('');
+    setChoosingAccount(false);
+  }, [visible, showRepoPicker]);
+
+  const closeStep = () => {
+    if (creatingRoom || creatingRepository) return;
+    if (creatingRepoStep) {
+      setCreatingRepoStep(false);
+      return;
+    }
+    if (showRepoPicker) {
+      handleToggleRepoPicker();
+      return;
+    }
+    onClose();
+  };
+
+  const createRepository = async () => {
+    if (!selectedInstallation || !validRepositoryName(repositoryName) || !handleCreateRepository)
+      return;
+    try {
+      await handleCreateRepository(selectedInstallation.installationId, repositoryName);
+      setCreatingRepoStep(false);
+      setRepositoryName('');
+    } catch {
+      // The parent keeps the creation error visible in this step.
+    }
+  };
+
+  const step = creatingRepoStep ? 'create' : showRepoPicker ? 'picker' : 'form';
+  const title =
+    step === 'create'
+      ? 'Create repository'
+      : step === 'picker'
+        ? 'Repository'
+        : `New ${ROOM_LABEL}`;
+  const submitDisabled =
+    step === 'create'
+      ? !selectedInstallation || !validRepositoryName(repositoryName) || creatingRepository
+      : !validRoomSlug(roomName) || creatingRoom || creatingRepository;
+
   return (
-    <HullDialog
-      actions={[
-        { label: 'Cancel', onPress: onClose, variant: 'quiet' },
-        {
-          label: creatingRoom ? 'Creating' : 'Create',
-          onPress: () => void createRoom(),
-          disabled: !validRoomSlug(roomName) || creatingRoom,
-          busy: creatingRoom,
-          variant: 'primary',
-          testID: 'create-room-submit',
-        },
-      ]}
-      body={`In ${workspaceName}. Repository optional.`}
-      contentLayout="fill"
-      onRequestClose={onClose}
-      surfaceStyle={{ minHeight: dialogMinHeight, maxHeight: availableDialogHeight }}
+    <HullActionSheetModal
+      dismissOnBackdrop={!creatingRoom && !creatingRepository}
+      onClose={closeStep}
+      scrollBody={step !== 'picker'}
+      navigation={
+        step === 'create' ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={creatingRepository}
+            onPress={() => setCreatingRepoStep(false)}
+            style={styles.backRow}
+            testID="create-repository-back"
+          >
+            <ChevronGlyph color={styles.chevron.color} direction="left" size={CHEVRON_ROW_SIZE} />
+            <Text style={styles.backText}>Repository</Text>
+          </TouchableOpacity>
+        ) : undefined
+      }
       testID="new-room-dialog"
-      title={`New ${ROOM_LABEL}`}
+      title={title}
       visible={visible}
-    >
-      <ScrollView
-        contentContainerStyle={styles.formScrollContent}
-        style={styles.formScroll}
-        testID="create-room-content"
-      >
-        {roomControls}
-        {showRepoPicker && (
-          <View style={styles.picker} testID="create-room-picker">
+      footer={
+        <View style={styles.actions}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={creatingRoom || creatingRepository}
+            onPress={closeStep}
+            style={styles.cancelAction}
+            testID="create-room-cancel"
+          >
+            <Text style={styles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+          {step !== 'picker' && (
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={handleSelectNoRepository}
-              style={styles.noRepoRow}
-              testID="create-room-no-repository"
+              accessibilityState={{
+                busy: creatingRoom || creatingRepository,
+                disabled: submitDisabled,
+              }}
+              disabled={submitDisabled}
+              onPress={() => (step === 'create' ? void createRepository() : void createRoom())}
+              style={[styles.primaryAction, submitDisabled && styles.disabledAction]}
+              testID={step === 'create' ? 'create-repository-submit' : 'create-room-submit'}
             >
-              <Text style={styles.noRepoRowText}>No repository (chat only)</Text>
+              <Text style={styles.primaryActionText}>
+                {step === 'create'
+                  ? creatingRepository
+                    ? 'Creating…'
+                    : 'Create'
+                  : creatingRoom
+                    ? 'Creating…'
+                    : 'Create Room'}
+              </Text>
             </TouchableOpacity>
+          )}
+        </View>
+      }
+    >
+      {step === 'form' && (
+        <View style={styles.form} testID="create-room-content">
+          <View style={styles.roomNameField}>
+            <Text style={styles.fieldLabel}>Name</Text>
+            <HullDialogInput
+              accessibilityLabel={`${ROOM_LABEL} name`}
+              editable={!creatingRoom}
+              onChangeText={setRoomName}
+              onSubmitEditing={() => void createRoom()}
+              placeholder="room-name"
+              testID="create-room-name"
+              value={roomName}
+            />
+            {roomName.length > 0 && !validRoomSlug(roomName) && (
+              <Text testID="create-room-name-hint" style={styles.hint}>
+                {ROOM_SLUG_HINT}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={creatingRoom}
+            onPress={handleToggleRepoPicker}
+            style={styles.row}
+            testID="create-room-repo-row"
+          >
+            <Text style={styles.rowLabel}>Repository</Text>
+            <Text numberOfLines={1} style={styles.rowValue}>
+              {pendingRepo?.name ?? 'None'}
+            </Text>
+            <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
+          </TouchableOpacity>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Public</Text>
+            <Switch
+              accessibilityLabel="Public Room"
+              disabled={creatingRoom}
+              onValueChange={(value) => setInviteOnly(!value)}
+              testID="create-room-public"
+              thumbColor={theme.buzz.bgBase}
+              {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
+              trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+              value={!inviteOnly}
+            />
+          </View>
+        </View>
+      )}
+      {step === 'picker' && (
+        <View style={styles.picker} testID="create-room-picker">
+          <View style={styles.pickerContent}>
             <RepoPicker
               candidates={repoCandidates}
               currentKey={pendingRepo?.key ?? null}
@@ -194,72 +231,154 @@ export function NewRoomDialog({
               notice={repoPickerNotice}
               onAddAccount={handleAddGitHubAccount}
               onManageInstallation={handleManageGitHubInstallation}
+              onCreateRepository={handleCreateRepository}
+              onStartCreateRepository={() => {
+                Keyboard.dismiss();
+                setInstallationId(activeInstallations[0]?.installationId ?? null);
+                setCreatingRepoStep(true);
+              }}
               onSelect={handleSelectRepoCandidate}
+              onSelectNoRepository={handleSelectNoRepository}
+              noRepositoryInset={HULL_SHEET_INSET}
               testIDPrefix="create-room-repo-picker"
             />
           </View>
-        )}
-      </ScrollView>
-    </HullDialog>
+        </View>
+      )}
+      {step === 'create' && (
+        <View style={styles.createForm} testID="create-repository-content">
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => setChoosingAccount((current) => !current)}
+            style={styles.row}
+            testID="create-repository-account"
+          >
+            <Text style={styles.rowLabel}>GitHub account</Text>
+            <Text numberOfLines={1} style={styles.rowValue}>
+              {selectedInstallation?.accountLogin ?? 'None'}
+            </Text>
+            <ChevronGlyph
+              color={styles.chevron.color}
+              direction={choosingAccount ? 'down' : 'right'}
+              size={CHEVRON_ROW_SIZE}
+            />
+          </TouchableOpacity>
+          {choosingAccount &&
+            activeInstallations.map((installation) => (
+              <TouchableOpacity
+                accessibilityRole="button"
+                key={installation.installationId}
+                onPress={() => {
+                  setInstallationId(installation.installationId);
+                  setChoosingAccount(false);
+                }}
+                style={styles.row}
+                testID={`create-repository-account-${installation.installationId}`}
+              >
+                <Text style={styles.rowLabel}>{installation.accountLogin}</Text>
+                {selectedInstallation?.installationId === installation.installationId && (
+                  <Text style={styles.selectedMark}>✓</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          <View style={styles.nameField}>
+            <Text style={styles.fieldLabel}>Repository name</Text>
+            <HullDialogInput
+              accessibilityLabel="Repository name"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!creatingRepository}
+              onChangeText={setRepositoryName}
+              placeholder="repository-name"
+              testID="create-repository-name"
+              value={repositoryName}
+            />
+          </View>
+          {!!repoPickerError && (
+            <Text accessibilityRole="alert" style={styles.error} testID="create-repository-error">
+              {repoPickerError}
+            </Text>
+          )}
+        </View>
+      )}
+    </HullActionSheetModal>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    formScroll: { flex: 1, flexShrink: 1, minHeight: 0 },
-    formScrollContent: {
-      minHeight: NEW_ROOM_FORM_CONTENT_HEIGHT,
-      paddingTop: NEW_ROOM_FORM_LAYOUT.contentPaddingTop,
-    },
-    roomControls: { gap: NEW_ROOM_FORM_LAYOUT.controlsGap },
-    repoRow: {
-      marginTop: NEW_ROOM_FORM_LAYOUT.repoRowMarginTop,
-      // A fixed height: on some devices a minimum height collapses until first tap.
-      height: NEW_ROOM_FORM_LAYOUT.repoRowHeight,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    repoRowLabel: { ...hull.type.sectionHead, color: hull.textMuted },
-    repoRowValue: {
-      ...hull.type.meta,
-      flex: 1,
-      minWidth: 0,
-      textAlign: 'right',
-      color: hull.textSecondary,
-    },
-    repoRowChevron: { color: hull.chrome },
-    visibilityRow: {
-      minHeight: NEW_ROOM_FORM_LAYOUT.visibilityRowHeight,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    visibilityLabel: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    noRepoRow: {
-      minHeight: 44,
-      justifyContent: 'center',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    noRepoRowText: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textSecondary,
-    },
+    form: { paddingTop: 4 },
+    roomNameField: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: 16 },
     fieldLabel: {
       ...Typography.default(),
-      ...hull.type.sectionHead,
-      lineHeight: NEW_ROOM_FORM_LAYOUT.fieldLabelLineHeight,
-      color: hull.textPrimary,
+      ...hull.type.meta,
+      color: hull.textMuted,
     },
     hint: {
       ...Typography.default(),
       ...hull.type.meta,
-      lineHeight: NEW_ROOM_FORM_LAYOUT.hintLineHeight,
       color: hull.textMuted,
+      marginTop: 6,
     },
-    picker: { marginTop: 8 },
+    row: {
+      minHeight: 54,
+      paddingHorizontal: HULL_SHEET_INSET,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    rowLabel: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flex: 1 },
+    rowValue: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      maxWidth: '50%',
+      flexShrink: 1,
+    },
+    chevron: { color: hull.chrome },
+    selectedMark: { ...hull.type.body, color: hull.accent },
+    backRow: {
+      minHeight: 32,
+      paddingHorizontal: HULL_SHEET_INSET,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    backText: { ...Typography.default(), ...hull.type.meta, color: hull.chrome },
+    picker: { paddingBottom: 8 },
+    pickerContent: { paddingHorizontal: HULL_SHEET_INSET, flexShrink: 1 },
+    createForm: { paddingBottom: 12 },
+    nameField: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: 16 },
+    error: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.dialogDanger,
+      marginHorizontal: HULL_SHEET_INSET,
+      marginTop: 12,
+    },
+    actions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
+    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.chrome },
+    primaryAction: {
+      minHeight: 44,
+      minWidth: 118,
+      paddingHorizontal: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: hull.radius,
+      backgroundColor: hull.accent,
+    },
+    disabledAction: { opacity: 0.42 },
+    primaryActionText: { ...Typography.default('semiBold'), color: hull.textInverted },
   };
 });

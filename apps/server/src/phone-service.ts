@@ -88,6 +88,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
   notifyConnectorHelper,
@@ -3627,6 +3628,7 @@ export class PhoneService {
         [input.messageId, input.roomId, viewerId],
       );
       if (!deleted.rowCount) throw new Error('message is not available for deletion');
+      await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
     });
   }
 

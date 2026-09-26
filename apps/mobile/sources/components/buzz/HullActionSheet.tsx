@@ -21,8 +21,12 @@ type HullActionSheetProps = {
   children: React.ReactNode;
   /** Pinned under the title: cannot scroll away with the sheet body. */
   sticky?: React.ReactNode;
+  /** Navigation shown between the grip and title. */
+  navigation?: React.ReactNode;
   /** Pinned under the body (Cancel). Stays on-screen while the body scrolls. */
   footer?: React.ReactNode;
+  /** A virtualized child list owns scrolling for this sheet body. */
+  scrollBody?: boolean;
   grip?: boolean;
   style?: StyleProp<ViewStyle>;
   subtitle?: string;
@@ -61,7 +65,9 @@ function useVisualKeyboardHeight(): number {
 export function HullActionSheet({
   children,
   footer,
+  scrollBody = true,
   grip = true,
+  navigation,
   sticky,
   style,
   subtitle,
@@ -85,18 +91,23 @@ export function HullActionSheet({
           Math.max(keyboardHeight, 0),
       )
     : undefined;
-  const body = pinChrome ? (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      nestedScrollEnabled
-      style={[styles.bodyScroll, bodyMaxHeight != null && { maxHeight: bodyMaxHeight }]}
-      testID={testID ? `${testID}-body` : undefined}
-    >
-      {children}
-    </ScrollView>
-  ) : (
-    children
-  );
+  const body =
+    pinChrome && scrollBody ? (
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        style={[styles.bodyScroll, bodyMaxHeight != null && { maxHeight: bodyMaxHeight }]}
+        testID={testID ? `${testID}-body` : undefined}
+      >
+        {children}
+      </ScrollView>
+    ) : pinChrome ? (
+      <View style={[styles.bodyScroll, bodyMaxHeight != null && { maxHeight: bodyMaxHeight }]}>
+        {children}
+      </View>
+    ) : (
+      children
+    );
   return (
     <HullFloatingSurface style={[styles.sheet, style]} testID={testID}>
       {grip ? (
@@ -108,6 +119,7 @@ export function HullActionSheet({
           <View style={styles.grip} />
         </View>
       ) : null}
+      {navigation}
       {title ? (
         <Text accessibilityRole="header" style={styles.title}>
           {title}
@@ -277,8 +289,10 @@ type HullActionSheetModalProps = {
   dismissOnBackdrop?: boolean;
   /** Pinned under the title. */
   sticky?: React.ReactNode;
+  navigation?: React.ReactNode;
   /** Pinned under the scrolling body. */
   footer?: React.ReactNode;
+  scrollBody?: boolean;
   modalTestID?: string;
   onClose: () => void;
   scrimTestID?: string;
@@ -294,7 +308,9 @@ export function HullActionSheetModal({
   contentStyle,
   dismissOnBackdrop,
   footer,
+  scrollBody,
   modalTestID,
+  navigation,
   onClose,
   scrimTestID,
   sticky,
@@ -318,7 +334,9 @@ export function HullActionSheetModal({
     >
       <HullActionSheet
         footer={footer}
+        scrollBody={scrollBody}
         grip={!isDesktop}
+        navigation={navigation}
         sticky={sticky}
         style={{ paddingBottom: Math.max(insets.bottom, 10) }}
         subtitle={subtitle}

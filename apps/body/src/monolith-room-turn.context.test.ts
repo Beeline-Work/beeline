@@ -13,6 +13,7 @@ import { WARM_TRANSCRIPT_OVERLAP } from './warm-transcript.js';
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -34,6 +35,7 @@ const CONVERSATION = Array.from({ length: 200 }, (_, index) => ({
 
 describe('monolith Room turn context', () => {
   it('prompts from the newest page and sends only what is new to a warm session', async () => {
+    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-context-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -73,6 +75,7 @@ describe('monolith Room turn context', () => {
         : message,
     );
     let inboxReads = 0;
+    let institutionalReads = 0;
     const ask = (id: string, body: string) => ({
       id,
       authorId: HUMAN,
@@ -138,6 +141,18 @@ describe('monolith Room turn context', () => {
             },
           ],
         };
+      if (name === 'getInstitutionalContext') {
+        institutionalReads += 1;
+        if (institutionalReads === 2) throw new Error('memory database unavailable');
+        const text = `Institutional memory snapshot ${institutionalReads}`;
+        return {
+          snapshotRevision: institutionalReads,
+          text,
+          itemIds: [`memory-${institutionalReads}`],
+          totalBytes: Buffer.byteLength(text),
+          omitted: {},
+        };
+      }
       if (name === 'getRoomConversation') {
         conversationReads.push(input);
         return { items: conversation, cursor: 'row-250' };
@@ -203,6 +218,10 @@ describe('monolith Room turn context', () => {
     expect(prompts[1]).toContain(`Repository checkout: origin/main at commit ${'a'.repeat(40)}`);
     expect(prompts[2]).toContain(`Repository checkout: origin/main at commit ${'b'.repeat(40)}`);
     expect(sessionCount).toBe(2);
+    expect(institutionalReads).toBe(3);
+    expect(prompts[0]).toContain('Institutional memory snapshot 1');
+    expect(prompts[1]).not.toContain('Institutional memory snapshot');
+    expect(prompts[2]).toContain('Institutional memory snapshot 3');
 
     expect(systemPrompts[0]).toContain(
       'Ask one focused question only when an unresolved choice materially changes behavior',

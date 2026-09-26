@@ -31,10 +31,21 @@ describe('the first Room starter prompts', () => {
     ).toEqual({ kind: 'add-room-agent' });
   });
 
-  it('offers the pairing command to someone who cannot add an existing agent', () => {
+  it('offers pairing when the Workspace has no agent, regardless of Room management permission', () => {
     expect(
-      roomStarterPrompts({ canAddRoomMembers: false, workspaceAgentCount: 3 })[0]!.action,
-    ).toEqual({ kind: 'connect-agent' });
+      roomStarterPrompts({ canAddRoomMembers: false, workspaceAgentCount: 0 }).map(
+        (prompt) => prompt.testID,
+      ),
+    ).toEqual(['starter-connect-agent', 'starter-invite']);
+  });
+
+  it('offers no agent starter when the viewer cannot add existing agents', () => {
+    for (const workspaceAgentCount of [3, null])
+      expect(
+        roomStarterPrompts({ canAddRoomMembers: false, workspaceAgentCount }).map(
+          (prompt) => prompt.testID,
+        ),
+      ).toEqual(['starter-invite']);
   });
 
   it('tags the Room agent once there is one, and drops the agent-getting starter', () => {

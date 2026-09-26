@@ -39,23 +39,29 @@ export function roomStarterPrompts(input: {
   readonly canAddRoomMembers: boolean;
 }): readonly RoomStarterPrompt[] {
   const handle = input.roomAgent?.handle;
-  if (!handle)
-    return [
-      input.workspaceAgentCount !== 0 && input.canAddRoomMembers
-        ? {
-            lead: 'Add an agent',
-            detail: 'to this Room',
-            testID: 'starter-add-agent',
-            action: { kind: 'add-room-agent' },
-          }
-        : {
-            lead: 'Connect an agent',
-            detail: 'so this Room has someone to ask',
-            testID: 'starter-connect-agent',
-            action: { kind: 'connect-agent' },
-          },
-      INVITE_PROMPT,
-    ];
+  if (!handle) {
+    if (input.workspaceAgentCount === 0)
+      return [
+        {
+          lead: 'Connect an agent',
+          detail: 'so this Room has someone to ask',
+          testID: 'starter-connect-agent',
+          action: { kind: 'connect-agent' },
+        },
+        INVITE_PROMPT,
+      ];
+    if (input.canAddRoomMembers)
+      return [
+        {
+          lead: 'Add an agent',
+          detail: 'to this Room',
+          testID: 'starter-add-agent',
+          action: { kind: 'add-room-agent' },
+        },
+        INVITE_PROMPT,
+      ];
+    return [INVITE_PROMPT];
+  }
   const mention: ComposerMention = { handle, pubkey: input.roomAgent!.pubkey };
   return [
     {

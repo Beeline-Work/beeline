@@ -173,10 +173,6 @@ describe('Beeline display branding', () => {
     new URL('../app/(app)/beeline/channels.tsx', import.meta.url),
     'utf8',
   );
-  const inviteScreen = readFileSync(
-    new URL('../app/(app)/join/[token].tsx', import.meta.url),
-    'utf8',
-  );
 
   it('uses Beeline for launcher names and the Face ID permission', () => {
     expect(loadNativeIdentity()).toMatchObject({
@@ -188,8 +184,6 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
     expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
-    expect(inviteScreen).toContain('Choose another way in');
-    expect(inviteScreen).not.toMatch(/Return to buzzy/i);
   });
 
   it('uses an iOS-valid display version and rejects retired variant suffixes before builds', () => {

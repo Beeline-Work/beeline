@@ -236,8 +236,38 @@ export type RegistryInstallResult =
       steps: readonly ConnectorStep[];
       authorizationUrl: string;
       attemptId: string;
+      attemptExpiresAt: number;
     }
   | { status: 'error'; steps: readonly ConnectorStep[]; errorMessage: string };
+
+/** Matches the server attempt interval, for a peer that does not name its clock. */
+const OAUTH_ATTEMPT_FALLBACK_MS = 10 * 60_000;
+
+function attemptExpiry(value: unknown): number {
+  return typeof value === 'number' ? value : Date.now() + OAUTH_ATTEMPT_FALLBACK_MS;
+}
+
+/**
+ * One provider fetch whose redirects are followed BY HAND: undici's automatic
+ * following would replay the code-exchange body onto whatever host the
+ * Location names, including this machine's loopback, which the own-machine
+ * refusal exists to stop. Every hop is re-checked before it is taken.
+ */
+async function guardedFetch(
+  url: string,
+  init: RequestInit,
+  guard: (target: string) => Promise<string>,
+  transport: typeof fetch,
+): Promise<Response> {
+  let current = url;
+  for (let hop = 0; ; hop += 1) {
+    if (hop > 3) throw new Error('too many redirects');
+    const response = await transport(current, { ...init, redirect: 'manual' });
+    const location = response.headers.get('location');
+    if (!(response.status >= 300 && response.status < 400) || !location) return response;
+    current = await guard(new URL(location, current).toString());
+  }
+}
 
 export async function installRegistryMcp(input: {
   api: RegistryApi;
@@ -264,6 +294,7 @@ export async function installRegistryMcp(input: {
   const pinnedName = serverName;
   const pinnedVersion = version;
   const remoteIsOwnMachine = await ownMachine(new URL(remoteUrl).hostname, resolveHost);
+  const guard = (target: string) => assertNotOwnMachine(target, remoteIsOwnMachine, resolveHost);
   const path = registryMcpStatePath(assignment.connectorId, input.home);
   const stored = readState(path);
   if (
@@ -293,23 +324,29 @@ export async function installRegistryMcp(input: {
         steps: steps('connect'),
         authorizationUrl: stored.authorizationUrl,
         attemptId: stored.attemptId,
+        attemptExpiresAt: attemptExpiry(claimed.expiresAt),
       };
     }
     try {
-      const response = await transport(stored.tokenEndpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code: claimed.code,
-          redirect_uri: stored.redirectUri,
-          client_id: stored.clientId,
-          code_verifier: stored.verifier,
-          resource: stored.resourceIndicator,
-          ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
-        }),
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await guardedFetch(
+        stored.tokenEndpoint,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: claimed.code,
+            redirect_uri: stored.redirectUri,
+            client_id: stored.clientId,
+            code_verifier: stored.verifier,
+            resource: stored.resourceIndicator,
+            ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
+          }),
+          signal: AbortSignal.timeout(20_000),
+        },
+        guard,
+        transport,
+      );
       if (!response.ok) throw new Error('token exchange refused');
       const token = await jsonResponse(response);
       if (typeof token.access_token !== 'string') throw new Error('access token missing');
@@ -340,24 +377,29 @@ export async function installRegistryMcp(input: {
 
   async function discover(): Promise<RegistryInstallResult> {
     try {
-      const initialize = await transport(remoteUrl, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-          params: {
-            protocolVersion: '2025-03-26',
-            capabilities: {},
-            clientInfo: { name: 'Beeline', version: '1' },
+      const initialize = await guardedFetch(
+        remoteUrl,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
           },
-        }),
-        signal: AbortSignal.timeout(20_000),
-      });
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-03-26',
+              capabilities: {},
+              clientInfo: { name: 'Beeline', version: '1' },
+            },
+          }),
+          signal: AbortSignal.timeout(20_000),
+        },
+        guard,
+        transport,
+      );
       if (initialize.ok) {
         writeState(path, {
           status: 'connected',
@@ -374,9 +416,12 @@ export async function installRegistryMcp(input: {
       );
       if (!resourceMetadataUrl) throw new Error('protected-resource metadata is missing');
       await assertNotOwnMachine(resourceMetadataUrl, remoteIsOwnMachine, resolveHost);
-      const resourceResponse = await transport(resourceMetadataUrl, {
-        signal: AbortSignal.timeout(10_000),
-      });
+      const resourceResponse = await guardedFetch(
+        resourceMetadataUrl,
+        { signal: AbortSignal.timeout(10_000) },
+        guard,
+        transport,
+      );
       if (!resourceResponse.ok) throw new Error('protected-resource metadata is unavailable');
       const resource = await jsonResponse(resourceResponse);
       const authorizationServer = Array.isArray(resource.authorization_servers)
@@ -386,7 +431,12 @@ export async function installRegistryMcp(input: {
       await assertNotOwnMachine(authorizationServer, remoteIsOwnMachine, resolveHost);
       let metadataResponse: Response | undefined;
       for (const metadataUrl of authorizationServerMetadataUrls(authorizationServer)) {
-        const candidate = await transport(metadataUrl, { signal: AbortSignal.timeout(10_000) });
+        const candidate = await guardedFetch(
+          metadataUrl,
+          { signal: AbortSignal.timeout(10_000) },
+          guard,
+          transport,
+        );
         if (candidate.ok) {
           metadataResponse = candidate;
           break;
@@ -412,18 +462,23 @@ export async function installRegistryMcp(input: {
       });
       if (typeof rendezvous.state !== 'string' || typeof rendezvous.redirectUri !== 'string')
         throw new Error('OAuth callback is unavailable');
-      const registration = await transport(registrationEndpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          client_name: 'Beeline',
-          redirect_uris: [rendezvous.redirectUri],
-          grant_types: ['authorization_code', 'refresh_token'],
-          response_types: ['code'],
-          token_endpoint_auth_method: 'none',
-        }),
-        signal: AbortSignal.timeout(20_000),
-      });
+      const registration = await guardedFetch(
+        registrationEndpoint,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'Beeline',
+            redirect_uris: [rendezvous.redirectUri],
+            grant_types: ['authorization_code', 'refresh_token'],
+            response_types: ['code'],
+            token_endpoint_auth_method: 'none',
+          }),
+          signal: AbortSignal.timeout(20_000),
+        },
+        guard,
+        transport,
+      );
       if (!registration.ok) throw new Error('dynamic client registration was refused');
       const client = await jsonResponse(registration);
       if (typeof client.client_id !== 'string')
@@ -469,6 +524,7 @@ export async function installRegistryMcp(input: {
         steps: steps('connect'),
         authorizationUrl: authorizationUrl.toString(),
         attemptId,
+        attemptExpiresAt: attemptExpiry(rendezvous.expiresAt),
       };
     } catch (error) {
       const message =
@@ -554,18 +610,24 @@ export function registryMcpHostBindPaths(
 async function refresh(state: ConnectedState, transport: typeof fetch): Promise<ConnectedState> {
   if (!state.refreshToken || !state.tokenEndpoint || !state.clientId) return state;
   if (!state.expiresAt || state.expiresAt > Date.now() + 60_000) return state;
-  const response = await transport(state.tokenEndpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: state.refreshToken,
-      client_id: state.clientId,
-      ...(state.resourceIndicator ? { resource: state.resourceIndicator } : {}),
-      ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
-    }),
-    signal: AbortSignal.timeout(20_000),
-  });
+  const remoteIsOwnMachine = await ownMachine(new URL(state.remoteUrl).hostname);
+  const response = await guardedFetch(
+    state.tokenEndpoint,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: state.refreshToken,
+        client_id: state.clientId,
+        ...(state.resourceIndicator ? { resource: state.resourceIndicator } : {}),
+        ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
+      }),
+      signal: AbortSignal.timeout(20_000),
+    },
+    (target) => assertNotOwnMachine(target, remoteIsOwnMachine, resolveHostAddresses),
+    transport,
+  );
   if (!response.ok) throw new Error('refresh refused');
   const token = await jsonResponse(response);
   if (typeof token.access_token !== 'string') throw new Error('refresh returned no access token');
@@ -602,7 +664,13 @@ class RegistryMcpRefusal extends Error {
   }
 }
 
-type BrokerRequest = { connectorId: string; line: string; turn?: RegistryMcpTurnContext };
+type BrokerRequest = {
+  connectorId: string;
+  line: string;
+  turn?: RegistryMcpTurnContext;
+  /** One bridge process == one harness MCP connection == one provider session. */
+  connectionId: string;
+};
 
 function readTurnContext(value: unknown): RegistryMcpTurnContext | undefined {
   const turn = value as Partial<RegistryMcpTurnContext> | undefined;
@@ -642,6 +710,8 @@ function brokerSocketPath(home = homedir()): string {
 export class RegistryMcpHostBroker {
   readonly socketPath: string;
   private server?: Server;
+  /** Sessions are PER CONNECTION: two Rooms initialized against the same
+   * connector each hold their own provider session id. */
   private readonly sessions = new Map<string, string>();
 
   constructor(
@@ -657,6 +727,7 @@ export class RegistryMcpHostBroker {
     connectorId: string,
     line: string,
     turn: RegistryMcpTurnContext | undefined,
+    connectionId: string,
   ): Promise<string[]> {
     if (line.length > 1024 * 1024) throw new Error('Registry MCP request is too large');
     const path = registryMcpStatePath(connectorId, this.home);
@@ -671,7 +742,8 @@ export class RegistryMcpHostBroker {
     }
     // An `initialize` opens a NEW provider session, so a cached id is never
     // sent on it.
-    const cached = method === 'initialize' ? undefined : this.sessions.get(connectorId);
+    const sessionKey = `${connectionId}|${connectorId}`;
+    const cached = method === 'initialize' ? undefined : this.sessions.get(sessionKey);
     const response = await this.transport(state.remoteUrl, {
       method: 'POST',
       headers: {
@@ -688,11 +760,11 @@ export class RegistryMcpHostBroker {
       // 401/429/5xx is the provider refusing ONE call, and dropping the id
       // there would leave every later call session-less for the rest of the
       // harness session, which nothing re-initializes.
-      if (response.status === 404) this.sessions.delete(connectorId);
+      if (response.status === 404) this.sessions.delete(sessionKey);
       throw new Error('remote refused call');
     }
     const session = response.headers.get('mcp-session-id');
-    if (session) this.sessions.set(connectorId, session);
+    if (session) this.sessions.set(sessionKey, session);
     if (response.status === 202 || response.status === 204) return [];
     const body = await response.text();
     if (response.headers.get('content-type')?.includes('text/event-stream'))
@@ -734,9 +806,18 @@ export class RegistryMcpHostBroker {
         void (async () => {
           try {
             const request = JSON.parse(buffer) as BrokerRequest;
-            if (typeof request.connectorId !== 'string' || typeof request.line !== 'string')
+            if (
+              typeof request.connectorId !== 'string' ||
+              typeof request.line !== 'string' ||
+              typeof request.connectionId !== 'string'
+            )
               throw new Error('invalid broker request');
-            const messages = await this.request(request.connectorId, request.line, request.turn);
+            const messages = await this.request(
+              request.connectorId,
+              request.line,
+              request.turn,
+              request.connectionId,
+            );
             socket.end(`${JSON.stringify({ messages })}\n`);
           } catch (error) {
             socket.end(
@@ -808,6 +889,7 @@ export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void
   const turnContextPath = env.BEELINE_TURN_CONTEXT_FILE;
   if (!socketPath || !connectorId || !turnContextPath)
     throw new Error('Registry MCP broker is unavailable');
+  const connectionId = randomBytes(12).toString('base64url');
   let pending = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
   lines.on('line', (line) => {
@@ -828,6 +910,7 @@ export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void
         for (const message of await brokerRequest(socketPath, {
           connectorId,
           line,
+          connectionId,
           ...(turn ? { turn } : {}),
         }))
           process.stdout.write(`${message}\n`);

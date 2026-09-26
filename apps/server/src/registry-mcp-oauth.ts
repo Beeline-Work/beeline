@@ -22,7 +22,7 @@ export class RegistryMcpOAuth {
   async begin(
     connectorId: string,
     helperAgentId: string,
-  ): Promise<{ state: string; redirectUri: string }> {
+  ): Promise<{ state: string; redirectUri: string; expiresAt: number }> {
     const connector = await this.database.query(
       `SELECT 1 FROM workspace_connectors
        WHERE id=$1::uuid AND helper_agent_id=$2 AND connector_type='registry-mcp'
@@ -31,17 +31,24 @@ export class RegistryMcpOAuth {
     );
     if (!connector.rowCount) throw new Error('connector not found for this helper');
     const state = `${randomUUID()}${randomUUID()}`;
-    await this.database.transaction(async (database) => {
+    const inserted = await this.database.transaction(async (database) => {
       await database.query(`DELETE FROM registry_mcp_oauth_attempts WHERE connector_id=$1`, [
         connectorId,
       ]);
-      await database.query(
-        `INSERT INTO registry_mcp_oauth_attempts(state,connector_id,expires_at)
-         VALUES($1,$2,now()+interval '10 minutes')`,
-        [state, connectorId],
-      );
+      return (
+        await database.query<{ expires_at: Date }>(
+          `INSERT INTO registry_mcp_oauth_attempts(state,connector_id,expires_at)
+           VALUES($1,$2,now()+interval '10 minutes')
+           RETURNING expires_at`,
+          [state, connectorId],
+        )
+      ).rows[0];
     });
-    return { state, redirectUri: this.redirectUri };
+    return {
+      state,
+      redirectUri: this.redirectUri,
+      expiresAt: attemptExpiry(inserted?.expires_at),
+    };
   }
 
   async complete(state: string, code: string): Promise<boolean> {
@@ -86,7 +93,11 @@ export class RegistryMcpOAuth {
     connectorId: string,
     state: string,
     helperAgentId: string,
-  ): Promise<{ status: 'pending' } | { status: 'expired' } | { status: 'ready'; code: string }> {
+  ): Promise<
+    | { status: 'pending'; expiresAt: number }
+    | { status: 'expired' }
+    | { status: 'ready'; code: string }
+  > {
     const row = (
       await this.database.query<{ code: string }>(
         `DELETE FROM registry_mcp_oauth_attempts attempt
@@ -100,11 +111,17 @@ export class RegistryMcpOAuth {
       )
     ).rows[0];
     if (row) return { status: 'ready', code: row.code };
-    const live = await this.database.query(
-      `SELECT 1 FROM registry_mcp_oauth_attempts
+    const live = await this.database.query<{ expires_at: Date }>(
+      `SELECT expires_at FROM registry_mcp_oauth_attempts
        WHERE state=$1 AND connector_id=$2::uuid AND expires_at>now()`,
       [state, connectorId],
     );
-    return live.rowCount ? { status: 'pending' } : { status: 'expired' };
+    if (!live.rowCount) return { status: 'expired' };
+    return { status: 'pending', expiresAt: attemptExpiry(live.rows[0]!.expires_at) };
   }
+}
+
+/** The server's attempt clock is the one ceiling; the helper reads it, not its own. */
+function attemptExpiry(expiresAt: Date | undefined): number {
+  return expiresAt ? expiresAt.getTime() : Date.now() + 10 * 60_000;
 }

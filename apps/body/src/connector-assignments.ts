@@ -136,10 +136,13 @@ export class ConnectorAssignmentLoop {
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
   private readonly composioWatches = new Map<string, unknown>();
-  /** When each registry sign-in attempt started, so one can time out. */
+  /** When each registry sign-in attempt's SERVER clock ends, so one can time
+   * out. Keyed by connector AND pairing generation: a re-pair re-arms the row
+   * to a new generation, and a ceremony latched to the old one must never
+   * swallow it. */
   private readonly registryCeremonies = new Map<
     string,
-    { attemptId: string; startedAt: number; expired?: boolean }
+    { attemptId: string; endsAt: number; expired?: boolean }
   >();
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
@@ -378,6 +381,10 @@ export class ConnectorAssignmentLoop {
       await this.runRevoke(assignment.connectorId, assignment.reference);
   }
 
+  private ceremonyKey(assignment: Extract<ConnectorAssignment, { kind: 'install' }>): string {
+    return `${assignment.connectorId}:${assignment.pairingGeneration ?? 1}`;
+  }
+
   private async runRegistryMcpInstall(
     assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
   ): Promise<void> {
@@ -385,6 +392,7 @@ export class ConnectorAssignmentLoop {
       assignment.pairingGeneration !== undefined
         ? { pairingGeneration: assignment.pairingGeneration }
         : {};
+    const ceremonyKey = this.ceremonyKey(assignment);
     const result = await this.installRegistry({
       api: this.api as never,
       agentId: this.agentId,
@@ -398,7 +406,7 @@ export class ConnectorAssignmentLoop {
     };
     if (result.status === 'connected') {
       stopWatch();
-      this.registryCeremonies.delete(assignment.connectorId);
+      this.registryCeremonies.delete(ceremonyKey);
       await this.api.execute('installConnector', {
         agentId: this.agentId,
         connectorId: assignment.connectorId,
@@ -407,23 +415,22 @@ export class ConnectorAssignmentLoop {
       return;
     }
     if (result.status === 'installing') {
-      const ceremony = this.registryCeremonies.get(assignment.connectorId);
+      const ceremony = this.registryCeremonies.get(ceremonyKey);
       if (!ceremony || ceremony.attemptId !== result.attemptId) {
-        this.registryCeremonies.set(assignment.connectorId, {
+        this.registryCeremonies.set(ceremonyKey, {
           attemptId: result.attemptId,
-          startedAt: Date.now(),
+          endsAt: result.attemptExpiresAt,
         });
       } else if (ceremony.expired) {
         // Already ended and already said why. A fresh attempt (a re-pair
         // mints a new authorization page) starts its own window above.
         return;
-      } else if (Date.now() - ceremony.startedAt >= CONNECT_TIMEOUT_MS) {
-        // A sign-in nobody completed: the row stays `installing`, so the
-        // server re-issues this assignment forever and the 2s re-arm below
-        // would keep spending a claim round trip and a row UPDATE for the
-        // daemon's life. End the row and say why — Retry re-arms it.
+      } else if (Date.now() >= ceremony.endsAt) {
+        // The SERVER's attempt clock ran out, not a local guess at it: the
+        // helper's ceiling now agrees with the window the row's sign-in is
+        // actually valid for. End the row and say why — Retry re-arms it.
         stopWatch();
-        this.registryCeremonies.set(assignment.connectorId, { ...ceremony, expired: true });
+        this.registryCeremonies.set(ceremonyKey, { ...ceremony, expired: true });
         await this.api.execute('postConnectorStatus', {
           agentId: this.agentId,
           connectorId: assignment.connectorId,
@@ -437,7 +444,7 @@ export class ConnectorAssignmentLoop {
         return;
       }
     } else {
-      this.registryCeremonies.delete(assignment.connectorId);
+      this.registryCeremonies.delete(ceremonyKey);
     }
     await this.api.execute('postConnectorStatus', {
       agentId: this.agentId,

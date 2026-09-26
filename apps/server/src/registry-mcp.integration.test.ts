@@ -326,4 +326,88 @@ describe('Registry MCP connection orchestration', () => {
       /access[_ -]?token|refresh[_ -]?token|authorization code/i,
     );
   });
+
+  it('wakes an ended install turn once per sign-in attempt, never a live one', async () => {
+    const first = await daemon.execute('connectMcpServer', connectInput(), HELPER);
+    expect(first).toMatchObject({ status: 'connecting' });
+    const connectorId = (first as { connectorId: string }).connectorId;
+
+    // While the requesting turn still holds its command, the sign-in page
+    // writes nothing: the agent is mid-turn and reads needs_sign_in itself.
+    await daemon.execute(
+      'postConnectorStatus',
+      {
+        agentId: HELPER,
+        connectorId,
+        steps: [],
+        signIn: {
+          method: 'oauth',
+          url: 'https://mcp.linear.app/authorize?state=resume-one',
+          attemptId: 'resume-attempt-one',
+        },
+      },
+      HELPER,
+    );
+    expect(
+      await database.query(`SELECT 1 FROM messages WHERE author_id=$1`, [
+        connectorIdentityId('registry-mcp'),
+      ]),
+    ).toHaveProperty('rowCount', 0);
+
+    // The turn ends; the helper's watch re-posts the same attempt and the
+    // install Room gets ONE resume-kind line, deduplicated across repeats.
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [COMMAND]);
+    const report = {
+      agentId: HELPER,
+      connectorId,
+      steps: [],
+      signIn: {
+        method: 'oauth' as const,
+        url: 'https://mcp.linear.app/authorize?state=resume-one',
+        attemptId: 'resume-attempt-one',
+      },
+    };
+    await daemon.execute('postConnectorStatus', report, HELPER);
+    await daemon.execute('postConnectorStatus', report, HELPER);
+    const lines = await database.query<{
+      text: string;
+      room_id: string;
+      event_url: string | null;
+    }>(
+      `SELECT text,room_id,system_event->'object'->>'url' event_url
+       FROM messages WHERE author_id=$1`,
+      [connectorIdentityId('registry-mcp')],
+    );
+    expect(lines.rows).toHaveLength(1);
+    expect(lines.rows[0]).toMatchObject({ room_id: ROOM });
+    expect(lines.rows[0]!.event_url).toBe('https://mcp.linear.app/authorize?state=resume-one');
+    const resume = await database.query(
+      `SELECT 1 FROM agent_commands
+       WHERE agent_id=$1 AND action='resume' AND parent_command_id=$2`,
+      [HELPER, COMMAND],
+    );
+    expect(resume).toHaveProperty('rowCount', 1);
+
+    // A NEW attempt is a fresh sign-in page: it resumes once again.
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [COMMAND]);
+    await daemon.execute(
+      'postConnectorStatus',
+      {
+        ...report,
+        signIn: {
+          method: 'oauth' as const,
+          url: 'https://mcp.linear.app/authorize?state=resume-two',
+          attemptId: 'resume-attempt-two',
+        },
+      },
+      HELPER,
+    );
+    expect(
+      (
+        await database.query(`SELECT 1 FROM agent_commands WHERE action='resume' AND parent_command_id=$1`, [
+          COMMAND,
+        ]),
+      ).rowCount,
+    ).toBe(2);
+  });
 });

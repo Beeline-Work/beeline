@@ -1752,7 +1752,11 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
     const row = (
-      await this.database.query<{ id: string }>(
+      await this.database.query<{
+        id: string;
+        connector_type: string;
+        registry_server_name: string | null;
+      }>(
         `UPDATE workspace_connectors
          SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
              status_error=COALESCE($3::text,status_error),
@@ -1765,7 +1769,7 @@ export class DaemonService {
            AND helper_agent_id=$8
            AND status='installing'
            AND pairing_generation=$9
-         RETURNING id`,
+         RETURNING id,connector_type,registry_server_name`,
         [
           input.connectorId,
           JSON.stringify(input.steps),
@@ -1781,7 +1785,71 @@ export class DaemonService {
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
     if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
+    if (row.connector_type === 'registry-mcp' && input.signIn?.url && input.signIn.attemptId)
+      await this.resumeRegistrySignIn(row, input.signIn);
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Registry sign-in page the helper just published is ONE fact: the first
+   * needs_sign_in per attempt posts a resume-kind line into the install Room,
+   * whose command resume wakes the turn that called connect_mcp_server — but
+   * only once that turn has ENDED. A still-claimed install command means the
+   * agent is mid-turn and will read the needs_sign_in result itself, so
+   * writing the line would complete its command out from under it. The
+   * helper's 2s watch re-posts the same attempt after the turn ends, and that
+   * later report is the one that resumes. The same attempt never resumes
+   * twice — the line id is derived from the attempt, so repeat reports
+   * collide and write nothing.
+   */
+  private async resumeRegistrySignIn(
+    row: { id: string; registry_server_name: string | null },
+    signIn: NonNullable<Input<'postConnectorStatus'>['signIn']>,
+  ): Promise<void> {
+    if (signIn.method !== 'oauth') return;
+    const target = (
+      await this.database.query<{
+        install_room_id: string;
+        install_agent_id: string;
+        install_command_id: string;
+        command_state: string | null;
+      }>(
+        `SELECT c.install_room_id,c.install_agent_id,c.install_command_id,command.state command_state
+         FROM workspace_connectors c
+         LEFT JOIN agent_commands command ON command.id=c.install_command_id
+         WHERE c.id=$1::uuid AND c.install_room_id IS NOT NULL
+           AND c.install_agent_id IS NOT NULL AND c.install_command_id IS NOT NULL`,
+        [row.id],
+      )
+    ).rows[0];
+    if (!target) return;
+    if (target.command_state === null ||
+        target.command_state === 'pending' ||
+        target.command_state === 'claimed' ||
+        target.command_state === 'cancelled')
+      return;
+    await ensureConnectorIdentity(this.database, 'registry-mcp');
+    const wrote = await systemLine(this.database, {
+      id: createHash('sha256')
+        .update(`registry-mcp-signin-resume:${row.id}:${signIn.attemptId}`)
+        .digest('hex'),
+      roomId: target.install_room_id,
+      authorId: connectorIdentityId('registry-mcp'),
+      subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+      verb: 'needs',
+      object: { text: 'provider sign-in', url: signIn.url },
+      consequence: 'the provider sign-in page is ready · connect this tool through Trusty Squire',
+      kind: 'connector-offer-decided',
+      commandId: target.install_command_id,
+      wakes: [target.install_agent_id],
+    });
+    if (wrote.inserted)
+      this.live.publish({
+        type: 'invalidate',
+        roomId: target.install_room_id,
+        reason: 'connector-ready',
+        agentId: target.install_agent_id,
+      });
   }
 
   /**

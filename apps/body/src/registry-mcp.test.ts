@@ -248,7 +248,7 @@ describe('Registry MCP OAuth installer', () => {
         return allowed;
       },
     );
-    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).resolves.toEqual([
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).resolves.toEqual([
       JSON.stringify({ jsonrpc: '2.0', id: 7, result: { tools: [] } }),
     ]);
     expect(asked).toEqual([
@@ -259,7 +259,7 @@ describe('Registry MCP OAuth installer', () => {
     // A third-party requester with no standing grant is held for the owner.
     allowed = false;
     providerCalls = 0;
-    await expect(broker.request(CONNECTOR, TOOLS_CALL, TURN)).rejects.toThrow(
+    await expect(broker.request(CONNECTOR, TOOLS_CALL, TURN, 'connection-one')).rejects.toThrow(
       REGISTRY_MCP_APPROVAL_REFUSAL,
     );
     expect(asked.at(-1)).toEqual({
@@ -273,11 +273,20 @@ describe('Registry MCP OAuth installer', () => {
     await broker.start();
     try {
       await expect(
-        socketCall(broker.socketPath, { connectorId: CONNECTOR, line: TOOLS_CALL }),
+        socketCall(broker.socketPath, {
+          connectorId: CONNECTOR,
+          line: TOOLS_CALL,
+          connectionId: 'connection-one',
+        }),
       ).resolves.toEqual({ error: REGISTRY_MCP_APPROVAL_REFUSAL });
       expect(providerCalls).toBe(0);
       await expect(
-        socketCall(broker.socketPath, { connectorId: CONNECTOR, line: TOOLS_LIST, turn: TURN }),
+        socketCall(broker.socketPath, {
+          connectorId: CONNECTOR,
+          line: TOOLS_LIST,
+          turn: TURN,
+          connectionId: 'connection-one',
+        }),
       ).resolves.toEqual({
         messages: [JSON.stringify({ jsonrpc: '2.0', id: 7, result: { tools: [] } })],
       });
@@ -381,20 +390,78 @@ describe('Registry MCP OAuth installer', () => {
       async () => true,
     );
     const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
-    await broker.request(CONNECTOR, initialize, TURN);
-    await broker.request(CONNECTOR, TOOLS_LIST, TURN);
+    await broker.request(CONNECTOR, initialize, TURN, 'connection-one');
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one');
     expect(sent).toEqual([null, 'session-one']);
 
     live = 'session-two';
-    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow(
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).rejects.toThrow(
       'remote refused call',
     );
     // The next call re-establishes rather than re-offering the dead id.
-    await broker.request(CONNECTOR, TOOLS_LIST, TURN);
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one');
     expect(sent).toEqual([null, 'session-one', 'session-one', null]);
     // A fresh `initialize` never carries the session it is replacing.
-    await broker.request(CONNECTOR, initialize, TURN);
+    await broker.request(CONNECTOR, initialize, TURN, 'connection-one');
     expect(sent.at(-1)).toBeNull();
+  });
+
+  it('keeps one provider session per bridge connection, not per connector', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
+    homes.push(home);
+    mkdirSync(join(home, '.beeline', 'registry-mcp'), { recursive: true });
+    writeFileSync(
+      registryMcpStatePath(CONNECTOR, home),
+      JSON.stringify({
+        status: 'connected',
+        connectorId: CONNECTOR,
+        serverName: 'app.linear/linear',
+        version: '1.0.1',
+        remoteUrl: 'https://mcp.linear.app/mcp',
+        accessToken: 'linear-access-secret',
+      }),
+    );
+    const offered: string[] = [];
+    const dead = new Set<string>();
+    let initializes = 0;
+    const broker = new RegistryMcpHostBroker(
+      home,
+      vi.fn(async (_input, init) => {
+        const session = new Headers(init?.headers).get('mcp-session-id');
+        offered.push(session ?? '');
+        if (session && dead.has(session)) return new Response('', { status: 404 });
+        if (session)
+          return Response.json(
+            { jsonrpc: '2.0', id: 1, result: {} },
+            { headers: { 'mcp-session-id': session } },
+          );
+        const fresh = ['session-a', 'session-b'][initializes++] ?? 'session-c';
+        return Response.json(
+          { jsonrpc: '2.0', id: 1, result: {} },
+          { headers: { 'mcp-session-id': fresh } },
+        );
+      }) as typeof fetch,
+      async () => true,
+    );
+    const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    // Two harness connections initialize against the same connector, and the
+    // remote hands each its own session id.
+    await broker.request(CONNECTOR, initialize, TURN, 'connection-one');
+    await broker.request(CONNECTOR, initialize, TURN, 'connection-two');
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one');
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-two');
+    expect(offered).toEqual(['', '', 'session-a', 'session-b']);
+
+    // A 404 on connection one drops ONLY that connection's session: the
+    // second connection keeps using its own.
+    dead.add('session-a');
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).rejects.toThrow(
+      'remote refused call',
+    );
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-two');
+    expect(offered.at(-1)).toBe('session-b');
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one');
+    expect(offered.at(-1)).toBe('');
   });
 
   it('sends the metadata resource indicator on authorization, exchange and refresh', async () => {
@@ -466,7 +533,7 @@ describe('Registry MCP OAuth installer', () => {
 
     // `expires_in: 0` makes the next broker call refresh before it forwards.
     const broker = new RegistryMcpHostBroker(home, transport, async () => true);
-    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow();
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).rejects.toThrow();
     expect(new URLSearchParams(bodies[1]!).get('resource')).toBe(canonical);
   });
 
@@ -557,15 +624,16 @@ describe('Registry MCP OAuth installer', () => {
       CONNECTOR,
       JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
       TURN,
+      'connection-one',
     );
     for (const status of [429, 502, 401]) {
       refuse = status;
-      await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow(
+      await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).rejects.toThrow(
         'remote refused call',
       );
     }
     refuse = 0;
-    await broker.request(CONNECTOR, TOOLS_LIST, TURN);
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one');
     // The session the remote issued survived every one-call refusal: only a
     // 404 (a terminated session) may drop it.
     expect(sent).toEqual([null, 'session-one', 'session-one', 'session-one', 'session-one']);
@@ -610,7 +678,7 @@ describe('Registry MCP OAuth installer', () => {
         return Response.json({});
       }) as typeof fetch,
     );
-    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow(
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN, 'connection-one')).rejects.toThrow(
       REGISTRY_MCP_APPROVAL_REFUSAL,
     );
     expect(providerCalls).toBe(0);
@@ -692,6 +760,47 @@ describe('Registry MCP OAuth installer', () => {
         run('http://127.0.0.1:9000/mcp', 'http://127.0.0.1:9000', ['127.0.0.1']),
       ).resolves.toMatchObject({ status: 'installing' });
     });
+
+    it('refuses a discovery redirect onto this machine', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
+      homes.push(home);
+      const remoteUrl = 'https://mcp.linear.app/mcp';
+      const metadataOrigin = 'https://login.evil.test';
+      const transport = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === remoteUrl)
+          return new Response('', {
+            status: 401,
+            headers: {
+              'www-authenticate': `Bearer resource_metadata="${metadataOrigin}/.well-known/oauth-protected-resource/mcp"`,
+            },
+          });
+        if (url.includes('oauth-protected-resource'))
+          return Response.json({ authorization_servers: [metadataOrigin] });
+        if (url === `${metadataOrigin}/.well-known/oauth-authorization-server`)
+          return new Response('', {
+            status: 302,
+            headers: { location: 'http://127.0.0.1:9/.well-known/oauth-authorization-server' },
+          });
+        throw new Error(`unexpected ${url}`);
+      }) as typeof fetch;
+      await expect(
+        installRegistryMcp({
+          api,
+          agentId: 'b'.repeat(64),
+          assignment: {
+            ...assignment,
+            registryManifest: {
+              ...assignment.registryManifest!,
+              remotes: [{ type: 'streamable-http', url: remoteUrl }],
+            },
+          },
+          home,
+          transport,
+          resolveHost: async () => ['93.184.216.34'],
+        }),
+      ).resolves.toMatchObject({ status: 'error', errorMessage: OWN_MACHINE_REFUSAL });
+    });
   });
 
   it('mints a fresh authorization request once its attempt has expired', async () => {
@@ -705,8 +814,10 @@ describe('Registry MCP OAuth installer', () => {
           return {
             state: states.shift() ?? 'exhausted',
             redirectUri: 'https://beeline.example/callback',
+            expiresAt: 5_000,
           };
-        if (name === 'claimRegistryMcpOAuthCode') return { status: claimStatus };
+        if (name === 'claimRegistryMcpOAuthCode')
+          return claimStatus === 'pending' ? { status: 'pending', expiresAt: 5_000 } : { status: claimStatus };
         throw new Error(`unexpected ${name}`);
       }),
     };
@@ -744,9 +855,15 @@ describe('Registry MCP OAuth installer', () => {
     const first = await installRegistryMcp(input);
     if (first.status !== 'installing') throw new Error('expected OAuth sign-in');
     expect(new URL(first.authorizationUrl).searchParams.get('state')).toBe('first-state');
+    // The helper's ceremony ceiling is the SERVER's attempt clock, verbatim.
+    expect(first.attemptExpiresAt).toBe(5_000);
 
     const waiting = await installRegistryMcp(input);
-    expect(waiting).toMatchObject({ status: 'installing', attemptId: first.attemptId });
+    expect(waiting).toMatchObject({
+      status: 'installing',
+      attemptId: first.attemptId,
+      attemptExpiresAt: 5_000,
+    });
 
     claimStatus = 'expired';
     const reissued = await installRegistryMcp(input);

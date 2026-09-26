@@ -103,7 +103,7 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     platform: 'android',
     runtimeVersion: '29',
     evidence:
-      'store binaries built on the android@29 pin (#1540, fa8b3b9e4) and uploaded to the Play track by successful unified release run 35802330273 (head c095ca34), the last Android native build before the runtime-30 notification-routing binary',
+      'store binaries built on the android@29 pin (#1540, fa8b3b9e4) and committed to the Play production track as versionCode 102 (release 0.2.20) by successful unified release run 35802330273 (v0.0.123, head c095ca34) — that upload is a step inside mobile_native_android, since this workflow has no separate store_android job — plus the sideload and beta APKs installed off that same pin',
   },
   {
     platform: 'ios',

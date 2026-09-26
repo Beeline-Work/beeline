@@ -41,8 +41,6 @@ describe('connector offers (R5)', () => {
       'This changes your Workbench. Once it is added, I can provision the 1inch API key into its vault — still no raw key in chat',
     );
     const google = connectorOfferConsequence('google-gmail');
-    expect(connectorOfferConsequence('composio', 'create issues', ['GITHUB_CREATE_AN_ISSUE']))
-      .toContain('approved tools: GITHUB_CREATE_AN_ISSUE');
     expect(google).toMatch(/^This changes your Workbench\./);
     expect(google).toContain('never see your password');
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');

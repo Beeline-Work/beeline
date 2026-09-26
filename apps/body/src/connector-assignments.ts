@@ -136,7 +136,7 @@ export class ConnectorAssignmentLoop {
   private readonly googleHomeDir: string;
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
-  private readonly composioWatches = new Map<string, unknown>();
+  private readonly signInWatches = new Map<string, unknown>();
   /** When each registry sign-in attempt's SERVER clock ends, so one can time
    * out. Keyed by connector AND pairing generation: a re-pair re-arms the row
    * to a new generation, and a ceremony latched to the old one must never
@@ -223,8 +223,8 @@ export class ConnectorAssignmentLoop {
       this.cancel(this.tailscaleWatch);
       this.tailscaleWatch = undefined;
     }
-    for (const watch of this.composioWatches.values()) this.cancel(watch);
-    this.composioWatches.clear();
+    for (const watch of this.signInWatches.values()) this.cancel(watch);
+    this.signInWatches.clear();
   }
 
   /**
@@ -363,8 +363,6 @@ export class ConnectorAssignmentLoop {
     if (assignment.kind === 'install') {
       if (assignment.connectorType === 'registry-mcp') {
         await this.runRegistryMcpInstall(assignment);
-      } else if (assignment.connectorType === 'composio') {
-        await this.runComposioInstall(assignment);
       } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
       } else {
@@ -401,9 +399,9 @@ export class ConnectorAssignmentLoop {
       home: this.registryHomeDir,
     });
     const stopWatch = () => {
-      const watch = this.composioWatches.get(assignment.connectorId);
+      const watch = this.signInWatches.get(assignment.connectorId);
       if (watch !== undefined) this.cancel(watch);
-      this.composioWatches.delete(assignment.connectorId);
+      this.signInWatches.delete(assignment.connectorId);
     };
     if (result.status === 'connected') {
       stopWatch();
@@ -462,64 +460,13 @@ export class ConnectorAssignmentLoop {
         : { signIn: null, errorMessage: result.errorMessage }),
       ...generation,
     });
-    if (result.status === 'installing' && !this.composioWatches.has(assignment.connectorId)) {
+    if (result.status === 'installing' && !this.signInWatches.has(assignment.connectorId)) {
       const watch = this.schedule(() => {
-        this.composioWatches.delete(assignment.connectorId);
+        this.signInWatches.delete(assignment.connectorId);
         if (!this.stopped) void this.runOnce();
       }, CONNECT_WATCH_INTERVAL_MS);
-      this.composioWatches.set(assignment.connectorId, watch);
+      this.signInWatches.set(assignment.connectorId, watch);
     }
-  }
-
-  private async runComposioInstall(
-    assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
-  ): Promise<void> {
-    const generation =
-      assignment.pairingGeneration !== undefined
-        ? { pairingGeneration: assignment.pairingGeneration }
-        : {};
-    try {
-      const link = await this.api.execute('getComposioLink', {
-        agentId: this.agentId,
-        connectorId: assignment.connectorId,
-        ...generation,
-      });
-      if (link.status === 'pending') {
-        await this.api.execute('postConnectorStatus', {
-          agentId: this.agentId,
-          connectorId: assignment.connectorId,
-          steps: [{ label: `Link ${link.toolkit}`, status: 'running' }],
-          signIn: { method: 'oauth', url: link.url },
-          ...generation,
-        });
-        if (!this.composioWatches.has(assignment.connectorId)) {
-          const watch = this.schedule(() => {
-            this.composioWatches.delete(assignment.connectorId);
-            if (!this.stopped) void this.runOnce();
-          }, CONNECT_WATCH_INTERVAL_MS);
-          this.composioWatches.set(assignment.connectorId, watch);
-        }
-        return;
-      }
-    } catch (error) {
-      const message = `Composio connection failed: ${describe(error)}`;
-      await this.api.execute('postConnectorStatus', {
-        agentId: this.agentId,
-        connectorId: assignment.connectorId,
-        steps: [{ label: 'Connect Composio', status: 'failed', reason: message }],
-        errorMessage: message,
-        ...generation,
-      });
-      return;
-    }
-    const watch = this.composioWatches.get(assignment.connectorId);
-    if (watch !== undefined) this.cancel(watch);
-    this.composioWatches.delete(assignment.connectorId);
-    await this.api.execute('installConnector', {
-      agentId: this.agentId,
-      connectorId: assignment.connectorId,
-      ...generation,
-    });
   }
 
   /** Install Tailscale and publish its browser login URL until the tailnet is connected. */

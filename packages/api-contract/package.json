@@ -4,11 +4,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./composio": {
-      "types": "./dist/composio.d.ts",
-      "import": "./dist/composio.js",
-      "default": "./dist/composio.js"
-    },
     "./phone": {
       "types": "./dist/phone.d.ts",
       "import": "./dist/phone.js",
@@ -48,6 +43,11 @@
       "types": "./dist/system-identity.d.ts",
       "import": "./dist/system-identity.js",
       "default": "./dist/system-identity.js"
+    },
+    "./app-connections": {
+      "types": "./dist/app-connections.d.ts",
+      "import": "./dist/app-connections.js",
+      "default": "./dist/app-connections.js"
     },
     "./workbench": {
       "types": "./dist/workbench.d.ts",

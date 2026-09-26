@@ -14,7 +14,10 @@
  * the helper PR.
  */
 import type { ConnectorStatus, ConnectorStep } from './daemon-operations.js';
+import type { AppConnectionStatus, AppRoute, AppTransport } from './app-connections.js';
 import type { WalletLedgerEntry } from './wallet.js';
+
+export * from './app-connections.js';
 
 export type { WalletLedgerEntry };
 
@@ -29,7 +32,6 @@ export const CONNECTOR_KINDS = [
   'google-calendar',
   'google-drive',
   'google-youtube',
-  'composio',
   'registry-mcp',
 ] as const;
 export type ConnectorKind = (typeof CONNECTOR_KINDS)[number];
@@ -49,7 +51,6 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'google-calendar',
   'google-drive',
   'google-youtube',
-  'composio',
 ];
 
 /**
@@ -93,8 +94,6 @@ export type WorkbenchConnectorView = {
   readonly helperAgentId: string;
   readonly connectedAt?: number;
   readonly createdAt: number;
-  /** The paired Composio row's fixed approved tool scope. */
-  readonly approvedTools?: readonly string[];
   /** Registry identity for a dynamically connected remote MCP server. */
   readonly registryServerName?: string;
   readonly registryVersion?: string;
@@ -148,8 +147,31 @@ export type WorkbenchCatalogEntry = {
   readonly connectorType: ConnectorKind;
   readonly name: string;
   readonly available: boolean;
-  /** The exact Composio tool slugs this server will allow when paired. */
-  readonly approvedTools?: readonly string[];
+};
+
+/**
+ * One connected app: ONE row whatever route serves it (`app-connections.ts`).
+ * The key it holds (a Squire route) is folded into this row, not listed again
+ * under Keys.
+ */
+export type WorkbenchAppView = {
+  readonly appId: string;
+  readonly appKey: string;
+  readonly name: string;
+  /** Brand domain for the row's mark; absent draws the lettermark. */
+  readonly domain?: string;
+  readonly transport: AppTransport;
+  /** The route the server chose most recently for this app. */
+  readonly route: AppRoute;
+  readonly status: AppConnectionStatus;
+  readonly errorMessage?: string;
+  /** The machine that serves it. */
+  readonly helperName?: string;
+  /** The vault key a Squire route holds, when one is bound. */
+  readonly connectionReference?: string;
+  readonly useCount: number;
+  readonly lastUsedAt?: number;
+  readonly createdAt: number;
 };
 
 /** One machine the viewer connected that can serve as a connector helper. */
@@ -168,6 +190,8 @@ export type WorkbenchView = {
   readonly connectors: readonly WorkbenchConnectorView[];
   /** The VIEWER's connections. Another member's connections are never visible. */
   readonly connections: readonly WorkbenchConnectionView[];
+  /** The VIEWER's apps (the one front door). Absent from an older server. */
+  readonly apps?: readonly WorkbenchAppView[];
   /** The viewer's own connected machines — the Workbench's helper candidates. */
   readonly helpers: readonly WorkbenchHelperView[];
   /** Present when the VIEWER has created their wallet (no helper involved).
@@ -195,6 +219,30 @@ export type PairConnectorInput = {
 export type PairConnectorResult = {
   readonly connectorId: string;
   readonly status: ConnectorStatus;
+};
+/**
+ * Workbench → Connect an app. The server resolves and records the route, then
+ * hands the sign-in or sign-up to the chosen machine's agent, which completes
+ * it through Trusty Squire.
+ */
+export type ConnectWorkbenchAppInput = {
+  readonly workspaceId: string;
+  /** The app's name or website. */
+  readonly app: string;
+  /** A machine id (or agent id) the viewer owns. */
+  readonly helperAgentId: string;
+  /** Re-resolve an app in error from the top of the route order. */
+  readonly reconnect?: boolean;
+};
+export type ConnectWorkbenchAppResult = {
+  readonly appId: string;
+  readonly status: AppConnectionStatus;
+  readonly transport: AppTransport;
+  readonly route?: AppRoute;
+};
+export type DisconnectWorkbenchAppInput = {
+  readonly workspaceId: string;
+  readonly appId: string;
 };
 export type UnpairConnectorInput = {
   readonly workspaceId: string;

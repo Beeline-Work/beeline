@@ -37,6 +37,7 @@ export type SystemLineMessage = {
     cornerId: string;
     name?: string;
     objective: string;
+    sourceMessageId?: string;
     outcome?: 'landed' | 'abandoned';
     pullRequest?: { number?: number; title?: string; url: string };
   };
@@ -301,6 +302,9 @@ function notificationLifecycleEvent(
   message: SystemLineMessage,
 ): NotificationLifecycleEvent | undefined {
   const fact = message.daemonFact;
+  // A corner opened from a message is that message's marker, never a
+  // lifecycle notification folded in with its neighbours.
+  if (fact?.sourceMessageId) return undefined;
   if (fact) {
     const prNumber = fact.pullRequest?.number ?? pullRequestNumber(fact.pullRequest?.url);
     const state =

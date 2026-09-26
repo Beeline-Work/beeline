@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -13,7 +14,7 @@ import {
   saveActiveCommunityId,
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
-import { navigateToRoom } from '@/buzz/corner-navigation';
+import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
@@ -21,6 +22,7 @@ import {
   useRoomPins,
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
+import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -175,6 +177,7 @@ export default function BuzzChannels() {
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -575,6 +578,25 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
+  const openingCornerRef = useRef(false);
+  const openNewCorner = useCallback(
+    async (roomId: string) => {
+      if (openingCornerRef.current) return;
+      openingCornerRef.current = true;
+      try {
+        await openRoomListCorner({
+          roomId,
+          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title) : null,
+          openCorner: (cornerId, title) =>
+            router.push(cornerHref(cornerId, roomId, title, 'room-list')),
+        });
+      } finally {
+        openingCornerRef.current = false;
+      }
+    },
+    [transport],
+  );
+
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {
       if (!workspaceId) return;
@@ -870,11 +892,12 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               activeCommunityId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: activeCommunityId },
                     } as never)
                 : undefined
@@ -1026,6 +1049,9 @@ export default function BuzzChannels() {
                     pinned={pinned.includes(item.room.id)}
                     onPin={() => void togglePin(item.room.id)}
                     onToggleCorners={openCorners}
+                    onLongPressCorners={
+                      viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                    }
                     testID={`room-${item.room.id}`}
                   />
                 </View>

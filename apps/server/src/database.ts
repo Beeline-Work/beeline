@@ -3,6 +3,7 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
+import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -122,7 +123,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 3;
+export const REQUIRED_SCHEMA_VERSION = 8;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -330,6 +331,24 @@ export class PostgresDatabase implements ClosableDatabase {
       }
     }
   }
+}
+
+/**
+ * `to_tsvector` output runs roughly 3x its input for distinct short tokens, and
+ * Postgres refuses a tsvector over 1,048,575 bytes, so an unbounded call fails
+ * the write itself. Nothing reads a vector for a non-`message` row either: the
+ * GIN index and the only query are both scoped to conversational rows.
+ */
+export const MESSAGE_SEARCH_DOCUMENT_MAX_BYTES = 256 * 1024;
+
+function messageSearchDocumentSql(prefix: string): string {
+  return `CASE
+    WHEN ${prefix}presentation='message'
+      AND octet_length(convert_to(coalesce(${prefix}text,''),'UTF8'))
+          <=${MESSAGE_SEARCH_DOCUMENT_MAX_BYTES}
+    THEN to_tsvector('simple',coalesce(${prefix}text,''))
+    ELSE ''::tsvector
+  END`;
 }
 
 const SCHEMA = `
@@ -613,11 +632,40 @@ CREATE TABLE IF NOT EXISTS message_bookmarks (
 );
 CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_idx
   ON message_bookmarks(workspace_id,identity_id,created_at DESC);
+-- The Needs-you tray's only stored facts, per person: when they first saw a
+-- cell (its 24-hour clock, shared by every device) and when they cleared it
+-- by tapping or dismissing. Which messages are cells is read live
+-- (needs-you.ts), never stored.
+CREATE TABLE IF NOT EXISTS needs_you_marks (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  cleared_at timestamptz,
+  PRIMARY KEY(identity_id,message_id)
+);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by text REFERENCES identities(id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
+-- A GENERATED ... STORED column rewrites every row of the busiest table under
+-- ACCESS EXCLUSIVE, so the release migration would stall the live fleet before
+-- the machine roll. An ordinary nullable column is metadata-only; the trigger
+-- maintains it from the moment the schema lands and
+-- backfillMessageSearchDocuments fills the history in bounded batches.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_document tsvector;
+CREATE OR REPLACE FUNCTION messages_search_document_refresh() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.search_document := ${messageSearchDocumentSql('NEW.')};
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS messages_search_document_trg ON messages;
+CREATE TRIGGER messages_search_document_trg
+  BEFORE INSERT OR UPDATE OF text ON messages
+  FOR EACH ROW EXECUTE FUNCTION messages_search_document_refresh();
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a
@@ -672,6 +720,14 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+-- How much work the turn did, as the harness's own stream counted it. A turn is
+-- the unit mid-close cohorts compare, so the count has to live where both the
+-- served and the unserved cohort can be read from — a serve ledger only ever
+-- holds the turns memory reached, which is exactly the biased half.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS tool_calls integer;
+ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_tool_calls_check;
+ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_tool_calls_check
+  CHECK (tool_calls IS NULL OR tool_calls >= 0);
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS started_at timestamptz;
 UPDATE agent_turns SET started_at=created_at WHERE started_at IS NULL;
 ALTER TABLE agent_turns ALTER COLUMN started_at SET DEFAULT now();
@@ -732,6 +788,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
+ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS context jsonb;
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
   ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
   WHERE status IN ('pending','retry','claimed');
@@ -753,7 +810,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
   version integer NOT NULL CHECK (version > 0),
   supersedes_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL,
-  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL,
   created_by_command_id text,
   repository text,
   target_commit text,
@@ -768,15 +825,28 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
     (deleted_at IS NOT NULL AND body='')
   ),
   CONSTRAINT institutional_memory_items_creator_check
-    CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL)),
+    CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL)),
   CHECK (
     (kind='workspace_fact' AND subject_identity_id IS NULL AND audience_kind='workspace') OR
     (kind='human_profile_fact' AND subject_identity_id IS NOT NULL AND audience_kind='human_profile')
   )
 );
 ALTER TABLE institutional_memory_items ALTER COLUMN created_by_job_id DROP NOT NULL;
+-- created_by_job_id is PROVENANCE, never ownership. RESTRICT aborts
+-- DELETE FROM workspaces (the jobs cascade fires before the items cascade), and
+-- CASCADE is worse: a curator job queued against one Room can create a
+-- consolidated Workspace fact whose own Room is a different one, so deleting
+-- the job's Room would silently destroy a fact that Room never held. The item's
+-- lifecycle belongs to its workspace, Room and source message; forgetting which
+-- job wrote it is the only thing a job delete may do.
+ALTER TABLE institutional_memory_items
+  DROP CONSTRAINT IF EXISTS institutional_memory_items_created_by_job_id_fkey;
+ALTER TABLE institutional_memory_items
+  ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
+  FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_body_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_body_check CHECK (
   (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
@@ -784,7 +854,7 @@ ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items
 );
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
-  CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL));
+  CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
@@ -804,6 +874,10 @@ CREATE TABLE IF NOT EXISTS institutional_context_serves (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  -- The agent whose turn this snapshot was fetched for. One message addressing
+  -- two agents runs two turns under ONE request id (C107), so (room, request)
+  -- alone cannot say whose prompt the real token count belongs to.
+  agent_id text REFERENCES identities(id) ON DELETE CASCADE,
   request_id text,
   requester_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
   snapshot_revision bigint NOT NULL DEFAULT 0 CHECK (snapshot_revision >= 0),
@@ -819,11 +893,27 @@ CREATE TABLE IF NOT EXISTS institutional_context_serves (
   total_bytes integer NOT NULL DEFAULT 0 CHECK (total_bytes BETWEEN 0 AND 8000),
   estimated_tokens integer NOT NULL DEFAULT 0 CHECK (estimated_tokens >= 0),
   actual_input_tokens integer CHECK (actual_input_tokens IS NULL OR actual_input_tokens >= 0),
+  -- The exact byte length of the prompt the harness actually answered. The p95
+  -- budget gate divides the harness's real token count through this figure to
+  -- attribute the institutional block's own share, so it is measured at the
+  -- send boundary rather than estimated here.
+  prompt_bytes integer CHECK (prompt_bytes IS NULL OR prompt_bytes > 0),
   candidate_count integer NOT NULL DEFAULT 0 CHECK (candidate_count >= 0),
   dropped_counts jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (mode<>'shadow' OR (served=false AND total_bytes=0 AND cardinality(item_ids)=0))
 );
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS prompt_bytes integer;
+ALTER TABLE institutional_context_serves
+  DROP CONSTRAINT IF EXISTS institutional_context_serves_prompt_bytes_check;
+ALTER TABLE institutional_context_serves
+  ADD CONSTRAINT institutional_context_serves_prompt_bytes_check
+  CHECK (prompt_bytes IS NULL OR prompt_bytes > 0);
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS agent_id text REFERENCES identities(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS institutional_context_serves_turn_idx
+  ON institutional_context_serves(room_id,request_id,agent_id) WHERE mode='live';
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
   ON institutional_context_serves(shadow_job_id) WHERE shadow_job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS institutional_context_serves_workspace_created_idx
@@ -849,8 +939,17 @@ ALTER TABLE institutional_memory_outcomes
 ALTER TABLE institutional_memory_outcomes
   ADD CONSTRAINT institutional_memory_outcomes_kind_check CHECK (kind IN (
     'shadow_extracted','memory_extracted','turn_completed','ci_green','merged',
-    'repeat_correction','repeat_review_finding'
+    'procedure_extracted','curator_completed','repeat_correction','repeat_review_finding'
   ));
+-- A corner's own outcome — the merge and the green check — belongs to the corner,
+-- not to a serve or a job: the recurring-work cycle-time and yield cohorts
+-- compare corners that memory reached with corners it never did, so the
+-- unserved half must be recordable at all. Exactly one anchor stays required.
+ALTER TABLE institutional_memory_outcomes
+  DROP CONSTRAINT IF EXISTS institutional_memory_outcomes_check;
+ALTER TABLE institutional_memory_outcomes
+  ADD CONSTRAINT institutional_memory_outcomes_check
+  CHECK (serve_id IS NOT NULL OR job_id IS NOT NULL OR room_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
 
@@ -885,6 +984,169 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_history_searches (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  output_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  query_hash text NOT NULL CHECK (query_hash ~ '^[0-9a-f]{64}$'),
+  authorized_room_count integer NOT NULL CHECK (authorized_room_count >= 0),
+  result_count integer NOT NULL CHECK (result_count BETWEEN 0 AND 10),
+  omitted_count integer NOT NULL CHECK (omitted_count >= 0),
+  matches_capped boolean NOT NULL DEFAULT false,
+  latency_ms integer NOT NULL CHECK (latency_ms >= 0),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE institutional_history_searches
+  ADD COLUMN IF NOT EXISTS matches_capped boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS institutional_history_searches_workspace_created_idx
+  ON institutional_history_searches(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skills (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  slug text NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug)<=64),
+  description text NOT NULL CHECK (length(description) BETWEEN 1 AND 60),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+  current_version integer NOT NULL CHECK (current_version > 0),
+  revision bigint NOT NULL CHECK (revision > 0),
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  repository text NOT NULL,
+  target_commit text NOT NULL,
+  path text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  last_served_at timestamptz,
+  curated_at timestamptz,
+  UNIQUE(workspace_id,slug)
+);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS curated_at timestamptz;
+-- The git blob id of the anchored file AT the recorded commit, filled by the
+-- server's own GitHub read (never asserted by a model), plus the outcome of the
+-- last comparison against the repository's current code. A procedure whose
+-- anchored file no longer matches is stale advice whatever its age, so the
+-- anchor pass and the aging pass both end in the same state vocabulary.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS code_content_hash text;
+ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_code_content_hash_check;
+ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_code_content_hash_check
+  CHECK (code_content_hash IS NULL OR code_content_hash ~ '^[0-9a-f]{40}$');
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_checked_at timestamptz;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_at timestamptz;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_reason text;
+ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_anchor_stale_reason_check;
+ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason_check
+  CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
+CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
+  ON workspace_skills(workspace_id,state,updated_at DESC,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skill_versions (
+  skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
+  version integer NOT NULL CHECK (version > 0),
+  markdown text NOT NULL,
+  content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+  source_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  source_message_ids text[] NOT NULL CHECK (cardinality(source_message_ids)>0),
+  repository text NOT NULL,
+  target_commit text NOT NULL,
+  path text,
+  extractor_version text NOT NULL,
+  model text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  source_deleted_at timestamptz,
+  PRIMARY KEY(skill_id,version),
+  CONSTRAINT workspace_skill_versions_markdown_check CHECK (
+    (source_deleted_at IS NULL AND octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768) OR
+    (source_deleted_at IS NOT NULL AND markdown='')
+  )
+);
+ALTER TABLE workspace_skill_versions ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
+ALTER TABLE workspace_skill_versions
+  DROP CONSTRAINT IF EXISTS workspace_skill_versions_markdown_check;
+ALTER TABLE workspace_skill_versions
+  ADD CONSTRAINT workspace_skill_versions_markdown_check CHECK (
+    (source_deleted_at IS NULL AND octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768) OR
+    (source_deleted_at IS NOT NULL AND markdown='')
+  );
+
+CREATE TABLE IF NOT EXISTS institutional_review_findings (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  source_corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  taxonomy text NOT NULL CHECK (length(taxonomy) BETWEEN 1 AND 120),
+  summary text NOT NULL CHECK (length(summary) BETWEEN 1 AND 1000),
+  severity text NOT NULL CHECK (severity IN ('info','warning','error')),
+  path text,
+  classifier_version text NOT NULL,
+  confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_review_findings_repeat_idx
+  ON institutional_review_findings(workspace_id,taxonomy,path,created_at,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skill_uses (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
+  skill_version integer NOT NULL,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(skill_id,skill_version)
+    REFERENCES workspace_skill_versions(skill_id,version) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
+  ON workspace_skill_uses(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
+  workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
+  auto_advance boolean NOT NULL DEFAULT false,
+  stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
+  archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
+  retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
+  daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
+  availability_observed_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (archive_after_days > stale_after_days),
+  CHECK (retention_days >= archive_after_days)
+);
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
+
+-- Every span in which no authorized helper host could serve this Workspace.
+-- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
+-- past retention only because a host was offline while the calendar advanced.
+CREATE TABLE IF NOT EXISTS institutional_host_availability_gaps (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz NOT NULL,
+  CHECK (ended_at > started_at)
+);
+CREATE INDEX IF NOT EXISTS institutional_host_availability_gaps_workspace_idx
+  ON institutional_host_availability_gaps(workspace_id,ended_at,started_at);
+
+CREATE TABLE IF NOT EXISTS institutional_curator_cycles (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  cycle_key text NOT NULL,
+  queued_jobs integer NOT NULL DEFAULT 0 CHECK (queued_jobs >= 0),
+  stale_items integer NOT NULL DEFAULT 0 CHECK (stale_items >= 0),
+  archived_items integer NOT NULL DEFAULT 0 CHECK (archived_items >= 0),
+  stale_skills integer NOT NULL DEFAULT 0 CHECK (stale_skills >= 0),
+  archived_skills integer NOT NULL DEFAULT 0 CHECK (archived_skills >= 0),
+  consolidated_items integer NOT NULL DEFAULT 0 CHECK (consolidated_items >= 0),
+  consolidated_skills integer NOT NULL DEFAULT 0 CHECK (consolidated_skills >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  UNIQUE(workspace_id,cycle_key)
+);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1375,6 +1637,8 @@ ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
   CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository'));
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS agent_grants_pending_idx ON agent_grants(workspace_id)
+  WHERE status='pending';
 
 -- Immutable evidence for the requester-aware policy upgrade. This deliberately
 -- has no foreign keys: deleting a Workspace or agent must not erase what the
@@ -1488,6 +1752,19 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit 
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS website_url text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_agent_id text REFERENCES identities(id) ON DELETE SET NULL;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_room_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
+-- agent_commands is installed immediately after this base schema and its
+-- ids are text, so this provenance pointer deliberately follows the existing
+-- grant command pointer instead of introducing an early cross-schema FK.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_command_id text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_handoff_attempt text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relayed_attempt text;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,
@@ -1502,13 +1779,28 @@ CREATE TABLE IF NOT EXISTS google_oauth_grants (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
 );
+CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
+  state text PRIMARY KEY,
+  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  code text,
+  expires_at timestamptz NOT NULL
+);
 
 -- Per-machine unique: one connector per (workspace, owner, type, machine).
 -- NULL machine_id (legacy agents before this migration) are each their own
 -- machine; PostgreSQL treats NULL as distinct in unique indexes.
+-- Both DROPs name indexes nothing here creates, so each is a one-time
+-- conversion and every later migrate() leaves the live index in place. A
+-- drop-and-recreate under the SAME name would reopen a window on every
+-- release in which an ON CONFLICT upsert can infer no arbiter index.
 DROP INDEX IF EXISTS workspace_connectors_owner_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_machine_unique
-  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id);
+DROP INDEX IF EXISTS workspace_connectors_machine_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_fixed_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id)
+  WHERE connector_type <> 'registry-mcp';
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_registry_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, machine_id, registry_server_name)
+  WHERE connector_type = 'registry-mcp';
 CREATE INDEX IF NOT EXISTS workspace_connectors_helper_idx
   ON workspace_connectors(helper_agent_id);
 
@@ -1654,6 +1946,35 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
+  // Without this the drained backfill's first probe is a full heap read of the
+  // busiest table on EVERY release, including every release that has nothing
+  // left to fill. It is not empty once the backfill converges and is not meant
+  // to be: it keeps one entry per conversational row the trigger never saw,
+  // which is every pre-window row the backfill deliberately skips below. The
+  // drain reads newest-first and stops at the window edge, so those entries are
+  // never visited — they are exactly what makes a converged probe free.
+  await createIndexConcurrently(
+    database,
+    'messages_search_document_backfill_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_document_backfill_idx
+     ON messages(created_at DESC)
+     WHERE search_document IS NULL AND presentation='message'`,
+  );
+  const searchDocuments = await backfillMessageSearchDocuments(database);
+  if (searchDocuments)
+    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
+  await createIndexConcurrently(
+    database,
+    'messages_search_document_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_document_idx
+     ON messages USING GIN(search_document)
+     WHERE deleted_at IS NULL AND presentation='message'`,
+  );
+  // The Needs-you tray finds undecided grant cards without reading transcripts.
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_grant_request_idx
+     ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
+  );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);
@@ -1677,6 +1998,61 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
   await upgradeGrantPolicy(database);
+}
+
+export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
+
+/**
+ * Fill `messages.search_document` for rows written before the trigger existed.
+ *
+ * Only rows `searchInstitutionalHistory` can ever return are filled: it matches
+ * `presentation='message'` inside INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, and a row
+ * older than that window today can never re-enter it, so a document for one is
+ * work with no reader. That is what keeps this off the release's critical path
+ * — the alternative rewrites the busiest table in full behind the release gate.
+ * Batches are bounded by the partial index each UPDATE empties, so no statement
+ * holds the table for longer than one batch.
+ */
+export async function backfillMessageSearchDocuments(
+  database: SqlDatabase,
+  batchSize = MESSAGE_SEARCH_BACKFILL_BATCH,
+): Promise<number> {
+  let filled = 0;
+  for (;;) {
+    const updated = await database.query(
+      `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
+       WHERE id IN (
+         SELECT id FROM messages
+         WHERE search_document IS NULL AND presentation='message'
+           AND created_at>=now()-$1*interval '1 day'
+         ORDER BY created_at DESC LIMIT $2)`,
+      [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
+    );
+    filled += updated.rowCount;
+    if (updated.rowCount < batchSize) return filled;
+  }
+}
+
+/**
+ * A CONCURRENTLY build cancelled mid-flight — the release's own timeout is the
+ * ordinary way — leaves an INVALID index behind, and `IF NOT EXISTS` would then
+ * skip it forever while every reader silently seq-scans. Drop that carcass
+ * first; a valid index is left alone.
+ */
+async function createIndexConcurrently(
+  database: SqlDatabase,
+  name: string,
+  create: string,
+): Promise<void> {
+  const existing = await database.query<{ valid: boolean }>(
+    `SELECT indisvalid valid FROM pg_index
+     WHERE indexrelid=to_regclass($1) AND to_regclass($1) IS NOT NULL`,
+    [name],
+  );
+  const state = existing.rows[0];
+  if (state?.valid) return;
+  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+  await database.query(create);
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

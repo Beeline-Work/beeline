@@ -15,15 +15,19 @@ export function takeCornerComposerDraft(cornerId: string): string | undefined {
   return text;
 }
 
-export type ForwardMessageToNewCornerInput = OpenRandomNamedCornerInput & {
+export type ForwardMessageToNewCornerInput = Omit<OpenRandomNamedCornerInput, 'createCorner'> & {
   confirm: () => Promise<boolean>;
   /** The message already formatted as a forward. */
   forwardText: string;
+  /** The swiped message's server id; the server marks it with the opened corner. */
+  sourceMessageId: string;
+  createCorner: (roomId: string, title: string, sourceMessageId: string) => Promise<string>;
 };
 
 /**
  * Mobile swipe-right on a message: after the person confirms, create a
- * human-owned corner and open it with the message staged as a forward in its
+ * human-owned corner FROM that message (the server leaves the "corner opened"
+ * marker beneath it) and open it with the message staged as a forward in its
  * composer. Declining creates nothing.
  */
 export async function forwardMessageToNewCorner(
@@ -32,6 +36,7 @@ export async function forwardMessageToNewCorner(
   if (!(await input.confirm())) return null;
   return openRandomNamedCorner({
     ...input,
+    createCorner: (roomId, title) => input.createCorner(roomId, title, input.sourceMessageId),
     openCorner: (cornerId, title) => {
       stageCornerComposerDraft(cornerId, input.forwardText);
       input.openCorner(cornerId, title);

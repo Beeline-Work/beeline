@@ -28,15 +28,27 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'room-deck', file: 'components/buzz/RoomDeckLoadingView.tsx', treatment: 'glyph' },
   { id: 'changes-list', file: 'app/(app)/beeline/corners/[roomId].tsx', treatment: 'glyph' },
   { id: 'members', file: 'app/(app)/beeline/members.tsx', treatment: 'glyph' },
-  { id: 'workspace-settings', file: 'app/(app)/beeline/settings/workspace.tsx', treatment: 'glyph' },
+  {
+    id: 'workspace-settings',
+    file: 'app/(app)/beeline/settings/workspace.tsx',
+    treatment: 'glyph',
+  },
   { id: 'community', file: 'app/(app)/beeline/community.tsx', treatment: 'glyph' },
   { id: 'schedules', file: 'app/(app)/beeline/settings/schedules.tsx', treatment: 'glyph' },
   { id: 'workbench', file: 'app/(app)/beeline/settings/workbench.tsx', treatment: 'glyph' },
-  { id: 'workbench-connect', file: 'app/(app)/beeline/settings/workbench/connect.tsx', treatment: 'glyph' },
+  {
+    id: 'workbench-connect',
+    file: 'app/(app)/beeline/settings/workbench/connect.tsx',
+    treatment: 'glyph',
+  },
   { id: 'wallet', file: 'app/(app)/beeline/settings/workbench/wallet.tsx', treatment: 'glyph' },
-  { id: 'bookmarks', file: 'app/(app)/beeline/bookmarks.tsx', treatment: 'glyph' },
+  { id: 'tray', file: 'app/(app)/beeline/tray.tsx', treatment: 'glyph' },
   { id: 'member-picker', file: 'components/buzz/MemberPickerSheet.tsx', treatment: 'glyph' },
-  { id: 'forward-picker', file: 'components/buzz/ForwardMessagePickerSheet.tsx', treatment: 'glyph' },
+  {
+    id: 'forward-picker',
+    file: 'components/buzz/ForwardMessagePickerSheet.tsx',
+    treatment: 'glyph',
+  },
   { id: 'desktop-sidebar', file: 'components/SidebarView.tsx', treatment: 'glyph' },
   { id: 'desktop-inspector', file: 'components/DesktopRoomInspector.tsx', treatment: 'glyph' },
   { id: 'invite-join', file: 'app/(app)/join/[token].tsx', treatment: 'glyph' },
@@ -105,7 +117,9 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
 function loadingSurfaceGlyphFiles(): readonly string[] {
   return [
     ...new Set(
-      LOADING_SURFACES.filter((surface) => surface.treatment === 'glyph').map((surface) => surface.file),
+      LOADING_SURFACES.filter((surface) => surface.treatment === 'glyph').map(
+        (surface) => surface.file,
+      ),
     ),
   ];
 }
@@ -113,7 +127,9 @@ function loadingSurfaceGlyphFiles(): readonly string[] {
 function loadingSurfaceExceptionFiles(): readonly string[] {
   return [
     ...new Set(
-      LOADING_SURFACES.filter((surface) => surface.treatment === 'exception').map((surface) => surface.file),
+      LOADING_SURFACES.filter((surface) => surface.treatment === 'exception').map(
+        (surface) => surface.file,
+      ),
     ),
   ];
 }
@@ -231,11 +247,7 @@ function dots(renderer: ReactTestRenderer) {
   });
 }
 
-const GLYPH_MARKERS = [
-  'SurfaceGlyphLoader',
-  'BeelineGlyphPaint',
-  'BeelineMarkSpinner',
-] as const;
+const GLYPH_MARKERS = ['SurfaceGlyphLoader', 'BeelineGlyphPaint', 'BeelineMarkSpinner'] as const;
 
 function walkSourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -311,9 +323,10 @@ describe('normal-use loading surfaces', () => {
   it('refuses a newly found PixelLoader load gate without a recorded exception', () => {
     const allowed = new Set(loadingSurfaceExceptionFiles());
     for (const file of pixelLoaderCallSites()) {
-      expect(allowed.has(file), `${file} still mounts PixelLoader without a recorded exception`).toBe(
-        true,
-      );
+      expect(
+        allowed.has(file),
+        `${file} still mounts PixelLoader without a recorded exception`,
+      ).toBe(true);
     }
   });
 });

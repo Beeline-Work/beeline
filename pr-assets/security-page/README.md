@@ -34,4 +34,4 @@ the page has no horizontal overflow at phone width.
   `relay-stack/web/privacy/index.html`
 
 No `SECURITY.md` or dedicated security address exists in this repository, so
-the page intentionally reuses the privacy contact, `dani@trustysquire.ai`.
+the page intentionally reuses the privacy contact, `hello@usebeeline.app`.

@@ -84,6 +84,7 @@ A Room and a corner are the same conversation surface with different permissions
 **In a Room, the agent can:**
 
 - read the repository checkout, run searches, read git history — the filesystem is mounted **read-only**;
+- run shell commands inside that same sandbox (curl an endpoint, check `tailscale status`) — writable only in its own session state;
 - use every MCP tool mounted into its session, and web search where the harness has it (Codex and Claude Code get theirs turned on in the isolated home);
 - read files and photos people share (downloaded to the session for it — it never fetches a URL) and attach a file back to its reply;
 - address any other member, human or agent, by writing `@name`;
@@ -101,8 +102,8 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 
 ## Security posture
 
-- **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved tool-by-tool because the sandbox — not an allowlist — is what holds the line.
-- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap`, or a kernel that refuses unprivileged user namespaces, is logged once at start and every session afterwards runs unwrapped; the read-only rule then rests on the harness's own permission callback, which Codex, Claude Code, and Grok honour. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
+- **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved, and so are shell commands, because the sandbox — not an allowlist — is what holds the line for both.
+- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap` gets one automatic install attempt at daemon start (Linux hosts with `apt-get`; the unit's start deadline is extended to cover it, and a failed attempt is remembered for a day rather than retried on every restart). If the sandbox still cannot be built — a kernel that refuses unprivileged user namespaces, no usable package manager, or an operator who turned it off — every session afterwards runs unwrapped: mounted MCP tools stay approved, the agent's session prompt states whether it can run shell commands, and the read-only rule for anything else rests on the harness's own sandbox. Codex keeps its offline read-only mode; a harness that asks, like Claude Code, is told a shell is unavailable instead of being granted one. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
 - **Write access requires a corner.** A corner is a separate worktree on its own branch with a repository-scoped GitHub App token, and it is opened by an explicit host-governed call, never inferred.
 - **Reach outside the sandbox is a grant.** Repository cards stay in the requesting Room, where a Workspace owner or admin can answer. Personal-resource cards — host commands, paths, devices, secrets, wallets, Composio, and other MCP routes — go to the resource owner's private connector or `@system` DM, and only that owner can answer. Every approval is scoped to the Room and the original human requester, so delegation or an approval resume cannot turn someone else's request into owner consent. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered. An ALWAYS route remains available for the same scope until it is revoked; ONCE is consumed by the first authorized resource call, not by discovery.
 - **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. It bypasses repository prompts for any requester, but bypasses personal-resource prompts only when the original requester is the resource owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only. Generic budget grants are retired.
@@ -142,6 +143,17 @@ host-side review records sourced Workspace facts and requester-profile preferenc
 receives one relevance-selected, command-bound snapshot capped at 8,000 UTF-8 bytes; failures
 omit the optional block. `propose_memory_item` is the active-command-bound write path. The older
 `BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=true` mode remains measurement-only.
+`search_history` intersects every result with the requester, answering agent, and complete output
+audience. A merged corner can produce a bounded, code-anchored Workspace procedure; turns see only
+its relevance-ranked catalog entry, and `load_workspace_skill` returns the procedure as quoted,
+non-authoritative guidance with measured use. Generated procedures are never installed as native
+harness skills. Serving live memory requires an explicit
+`institutional_memory_workspace_rollouts` row at `pilot`/`live`, and host jobs require one at
+`shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent
+weekly curator ages and retains items, queues audience-partitioned consolidation on authorized user
+hosts, honors Workspace job/token budgets, and advances an opted-in cohort only when its objective
+dashboard clears the rollout gate. `stage` is the one enablement axis: `paused` stops the curator
+without unstaging, and `off` removes the Workspace from every lane.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
@@ -164,6 +176,8 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `request_grant`                                        | Everywhere      | Ask the correct Room manager or resource owner for access     |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
 | `propose_memory_item`                                  | Live memory     | Propose one sourced fact or requester working preference      |
+| `search_history`                                       | Live memory     | Search history visible to the full output audience            |
+| `load_workspace_skill`                                 | Live memory     | Load one restricted merge-derived Workspace procedure         |
 
 ## The app
 

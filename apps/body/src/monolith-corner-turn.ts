@@ -1,3 +1,4 @@
+import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -45,6 +46,7 @@ import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
@@ -589,6 +591,12 @@ export class MonolithCornerTurnLoop {
   private readonly warmTranscript = new WarmTranscript();
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /**
+   * The real size of the last settled prompt, captured while the session that
+   * sent it is still alive — `discardSession` clears both the client and the id,
+   * and the terminal receipt is posted on a path that may run after it.
+   */
+  private turnMetrics: { inputTokens?: number; promptBytes?: number } = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
@@ -713,6 +721,29 @@ export class MonolithCornerTurnLoop {
    * Drop this corner's live harness process. The next activation starts cold.
    * A rotation is a fact about one live session, so the pin goes with it.
    */
+  /**
+   * What this turn really cost and did, read at the moment its prompt settled.
+   *
+   * The token count is the harness's own (pi records it; every other harness
+   * leaves it unknown) and the byte count is the prompt this process handed over
+   * — together they are the only way the rollout budget gate can measure the
+   * institutional block's share of a real prompt instead of a byte estimate.
+   * Missing numbers are omitted rather than zeroed.
+   */
+  private async captureTurnMetrics(): Promise<{
+    inputTokens?: number;
+    promptBytes?: number;
+  }> {
+    const usage = this.sessionId
+      ? await readHarnessTurnUsage({ agentEnv: this.agentEnv, sessionId: this.sessionId })
+      : undefined;
+    const promptBytes = this.client?.lastPromptBytes;
+    return {
+      ...(usage ? { inputTokens: usage.inputTokens } : {}),
+      ...(promptBytes ? { promptBytes } : {}),
+    };
+  }
+
   private async discardSession(): Promise<void> {
     const client = this.client;
     this.client = undefined;
@@ -741,6 +772,7 @@ export class MonolithCornerTurnLoop {
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
@@ -749,11 +781,17 @@ export class MonolithCornerTurnLoop {
       yoloMode: configuration.yoloMode,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: [
+              ...grantedHostRoutes,
+              ...registryRoutes.map((route) => route.routeName),
+            ],
+          }),
+          ...registryRoutes.map((route) => route.routeName),
+        ],
         this.sessionCodegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
@@ -834,6 +872,12 @@ export class MonolithCornerTurnLoop {
       configuration.model || configuration.effort
         ? { model: configuration.model, effort: configuration.effort }
         : this.options.config.modelSelection;
+    const operatorHome = this.options.config.operatorHome ?? homedir();
+    const registryHostDeclarations = registryMcpHostDeclarations(
+      configuration.registryMcpRoutes,
+      this.commandContext.path,
+    );
+    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -849,7 +893,8 @@ export class MonolithCornerTurnLoop {
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
-          grantedHostRoutes,
+          grantedHostRoutes: mountedHostRoutes,
+          extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
@@ -916,7 +961,6 @@ export class MonolithCornerTurnLoop {
       PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
       CARGO_TARGET_DIR: cargoTargetDir,
     };
-    const operatorHome = this.options.config.operatorHome ?? homedir();
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -959,8 +1003,9 @@ export class MonolithCornerTurnLoop {
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
-            grantedHostRoutes,
+            grantedHostRoutes: mountedHostRoutes,
           }),
+          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
@@ -1003,11 +1048,14 @@ export class MonolithCornerTurnLoop {
       yoloMode: configuration.yoloMode,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: mountedHostRoutes,
+          }),
+          ...Object.keys(registryHostDeclarations),
+        ],
         codegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
@@ -1066,9 +1114,9 @@ export class MonolithCornerTurnLoop {
     );
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
-      grantedHostRoutes,
+      mountedHostRoutes,
       operatorHome,
-      hostDeclarations,
+      { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
@@ -1385,6 +1433,12 @@ export class MonolithCornerTurnLoop {
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
+              // A turn starts with no measured cost. Without this reset a turn
+              // that throws before its own prompt settles — the context fetch,
+              // `buildPrompt`, a rejected delivery — would report the PREVIOUS
+              // turn's token count and prompt size on its failure receipt, and
+              // the budget gate would read somebody else's prompt.
+              this.turnMetrics = {};
               await this.syncBranch();
               const [
                 conversation,
@@ -1723,6 +1777,11 @@ export class MonolithCornerTurnLoop {
                       toolCalls: [],
                     };
                   }
+                } finally {
+                  // Captured while the session is still alive: `discardSession`
+                  // clears both the client and the id, and the terminal receipt
+                  // that reports these facts may be posted after it.
+                  this.turnMetrics = await this.captureTurnMetrics();
                 }
               };
               let result = await runPrompt();
@@ -1908,6 +1967,8 @@ export class MonolithCornerTurnLoop {
         status: 'complete',
         ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
@@ -1942,6 +2003,8 @@ export class MonolithCornerTurnLoop {
         generationId: this.commandContext.generationId,
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       await trace.finish('failed', reason.text);
       throw error;

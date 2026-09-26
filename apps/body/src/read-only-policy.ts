@@ -268,6 +268,8 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'post_artifact',
   'write_scratch_file',
   'fetch_image',
+  'search_mcp_registry',
+  'connect_mcp_server',
 ] as const;
 
 /**
@@ -314,4 +316,25 @@ export function isBeelineAgentMcpPermissionRequest(request: AcpPermissionRequest
     `mcp__${normalized}__${tool}`,
     `mcp.${BEELINE_AGENT_MCP_SERVER_NAME}.${tool}`,
   ]).includes(title);
+}
+
+/**
+ * Whether this request names an MCP tool at all, whether or not that tool call
+ * is allowable: the `mcp__`/`mcp.` title spellings, a forwarded `{server, …}`
+ * envelope, a dispatcher's `tool_name`, and any host-classified identity in any
+ * of those places. The MCP allowlist decides every request that names MCP, so
+ * one wearing an MCP identity never falls through to another rule — a command
+ * line titled `mcp.beeline-readonly-mcp.search_text` is refused as the MCP call
+ * it claims to be, instead of being re-read as a shell request.
+ */
+export function isMcpShapedPermissionRequest(
+  request: AcpPermissionRequest,
+  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
+): boolean {
+  if (isHostMcpPermissionRequest(request, hostServers)) return true;
+  const record = permissionRecord(request.toolCall?.rawInput);
+  if (typeof record?.server === 'string') return true;
+  if (DISPATCHER_TOOL_NAME_KEYS.some((key) => typeof record?.[key] === 'string')) return true;
+  const title = request.toolCall?.title?.trim() ?? '';
+  return /^mcp__[^_].*__[^_]/.test(title) || /^mcp\.[^.]+\.[^.]/.test(title);
 }

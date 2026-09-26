@@ -9,10 +9,50 @@ import { build } from 'esbuild';
 
 const run = promisify(execFile);
 
+/** The production updater entry this script bundles straight from source. */
+export const UPDATER_ENTRY = new URL(
+  '../apps/body/src/self-update.ts',
+  import.meta.url,
+).pathname;
+
+/**
+ * Every `@beeline/*` workspace package the updater's own import graph reaches.
+ *
+ * The Pages leg used to bundle this entry after only `npm ci`, while a workspace
+ * package's `exports` point at its built `dist/`. Each name reported here is
+ * a package `.github/actions/pages-leg` must compile before the proof runs.
+ * `verify-pages-update.test.mjs` holds that leg to exactly this set, so a new
+ * import cannot silently assume a dist that was never built.
+ */
+export async function updaterWorkspacePackages() {
+  const packages = new Set();
+  await build({
+    entryPoints: [UPDATER_ENTRY],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    write: false,
+    logLevel: 'silent',
+    plugins: [
+      {
+        name: 'record-workspace-packages',
+        setup(pluginBuild) {
+          pluginBuild.onResolve({ filter: /^@beeline\// }, (args) => {
+            packages.add(args.path.split('/').slice(0, 2).join('/'));
+            // Resolve normally, exactly as the proof itself does.
+            return undefined;
+          });
+        },
+      },
+    ],
+  });
+  return [...packages].sort();
+}
+
 async function updaterModule() {
   // Execute the production updater without rebuilding the full monorepo.
   const result = await build({
-    entryPoints: [new URL('../apps/body/src/self-update.ts', import.meta.url).pathname],
+    entryPoints: [UPDATER_ENTRY],
     bundle: true,
     platform: 'node',
     format: 'esm',

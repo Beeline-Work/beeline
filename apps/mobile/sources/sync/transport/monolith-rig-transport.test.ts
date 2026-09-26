@@ -610,6 +610,22 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('names the message a swiped corner was opened from', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'forward-corner-id' }), { status: 200 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+    const sourceMessageId = 'f'.repeat(64);
+
+    await transport.createHumanCorner(ROOM, 'quiet amber corner', undefined, sourceMessageId);
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/createHumanCorner',
+      expect.objectContaining({
+        body: JSON.stringify({ roomId: ROOM, title: 'quiet amber corner', sourceMessageId }),
+      }),
+    );
+  });
+
   it('returns the server refusal when a corner close request fails', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),

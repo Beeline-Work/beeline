@@ -93,6 +93,8 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
+import { anchorCornerMarkers } from '@/buzz/corner-markers';
+import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -331,6 +333,7 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { ForwardMessagePickerSheet } from '@/components/buzz/ForwardMessagePickerSheet';
 import { ForwardCornerSheet } from '@/components/buzz/ForwardCornerSheet';
+import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
 import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
@@ -1251,7 +1254,7 @@ export function BuzzChatSurface({
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(() => {
-    const anchored = anchorRelayReports(combinedMessages);
+    const anchored = anchorCornerMarkers(anchorRelayReports(combinedMessages));
     const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
     if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
     // Folding cannot swallow the one exact server-owned unread boundary.
@@ -4123,7 +4126,9 @@ export function BuzzChatSurface({
           },
           { roomId: decodedId, messageId: target.relayId ?? target.id },
         ),
-        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        sourceMessageId: target.relayId ?? target.id,
+        createCorner: (roomId, title, sourceMessageId) =>
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -4483,6 +4488,28 @@ export function BuzzChatSurface({
       else router.push(cornerHref(action.cornerId, decodedId));
     },
     [decodedId, desktopExperience, openDesktopCorner],
+  );
+
+  // The line beneath a message a corner was opened from; its Open goes
+  // straight into that corner (the work pane on desktop).
+  const renderCornerMarker = useCallback(
+    (marker: ChatDisplayMessage) => {
+      const fact = marker.daemonFact!;
+      return (
+        <View key={marker.id}>
+          <CornerOpenedMarker
+            title={cornerName(fact.name ?? fact.objective, fact.cornerId)}
+            closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
+            onOpen={() => openCorner(fact.cornerId)}
+            testID={`corner-opened-marker-${fact.cornerId}`}
+          />
+          {marker.relayReports?.map((report) => (
+            <RelayHandOff key={report.id} message={report} />
+          ))}
+        </View>
+      );
+    },
+    [openCorner],
   );
 
   const closeDesktopWorkPane = useCallback(() => {
@@ -4939,6 +4966,11 @@ export function BuzzChatSurface({
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
+      if (item.daemonFact?.sourceMessageId) {
+        // Its source message is not resident, so the marker stands on its own row.
+        return renderCornerMarker(item);
+      }
+
       if (item.daemonFact) {
         return (
           <View>
@@ -4998,7 +5030,7 @@ export function BuzzChatSurface({
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
-      return (
+      const ledgerMessage = (
         <OrdinaryLedgerMessage
           message={renderedItem}
           firstBylineOfDay={bylineOpeners.has(item.id)}
@@ -5054,8 +5086,17 @@ export function BuzzChatSurface({
           onDismiss={dismissOutboxMessage}
         />
       );
+      return item.cornerMarkers?.length ? (
+        <View>
+          {ledgerMessage}
+          {item.cornerMarkers.map(renderCornerMarker)}
+        </View>
+      ) : (
+        ledgerMessage
+      );
     },
     [
+      renderCornerMarker,
       bylineOpeners,
       agentByPubkey,
       answeredMessageIds,

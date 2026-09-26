@@ -9,15 +9,15 @@ import type { RoomDeckComposeAction } from './RoomDeckComposeMenu';
 export function WorkspaceActionsMenu({
   onMembers,
   onSettings,
-  onBookmarks,
-  bookmarksSelected = false,
+  onTray,
+  traySelected = false,
   onCompose,
   canManageWorkspace = false,
 }: {
   onMembers: () => void;
   onSettings?: () => void;
-  onBookmarks?: () => void;
-  bookmarksSelected?: boolean;
+  onTray?: () => void;
+  traySelected?: boolean;
   onCompose?: (action: RoomDeckComposeAction) => void;
   canManageWorkspace?: boolean;
 }) {
@@ -49,12 +49,12 @@ export function WorkspaceActionsMenu({
           onPress={() => choose(onMembers)}
           testID="workspace-menu-members"
         />
-        {onBookmarks && (
+        {onTray && (
           <HullActionSheetRow
-            label="Bookmarks"
-            selected={bookmarksSelected}
-            onPress={() => choose(onBookmarks)}
-            testID="workspace-menu-bookmarks"
+            label="Tray"
+            selected={traySelected}
+            onPress={() => choose(onTray)}
+            testID="workspace-menu-tray"
           />
         )}
         {onCompose && (

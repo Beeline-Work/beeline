@@ -1,5 +1,8 @@
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
 
+/** The most option rows an open model/effort list shows before it scrolls. */
+export const AGENT_MODEL_PICKER_VISIBLE_ROWS = 5;
+
 /**
  * Case-insensitive live filter for the advertised model catalog. Every
  * whitespace-separated token must be a substring of either the stable model

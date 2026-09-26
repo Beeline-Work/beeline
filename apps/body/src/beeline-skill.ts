@@ -33,11 +33,11 @@ const BEELINE_ROOM_CAPABILITIES = [
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
-  'If shell access is blocked, continue with read-only inspection instead of retrying it: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
+  'If a shell command is refused, say so plainly rather than retrying it, and continue with read-only inspection: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
   'A mounted tool is not standing resource consent: each resource call checks the original requester. Repository permission under yolo bypasses prompts for anyone; personal resources bypass only for their owner requester. Otherwise repository asks go to Workspace managers in the Room and resource asks go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget card. Delegation and follow-up work retain the original requester. Network web search is enabled.',
   BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
-  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
+  'To create a file you can send, call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
   `To react to a message in this Room, call beeline-agent react_to_message with its message id and one supported emoji (${MESSAGE_REACTION_EMOJIS.join(' ')}).`,
   `To react to things that HAPPEN in this Room rather than only to what is said to you, call beeline-agent subscribe_events with the kinds you want (${SERVER_EVENT_KINDS.join(', ')}); each one then wakes you for a turn. Subscriptions are per Room and cover every way the event lands: joining a Room you subscribed to wakes you, and so does a person arriving in the Workspace when that arrival projects into this Room - subscribe to joined in an onboarding Room and every newcomer wakes you, exactly like a greeter. It replaces your list, so send every kind you want - list_event_subscriptions shows the current one. You do this yourself: nobody has to configure it for you. grant-decided carries the grant id and status and resumes the turn that asked for the grant. choice-answered, choice-skipped, and poll-closed start a new input turn for the asking agent; they do not resume a paused grant.`,
@@ -57,7 +57,7 @@ const BEELINE_DM_CAPABILITIES = [
   'A mounted tool is not standing resource consent: each resource call checks the original requester. Repository permission under yolo bypasses prompts for anyone; personal resources bypass only for their owner requester. Otherwise repository asks go to Workspace managers in the Room and resource asks go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget card. Delegation and follow-up work retain the original requester. Network web search is enabled.',
   BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
-  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
+  'To create a file you can send, call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'Tag the person only when you need a decision or input, or when the task they asked for is finished.',
   `To react to a message in this Room, call beeline-agent react_to_message with its message id and one supported emoji (${MESSAGE_REACTION_EMOJIS.join(' ')}).`,
   'If you already know discrete options, call beeline-agent ask_choice. A pick is a preference, never sandbox, spend, or merge authority. open_poll is refused here: one human is a question.',
@@ -69,11 +69,46 @@ export interface RepositoryPrimerInfo {
   branch: string;
 }
 
-export function beelinePrimer(repository?: RepositoryPrimerInfo, directMessage?: boolean): string {
+/**
+ * Whether this session can run shell commands, and why not when it cannot.
+ * `roomShellCapability` (`harness-capabilities.ts`) settles it from the harness
+ * and the sandbox together, because a model told nothing keeps asking for a
+ * shell it cannot have — and a model told the wrong thing stops using one it
+ * has. An unmeasured harness passes no state at all and the standing
+ * "if a shell command is refused, say so plainly rather than retrying it"
+ * line carries the case.
+ *
+ * `detail` is the ONE bounded sentence from `BwrapAvailability.shellDetail`,
+ * carrying the operator's one-line fix and nothing else: the model is told to
+ * relay it into a Room every Workspace member can read.
+ */
+export type RoomShellState =
+  { readonly available: true } | { readonly available: false; readonly detail?: string };
+
+function shellLine(shell: RoomShellState | undefined): string {
+  if (!shell) return '';
+  if (shell.available) {
+    return (
+      ' Shell commands are available in this session: run one with your own shell tool when the' +
+      ' work needs it, and report its output in your reply.'
+    );
+  }
+  return (
+    ' Shell commands are NOT available in this session, so a request that needs one cannot be run.' +
+    ' Say that plainly in your reply instead of retrying it.' +
+    `${shell.detail ? ` ${shell.detail}` : ''}`
+  );
+}
+
+export function beelinePrimer(
+  repository?: RepositoryPrimerInfo,
+  directMessage?: boolean,
+  shell?: RoomShellState,
+): string {
   if (directMessage) {
     return (
       'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-      `Room mechanics. ${BEELINE_DM_CAPABILITIES}`
+      `Room mechanics. ${BEELINE_DM_CAPABILITIES}${shellLine(shell)}`
     );
   }
   const repositoryLine = repository
@@ -81,7 +116,7 @@ export function beelinePrimer(repository?: RepositoryPrimerInfo, directMessage?:
     : '';
   return (
     'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-    `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}${repositoryLine}`
+    `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}${repositoryLine}${shellLine(shell)}`
   );
 }
 
@@ -96,8 +131,9 @@ export function beelineCapabilityContextForHarness(
   agentCommand: string | undefined,
   repository?: RepositoryPrimerInfo,
   directMessage?: boolean,
+  shell?: RoomShellState,
 ): BeelineCapabilityContext {
-  const primer = beelinePrimer(repository, directMessage);
+  const primer = beelinePrimer(repository, directMessage, shell);
   return {
     sessionPrompt: primer,
     ...(harnessHonorsSessionSystemPrompt(agentCommand) ? {} : { compatibilityTurnPrefix: primer }),
@@ -154,6 +190,20 @@ When you cannot use a tool or reach something on this machine, answer in exactly
 An offer is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and it never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value; once a tool is added, provisioning happens inside it and receipts reach the person through the tool's own status message.
 
 Keys belong to the human who provisioned them. Their private scoped approval is required to use their resource for another requester; the agent owner cannot authorize someone else’s resources. Use the connector without exposing or sharing raw keys. The Workbench page remains the place a person manages tools and keys by hand (Settings → Workbench); you point there to MANAGE what exists, not to add what you need.
+
+## Find and connect the right tool
+
+When a user's request needs an account or service you cannot reach with a mounted tool:
+
+1. Call \`workbench_status\`. If this owner already has a fitting connected tool on this machine, use it. Do not install a duplicate.
+2. Call \`search_mcp_registry\` with the most likely provider or product name. Registry search is name-based, so try at most three concrete provider/product terms derived from the request.
+3. Prefer the provider-owned official MCP server. Confirm that its registry namespace, website, remote domain, and provider documentation agree. Prefer a \`streamable-http\` remote. Consider a community server or another route only when no provider-owned server exists, and say which evidence led you to that choice.
+4. Call \`connect_mcp_server\` with the exact \`serverName\` and \`version\` returned by search. Never invent, paste, or substitute a URL, package name, command, or version.
+5. If it returns \`needs_sign_in\` and Trusty Squire is connected, try Squire before asking the owner: call \`operate_start\` on the authorization URL, use \`operate_login\`, continue with \`operate_observe\` and the needed \`operate_*\` tools, then call \`operate_finish\`. Reuse the existing Squire browser session. Do not ask the owner while Squire can continue.
+6. If Squire returns an approval, passkey, or vouch link, the existing facade sends that one link to the owner; wait and do not call the fallback. If Squire is unavailable or cannot proceed and emitted no link, call \`connect_mcp_server\` again for the same connector with \`handoffToOwner: true\`. That sends the owner one link. Do not paste the link into the Room and do not send it twice.
+7. When the connection completes or your turn resumes, call \`workbench_status\`, use the mounted server, and finish the original request. Installation is not permission: the result of the existing resource-approval call is authoritative for every use.
+
+Today's connector installer supports Registry remote servers. If the best entry is package-only, report that this installer cannot add it yet and continue to the next best supported candidate; do not download or execute the package yourself.
 
 ## Showing a mock
 

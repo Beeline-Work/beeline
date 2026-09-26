@@ -89,6 +89,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -200,7 +201,7 @@ const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
-    throw new Error('agent name must be a short spoken name');
+    throw new Error('invalid agent name: must be a short spoken name');
   return name;
 }
 
@@ -2978,6 +2979,16 @@ export class PhoneService {
           input as Input<'listMessageBookmarks'>,
           viewerId,
         )) as Output<Name>;
+      case 'readNeedsYou':
+        return (await this.readNeedsYou(input as Input<'readNeedsYou'>, viewerId)) as Output<Name>;
+      case 'countNeedsYou':
+        return (await this.countNeedsYou(
+          input as Input<'countNeedsYou'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'clearNeedsYou':
+        await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
+        return undefined as Output<Name>;
       case 'createRoomSchedule':
         return (await this.createRoomSchedule(
           input as Input<'createRoomSchedule'>,
@@ -3771,6 +3782,69 @@ export class PhoneService {
       );
       return { bookmarked: true };
     });
+  }
+
+  /**
+   * The viewer's Needs-you cells (`needs-you.ts` owns the rule). Showing a
+   * cell starts its 24-hour clock once, for every device; a clock already
+   * running is left alone.
+   */
+  private async readNeedsYou(
+    input: Input<'readNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'readNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items, unseen } = await needsYouItems(
+      this.database,
+      input.workspaceId,
+      viewerId,
+      (row) => identity(row, this.publicOrigin),
+    );
+    if (!unseen.length) return { items };
+    const started = await this.database.query<{ message_id: string; first_seen_at: Date }>(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       SELECT $1,message_id,$3 FROM unnest($2::text[]) message_id
+       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
+       RETURNING message_id,first_seen_at`,
+      [viewerId, unseen, input.workspaceId],
+    );
+    const clocks = new Map(started.rows.map((row) => [row.message_id, row.first_seen_at]));
+    return {
+      items: items.map((item) => {
+        const firstSeen = clocks.get(item.messageId);
+        return firstSeen ? { ...item, expiresAt: needsYouExpiresAt(firstSeen) } : item;
+      }),
+    };
+  }
+
+  private async countNeedsYou(
+    input: Input<'countNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'countNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
+      identity(row, this.publicOrigin),
+    );
+    return { count: items.length };
+  }
+
+  /** A tap or a dismissal: the cell is handled, on every device. */
+  private async clearNeedsYou(input: Input<'clearNeedsYou'>, viewerId: string): Promise<void> {
+    if (typeof input.messageId !== 'string' || !input.messageId)
+      throw new Error('messageId is required');
+    const cleared = await this.database.query(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+       SELECT $1,message.id,room.workspace_id,now()
+       FROM messages message
+       JOIN rooms room ON room.id=message.room_id AND room.workspace_id=$3
+       JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
+         AND member.removed_at IS NULL
+       WHERE message.id=$2
+       ON CONFLICT(identity_id,message_id)
+         DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+      [viewerId, input.messageId, input.workspaceId],
+    );
+    if (!cleared.rowCount) throw new Error('message is not available');
   }
 
   private async listMessageBookmarks(
@@ -4578,8 +4652,8 @@ export class PhoneService {
     const id = randomUUID();
     await this.database.transaction(async (database) => {
       const parent = (
-        await database.query<{ workspace_id: string }>(
-          `SELECT room.workspace_id FROM rooms room
+        await database.query<{ workspace_id: string; viewer_name: string }>(
+          `SELECT room.workspace_id,viewer.name viewer_name FROM rooms room
            JOIN memberships room_member ON room_member.room_id=room.id
              AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -4630,6 +4704,35 @@ export class PhoneService {
           [id, input.appInstallationId, randomUUID(), viewerId],
         );
       }
+      // A corner opened FROM a message (the phone's swipe-right forward) leaves
+      // one durable marker in the parent Room, the same `corner-open` card an
+      // agent's `open_corner` writes, carrying the source message so every
+      // reader anchors it beneath that message. No kind: a person opening a
+      // scratch corner wakes no subscriber. A source that is not a message in
+      // this Room (an unsent outbox row) opens the corner without a marker.
+      const source = input.sourceMessageId
+        ? await database.query(`SELECT 1 FROM messages WHERE id=$1 AND room_id=$2`, [
+            input.sourceMessageId,
+            input.roomId,
+          ])
+        : undefined;
+      if (source?.rowCount) {
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
+          verb: 'opened a corner',
+          object: { text: title, id },
+          presentation: 'card',
+          cardType: 'daemon-fact',
+          card: {
+            type: 'corner-open',
+            cornerId: id,
+            name: title,
+            objective: '',
+            sourceMessageId: input.sourceMessageId,
+          },
+        });
+      }
     });
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
@@ -4658,6 +4761,15 @@ export class PhoneService {
         roomId,
         title,
       ]);
+      // The marker beneath a forwarded message names the corner it opened, so
+      // it follows the corner's current name rather than the random one it was
+      // opened under.
+      await database.query(
+        `UPDATE messages SET card=jsonb_set(card,'{name}',to_jsonb($3::text))
+         WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2
+           AND card->>'sourceMessageId' IS NOT NULL`,
+        [access.parent_id, roomId, title],
+      );
       return access.parent_id;
     });
     this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });
@@ -6603,6 +6715,10 @@ export class PhoneService {
         signed_in_as: string | null;
         sign_in: ConnectorStatus['signIn'] | null;
         composio_scope: unknown;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        display_name: string | null;
+        website_url: string | null;
         connected_at: Date | null;
         created_at: Date;
       }>(
@@ -6612,7 +6728,8 @@ export class PhoneService {
                           WHERE sibling.machine_id=c.machine_id
                             AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
-                c.signed_in_as,c.sign_in,c.composio_scope,c.connected_at,c.created_at
+                c.signed_in_as,c.sign_in,c.composio_scope,c.registry_server_name,
+                c.registry_version,c.display_name,c.website_url,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
          WHERE c.owner_identity_id=$1
@@ -6733,6 +6850,10 @@ export class PhoneService {
         ...(row.connector_type === 'composio'
           ? { approvedTools: approvedComposioTools(row.composio_scope, viewerId) }
           : {}),
+        ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
+        ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
+        ...(row.display_name ? { displayName: row.display_name } : {}),
+        ...(row.website_url ? { websiteUrl: row.website_url } : {}),
         ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
         createdAt: seconds(row.created_at),
       })),
@@ -6890,7 +7011,8 @@ export class PhoneService {
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps,pairing_generation,composio_scope
        ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1,$8::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id)
+         WHERE connector_type <> 'registry-mcp' DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
            status_steps=EXCLUDED.status_steps,
@@ -7902,6 +8024,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomMessage',
   'setMessageBookmark',
   'listMessageBookmarks',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
@@ -7991,6 +8116,9 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'reopenChat',
   'listMessageBookmarks',
   'setMessageBookmark',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'readWorkbench',
   'readConnectionDetail',
   'readWallet',

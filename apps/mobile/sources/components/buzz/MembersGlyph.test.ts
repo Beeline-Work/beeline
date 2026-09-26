@@ -114,9 +114,7 @@ describe('MembersGlyph', () => {
   it('can render as a solid destination mark without an outline', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
-      renderer = create(
-        React.createElement(MembersGlyph, { color: '#b08a4a', filled: true }),
-      );
+      renderer = create(React.createElement(MembersGlyph, { color: '#b08a4a', filled: true }));
     });
     const circle = renderer.root.findByType('Circle' as never);
     const body = renderer.root.findByType('Polygon' as never);

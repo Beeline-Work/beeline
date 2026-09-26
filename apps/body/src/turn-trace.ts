@@ -161,6 +161,8 @@ export class TurnTrace {
   private atQueue?: SessionSchedulerSnapshot;
   private atAdmission?: SessionSchedulerSnapshot;
   private finished = false;
+  /** Every distinct tool call id this turn has seen, across retries. */
+  private readonly toolCallIds = new Set<string>();
 
   constructor(private readonly options: TurnTraceOptions) {
     this.now = options.now ?? (() => performance.now());
@@ -246,7 +248,11 @@ export class TurnTrace {
    */
   toolCalls(calls: readonly { id?: string; status?: string }[]): void {
     const attempt = this.current;
-    calls.forEach((call, index) => attempt.toolCallIds.add(call.id ?? `#${index}`));
+    calls.forEach((call, index) => {
+      const id = call.id ?? `#${index}`;
+      attempt.toolCallIds.add(id);
+      this.toolCallIds.add(`${attempt.attempt}:${id}`);
+    });
     const outstanding = calls.some((call) => toolCallOutstanding(call));
     if (outstanding && attempt.toolWorkOpenedAt === undefined) {
       attempt.toolWorkOpenedAt = this.now();
@@ -286,6 +292,16 @@ export class TurnTrace {
     if (input.provider) next.provider = input.provider;
     if (input.reason) next.retryReason = input.reason;
     this.attempts.push(next);
+  }
+
+  /**
+   * How much work this turn did, as the harness's own stream counted it. A
+   * retry re-reports the same call with the same id on its new attempt, so the
+   * set is keyed by attempt as well — the second attempt's own re-issue of a
+   * call IS work, while a repeated snapshot inside one attempt is not.
+   */
+  get toolCallsTotal(): number {
+    return this.toolCallIds.size;
   }
 
   /** The record as it stands, without writing it. */

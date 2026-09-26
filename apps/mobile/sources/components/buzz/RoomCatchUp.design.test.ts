@@ -120,7 +120,9 @@ describe('the catch-up sheet', () => {
     );
     expect(report).not.toMatch(/msgs?['`]|\$\{count\}/);
     // The badge keeps its own count, which only ever claims this visit.
-    expect(hook).toContain('badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0');
+    expect(hook).toContain(
+      'badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0',
+    );
     expect(hook).not.toContain('unreadCount');
   });
 
@@ -135,9 +137,7 @@ describe('the catch-up sheet', () => {
     );
     expect(boundary).toContain('export function catchUpOfferEligible(');
     expect(boundary).not.toMatch(/catchUpOfferEligible[\s\S]{0,200}queue\.count/);
-    expect(hook).toContain(
-      'catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts)',
-    );
+    expect(hook).toContain('catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts)');
     // The offer rides the line, so it cannot outlive it: no line owed, no
     // offer, and reaching newest ends both on the same landing.
     expect(hook).toContain('lineOwed &&');

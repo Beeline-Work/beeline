@@ -2213,7 +2213,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('proves send -> read -> daemon prompt -> reply -> WebSocket invalidation and overlays', async () => {
+  it('proves send -> read -> daemon prompt -> reply -> WebSocket delta and overlays', async () => {
     const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
       `bearer.${accessToken}`,
     ]);
@@ -2274,15 +2274,19 @@ describe('monolith integration', () => {
       .items;
     expect(conversationItems.at(-1)?.body).toContain('@bee did not answer @owner');
     expect(conversationItems.at(-2)?.body).toBe('@bee What is your soul?');
-    const invalidated = next(socket, 'invalidate');
+    const delivered = next(socket, 'message-delta');
     const reply = await daemonOperation(
       'postRoomMessage',
       { roomId: ROOM, requestId: threadedMessageId, text: 'I am Terra.' },
       daemonToken,
     );
     expect(reply.status).toBe(200);
-    expect(await invalidated).toEqual(
-      expect.objectContaining({ type: 'invalidate', roomId: ROOM, reason: 'message' }),
+    expect(await delivered).toEqual(
+      expect.objectContaining({
+        type: 'message-delta',
+        roomId: ROOM,
+        message: expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
+      }),
     );
     const answeredRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
       messages: Array<{ requestId?: string; text: string }>;
@@ -4108,8 +4112,11 @@ describe('monolith integration', () => {
     ]);
 
     expect([foreground.status, outbox.status]).toEqual([200, 200]);
-    expect(await foreground.json()).toEqual({ messageId: payload.messageId });
-    expect(await outbox.json()).toEqual({ messageId: payload.messageId });
+    expect(await foreground.json()).toEqual({
+      messageId: payload.messageId,
+      activeSteerAgentIds: [],
+    });
+    expect(await outbox.json()).toEqual({ messageId: payload.messageId, activeSteerAgentIds: [] });
     const stored = await database.query<{ count: string }>(
       `SELECT count(*)::text FROM messages WHERE id=$1`,
       [payload.messageId],
@@ -4463,6 +4470,7 @@ describe('monolith integration', () => {
     expect(view.managerSettings).toEqual({
       visibility: expect.any(String),
       rooms: expect.any(Array),
+      roomsTruncated: false,
     });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
@@ -4662,6 +4670,7 @@ describe('monolith integration', () => {
       personId: HUMAN,
       name: 'Owner',
       handle: 'owner',
+      pushLevel: 'mine',
     });
 
     const profile = await operation('updatePersonProfile', {
@@ -5398,6 +5407,75 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.archived,
     ).toBe(true);
+  });
+
+  it('marks the message a human corner was opened from, and follows its rename', async () => {
+    const sourceId = '7'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: ROOM,
+          messageId: sourceId,
+          text: 'Worth its own corner',
+        })
+      ).status,
+    ).toBe(200);
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'quiet amber corner',
+      sourceMessageId: sourceId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    const markerFor = async (viewer: string) =>
+      (await phone.readRoom(ROOM, viewer))?.messages.find(
+        (message) => message.daemonFact?.cornerId === cornerId,
+      );
+    const marker = await markerFor(HUMAN);
+    expect(marker).toMatchObject({
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-open',
+        cornerId,
+        name: 'quiet amber corner',
+        objective: '',
+        sourceMessageId: sourceId,
+      },
+    });
+    // Everyone in the Room reads the same marker, not just its opener.
+    expect((await markerFor(AGENT))?.daemonFact?.sourceMessageId).toBe(sourceId);
+    // A person opening a scratch corner wakes nobody.
+    expect(
+      (
+        await database.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1`, [
+          marker!.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+
+    expect(
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright river corner' })).status,
+    ).toBe(204);
+    expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
+      name: 'bright river corner',
+      sourceMessageId: sourceId,
+    });
+
+    // A source that is not a message in this Room opens the corner unmarked.
+    const unmarked = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'stray corner',
+      sourceMessageId: '8'.repeat(64),
+    });
+    expect(unmarked.status).toBe(200);
+    const { id: unmarkedId } = (await unmarked.json()) as { id: string };
+    expect(await markerFor(HUMAN)).toBeDefined();
+    expect(
+      (await phone.readRoom(ROOM, HUMAN))?.messages.some(
+        (message) => message.daemonFact?.cornerId === unmarkedId,
+      ),
+    ).toBe(false);
   });
 
   it('renames a human corner through a name-only updateRoom', async () => {
@@ -6531,7 +6609,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: cornerId,
       messageId: handoff,
-      text: '@Peer can you pick up where Bee left off?',
+      text: '@peer can you pick up where Bee left off?',
       mentions: [peer],
     });
     const peerInbox = (await (
@@ -6575,7 +6653,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: cornerId,
       messageId: '8'.repeat(64),
-      text: '@Stranger take a look',
+      text: '@stranger take a look',
       mentions: [stranger],
     });
     const notes = await database.query<{ text: string; tagged_ids: string[] }>(
@@ -6802,8 +6880,21 @@ describe('monolith integration', () => {
       requestId: 'heartbeat-without-turn',
       status: 'working',
       generationId,
-      heartbeat: true,
     });
+    await database.query(`DELETE FROM agent_turns WHERE request_id='heartbeat-without-turn'`);
+    const missingHeartbeat = await request(
+      '/v1/daemon/operations/postAgentTurnReceipt',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: 'heartbeat-without-turn',
+        status: 'working',
+        generationId,
+        heartbeat: true,
+      },
+      daemonToken,
+    );
+    expect(missingHeartbeat.status).toBe(200);
     expect(
       await database.query(`SELECT 1 FROM agent_turns WHERE request_id='heartbeat-without-turn'`),
     ).toHaveProperty('rowCount', 0);
@@ -7640,6 +7731,11 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: 'corner-room-label',
+      status: 'complete',
+    });
     const roomRow = async () =>
       (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
@@ -11275,12 +11371,28 @@ describe('monolith integration', () => {
       [WORKSPACE, peer, ROOM],
     );
     // No live receipt: an event is emitted from inside a turn or not at all.
-    const outsideTurn = await daemonOperation('postRoomEvent', {
+    await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
-      kind: 'agent:handoff',
-      consequence: 'the branch is ready',
+      requestId: 'event-without-turn',
+      status: 'working',
     });
-    expect(outsideTurn.status).toBeGreaterThanOrEqual(400);
+    await database.query(
+      `DELETE FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, 'event-without-turn', AGENT],
+    );
+    const outsideTurn = await request(
+      '/v1/daemon/operations/postRoomEvent',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: 'event-without-turn',
+        generationId: 'fixture-generation',
+        kind: 'agent:handoff',
+        consequence: 'the branch is ready',
+      },
+      daemonToken,
+    );
+    expect(outsideTurn.status).toBe(400);
     expect(((await outsideTurn.json()) as { error: string }).error).toMatch(/no turn running/);
 
     const trigger = await operation('sendRoomMessage', {

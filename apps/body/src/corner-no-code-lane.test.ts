@@ -534,6 +534,7 @@ async function upgradeTurn(
   };
   let lane = 'no_code';
   let closeRequested = false;
+  let closeAfterReceipt = false;
   let delivered = false;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
@@ -560,6 +561,7 @@ async function upgradeTurn(
         ],
       };
     if (name === 'getAgentConfiguration') return { commands: [] };
+    if (name === 'postAgentTurnReceipt' && closeAfterReceipt) closeRequested = true;
     return { id: 'write-id', createdAt: 1 };
   });
   const api = {
@@ -580,7 +582,9 @@ async function upgradeTurn(
           lane = 'code';
         },
         requestClose: () => {
-          closeRequested = true;
+          // Let the refused upgrade finish its ordinary reply and receipt
+          // before the fixture asks the intake loop to exit.
+          closeAfterReceipt = true;
         },
         onChunk,
         onToolCalls,

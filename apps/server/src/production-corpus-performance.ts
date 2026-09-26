@@ -13,6 +13,7 @@ export const HOT_READ_BUDGETS_MS = {
   'presence-candidates': 100,
   'push-candidates': 100,
   'corner-facts': 100,
+  'history-search': 250,
 } as const;
 
 export type HotReadName = keyof typeof HOT_READ_BUDGETS_MS;

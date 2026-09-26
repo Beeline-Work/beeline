@@ -21,7 +21,9 @@
  * were allowed, and both are recorded here rather than assumed.
  *
  * The native `Write` and `Bash` requests come from the same adapter, captured
- * the same way, and stay denied in a Room.
+ * the same way. A Room still denies Write; it allows Bash only while the OS
+ * sandbox that holds the Room's read-only filesystem wraps the session. `Bash`
+ * declares `kind: 'execute'`, which is the whole of what that decision reads.
  */
 
 /** `read_file` on Beeline's own inspection MCP, via claude-agent-acp. */

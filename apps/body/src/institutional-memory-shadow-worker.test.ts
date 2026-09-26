@@ -6,6 +6,7 @@ import type {
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   InstitutionalMemoryShadowWorker,
+  institutionalMemoryExtractionPrompt,
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
 
@@ -19,6 +20,7 @@ const job: InstitutionalMemoryShadowJob = {
   requesterIdentityId: 'human-1',
   directMessage: false,
   mode: 'shadow',
+  triggerKind: 'turn_review',
   messages: [{ id: 'message-1', authorId: 'human-1', createdAt: 1_700_000_000, text: 'Use pnpm.' }],
   existingItems: [],
 };
@@ -59,6 +61,44 @@ describe('institutional memory shadow worker', () => {
     expect(institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'true' })).toBe(
       true,
     );
+  });
+
+  it('quotes the server-bounded merge and curator context in the isolated prompt', () => {
+    expect(
+      institutionalMemoryExtractionPrompt({
+        ...job,
+        triggerKind: 'curator',
+        context: { partition: 'workspace-facts', candidates: [{ id: 'fact-1' }] },
+      }),
+    ).toContain('"partition":"workspace-facts"');
+    expect(
+      institutionalMemoryExtractionPrompt({
+        ...job,
+        triggerKind: 'merge_review',
+        context: { repository: 'Beeline-Work/beeline', targetCommit: 'abc123' },
+      }),
+    ).toContain('"targetCommit":"abc123"');
+  });
+
+  it('carries the recorded CI result and reviewer verdict into the merge-review evidence', () => {
+    const prompt = institutionalMemoryExtractionPrompt({
+      ...job,
+      triggerKind: 'merge_review',
+      context: {
+        repository: 'Beeline-Work/beeline',
+        targetCommit: 'abc123',
+        checks: 'failing',
+        reviewerVerdict: { approvedBy: 'agent-1', force: true, headSha: 'abc123' },
+      },
+    });
+    const [, encoded] = prompt.split('Completed corner evidence:\n');
+    const evidence = JSON.parse(encoded ?? '{}') as {
+      context: { checks?: string; reviewerVerdict?: Record<string, unknown> };
+    };
+    expect(evidence.context).toMatchObject({
+      checks: 'failing',
+      reviewerVerdict: { approvedBy: 'agent-1', force: true, headSha: 'abc123' },
+    });
   });
 
   it('does not claim while interactive work is active', async () => {

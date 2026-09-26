@@ -79,6 +79,43 @@ describe('granted MCP host routes', () => {
     expect(rewritten.env).not.toHaveProperty('TRUSTY_SQUIRE_PROFILE_DIR');
   });
 
+  it('keeps a dynamic Registry route behind its stable resource target', () => {
+    const rewritten = rewriteHostMcpDeclaration(
+      'registry-linear-row',
+      {
+        command: 'registry-bridge',
+        [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST,
+        beeline_resource_target: 'registry-mcp:app.linear/linear',
+        beeline_resource_gate: 'transport',
+      },
+      '/home/op',
+      '/tmp/turn.resource-auth.json',
+    );
+    expect(rewritten).not.toHaveProperty('beeline_resource_target');
+    expect(rewritten).not.toHaveProperty('beeline_resource_gate');
+    expect(rewritten.env).toMatchObject({
+      BEELINE_RESOURCE_TARGET: 'registry-mcp:app.linear/linear',
+      BEELINE_RESOURCE_GATE: 'transport',
+      BEELINE_RESOURCE_AUTH_FILE: '/tmp/turn.resource-auth.json',
+    });
+    const relaunch = JSON.parse(
+      (rewritten.env as Record<string, string>).BEELINE_RESOURCE_LAUNCH,
+    ) as Record<string, unknown>;
+    expect(relaunch.command).toBe('registry-bridge');
+    expect(relaunch).not.toHaveProperty('beeline_resource_target');
+  });
+
+  it('leaves an ordinary host route spending its own grant', () => {
+    const rewritten = rewriteHostMcpDeclaration(
+      'browser',
+      { command: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST },
+      '/home/op',
+      '/tmp/turn.resource-auth.json',
+    );
+    expect(rewritten.env).toMatchObject({ BEELINE_RESOURCE_TARGET: 'browser' });
+    expect(rewritten.env).not.toHaveProperty('BEELINE_RESOURCE_GATE');
+  });
+
   it('answers whether a grant reaches Squire, not merely some host server', () => {
     const declarations = {
       browser: { command: 'browser-mcp' },

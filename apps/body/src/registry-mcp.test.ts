@@ -397,6 +397,180 @@ describe('Registry MCP OAuth installer', () => {
     expect(sent.at(-1)).toBeNull();
   });
 
+  it('sends the metadata resource indicator on authorization, exchange and refresh', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
+    homes.push(home);
+    // The Registry manifest's remote and the provider's canonical resource
+    // differ; RFC 8707 target consistency fails unless every leg agrees.
+    const canonical = 'https://mcp.linear.app/mcp/';
+    let callbackReady = false;
+    const api = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'beginRegistryMcpOAuth')
+          return { state: 'opaque', redirectUri: 'https://beeline.example/callback' };
+        if (name === 'claimRegistryMcpOAuthCode')
+          return callbackReady ? { status: 'ready', code: 'code-one' } : { status: 'pending' };
+        throw new Error(`unexpected ${name}`);
+      }),
+    };
+    const bodies: string[] = [];
+    const transport = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://mcp.linear.app/mcp')
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate':
+              'Bearer resource_metadata="https://mcp.linear.app/.well-known/oauth-protected-resource/mcp"',
+          },
+        });
+      if (url.includes('oauth-protected-resource'))
+        return Response.json({
+          resource: canonical,
+          authorization_servers: ['https://mcp.linear.app'],
+        });
+      if (url === 'https://mcp.linear.app/.well-known/oauth-authorization-server')
+        return Response.json({
+          authorization_endpoint: 'https://mcp.linear.app/authorize',
+          token_endpoint: 'https://mcp.linear.app/token',
+          registration_endpoint: 'https://mcp.linear.app/register',
+          code_challenge_methods_supported: ['S256'],
+        });
+      if (url === 'https://mcp.linear.app/register')
+        return Response.json({ client_id: 'dynamic-client' });
+      if (url === 'https://mcp.linear.app/token') {
+        bodies.push(String(init?.body));
+        return Response.json({
+          access_token: 'access-one',
+          refresh_token: 'refresh-one',
+          expires_in: 0,
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    const input = {
+      api,
+      agentId: 'b'.repeat(64),
+      assignment,
+      home,
+      transport,
+      resolveHost: async () => ['93.184.216.34'],
+    };
+    const pending = await installRegistryMcp(input);
+    if (pending.status !== 'installing') throw new Error('expected OAuth sign-in');
+    expect(new URL(pending.authorizationUrl).searchParams.get('resource')).toBe(canonical);
+
+    callbackReady = true;
+    expect(await installRegistryMcp(input)).toMatchObject({ status: 'connected' });
+    expect(new URLSearchParams(bodies[0]!).get('resource')).toBe(canonical);
+
+    // `expires_in: 0` makes the next broker call refresh before it forwards.
+    const broker = new RegistryMcpHostBroker(home, transport, async () => true);
+    await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow();
+    expect(new URLSearchParams(bodies[1]!).get('resource')).toBe(canonical);
+  });
+
+  it('reads authorization-server metadata from a path-scoped issuer', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
+    homes.push(home);
+    const asked: string[] = [];
+    const transport = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://mcp.linear.app/mcp')
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate':
+              'Bearer resource_metadata="https://mcp.linear.app/.well-known/oauth-protected-resource/mcp"',
+          },
+        });
+      if (url.includes('oauth-protected-resource'))
+        return Response.json({ authorization_servers: ['https://login.example.com/tenant1'] });
+      if (url.includes('.well-known')) {
+        asked.push(url);
+        // RFC 8414: the well-known segment goes BEFORE the issuer's path.
+        return url === 'https://login.example.com/.well-known/oauth-authorization-server/tenant1'
+          ? Response.json({
+              authorization_endpoint: 'https://login.example.com/tenant1/authorize',
+              token_endpoint: 'https://login.example.com/tenant1/token',
+              registration_endpoint: 'https://login.example.com/tenant1/register',
+              code_challenge_methods_supported: ['S256'],
+            })
+          : new Response('', { status: 404 });
+      }
+      if (url === 'https://login.example.com/tenant1/register')
+        return Response.json({ client_id: 'dynamic-client' });
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    const result = await installRegistryMcp({
+      api: {
+        execute: vi.fn(async () => ({
+          state: 'opaque',
+          redirectUri: 'https://beeline.example/callback',
+        })),
+      },
+      agentId: 'b'.repeat(64),
+      assignment,
+      home,
+      transport,
+      resolveHost: async () => ['93.184.216.34'],
+    });
+    if (result.status !== 'installing') throw new Error('expected OAuth sign-in');
+    expect(
+      new URL(result.authorizationUrl).origin + new URL(result.authorizationUrl).pathname,
+    ).toBe('https://login.example.com/tenant1/authorize');
+    expect(asked[0]).toBe(
+      'https://login.example.com/.well-known/oauth-authorization-server/tenant1',
+    );
+  });
+
+  it('keeps the provider session through a transient refusal', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
+    homes.push(home);
+    mkdirSync(join(home, '.beeline', 'registry-mcp'), { recursive: true });
+    writeFileSync(
+      registryMcpStatePath(CONNECTOR, home),
+      JSON.stringify({
+        status: 'connected',
+        connectorId: CONNECTOR,
+        serverName: 'app.linear/linear',
+        version: '1.0.1',
+        remoteUrl: 'https://mcp.linear.app/mcp',
+        accessToken: 'linear-access-secret',
+      }),
+    );
+    const sent: (string | null)[] = [];
+    let refuse = 0;
+    const broker = new RegistryMcpHostBroker(
+      home,
+      vi.fn(async (_input, init) => {
+        sent.push(new Headers(init?.headers).get('mcp-session-id'));
+        if (refuse) return new Response('', { status: refuse });
+        return Response.json(
+          { jsonrpc: '2.0', id: 1, result: {} },
+          { headers: { 'mcp-session-id': 'session-one' } },
+        );
+      }) as typeof fetch,
+      async () => true,
+    );
+    await broker.request(
+      CONNECTOR,
+      JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+      TURN,
+    );
+    for (const status of [429, 502, 401]) {
+      refuse = status;
+      await expect(broker.request(CONNECTOR, TOOLS_LIST, TURN)).rejects.toThrow(
+        'remote refused call',
+      );
+    }
+    refuse = 0;
+    await broker.request(CONNECTOR, TOOLS_LIST, TURN);
+    // The session the remote issued survived every one-call refusal: only a
+    // 404 (a terminated session) may drop it.
+    expect(sent).toEqual([null, 'session-one', 'session-one', 'session-one', 'session-one']);
+  });
+
   it('has the provider store masked before any connect writes a token into it', async () => {
     const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
     homes.push(home);

@@ -151,6 +151,16 @@ type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['o
 const id = () => randomBytes(32).toString('hex');
 export const INBOX_REPLAY_REWIND_MS = 5_000;
 
+/**
+ * A system line's subject is spoken in the Ledger's own voice, so it is the
+ * PINNED registry coordinate, never the publisher's free-text title: a title
+ * of `@dani` would otherwise render as a person. The leading `@` is stripped
+ * so no coordinate can read as a handle either.
+ */
+function registrySubject(serverName: string | null): string {
+  return serverName?.replace(/^@+/, '').trim() || 'MCP server';
+}
+
 function registryMcpRouteName(serverName: string, connectorId: string): string {
   const slug = serverName
     .toLowerCase()
@@ -1610,11 +1620,11 @@ export class DaemonService {
           install_agent_id: string | null;
           install_room_id: string | null;
           install_command_id: string | null;
-          display_name: string | null;
+          registry_server_name: string | null;
         }>(
           `SELECT id,pairing_generation,connector_type,owner_identity_id,workspace_id,machine_id,
                   helper_agent_id,composio_ready,composio_scope,install_agent_id,install_room_id,
-                  install_command_id,display_name
+                  install_command_id,registry_server_name
            FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
@@ -1674,7 +1684,7 @@ export class DaemonService {
             .digest('hex'),
           roomId: row.install_room_id,
           authorId: connectorIdentityId('registry-mcp'),
-          subject: { kind: 'system', name: row.display_name ?? 'MCP server' },
+          subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
           verb: 'connected',
           consequence: 'the requesting agent can continue the original task',
           kind: 'connector-offer-decided',
@@ -5366,7 +5376,7 @@ export class DaemonService {
               .digest('hex'),
             roomId: dmRoomId,
             authorId: connectorIdentityId('registry-mcp'),
-            subject: { kind: 'system', name: manifest.title ?? manifest.name },
+            subject: { kind: 'system', name: registrySubject(serverName) },
             verb: 'needs',
             object: { text: 'provider sign-in', url: signIn.url },
             consequence: 'complete this sign-in to connect the tool',

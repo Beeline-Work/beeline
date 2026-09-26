@@ -32,6 +32,13 @@ type PendingState = {
   serverName: string;
   version: string;
   remoteUrl: string;
+  /**
+   * The canonical RFC 8707 resource indicator the protected-resource metadata
+   * published. The authorization request, the code exchange and every refresh
+   * must carry the SAME value or the provider answers `invalid_target`, so it
+   * is resolved once and stored rather than re-derived from the manifest.
+   */
+  resourceIndicator: string;
   state: string;
   redirectUri: string;
   verifier: string;
@@ -48,6 +55,7 @@ type ConnectedState = {
   serverName: string;
   version: string;
   remoteUrl: string;
+  resourceIndicator?: string;
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
@@ -76,6 +84,22 @@ function safeUrl(value: unknown): string | undefined {
     // Invalid discovery metadata is unsupported, never a reason to log it.
   }
   return undefined;
+}
+
+/**
+ * RFC 8414 inserts the well-known segment BEFORE an issuer's path, so an
+ * issuer of `https://host/tenant1` publishes at
+ * `https://host/.well-known/oauth-authorization-server/tenant1`. Resolving the
+ * well-known path against the origin alone reports a conformant provider as
+ * not supporting standard OAuth. The MCP spec also permits OpenID discovery.
+ */
+export function authorizationServerMetadataUrls(issuer: string): string[] {
+  const url = new URL(issuer);
+  const path = url.pathname.replace(/\/+$/, '');
+  return [
+    new URL(`/.well-known/oauth-authorization-server${path}`, url).toString(),
+    new URL(`/.well-known/openid-configuration${path}`, url).toString(),
+  ];
 }
 
 function base64url(bytes: Buffer): string {
@@ -281,7 +305,7 @@ export async function installRegistryMcp(input: {
           redirect_uri: stored.redirectUri,
           client_id: stored.clientId,
           code_verifier: stored.verifier,
-          resource: stored.remoteUrl,
+          resource: stored.resourceIndicator,
           ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
         }),
         signal: AbortSignal.timeout(20_000),
@@ -295,6 +319,7 @@ export async function installRegistryMcp(input: {
         serverName,
         version,
         remoteUrl: remote.url,
+        resourceIndicator: stored.resourceIndicator,
         accessToken: token.access_token,
         ...(typeof token.refresh_token === 'string' ? { refreshToken: token.refresh_token } : {}),
         ...(typeof token.expires_in === 'number'
@@ -359,14 +384,15 @@ export async function installRegistryMcp(input: {
         : undefined;
       if (!authorizationServer) throw new Error('authorization server metadata is missing');
       await assertNotOwnMachine(authorizationServer, remoteIsOwnMachine, resolveHost);
-      const metadataUrl = new URL(
-        '/.well-known/oauth-authorization-server',
-        authorizationServer,
-      ).toString();
-      const metadataResponse = await transport(metadataUrl, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!metadataResponse.ok) throw new Error('authorization server metadata is unavailable');
+      let metadataResponse: Response | undefined;
+      for (const metadataUrl of authorizationServerMetadataUrls(authorizationServer)) {
+        const candidate = await transport(metadataUrl, { signal: AbortSignal.timeout(10_000) });
+        if (candidate.ok) {
+          metadataResponse = candidate;
+          break;
+        }
+      }
+      if (!metadataResponse) throw new Error('authorization server metadata is unavailable');
       const metadata = await jsonResponse(metadataResponse);
       const authorizationEndpoint = safeUrl(metadata.authorization_endpoint);
       const tokenEndpoint = safeUrl(metadata.token_endpoint);
@@ -404,6 +430,7 @@ export async function installRegistryMcp(input: {
         throw new Error('dynamic client registration returned no client id');
       const verifier = base64url(randomBytes(48));
       const challenge = base64url(createHash('sha256').update(verifier).digest());
+      const resourceIndicator = safeUrl(resource.resource) ?? remoteUrl;
       const scope = Array.isArray(resource.scopes_supported)
         ? resource.scopes_supported
             .filter((item): item is string => typeof item === 'string')
@@ -418,7 +445,7 @@ export async function installRegistryMcp(input: {
         code_challenge: challenge,
         code_challenge_method: 'S256',
         ...(scope ? { scope } : {}),
-        resource: safeUrl(resource.resource) ?? remoteUrl,
+        resource: resourceIndicator,
       }).toString();
       const attemptId = base64url(randomBytes(18));
       writeState(path, {
@@ -427,6 +454,7 @@ export async function installRegistryMcp(input: {
         serverName: pinnedName,
         version: pinnedVersion,
         remoteUrl: remoteUrl,
+        resourceIndicator,
         state: rendezvous.state,
         redirectUri: rendezvous.redirectUri,
         verifier,
@@ -533,7 +561,7 @@ async function refresh(state: ConnectedState, transport: typeof fetch): Promise<
       grant_type: 'refresh_token',
       refresh_token: state.refreshToken,
       client_id: state.clientId,
-      resource: state.remoteUrl,
+      ...(state.resourceIndicator ? { resource: state.resourceIndicator } : {}),
       ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
     }),
     signal: AbortSignal.timeout(20_000),
@@ -641,10 +669,8 @@ export class RegistryMcpHostBroker {
       state = refreshed;
       writeState(path, state);
     }
-    // An `initialize` opens a NEW provider session, and a remote answers a
-    // terminated session id with a refusal — so a cached id is never sent on
-    // initialize and never survives a refusal, or one expiry would wedge this
-    // connector for the life of the daemon.
+    // An `initialize` opens a NEW provider session, so a cached id is never
+    // sent on it.
     const cached = method === 'initialize' ? undefined : this.sessions.get(connectorId);
     const response = await this.transport(state.remoteUrl, {
       method: 'POST',
@@ -658,7 +684,11 @@ export class RegistryMcpHostBroker {
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) {
-      this.sessions.delete(connectorId);
+      // 404 is the streamable-HTTP signal that this session id is gone. A
+      // 401/429/5xx is the provider refusing ONE call, and dropping the id
+      // there would leave every later call session-less for the rest of the
+      // harness session, which nothing re-initializes.
+      if (response.status === 404) this.sessions.delete(connectorId);
       throw new Error('remote refused call');
     }
     const session = response.headers.get('mcp-session-id');

@@ -119,7 +119,12 @@ export default function CommunityInviteJoin() {
     }
   }, [identity, preview, token]);
 
-  const otherWay = () => router.replace('/beeline/community');
+  const otherWay = useCallback(async () => {
+    // Declining is a real way out: the parked copy is spent here, or the deck
+    // would send them straight back to this invite on its next mount.
+    await clearPendingInvite();
+    router.replace('/beeline/community');
+  }, []);
   const retry = () => {
     setError(null);
     setFailure(null);
@@ -190,7 +195,7 @@ export default function CommunityInviteJoin() {
             />
             <Pressable
               accessibilityRole="button"
-              onPress={otherWay}
+              onPress={() => void otherWay()}
               style={styles.quiet}
               testID="invite-not-mine"
             >
@@ -220,7 +225,7 @@ export default function CommunityInviteJoin() {
             />
             <Pressable
               accessibilityRole="button"
-              onPress={otherWay}
+              onPress={() => void otherWay()}
               style={styles.quiet}
               testID="invite-other-way"
             >
@@ -238,7 +243,7 @@ export default function CommunityInviteJoin() {
             </Text>
             <BrassButton
               label="Choose another way in"
-              onPress={otherWay}
+              onPress={() => void otherWay()}
               style={styles.primary}
               testID="invite-other-way"
             />

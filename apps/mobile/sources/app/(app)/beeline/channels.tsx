@@ -16,6 +16,7 @@ import {
 } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { loadPendingInvite } from '@/buzz/pending-invite';
+import { deckLanding } from '@/buzz/deck-landing';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
@@ -361,10 +362,14 @@ export default function BuzzChannels() {
         return;
       }
       // An invite opened before sign-in outranks every other landing.
-      const pendingInvite = await loadPendingInvite();
-      if (pendingInvite) {
+      const parked = deckLanding({
+        pendingInvite: await loadPendingInvite(),
+        workspaces: { status: 'pending' },
+        chats: 'pending',
+      });
+      if (parked.kind === 'invite') {
         if (!cancelled)
-          router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
+          router.replace({ pathname: '/join/[token]', params: { token: parked.token } });
         return;
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
@@ -777,7 +782,15 @@ export default function BuzzChannels() {
     transport,
   ]);
 
-  const noWorkspace = workspacesConfirmed && workspaceList?.workspaces.length === 0;
+  const landing = deckLanding({
+    workspaces: workspacesConfirmed
+      ? { status: 'ready', count: workspaceList?.workspaces.length ?? 0 }
+      : error
+        ? { status: 'failed' }
+        : { status: 'pending' },
+    chats: chatList ? 'ready' : error ? 'failed' : 'pending',
+  });
+  const noWorkspace = landing.kind === 'choice';
   useEffect(() => {
     if (noWorkspace) router.replace('/beeline/community');
   }, [noWorkspace]);
@@ -831,14 +844,9 @@ export default function BuzzChannels() {
     [activeCommunityId, canManageWorkspace],
   );
 
-  if (noWorkspace) {
-    // No Workspace: the create-or-join choice is the landing (the effect
-    // above replaces this screen). Only a LIVE read decides this — a cached
-    // empty list falls through, so an unreachable server reports itself
-    // below instead of spinning here forever.
-    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
-  }
-  if (!chatList && !error) {
+  if (landing.kind === 'choice' || landing.kind === 'loader') {
+    // Choice: the create-or-join screen is the landing and the effect above
+    // is replacing this one; loader: nothing has answered yet.
     return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
   if (!chatList) {

@@ -56,6 +56,9 @@ export default function CreateWorkspace() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const workspaceId = useRef(Crypto.randomUUID()).current;
+  // The name the last confirmation asked the server for, recorded BEFORE the
+  // call: a create whose response never arrived may still have committed.
+  const attemptedName = useRef<string | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [step, setStep] = useState<Step>(1);
   const [workspaceName, setWorkspaceName] = useState('');
@@ -65,7 +68,6 @@ export default function CreateWorkspace() {
   const [savedProfile, setSavedProfile] = useState<{ name: string; face: string | null } | null>(
     null,
   );
-  const [createdName, setCreatedName] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
@@ -120,14 +122,15 @@ export default function CreateWorkspace() {
     setWorking('create');
     setError(null);
     setNotice(null);
+    const previousName = attemptedName.current;
+    attemptedName.current = name;
     try {
       const created = await monolithPhoneOperation('createWorkspace', { workspaceId, name });
       // Step 1 stays editable behind the back control, and the create is
       // idempotent on this id: a confirmed rename has to be written, or the
       // Workspace would silently keep the name the person just corrected.
-      if (createdName !== null && createdName !== name)
+      if (previousName !== null && previousName !== name)
         await monolithPhoneOperation('updateWorkspace', { workspaceId, name });
-      setCreatedName(name);
       await saveActiveCommunityId(identity.publicKey, created.id);
       setRoomId(created.roomId ?? null);
       if (picture) {
@@ -144,7 +147,7 @@ export default function CreateWorkspace() {
     } finally {
       setWorking(null);
     }
-  }, [createdName, identity, picture, workspaceId, workspaceName, working]);
+  }, [identity, picture, workspaceId, workspaceName, working]);
 
   const saveProfile = useCallback(async () => {
     const name = personName.trim();

@@ -87,6 +87,7 @@ import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-roo
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { planComposerFill, type ComposerMention } from '@/buzz/composer-fill';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
@@ -1951,24 +1952,21 @@ export function BuzzChatSurface({
     [roomSurface?.members],
   );
   // The one way anything but typing puts words in the composer: a starter
-  // prompt and a catch-up request both go through here, so neither can
-  // overwrite a draft the person has already started (there is no undo).
-  const fillComposer = useCallback(
-    (text: string, mention?: { handle: string; pubkey: string }) => {
-      if (inputTextRef.current.trim()) return false;
-      if (mention) {
-        const handle = mention.handle.replace(/^@/, '');
-        selectedAgentMentionsRef.current.set(handle, mention.pubkey);
-        selectedMentionsRef.current.set(handle, mention.pubkey);
-      }
-      inputTextRef.current = text;
-      setInputText(text);
-      setInputSelection({ start: text.length, end: text.length });
-      scheduleAnimationFrame(() => composerRef.current?.focus());
-      return true;
-    },
-    [],
-  );
+  // prompt and a catch-up request both go through here, and `planComposerFill`
+  // owns what that does to a draft somebody already started.
+  const fillComposer = useCallback((text: string, mention?: ComposerMention) => {
+    const plan = planComposerFill({ draft: inputTextRef.current, text, mention });
+    if (plan.focus) scheduleAnimationFrame(() => composerRef.current?.focus());
+    if (!plan.fill) return false;
+    if (plan.fill.mention) {
+      selectedAgentMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+      selectedMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+    }
+    inputTextRef.current = plan.fill.text;
+    setInputText(plan.fill.text);
+    setInputSelection(plan.fill.selection);
+    return true;
+  }, []);
   const starterPrompts = useMemo(() => {
     if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
       return undefined;

@@ -229,6 +229,33 @@ describe('creating a Workspace', () => {
     expect(find(renderer, 'create-step-profile')).toHaveLength(1);
   });
 
+  it('writes a name corrected after a create whose response never arrived', async () => {
+    let calls = 0;
+    controls.operation.mockImplementation(async (name: string, input: any) => {
+      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
+      if (name === 'createWorkspace') {
+        calls += 1;
+        // The server committed the first insert; only the answer was lost.
+        if (calls === 1) throw new Error('timeout');
+        return { id: input.workspaceId, roomId: 'general-1' };
+      }
+      return undefined;
+    });
+    const renderer = await render();
+    await type(renderer, 'create-workspace-name', 'Alpha');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(find(renderer, 'create-error')).toHaveLength(1));
+    await type(renderer, 'create-workspace-name', 'Alpha Labs');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() =>
+      expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
+        workspaceId: WORKSPACE,
+        name: 'Alpha Labs',
+      }),
+    );
+    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
+  });
+
   it('leaves the name alone when step 1 is confirmed again unchanged', async () => {
     const renderer = await render();
     await type(renderer, 'create-workspace-name', 'Crew');

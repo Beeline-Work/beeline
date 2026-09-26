@@ -73,10 +73,6 @@ describe('the catch-up sheet', () => {
     expect(surface).toContain('boundaryId: catchUpBoundaryId');
     expect(surface).toContain('newestId: newestTranscriptMessageId');
     expect(surface).toContain('onAskAgent={draftCatchUpRequest}');
-    // The request goes through the one composer-fill helper, which is what
-    // registers the mention (and refuses to overwrite a started draft).
-    expect(surface).toContain('fillComposer(prompt, { handle, pubkey: agent.pubkey })');
-    expect(surface).toContain('selectedAgentMentionsRef.current.set(handle, mention.pubkey)');
   });
 
   it('CHEV-10: the disc is 44 and its lift stays derived from the turn line', () => {

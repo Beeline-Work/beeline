@@ -219,7 +219,9 @@ describe('CommunityInviteJoin', () => {
     );
     expect(text(renderer)).toContain('This invite doesn’t work anymore');
     expect(controls.clearPendingInvite).toHaveBeenCalled();
-    renderer.root.findByProps({ testID: 'invite-other-way' }).props.onPress();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'invite-other-way' }).props.onPress();
+    });
     expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
   });
 
@@ -244,9 +246,23 @@ describe('CommunityInviteJoin', () => {
 
   it('sends "This isn’t my invite" to the choice screen without joining', async () => {
     const renderer = await render();
-    renderer.root.findByProps({ testID: 'invite-not-mine' }).props.onPress();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'invite-not-mine' }).props.onPress();
+    });
     expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
     expect(controls.redeemInvite).not.toHaveBeenCalled();
+  });
+
+  it('spends the parked invite when an unreachable invite is declined', async () => {
+    controls.invite.mockRejectedValue(new HttpError(503, 'request_failed'));
+    const renderer = await render();
+    expect(controls.clearPendingInvite).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'invite-other-way' }).props.onPress();
+    });
+    // Without this the deck's bootstrap would route them straight back here.
+    expect(controls.clearPendingInvite).toHaveBeenCalled();
+    expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
   });
 
   it('starts only one redemption when acceptance is pressed repeatedly', async () => {

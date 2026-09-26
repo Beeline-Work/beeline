@@ -201,7 +201,7 @@ const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
-    throw new Error('agent name must be a short spoken name');
+    throw new Error('invalid agent name: must be a short spoken name');
   return name;
 }
 

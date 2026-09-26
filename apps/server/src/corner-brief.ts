@@ -249,8 +249,7 @@ export async function resolvePendingCornerBriefAttachments(
     }));
 }
 
-const UPGRADE_INTENT_ENTRIES = 50;
-const UPGRADE_SNAPSHOT_LENGTH = 16_000;
+const UPGRADE_REQUEST_LENGTH = 16_000;
 const UPGRADE_BUILD_SPEC_LENGTH = 65_536;
 const UPGRADE_CRITERION_LENGTH = 2_000;
 
@@ -265,7 +264,7 @@ function upgradeBuildSpec(
   discussion: readonly { name: string; text: string }[],
   request: string,
 ): string {
-  const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade\n`;
+  const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
   const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
   const kept: string[] = [];
   let remaining = UPGRADE_BUILD_SPEC_LENGTH - head.length - 128;
@@ -288,37 +287,33 @@ function upgradeBuildSpec(
  * the assignment: the server composes it here, in the upgrade's own
  * transaction, rather than leaving the one repository corner that `createCorner`
  * would have refused — a code corner with no brief at all.
+ *
+ * The ONE explicit ask that triggered the upgrade is the whole authoritative
+ * intent. Everything said in the corner before it is carried as build-spec
+ * context, because a chat corner holds abandoned and superseded asks that a
+ * worker reading `intentVerbatim` could not rank against the live one.
  */
 export async function composeCornerUpgradeBrief(
   db: SqlDatabase,
   cornerId: string,
   approval: { sourceMessageId: string; snapshot: string },
 ): Promise<CornerBriefStructuredDraft> {
+  if (!approval.snapshot.trim() || approval.snapshot.length > UPGRADE_REQUEST_LENGTH)
+    throw new Error(
+      `corner lane upgrade needs the code request written in one message of at most ${UPGRADE_REQUEST_LENGTH} characters — ask again in a shorter message`,
+    );
   const discussion = (
-    await db.query<{ id: string; text: string; name: string; kind: string }>(
-      `SELECT message.id,message.text,identity.name,identity.kind
+    await db.query<{ id: string; text: string; name: string }>(
+      `SELECT message.id,message.text,identity.name
        FROM messages message JOIN identities identity ON identity.id=message.author_id
        WHERE message.room_id=$1 AND message.presentation='message'
          AND message.deleted_at IS NULL AND btrim(message.text)<>''
        ORDER BY message.created_at,message.id`,
       [cornerId],
     )
-  ).rows;
-  const intentVerbatim = discussion
-    .filter(
-      (row) =>
-        row.kind === 'human' &&
-        row.id !== approval.sourceMessageId &&
-        row.text.length <= UPGRADE_SNAPSHOT_LENGTH,
-    )
-    .slice(-(UPGRADE_INTENT_ENTRIES - 1))
-    .map((row) => ({ sourceMessageId: row.id, snapshot: row.text }));
-  intentVerbatim.push({
-    sourceMessageId: approval.sourceMessageId,
-    snapshot: approval.snapshot,
-  });
+  ).rows.filter((row) => row.id !== approval.sourceMessageId);
   return {
-    intentVerbatim,
+    intentVerbatim: [{ sourceMessageId: approval.sourceMessageId, snapshot: approval.snapshot }],
     buildSpec: upgradeBuildSpec(discussion, approval.snapshot),
     criteria: [{ id: 'AC-1', text: upgradeCriterion(approval.snapshot) }],
     references: [],

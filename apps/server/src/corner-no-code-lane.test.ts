@@ -421,14 +421,14 @@ it('carries the corner discussion into a first brief the human ask approves', as
     snapshot: '@hoots please do this',
     approvedBy: HUMAN,
   });
-  // Verbatim intent is the human side of the discussion, approval last; the
-  // agent's own words are discussion, never authority.
-  expect(brief?.intentVerbatim.map((item) => item.snapshot)).toEqual([
-    'The widget renderer drops the trailing label',
-    '@hoots please do this',
-  ]);
+  // The ask that triggered the upgrade is the whole authoritative intent: a
+  // chat corner's earlier asks may have been abandoned, and the worker cannot
+  // rank them against the live one.
+  expect(brief?.intentVerbatim.map((item) => item.snapshot)).toEqual(['@hoots please do this']);
+  // Everything else said in the corner is carried as context instead, once.
   expect(brief?.buildSpec).toContain('The widget renderer drops the trailing label');
   expect(brief?.buildSpec).toContain('I can see it in the renderer');
+  expect(brief?.buildSpec.split('@hoots please do this')).toHaveLength(2);
   expect(brief?.criteria).toEqual([
     { id: 'AC-1', text: expect.stringContaining('@hoots please do this') },
   ]);
@@ -464,4 +464,36 @@ it('keeps the brief a no-code corner already had when it upgrades', async () => 
     buildSpec: 'Scan the market and write it up',
   });
   expect(await lane(cornerId)).toBe('code');
+});
+
+it("refuses the upgrade when the asking message cannot be the brief's approval", async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  const messageId = randomBytes(32).toString('hex');
+  await phone.execute(
+    'sendRoomMessage',
+    { roomId: cornerId, messageId, text: `@hoots ${'x'.repeat(16_000)}` },
+    HUMAN,
+  );
+  const command = (
+    await daemon.execute('getAgentCommands', { roomId: cornerId }, AGENT)
+  ).commands.at(-1);
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: cornerId, commandId: command!.id, generationId: 'g1' },
+    AGENT,
+  );
+
+  // The refusal names the real cause and what to do, rather than surfacing an
+  // internal brief-validation error for a lane operation.
+  await expect(
+    daemon.execute(
+      'upgradeCornerLane',
+      { cornerId, requestId: command!.turnRequestId, generationId: 'g1' },
+      AGENT,
+    ),
+  ).rejects.toThrow('ask again in a shorter message');
+  expect(await lane(cornerId)).toBe('no_code');
+  expect(
+    (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
+  ).toHaveLength(0);
 });

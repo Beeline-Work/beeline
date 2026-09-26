@@ -3,7 +3,6 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
-import { ComposioClient } from './connector-composio.js';
 import { LiveHub } from './live.js';
 import {
   BackgroundLeader,
@@ -240,6 +239,7 @@ async function main() {
     enrichmentDatabase,
     objectService,
     googleOAuth,
+    mcpRegistry,
   );
   const daemon = new DaemonService(
     database,
@@ -252,9 +252,6 @@ async function main() {
     process.env.FLY_MACHINE_ID,
     github ? (input) => github!.prChecksStatus(input) : undefined,
     googleOAuth,
-    process.env.BEELINE_COMPOSIO_API_KEY
-      ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
-      : undefined,
     institutionalMemory,
     mcpRegistry,
     registryMcpOAuth,

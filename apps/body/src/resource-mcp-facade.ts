@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { squireCallAppKeys } from '@beeline/api-contract/workbench';
 
 export const RESOURCE_FACADE_FLAG = '--resource-mcp-facade';
 export function resourceFacadeArgs(): string[] {
@@ -322,6 +323,26 @@ async function postSquireApproval(
   });
 }
 
+/**
+ * What the server's gate needs to know about one call beyond its target: the
+ * tool it runs, for the app usage ledger, and — for Trusty Squire — the apps
+ * its arguments name, so a Squire call for a connected app answers to that
+ * app's one permission decision rather than Squire's own.
+ */
+export function resourceCallFacts(
+  message: Record<string, unknown>,
+  target: string,
+): { operation?: string; appKeys?: readonly string[] } {
+  if (message.method !== 'tools/call') return {};
+  const params = record(message.params);
+  const tool = shortString(params?.name);
+  const appKeys = target === 'squire' ? squireCallAppKeys(record(params?.arguments)) : [];
+  return {
+    ...(tool ? { operation: tool } : {}),
+    ...(appKeys.length ? { appKeys } : {}),
+  };
+}
+
 export async function authorizeResourceMessage(
   message: Record<string, unknown>,
   target: string,
@@ -355,6 +376,7 @@ export async function authorizeResourceMessage(
         ...context,
         target,
         ...(spendsGrant && !NON_CONSUMING.has(message.method) ? {} : { consume: false }),
+        ...resourceCallFacts(message, target),
       }),
       signal: AbortSignal.timeout(20_000),
     },

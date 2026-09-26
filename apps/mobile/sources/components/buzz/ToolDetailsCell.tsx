@@ -23,6 +23,9 @@ export type ToolDetailsCellProps = {
   actionDisabled?: boolean;
   actionTestID?: string;
   detailText: string;
+  /** A mark of the row's own, in place of the fixed connector logo (an app
+   *  row wears its brand's `ServiceMark`, like a key row). */
+  leading?: React.ReactNode;
   logoUrl?: string;
   errorText?: string;
   extraActions?: readonly {
@@ -48,6 +51,7 @@ export function ToolDetailsCell({
   actionDisabled,
   actionTestID,
   detailText,
+  leading,
   logoUrl,
   errorText,
   extraActions,
@@ -70,9 +74,10 @@ export function ToolDetailsCell({
     <View testID={testID}>
       <SettingsRow
         leading={
-          logoUrl ? (
+          leading ??
+          (logoUrl ? (
             <IdentityMark kind="human" seed={testID} name={title} avatarUrl={logoUrl} size={26} />
-          ) : undefined
+          ) : undefined)
         }
         action={action}
         description={errorText}

@@ -5,6 +5,7 @@ import {
   appKeyForHost,
   registrableDomain,
   registryServerAppKey,
+  registryServerDomain,
   selectOfficialHostedServer,
   type AppConnectionStatus,
   type AppRoute,
@@ -654,7 +655,11 @@ export async function connectApp(
         connectorId = armedConnector.id;
       }
       const name = displayNameFor(params.app, key, manifest);
-      const domain = identity.domain ?? domainOf(manifest?.websiteUrl) ?? null;
+      const domain =
+        identity.domain ??
+        domainOf(manifest?.websiteUrl) ??
+        (manifest ? registryServerDomain(manifest.name) : undefined) ??
+        null;
       const id = existing?.id ?? randomUUID();
       await db.query(
         `INSERT INTO workspace_apps(
@@ -939,7 +944,7 @@ export async function backfillRegistryApps(
         row.owner_identity_id,
         key,
         row.display_name ?? row.registry_server_name,
-        domainOf(row.website_url ?? undefined) ?? null,
+        domainOf(row.website_url ?? undefined) ?? registryServerDomain(row.registry_server_name) ?? null,
         row.id,
         row.machine_id,
       ],

@@ -138,6 +138,14 @@ export function registryServerAppKey(serverName: string): string | undefined {
   return domain ? brandOfDomain(domain) : undefined;
 }
 
+/** The domain a reverse-DNS Registry namespace names (`com.stripe/…` → `stripe.com`). */
+export function registryServerDomain(serverName: string): string | undefined {
+  const namespace = serverName.trim().toLowerCase().split('/')[0] ?? '';
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(namespace) || namespace.startsWith('io.github.'))
+    return undefined;
+  return registrableDomain(namespace.split('.').reverse().join('.'));
+}
+
 type RegistryCandidate = {
   readonly name: string;
   readonly version: string;

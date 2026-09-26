@@ -6,6 +6,7 @@ import {
   appResourceTarget,
   isOfficialHostedServer,
   registryServerAppKey,
+  registryServerDomain,
   selectOfficialHostedServer,
   squireCallAppKeys,
 } from './app-connections.js';
@@ -44,6 +45,8 @@ describe('official hosted MCP servers', () => {
     // A community package NAMED after the app is not the app's namespace.
     expect(registryServerAppKey('io.github.someone/linear')).toBe('someone');
     expect(registryServerAppKey('not a namespace/linear')).toBeUndefined();
+    expect(registryServerDomain('com.stripe/mcp')).toBe('stripe.com');
+    expect(registryServerDomain('io.github.github/github-mcp-server')).toBeUndefined();
   });
 
   it('accepts only the app’s own namespace with a streamable-http remote', () => {

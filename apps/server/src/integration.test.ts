@@ -8390,14 +8390,30 @@ describe('monolith integration', () => {
   it('privatizes legacy resource cards and revokes unproven approvals without broadening pending grants', async () => {
     await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
     const grants: Array<{ grantId: string; messageId: string }> = [];
-    for (const target of ['pending-resource', 'missing-provenance', 'foreign-approval']) {
+    for (const target of [
+      'pending-resource',
+      'missing-provenance',
+      'mismatched-root',
+      'foreign-approval',
+      'retired-budget',
+    ]) {
       grants.push(await (await daemonOperation('requestAgentGrant', {
         roomId: ROOM, kind: 'host', target, reason: 'use the host',
       })).json());
     }
     await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [grants[1]!.grantId]);
+    await database.query(`UPDATE agent_grants SET requested_by=$2 WHERE id=$1`, [
+      grants[2]!.grantId,
+      AGENT,
+    ]);
     await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`,
-      [grants[2]!.grantId, AGENT]);
+      [grants[3]!.grantId, AGENT]);
+    await database.query(`UPDATE agent_grants SET kind='budget' WHERE id=$1`, [grants[4]!.grantId]);
+    // Production already ran the old migration. These rows retain only the
+    // shapes from which the corrective ledger can recover without guessing.
+    await database.query(`UPDATE agent_grants SET status='revoked' WHERE id=ANY($1::uuid[])`, [
+      [grants[1]!.grantId, grants[2]!.grantId, grants[3]!.grantId],
+    ]);
     // Reproduce the pre-upgrade shared Room placement.
     await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [ROOM, grants[0]!.messageId]);
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
@@ -8416,12 +8432,63 @@ describe('monolith integration', () => {
       `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
     expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
       [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
+      [grants[3]!.grantId]: 'revoked', [grants[4]!.grantId]: 'revoked',
     });
     const card = (await database.query<{ room_id: string; card: { sourceRoomId: string; grants: Array<{status: string}> } }>(
       `SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])).rows[0]!;
     expect(card.room_id).not.toBe(ROOM);
     expect(card.card.sourceRoomId).toBe(ROOM);
-    expect(card.card.grants.map(g => g.status)).toEqual(['pending','revoked','revoked']);
+    expect(card.card.grants.map(g => g.status)).toEqual([
+      'pending', 'revoked', 'revoked', 'revoked', 'revoked',
+    ]);
+    const ledger = await database.query<{
+      grant_id: string;
+      previous_status: string | null;
+      recovered: boolean;
+      turn_disposition: string | null;
+    }>(`SELECT grant_id,previous_status,recovered,turn_disposition
+      FROM agent_grant_policy_revocations ORDER BY target`);
+    expect(ledger.rows).toEqual([
+      {
+        grant_id: grants[2]!.grantId,
+        previous_status: 'pending',
+        recovered: true,
+        turn_disposition: 'cancelled',
+      },
+      {
+        grant_id: grants[1]!.grantId,
+        previous_status: 'pending',
+        recovered: true,
+        turn_disposition: 'unrecoverable',
+      },
+      {
+        grant_id: grants[4]!.grantId,
+        previous_status: 'pending',
+        recovered: false,
+        turn_disposition: 'resumed',
+      },
+    ]);
+    expect((await database.query(
+      `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
+       WHERE g.id=$1 AND resume.action='resume' AND resume.root_source_message_id=(
+         SELECT root_source_message_id FROM agent_commands WHERE id=g.command_id
+       )`, [grants[4]!.grantId],
+    )).rowCount).toBe(1);
+    expect((await database.query<{ state: string }>(
+      `SELECT command.state FROM agent_commands command
+       JOIN agent_grants g ON g.command_id=command.id WHERE g.id=$1`,
+      [grants[2]!.grantId],
+    )).rows).toEqual([{ state: 'cancelled' }]);
+    const ownerNotices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL
+       AND text LIKE '%had a legacy grant revoked%' ORDER BY text`,
+      [SYSTEM_IDENTITY_ID],
+    );
+    expect(ownerNotices.rows.map((row) => row.text)).toEqual([
+      expect.stringContaining('retired-budget'),
+      expect.stringContaining('mismatched-root'),
+      expect.stringContaining('missing-provenance'),
+    ]);
     expect((await operation('decideAgentGrant', {grantId: grants[1]!.grantId, decision:'always'})).status).toBe(409);
     expect((await operation('decideAgentGrant', {grantId: grants[0]!.grantId, decision:'always'})).status).toBe(200);
   });
@@ -9504,7 +9571,15 @@ describe('monolith integration', () => {
         target: 'squire',
         reason: 'use the owner vault',
       })
-    ).json()) as { grantId: string; messageId: string };
+    ).json()) as {
+      grantId: string;
+      messageId: string;
+      approval: { destination: string; authority: string };
+    };
+    expect(route.approval).toEqual({
+      destination: 'trusty-squire-dm',
+      authority: 'resource-owner',
+    });
     const card = (
       await database.query<{
         room_id: string;
@@ -9622,6 +9697,42 @@ describe('monolith integration', () => {
       })
     ).json()) as { grants: Array<{ grantId: string }> };
     expect(liveAfter.grants.map((grant) => grant.grantId)).not.toContain(second.grantId);
+    const discovery = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        requestId: sourceId,
+        kind: 'mcp',
+        target: 'facade-resource',
+        reason: 'discover and call one personal resource',
+      })
+    ).json()) as { grantId: string };
+    expect(
+      (await operation('decideAgentGrant', { grantId: discovery.grantId, decision: 'once' }))
+        .status,
+    ).toBe(200);
+    const discoveryContext = {
+      roomId: ROOM,
+      requestId: sourceId,
+      target: 'facade-resource',
+    };
+    expect(
+      (await (await daemonOperation('authorizeResourceCall', {
+        ...discoveryContext, consume: false,
+      })).json()).allowed,
+    ).toBe(true);
+    expect(
+      (await database.query<{ status: string; expires_at: Date | null }>(
+        `SELECT status,expires_at FROM agent_grants WHERE id=$1`, [discovery.grantId],
+      )).rows[0],
+    ).toEqual({ status: 'once', expires_at: null });
+    expect(
+      (await (await daemonOperation('authorizeResourceCall', discoveryContext)).json()).allowed,
+    ).toBe(true);
+    expect(
+      (await database.query<{ expired: boolean }>(
+        `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`, [discovery.grantId],
+      )).rows[0],
+    ).toEqual({ expired: true });
     expect(
       (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,
     ).toBe(403);

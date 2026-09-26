@@ -1300,6 +1300,34 @@ ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 
+-- Immutable evidence for the requester-aware policy upgrade. This deliberately
+-- has no foreign keys: deleting a Workspace or agent must not erase what the
+-- release revoked. previous_status is NULL when the already-run production
+-- migration destroyed information that cannot be reconstructed safely.
+CREATE TABLE IF NOT EXISTS agent_grant_policy_revocations (
+  grant_id uuid PRIMARY KEY,
+  agent_id text NOT NULL,
+  workspace_id uuid NOT NULL,
+  room_id uuid NOT NULL,
+  owner_id text NOT NULL,
+  command_id text,
+  kind text NOT NULL,
+  target text NOT NULL,
+  requested_by text NOT NULL,
+  previous_status text CHECK (previous_status IS NULL OR previous_status IN ('pending','approved','once')),
+  reason text NOT NULL CHECK (reason IN (
+    'budget-retired','missing-requester-provenance','third-party-auto-resource',
+    'non-owner-resource-decision'
+  )),
+  recovered boolean NOT NULL DEFAULT false,
+  turn_disposition text CHECK (turn_disposition IS NULL OR turn_disposition IN (
+    'resumed','cancelled','not-active','unrecoverable'
+  )),
+  revoked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_grant_policy_revocations_owner_idx
+  ON agent_grant_policy_revocations(owner_id, revoked_at DESC);
+
 -- Preference cards: one lettered question or Room poll per row. Electorate is
 -- frozen at insert so a join/leave cannot move the denominator. Votes live in
 -- room_choice_votes; the card JSON on messages is the phone projection.

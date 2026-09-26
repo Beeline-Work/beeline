@@ -52,7 +52,50 @@ describe('CornerBriefDisclosure', () => {
       <CornerBriefDisclosure
         brief={{
           revision: 2,
-          content: 'A1: keep all permission tiers.',
+          revisionHash: 'a'.repeat(64),
+          legacy: false,
+          content: 'Keep all permission tiers and the corrected amber label.',
+          intentVerbatim: [
+            { sourceMessageId: 'intent-1', snapshot: 'Show every permission tier.' },
+            {
+              sourceMessageId: 'correction-2',
+              snapshot: 'Correction: the status label is amber, not blue.',
+            },
+          ],
+          buildSpec: 'Keep all permission tiers and the corrected amber label.',
+          criteria: [
+            { id: 'AC-1', text: 'All permission tiers remain visible.' },
+            { id: 'AC-2', text: 'The status label is amber.' },
+          ],
+          nonGoals: ['Changing the permission model.'],
+          references: [
+            {
+              label: 'Release card mock',
+              authority: 'approved-reference',
+              description: 'The corrected amber visual.',
+              objectId: 'mock-object',
+            },
+          ],
+          approvalBasis: {
+            kind: 'explicit-human-answer',
+            sourceMessageId: 'correction-2',
+            snapshot: 'Correction: the status label is amber, not blue.',
+            approvedBy: 'human-1',
+            briefHash: 'a'.repeat(64),
+          },
+          history: [
+            {
+              revision: 2,
+              revisionHash: 'a'.repeat(64),
+              change: 'Applied the amber correction.',
+              approvalKind: 'explicit-human-answer',
+            },
+            {
+              revision: 1,
+              revisionHash: 'b'.repeat(64),
+              approvalKind: 'initiating-command',
+            },
+          ],
           attachments: [
             {
               title: 'matrix.md',
@@ -76,6 +119,18 @@ describe('CornerBriefDisclosure', () => {
     expect(renderer.root.findAllByProps({ testID: 'corner-brief-detail' })).toHaveLength(0);
     act(() => renderer.root.findByProps({ testID: 'corner-brief-toggle' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'corner-brief-detail' })).toBeDefined();
+    const detailText = renderer.root
+      .findByProps({ testID: 'corner-brief-detail' })
+      .findAllByType('Text')
+      .map((node: any) => JSON.stringify(node.props.children))
+      .join('\n');
+    expect(detailText).toContain('Correction: the status label is amber, not blue.');
+    expect(detailText).toContain('correction-2');
+    expect(detailText).toContain('AC-2');
+    expect(detailText).toContain('approved reference');
+    expect(detailText).toContain('explicit human answer');
+    expect(renderer.root.findByProps({ testID: 'corner-brief-history' })).toBeDefined();
+    expect(detailText).toContain('Applied the amber correction.');
     expect(renderer.root.findByProps({ testID: 'corner-validation' })).toBeDefined();
     expect(
       renderer.root

@@ -1,60 +1,87 @@
 # Durable corner assignments
 
-The authoritative [v2 assignment](durable-corner-specs-v2-assignment.md) is preserved verbatim for the reviewer. [Fresh-context skill trials](durable-corner-specs-v2-evaluations.md) report observed agent behavior separately from runtime proof.
+The original [v2 assignment](durable-corner-specs-v2-assignment.md) and
+[fresh-context skill trials](durable-corner-specs-v2-evaluations.md) remain as design history.
+This document describes the shipped contract and its acceptance proof.
 
-`open_corner` accepts an optional full `brief` beside its short name and objective. A brief contains up to 65,536 characters of requirements and up to 16 Room files. Each file entry names a server object ID, purpose, and required status. The server resolves filename, MIME type, size, and SHA-256 from a ready object referenced by a message from its owner in the source Room. A missing or inaccessible file rejects the open. The corner Room, revision 1, initial worker command, and open card commit together; retries with the same tool-call key return that corner.
+## Current contract
 
-`revise_corner_brief` supplies the complete replacement, expected revision, and a change description. Revisions are immutable rows with author and source-message provenance. The opener's revision and the resulting worker command commit together. A green corner also wakes its configured reviewer. `read_corner_brief` pages previous revisions. Existing corners without a brief keep their objective and transcript path.
+Every new repository/code or research corner starts with a typed, human-authorized brief. A
+revision contains:
 
-Every worker turn reads the current revision from the server, downloads its files into the session scratch, and compares downloaded SHA-256 with the manifest. A missing or changed required file is called out in the prompt so dependent work pauses. Open corners pin referenced objects against the media sweep; the sweep and assignment validation lock the same object row. Closing a corner releases the pin and normal expiry resumes.
+- `intentVerbatim`: exact human message snapshots and their message IDs;
+- `buildSpec`: the synthesized Markdown implementation specification;
+- `criteria`: stable numbered IDs and their requirements;
+- `references`: object/message/URL references with explicit authority labels; and
+- `approvalBasis`: the exact initiating command or explicit answer that settled this material
+  scope.
 
-The configured reviewer sees the same current revision. `approve_merge` includes that revision; the server checks it and the PR head under the corner lock. A revised assignment invalidates an earlier approval even when the code head is unchanged. An approved stable patch ID can carry over a clean base catch-up: the server independently hashes GitHub's current PR diff and confirms the head stayed fixed while reading it. Changed code or requirements need fresh review. The existing `pr_checks_status` gate remains the merge authority. Validation stage records are scoped to revision and PR head. Missing stages project as pending; a changed revision or head makes prior evidence inapplicable. Stage records do not authorize a merge.
+The server checks every human snapshot against the source Room, requires the approval-basis
+message to remain in `intentVerbatim`, computes a deterministic revision hash, and commits the
+brief, corner, and initial worker command together. It automatically adds ready artifacts posted
+by the planner in that command turn to the manifest. The old `content` column is retained as a
+legacy `buildSpec` projection for pre-migration rows; it is not accepted as the contract for a new
+repository or research corner.
 
-The phone's corner header has an Assignment disclosure showing the current brief, file purposes, revision, and validation stages. Brief and validation reads degrade independently of the core Room read. Server deployment must precede the body version that calls the new operations.
+Approval is proportional. An initiating command authorizes a revision only when it already settles
+the exact material scope. Otherwise the planner asks the human one specific unresolved choice and
+records the answer against that revision. Silence is never approval, and settled requests do not
+receive a blanket proposal/go ceremony.
 
-## Acceptance evidence and implementation checklist
+The release-managed `beeline-spec` skill has two paths. Small, settled fixes take the compact path.
+Complex work performs current-state and scope analysis, user stories, architecture/data flow,
+failure modes, an acceptance/test map, automatic mock attachment, implementation-task synthesis,
+and a bounded default-on adversarial second read. Findings return to the planner; only a material
+product choice goes to the human.
 
-| Criterion | Evidence                                                                                                                                                                                                                                                      | Status                                                                                                                       |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| A1        | `monolith-corner-turn.test.ts` renders the assigned full brief outside the bounded transcript; `integration.test.ts` stores and restores it. A real local Cursor Room turn carried the settled amber-label requirement into revision 1 of a new corner brief. | Verified for one live requirement and at prompt/storage boundaries; a long-discussion fresh-worker trial remains unverified. |
-| A2        | A fresh-context button-label trial returned a compact brief and no confirmation question.                                                                                                                                                                     | Verified in an isolated skill trial; no live Room trial.                                                                     |
-| A3        | A fresh-context ambiguous-ban trial asked removal versus prevention of rejoining.                                                                                                                                                                             | Verified in an isolated skill trial; answer-to-revision trial pending.                                                       |
-| A4        | `integration.test.ts` covers atomic open, an identical retry (including after revision), rejection of a changed retry, missing-file rollback, and a rejected brief insert that rolls back the corner and worker command.                                      | Verified at the database boundary.                                                                                           |
-| A5        | Integration fixture removes the source scratch tree, then retrieves server-owned bytes after ordinary TTL while the corner is open; SHA-256 is in the manifest.                                                                                               | Verified at the object-storage boundary; separate live helper trial pending.                                                 |
-| A6        | Prompt test includes brief revision and a deliberate choice despite a long corner transcript.                                                                                                                                                                 | Verified for fresh prompt construction; full restart trial pending.                                                          |
-| A7        | Integration tests keep both revisions, requeue the worker, wake the configured reviewer on a green head, and project the new revision; the PR gate rejects old-revision approval at an unchanged head.                                                        | Verified at server boundaries.                                                                                               |
-| A8        | A fresh-context reviewer rejected a budget-only diff against a four-part permissions matrix despite green CI.                                                                                                                                                 | Verified in an isolated review trial; live review pending.                                                                   |
-| A9        | A fresh-context reviewer marked visual proof without a rendered screen and authorization proof without a server test unverified.                                                                                                                              | Verified in an isolated review trial; live evidence pending.                                                                 |
-| A10       | Integration test refuses a nonmember's brief read and revision; writes retain command authority. Assigned files use existing unguessable media-URL capabilities.                                                                                              | Verified for brief operations and file assignment; direct capability possession remains the existing media read authority.   |
-| A11       | Phone `RoomView` projects the current brief; `CornerBriefDisclosure.test.tsx` opens content, evidence, and a file link.                                                                                                                                       | Verified at API/component boundary; device proof pending.                                                                    |
-| A12       | Legacy startup, reviewer dispatch, and exact-head suites pass; a gate test proves stable patch identity carries approval over shifted hunks only with unchanged brief revision and code content.                                                              | Verified at the server gate; live catch-up pending.                                                                          |
-| A13       | Worker prompt retains the deliberate amber label; an isolated reviewer trial treated amber as intentional while refusing unsupported visual proof.                                                                                                            | Verified at prompt and behavioral-review boundaries.                                                                         |
-| A14       | Nine stages project as pending until recorded. A configured reviewer records review evidence for revision 2/head 1 while tests stay pending; empty passed claims are rejected.                                                                                | Verified at record/projection boundaries; complete live pipeline pending.                                                    |
-| A15       | A server fixture carries a reviewer refusal to the author, records the repair reply, dispatches review on a new green head, and approves that head/revision; existing tests bound repeated handbacks.                                                         | Verified through server handoff; live agent repair trial pending.                                                            |
-| A16       | An isolated reviewer handed a mechanical duplicate bug to the author, did not reopen the settled selector choice, and asked no human question about unrelated export scope.                                                                                   | Verified in a behavioral trial; live repair pending.                                                                         |
-| A17       | `pr-checks-status.test.ts` keeps the composite merge gate closed even with a falsely passed `final_authorization` row when reviewer approval is absent, yolo is off, or a human hold exists. Stage records do not merge or authorize.                         | Verified at server/helper boundary.                                                                                          |
-| A18       | Integration test rejects false CI pass, empty evidence, and old head evidence; merge gate rejects old revision. The Assignment disclosure labels validation as agent-recorded evidence and names the separate gate.                                           | Verified at record, gate, and component boundaries; unavailable-tool reporting trial pending.                                |
+Workers fetch and verify the current brief and files on every turn. Verbatim intent plus the current
+criteria are product authority; the short objective is navigation text only. Reviewers quote the
+verbatim intent with source IDs, report evidence for every current criterion ID, and separate
+product-completeness findings from engineering findings. Only a human-authorized revision may
+remove a requirement.
 
-The release-managed `beeline-spec` skill is generated by `apps/body/src/beeline-skill.ts` and provisioned with the other release-managed agent skills. Its guidance does not grant command, file, or merge authority.
+Merge approval is exact-head and exact-revision only. There is no patch-ID carry-over: whitespace,
+line-ending, rename/mode-only, binary, and all other head changes require review of the new head.
+The existing composite `pr_checks_status` gate remains the sole merge authority; validation-stage
+records are evidence, not authorization.
 
-The Room capability primer gives every agent the brief and proportional-confirmation instruction before repository dispatch. The corner prompt delivers the assigned brief on each turn and gives a configured reviewer the revision-bound review instruction. Agent-home provisioning writes release-managed `beeline-spec` and, for configured reviewers, `beeline-review` on activation. That path serves newly paired agents on their first activation and existing agents on normal activation after a release refresh or daemon restart; an already running model session is not retroactively updated.
+The phone Assignment disclosure shows provenance, approval basis, current criteria and references,
+the current hash, and revision history. Brief enrichment still degrades independently of the core
+Room read.
 
-`agent-home.test.ts` verifies a fresh home for every configured agent kind and release-stamp rebuilding on subsequent activation. Claude, Codex, Grok, Pi, Cursor, and OpenCode receive skills in their selected harness homes. Goose and custom/reference commands receive the same managed files in the Codex fallback tree, exposed through the Room's read-only MCP skill root; they have no verified native skill discovery. Their corner review prompt names the review file explicitly. `room-session.test.ts` checks that the read-only mount follows the provisioned tree for each kind. The Room primer is also repeated in turn content for adapters whose session-system-prompt delivery has not been verified. These are distribution and prompt-boundary tests, not proof that each production harness followed the skill or that existing running sessions have refreshed.
+## Acceptance proof
 
-## Validation checkpoint
+Run the complete proof only with a disposable local proof database/workspace:
 
-On 2026-09-25, `npx vitest run src/integration.test.ts --reporter=dot` in `apps/server` finished with 150 passes and nine failures. The failing cases concern Room send/reply and retry behavior, seeded soul and identity responses, an agent name refusal, a peer corner inbox, receipt freshness and parent-row state, and an outside-turn agent event. None is an assertion from the new brief tests, but the full file is not green and this run is not a passed tests stage. The four focused corner-open cases, including changed-key conflict and identical retry after revision, passed separately; server typecheck passed.
+```sh
+BEELINE_REAL_CURSOR_TOOL_PROOF=1 \
+  BEELINE_REAL_CURSOR_MODEL=auto \
+  npm run prove:corner-brief-acceptance
+```
 
-## Delivery audit after the first CI run
+The command fails closed unless the live-harness opt-in is present. It combines these boundaries in
+one fixture:
 
-The four requested components are present in the branch: release-managed `beeline-spec`, proportional-confirmation guidance, transactional brief/file assignment with revision restoration, and revision-bound staged review through the existing reviewer gate. No additional missing functional component was established by this audit. This is a code-path finding, not a claim that the workflow has passed end to end.
+1. Server HTTP/database tests preserve a long corrected discussion, bind an actual posted object to
+   the draft, enforce typed creation/revision, and reject missing or forged human authorization.
+2. A real native-discovery Cursor session posts an HTML visual mock, opens the corner, is stopped,
+   and is replaced by a fresh worker. That worker restores the brief, downloads the server-owned
+   mock after restart, completes a turn, receives a genuine midstream human correction, and writes
+   a new human-authorized revision.
+3. The fallback/read-only-MCP tests provision and expose the same managed skill tree for Goose and
+   custom/reference commands and verify its mounted read-only path.
+4. The reviewer lifecycle fixture deliberately presents a partial first implementation, records a
+   refusal with stable finding ID `PROD-AC-2-1`, repairs it, dispatches a rereview, and approves only
+   the repaired exact head and current revision. The author gate then clears.
+5. Focused phone tests verify provenance, approval basis, and revision-history disclosure.
 
-The first manually dispatched GitHub Checks run for `98eac50c` failed MOBILE SUITE and ACTIONLINT. A local mobile run with the same built package prerequisites found that the new Assignment disclosure violated the established typography lint; the disclosure now uses the shared type roles, and its component test, design lint, and mobile typecheck pass. Three branding assertions that spawn several app-config subprocesses timed out under the five-second per-test default; those assertions pass with a 30-second timeout. ACTIONLINT on workflow dispatch ran on the production host and stopped at the `sudo` ShellCheck install; the job now uses the hosted runner for both dispatch and pull requests. Local actionlint, shell lint, workflow path validation, and desktop signing tests pass. These local results do not supersede GitHub's current-head check verdict.
+The complete native live test passed on 2026-09-25 in a disposable proof workspace. The run observed
+the real `post_artifact`, `createCorner`, media download, restart restoration, and
+`reviseCornerBrief` calls. The Cursor account's Composer quota was exhausted, so the successful run
+used its live `auto` model; this is a model-selection limitation, not a native-discovery or workflow
+simulation. Goose/custom native skill discovery remains unverified: those harnesses are covered
+through their supported read-only-MCP fallback path.
 
-Evidence still needed before claiming full delivery: a real Room-to-corner handoff of an actual mock/file to a different helper after the source scratch is gone; a fresh worker session and restart that restore the same assigned revision; a correction that reaches worker and configured reviewer; a reviewer refusal/repair/rereview on current code and requirements; app-level device inspection; current-head CI and composite gate success; and deployed trials across supported harnesses. Goose and custom/reference commands have a managed file and read-only MCP path, but their native skill discovery remains unverified. Existing agents receive the new managed guidance on normal activation or restart after rollout; already running sessions do not refresh in place.
-
-## Audit follow-up
-
-On 2026-09-25, `BEELINE_REAL_CURSOR_TOOL_PROOF=1 npm run test:live -w @beeline/body -- src/proof-cursor-agent-tools.live.test.ts` passed against a real Cursor agent and a local monolith Room. The human message supplied a settled, unusual requirement to preserve an amber label. The model called `open_corner` through its mounted Beeline tool, and the test read revision 1 from `corner_brief_revisions` and found “amber” in its content. This proves one live Room-to-corner brief handoff, not a long-discussion fresh-worker restoration or file handoff. The fixture stops after the open and does not run a reviewer.
-
-The configured reviewer refused PR #1716 because the required real Room-to-corner-to-review and app proof are incomplete. That remains a blocking finding. The focused HTTP tests and fresh-context skill trials remain narrower evidence, and the current deployed web release predates this PR. The live file, restart, revision, refusal-repair-rereview, device, and deployed-harness paths are still unverified. A passed validation row cannot open the merge gate: a focused real-helper regression inserted a falsely passed `final_authorization` row and observed `mergeAllowed=false` with no reviewer, yolo off, and a human hold. The review guidance reserves a reported final authorization pass for the author after `pr_checks_status` reports checks passed and `mergeAllowed=true`. The phone labels passed rows “reported passed,” calls the rows agent-recorded evidence, and directs readers to the current PR checks and Beeline merge gate.
+The broader server integration file still has nine unrelated baseline failures recorded before this
+work. All focused acceptance cases, body contract tests, API/auth builds, affected typechecks, and
+the live proof above pass; focused evidence must not be represented as a green full server suite.

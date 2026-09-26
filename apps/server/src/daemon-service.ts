@@ -21,8 +21,13 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  cornerBriefRevisionHash,
   currentCornerBrief,
+  isStructuredCornerBrief,
+  projectCornerBrief,
+  resolveCornerBriefApproval,
   resolveCornerBriefAttachments,
+  resolvePendingCornerBriefAttachments,
   validateCornerBrief,
 } from './corner-brief.js';
 import {
@@ -866,11 +871,20 @@ export class DaemonService {
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
       case 'getComposioLink':
-        return (await this.composioLink(input as Input<'getComposioLink'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioLink(
+          input as Input<'getComposioLink'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getComposioTools':
-        return (await this.composioTools(input as Input<'getComposioTools'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioTools(
+          input as Input<'getComposioTools'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'executeComposioTool':
-        return (await this.composioExecute(input as Input<'executeComposioTool'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioExecute(
+          input as Input<'executeComposioTool'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
           (input as Input<'getGoogleOAuthGrant'>).connectorId,
@@ -991,7 +1005,10 @@ export class DaemonService {
         )) as Output<Name>;
       case 'authorizeHostCall':
         return (await this.authorizeScopedGrant(
-          input as Input<'authorizeHostCall'>, authenticatedAgentId, 'host', authenticatedAgentId,
+          input as Input<'authorizeHostCall'>,
+          authenticatedAgentId,
+          'host',
+          authenticatedAgentId,
         )) as Output<Name>;
       case 'authorizeRepositoryCall': {
         const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
@@ -1279,17 +1296,18 @@ export class DaemonService {
     input: Input<'getComposioLink'>,
     agentId: string,
   ): Promise<Output<'getComposioLink'>> {
-    const row = (await this.database.query<{
-      id: string;
-      owner_identity_id: string;
-      pairing_generation: number;
-      composio_session_id: string | null;
-      composio_link_toolkit: string | null;
-      composio_link_started_at: Date | null;
-      sign_in: { method: string; url: string } | null;
-      composio_scope: unknown;
-    }>(
-      `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
+    const row = (
+      await this.database.query<{
+        id: string;
+        owner_identity_id: string;
+        pairing_generation: number;
+        composio_session_id: string | null;
+        composio_link_toolkit: string | null;
+        composio_link_started_at: Date | null;
+        sign_in: { method: string; url: string } | null;
+        composio_scope: unknown;
+      }>(
+        `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
               c.composio_link_toolkit,c.composio_link_started_at,c.sign_in,c.composio_scope
        FROM workspace_connectors c
        JOIN agents a ON a.agent_id=c.helper_agent_id
@@ -1298,36 +1316,46 @@ export class DaemonService {
          AND owner_member.removed_at IS NULL
        WHERE c.id=$1::uuid AND c.helper_agent_id=$2 AND c.connector_type='composio'
          AND c.status='installing' AND c.owner_identity_id=a.owner_id`,
-      [input.connectorId, agentId],
-    )).rows[0];
-    if (!row || (input.pairingGeneration !== undefined &&
-        row.pairing_generation !== input.pairingGeneration))
+        [input.connectorId, agentId],
+      )
+    ).rows[0];
+    if (
+      !row ||
+      (input.pairingGeneration !== undefined && row.pairing_generation !== input.pairingGeneration)
+    )
       throw new Error('connector not found for this helper');
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
     let sessionId: string | null | undefined = row.composio_session_id;
     if (!sessionId) {
       const created = await this.composioClient.createSession(scope);
-      const updated = (await this.database.query<{ composio_session_id: string }>(
-        `UPDATE workspace_connectors SET composio_session_id=$3
+      const updated = (
+        await this.database.query<{ composio_session_id: string }>(
+          `UPDATE workspace_connectors SET composio_session_id=$3
          WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$4
            AND status='installing' AND composio_session_id IS NULL
          RETURNING composio_session_id`,
-        [row.id, agentId, created, row.pairing_generation],
-      )).rows[0];
-      sessionId = updated?.composio_session_id ??
-        (await this.database.query<{ composio_session_id: string }>(
-          `SELECT composio_session_id FROM workspace_connectors
+          [row.id, agentId, created, row.pairing_generation],
+        )
+      ).rows[0];
+      sessionId =
+        updated?.composio_session_id ??
+        (
+          await this.database.query<{ composio_session_id: string }>(
+            `SELECT composio_session_id FROM workspace_connectors
            WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
-          [row.id, agentId, row.pairing_generation],
-        )).rows[0]?.composio_session_id;
+            [row.id, agentId, row.pairing_generation],
+          )
+        ).rows[0]?.composio_session_id;
       if (!sessionId) throw new Error('connector pairing changed');
     }
     for (const toolkit of scope.toolkits) {
       if (await this.composioClient.connected(sessionId, toolkit, scope)) continue;
       if (row.composio_link_toolkit === toolkit && row.sign_in?.url) {
-        if (!row.composio_link_started_at ||
-            Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000)
+        if (
+          !row.composio_link_started_at ||
+          Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000
+        )
           throw new Error('Composio sign-in expired; tap Retry to open a new link');
         return { status: 'pending', toolkit, url: row.sign_in.url };
       }
@@ -1337,7 +1365,13 @@ export class DaemonService {
          SET composio_link_toolkit=$3,sign_in=$4::jsonb,
              composio_link_started_at=now(),updated_at=now()
          WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$5 AND status='installing'`,
-        [row.id, agentId, toolkit, JSON.stringify({ method: 'oauth', url }), row.pairing_generation],
+        [
+          row.id,
+          agentId,
+          toolkit,
+          JSON.stringify({ method: 'oauth', url }),
+          row.pairing_generation,
+        ],
       );
       return { status: 'pending', toolkit, url };
     }
@@ -1362,11 +1396,15 @@ export class DaemonService {
     | { status: 'permission-required'; grantId?: string }
   > {
     await this.access(input.roomId, agentId);
-    const row = (await this.database.query<{
-      id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
-      composio_scope: unknown;
-    }>(
-      `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
+    const row = (
+      await this.database.query<{
+        id: string;
+        owner_identity_id: string;
+        helper_agent_id: string;
+        composio_session_id: string;
+        composio_scope: unknown;
+      }>(
+        `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
        FROM workspace_connectors c
        JOIN rooms r ON r.workspace_id=c.workspace_id
        JOIN agents helper ON helper.agent_id=c.helper_agent_id
@@ -1381,8 +1419,9 @@ export class DaemonService {
        WHERE r.id=$1 AND c.connector_type='composio'
          AND c.status='connected' AND c.owner_identity_id=helper.owner_id
        ORDER BY c.updated_at DESC LIMIT 1`,
-      [input.roomId, agentId],
-    )).rows[0];
+        [input.roomId, agentId],
+      )
+    ).rows[0];
     if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
     const permission = await this.authorizeScopedGrant(input, agentId, 'mcp', 'composio');
     if (!permission.allowed)
@@ -1392,8 +1431,12 @@ export class DaemonService {
       };
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
-    return { connectorId: row.id, helperAgentId: row.helper_agent_id,
-      sessionId: row.composio_session_id, scope };
+    return {
+      connectorId: row.id,
+      helperAgentId: row.helper_agent_id,
+      sessionId: row.composio_session_id,
+      scope,
+    };
   }
 
   private async composioTools(
@@ -1418,20 +1461,30 @@ export class DaemonService {
     if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
       throw new Error('Composio arguments must be an object');
     const result = await this.composioClient!.execute(
-      access.sessionId, access.scope, input.toolkit, input.tool, input.arguments,
+      access.sessionId,
+      access.scope,
+      input.toolkit,
+      input.tool,
+      input.arguments,
     );
-    await receiveConnectionUsage(this.database, {
-      requestId: input.requestId,
-      agentId,
-      roomId: input.roomId,
-      usage: [{
-        ref: `composio:${input.toolkit}`,
-        service: input.toolkit,
-        operation: input.tool,
-        statusCode: 200,
-        bytes: JSON.stringify(result.data ?? null).length,
-      }],
-    }, access.helperAgentId);
+    await receiveConnectionUsage(
+      this.database,
+      {
+        requestId: input.requestId,
+        agentId,
+        roomId: input.roomId,
+        usage: [
+          {
+            ref: `composio:${input.toolkit}`,
+            service: input.toolkit,
+            operation: input.tool,
+            statusCode: 200,
+            bytes: JSON.stringify(result.data ?? null).length,
+          },
+        ],
+      },
+      access.helperAgentId,
+    );
     return result;
   }
 
@@ -1446,7 +1499,14 @@ export class DaemonService {
   ): Promise<Output<'installConnector'>> {
     const result = await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ id: string; pairing_generation: number; connector_type: string; owner_identity_id: string; composio_ready: boolean; composio_scope: unknown }>(
+        await database.query<{
+          id: string;
+          pairing_generation: number;
+          connector_type: string;
+          owner_identity_id: string;
+          composio_ready: boolean;
+          composio_scope: unknown;
+        }>(
           `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
@@ -1477,16 +1537,20 @@ export class DaemonService {
       );
       if (row.connector_type === 'composio') {
         const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
-        await applyVaultList(database, row, scope.toolkits.map((toolkit) => ({
-          reference: `composio:${toolkit}`,
-          service: toolkit,
-          label: `${toolkit} via Composio`,
-          fieldNames: [],
-          allowedHosts: [],
-          createdAt: Math.floor(Date.now() / 1000),
-          stale: false,
-          state: 'active' as const,
-        })));
+        await applyVaultList(
+          database,
+          row,
+          scope.toolkits.map((toolkit) => ({
+            reference: `composio:${toolkit}`,
+            service: toolkit,
+            label: `${toolkit} via Composio`,
+            fieldNames: [],
+            allowedHosts: [],
+            createdAt: Math.floor(Date.now() / 1000),
+            stale: false,
+            state: 'active' as const,
+          })),
+        );
       }
       return {
         row,
@@ -2438,34 +2502,17 @@ export class DaemonService {
     )
       throw new Error('invalid brief revision cursor');
     const rows = (
-      await this.database.query<{
-        revision: number;
-        content: string;
-        change: string | null;
-        author_id: string;
-        source_room_id: string;
-        source_message_id: string | null;
-        attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[];
-      }>(
-        `SELECT revision,content,change,author_id,source_room_id,source_message_id,attachments
+      await this.database.query<Parameters<typeof projectCornerBrief>[1]>(
+        `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
+                brief_references,approval_basis,revision_hash,change,author_id,
+                source_room_id,source_message_id,attachments
        FROM corner_brief_revisions WHERE corner_id=$1 AND ($2::integer IS NULL OR revision<$2)
        ORDER BY revision DESC LIMIT 21`,
         [input.cornerId, input.beforeRevision ?? null],
       )
     ).rows;
     return {
-      revisions: rows
-        .slice(0, 20)
-        .map((row) => ({
-          id: input.cornerId,
-          revision: row.revision,
-          content: row.content,
-          ...(row.change ? { change: row.change } : {}),
-          authorId: row.author_id,
-          sourceRoomId: row.source_room_id,
-          ...(row.source_message_id ? { sourceMessageId: row.source_message_id } : {}),
-          attachments: row.attachments,
-        })),
+      revisions: rows.slice(0, 20).map((row) => projectCornerBrief(input.cornerId, row)),
       ...(rows.length > 20 ? { nextBeforeRevision: rows[19]!.revision } : {}),
     };
   }
@@ -2505,7 +2552,6 @@ export class DaemonService {
         force: false,
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
-        ...(input.patchId ? { patchId: input.patchId } : {}),
       });
       return {
         pullRequestNumber: target.pull_request_number,
@@ -4713,7 +4759,7 @@ export class DaemonService {
             ? 'edit this repository'
             : kind === 'host'
               ? 'run this corner on your machine with host filesystem and command access'
-            : 'use this resource, including paid calls within this approval scope',
+              : 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
@@ -4875,11 +4921,13 @@ export class DaemonService {
         available:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))),
+          (entry.connectorType !== 'composio' ||
+            Boolean(composioScopeForOwner(context.owner.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))) &&
+          (entry.connectorType !== 'composio' ||
+            Boolean(composioScopeForOwner(context.owner.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4960,8 +5008,8 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
-    const composioScope = connectorType === 'composio'
-      ? composioScopeForOwner(context.addressee.pubkey) : undefined;
+    const composioScope =
+      connectorType === 'composio' ? composioScopeForOwner(context.addressee.pubkey) : undefined;
     if (connectorType === 'composio' && !composioScope)
       throw new Error('Composio scope is not configured on this Beeline server');
     const connectorName = connectorDisplayName(connectorType);
@@ -5033,9 +5081,7 @@ export class DaemonService {
         consequence: connectorOfferConsequence(
           connectorType,
           reason,
-          connectorType === 'composio'
-            ? Object.values(composioScope!.tools).flat()
-            : undefined,
+          connectorType === 'composio' ? Object.values(composioScope!.tools).flat() : undefined,
         ),
         helper: context.machine,
         status: 'pending',
@@ -5096,11 +5142,27 @@ export class DaemonService {
     }
     await this.access(input.roomId, agentId);
     const parent = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
-        [input.roomId],
-      )
+      await this.database.query<{
+        workspace_id: string;
+        repository_key: string | null;
+        repository_resolution: string;
+      }>(`SELECT workspace_id,repository_key,repository_resolution FROM rooms WHERE id=$1`, [
+        input.roomId,
+      ])
     ).rows[0]!;
+    // A no-code corner is scratch-backed even when its parent Room has a
+    // repository. It has no checkout or repository authority, so keep that
+    // existing lane available without pretending it is repository work.
+    const repositoryWork =
+      input.lane !== 'no_code' &&
+      (input.lane === 'research' ||
+        Boolean(input.repository) ||
+        parent.repository_resolution === 'repository' ||
+        Boolean(parent.repository_key));
+    if (repositoryWork && !input.brief)
+      throw new Error('repository and research corners require a structured brief');
+    if (input.brief && !isStructuredCornerBrief(input.brief))
+      throw new Error('new corners cannot use the legacy opaque brief format');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
@@ -5120,12 +5182,24 @@ export class DaemonService {
           repository_target_branch: string;
           lane: string;
           brief_content: string | null;
+          brief_intent: import('@beeline/api-contract/daemon').CornerBrief['intentVerbatim'] | null;
+          brief_build_spec: string | null;
+          brief_criteria: import('@beeline/api-contract/daemon').CornerBrief['criteria'] | null;
+          brief_non_goals: string[] | null;
+          brief_references: import('@beeline/api-contract/daemon').CornerBrief['references'] | null;
+          brief_approval_basis:
+            import('@beeline/api-contract/daemon').CornerBrief['approvalBasis'] | null;
+          brief_revision_hash: string | null;
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
                   fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
-                  initial.content brief_content,initial.change brief_change,
+                  initial.content brief_content,initial.intent_verbatim brief_intent,
+                  initial.build_spec brief_build_spec,initial.criteria brief_criteria,
+                  initial.non_goals brief_non_goals,initial.brief_references,
+                  initial.approval_basis brief_approval_basis,
+                  initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
            FROM rooms child
            JOIN corner_facts fact ON fact.corner_id=child.id
@@ -5141,7 +5215,7 @@ export class DaemonService {
       ).rows[0];
       if (existing) {
         const sameAttachments =
-          (input.brief?.attachments?.length ?? 0) === (existing.brief_attachments?.length ?? 0) &&
+          (input.brief?.attachments?.length ?? 0) <= (existing.brief_attachments?.length ?? 0) &&
           (input.brief?.attachments ?? []).every((item, index) => {
             const saved = existing.brief_attachments?.[index];
             return (
@@ -5150,11 +5224,13 @@ export class DaemonService {
               saved.required === item.required
             );
           });
-        const sameBrief = input.brief
-          ? existing.brief_content === input.brief.content.trim() &&
-            existing.brief_change === (input.brief.change ?? null) &&
-            sameAttachments
-          : existing.brief_content === null;
+        const sameBrief =
+          input.brief && isStructuredCornerBrief(input.brief)
+            ? existing.brief_revision_hash ===
+                cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
+              existing.brief_change === (input.brief.change ?? null) &&
+              sameAttachments
+            : existing.brief_content === null;
         if (
           existing.owner_agent_id !== agentId ||
           existing.request_id !== input.requestId ||
@@ -5165,7 +5241,19 @@ export class DaemonService {
           existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') ||
           !sameBrief
         ) {
-          throw new Error('corner assignment conflict: idempotency key was already used for a different assignment');
+          const mismatches = [
+            existing.owner_agent_id !== agentId && 'owner',
+            existing.request_id !== input.requestId && 'request',
+            existing.name !== name && 'name',
+            existing.objective !== objective && 'objective',
+            existing.repository_key !== (input.repository ?? null) && 'repository',
+            existing.repository_target_branch !== (input.targetBranch ?? 'main') && 'target branch',
+            existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') && 'lane',
+            !sameBrief && 'brief',
+          ].filter(Boolean);
+          throw new Error(
+            `corner assignment conflict: idempotency key was already used for a different assignment (${mismatches.join(', ')})`,
+          );
         }
         cornerId = existing.corner_id;
         return;
@@ -5227,17 +5315,51 @@ export class DaemonService {
         ],
       );
       if (input.brief) {
-        const attachments = await resolveCornerBriefAttachments(db, input.roomId, input.brief);
+        if (!isStructuredCornerBrief(input.brief))
+          throw new Error('new corners cannot use the legacy opaque brief format');
+        const explicitAttachments = await resolveCornerBriefAttachments(
+          db,
+          input.roomId,
+          input.brief,
+        );
+        const attachments = [
+          ...explicitAttachments,
+          ...(await resolvePendingCornerBriefAttachments(db, {
+            roomId: input.roomId,
+            agentId,
+            requestId: input.requestId,
+            generationId: input.generationId,
+            excluding: explicitAttachments.map((attachment) => attachment.objectId),
+          })),
+        ];
+        if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+        const authority = await resolveCornerBriefApproval(
+          db,
+          [input.roomId],
+          input.brief,
+          attachments,
+          parentCommand.root_source_message_id,
+        );
         await db.query(
-          `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id,source_message_id,attachments)
-           VALUES($1,1,$2,$3,$4,$5,$6,$7)`,
+          `INSERT INTO corner_brief_revisions(
+             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+             brief_references,approval_basis,revision_hash,change,author_id,
+             source_room_id,source_message_id,attachments
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
           [
             cornerId,
-            input.brief.content.trim(),
+            input.brief.buildSpec.trim(),
+            JSON.stringify(input.brief.intentVerbatim),
+            input.brief.buildSpec.trim(),
+            JSON.stringify(input.brief.criteria),
+            JSON.stringify(input.brief.nonGoals ?? []),
+            JSON.stringify(input.brief.references),
+            JSON.stringify(authority.approvalBasis),
+            authority.revisionHash,
             input.brief.change ?? null,
             agentId,
-            input.roomId,
-            parentCommand.root_source_message_id,
+            authority.sourceRoomId,
+            input.brief.approvalBasis.sourceMessageId,
             JSON.stringify(attachments),
           ],
         );
@@ -5276,7 +5398,11 @@ export class DaemonService {
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
-    if (!input.brief.change?.trim()) throw new Error('corner brief revision requires a change description');
+    if (!isStructuredCornerBrief(input.brief))
+      throw new Error('corner brief revisions require the structured authority contract');
+    const draft = input.brief;
+    if (!draft.change?.trim())
+      throw new Error('corner brief revision requires a change description');
     const brief = await this.database.transaction(async (db) => {
       const corner = (
         await db.query<{ parent_id: string; owner_agent_id: string }>(
@@ -5298,19 +5424,47 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
-      const attachments = await resolveCornerBriefAttachments(db, corner.parent_id, input.brief);
+      const explicitAttachments = await resolveCornerBriefAttachments(db, corner.parent_id, draft);
+      const attachments = [
+        ...explicitAttachments,
+        ...(await resolvePendingCornerBriefAttachments(db, {
+          roomId: input.cornerId,
+          agentId,
+          requestId: input.requestId,
+          generationId: input.generationId,
+          excluding: explicitAttachments.map((attachment) => attachment.objectId),
+        })),
+      ];
+      if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+      const authority = await resolveCornerBriefApproval(
+        db,
+        [corner.parent_id, input.cornerId],
+        draft,
+        attachments,
+        command.root_source_message_id,
+      );
       const revision = input.expectedRevision + 1;
       await db.query(
-        `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id,source_message_id,attachments)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        `INSERT INTO corner_brief_revisions(
+           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+           brief_references,approval_basis,revision_hash,change,author_id,
+           source_room_id,source_message_id,attachments
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           input.cornerId,
           revision,
-          input.brief.content.trim(),
-          input.brief.change?.trim() ?? null,
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.intentVerbatim),
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.criteria),
+          JSON.stringify(draft.nonGoals ?? []),
+          JSON.stringify(draft.references),
+          JSON.stringify(authority.approvalBasis),
+          authority.revisionHash,
+          draft.change?.trim() ?? null,
           agentId,
-          corner.parent_id,
-          command.source_message_id,
+          authority.sourceRoomId,
+          draft.approvalBasis.sourceMessageId,
           JSON.stringify(attachments),
         ],
       );

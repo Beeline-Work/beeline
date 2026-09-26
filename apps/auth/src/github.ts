@@ -554,39 +554,6 @@ export class GitHubAppClient {
     };
   }
 
-  /** Full GitHub PR diff for independently checking a reviewed patch after base catch-up. */
-  async readPullRequestDiff(accessToken: string, fullName: string, number: number): Promise<string> {
-    if (!Number.isSafeInteger(number) || number < 1) throw new Error('invalid pull request number');
-    const response = await fetch(
-      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${number}`,
-      {
-        headers: { ...githubHeaders(accessToken), accept: 'application/vnd.github.diff' },
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
-    if (!response.ok) throw new GitHubHttpError('GitHub pull request diff', response.status);
-    const length = Number(response.headers.get('content-length'));
-    if (length > 8 * 1024 * 1024) throw new Error('GitHub pull request diff is too large');
-    if (!response.body) throw new Error('GitHub pull request diff is unavailable');
-    const reader = response.body.getReader();
-    const chunks: Buffer[] = [];
-    let size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 8 * 1024 * 1024) {
-        await reader.cancel();
-        throw new Error('GitHub pull request diff is too large');
-      }
-      chunks.push(Buffer.from(value));
-    }
-    const diff = Buffer.concat(chunks).toString('utf8');
-    if (!diff.startsWith('diff --git '))
-      throw new Error('GitHub pull request diff is unavailable or incomplete');
-    return diff;
-  }
-
   /** Resolve a branch at GitHub now; push deliveries can arrive out of order. */
   async readBranchHead(accessToken: string, fullName: string, branch: string): Promise<string> {
     const body = await this.readRepositoryJson(

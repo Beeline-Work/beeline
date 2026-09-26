@@ -5,7 +5,33 @@ import { typeRoles } from '@/buzz/groknight';
 
 type Brief = {
   revision: number;
+  revisionHash?: string;
+  legacy?: boolean;
   content: string;
+  intentVerbatim?: readonly { sourceMessageId: string; snapshot: string }[];
+  buildSpec?: string;
+  criteria?: readonly { id: string; text: string }[];
+  nonGoals?: readonly string[];
+  references?: readonly {
+    label: string;
+    authority: string;
+    description: string;
+    objectId?: string;
+  }[];
+  approvalBasis?: {
+    kind: string;
+    sourceMessageId?: string;
+    snapshot?: string;
+    approvedBy?: string;
+    briefHash: string;
+    reason?: string;
+  };
+  history?: readonly {
+    revision: number;
+    revisionHash: string;
+    change?: string;
+    approvalKind: string;
+  }[];
   attachments: readonly { title: string; purpose: string; required: boolean; url: string }[];
 };
 
@@ -36,9 +62,72 @@ export function CornerBriefDisclosure({
       </Pressable>
       {expanded && (
         <View style={styles.detail} testID="corner-brief-detail">
-          <Text style={styles.content} selectable>
-            {brief.content}
-          </Text>
+          {brief.legacy || !brief.intentVerbatim?.length ? (
+            <>
+              <Text style={styles.filePurpose}>Legacy pre-migration assignment</Text>
+              <Text style={styles.content} selectable>
+                {brief.content}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.fileTitle}>Human intent · verbatim</Text>
+              {brief.intentVerbatim.map((item) => (
+                <View key={item.sourceMessageId}>
+                  <Text style={styles.content} selectable>
+                    {item.snapshot}
+                  </Text>
+                  <Text style={styles.filePurpose}>Message {item.sourceMessageId}</Text>
+                </View>
+              ))}
+              <Text style={styles.fileTitle}>Acceptance criteria</Text>
+              {brief.criteria?.map((criterion) => (
+                <Text key={criterion.id} style={styles.content} selectable>
+                  {criterion.id} · {criterion.text}
+                </Text>
+              ))}
+              {brief.nonGoals?.length ? (
+                <>
+                  <Text style={styles.fileTitle}>Non-goals</Text>
+                  {brief.nonGoals.map((item) => (
+                    <Text key={item} style={styles.filePurpose} selectable>
+                      {item}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+              <Text style={styles.fileTitle}>Build spec</Text>
+              <Text style={styles.content} selectable>
+                {brief.buildSpec ?? brief.content}
+              </Text>
+              <Text style={styles.fileTitle}>Approval basis</Text>
+              <Text style={styles.filePurpose} selectable>
+                {brief.approvalBasis?.kind.replaceAll('-', ' ') ?? 'unknown'}
+                {brief.approvalBasis?.sourceMessageId
+                  ? ` · message ${brief.approvalBasis.sourceMessageId}`
+                  : ''}
+                {brief.revisionHash ? ` · ${brief.revisionHash.slice(0, 12)}` : ''}
+              </Text>
+              {brief.approvalBasis?.snapshot ? (
+                <Text style={styles.content} selectable>
+                  {brief.approvalBasis.snapshot}
+                </Text>
+              ) : null}
+              {brief.references?.length ? (
+                <>
+                  <Text style={styles.fileTitle}>References</Text>
+                  {brief.references.map((reference) => (
+                    <View key={`${reference.label}:${reference.objectId ?? reference.description}`}>
+                      <Text style={styles.content}>{reference.label}</Text>
+                      <Text style={styles.filePurpose} selectable>
+                        {reference.authority.replaceAll('-', ' ')} · {reference.description}
+                      </Text>
+                    </View>
+                  ))}
+                </>
+              ) : null}
+            </>
+          )}
           {brief.attachments.map((file) => (
             <Pressable
               key={file.url}
@@ -70,6 +159,22 @@ export function CornerBriefDisclosure({
                       : entry.status.replaceAll('_', ' ')}
                   </Text>
                   <Text style={styles.filePurpose}>{entry.evidence}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {brief.history && brief.history.length > 1 ? (
+            <View testID="corner-brief-history" style={styles.validation}>
+              <Text style={styles.fileTitle}>Revision history</Text>
+              {brief.history.map((entry) => (
+                <View key={entry.revision}>
+                  <Text style={styles.content}>Revision {entry.revision}</Text>
+                  <Text style={styles.filePurpose} selectable>
+                    {entry.change ?? 'Initial assignment'} ·{' '}
+                    {entry.approvalKind.replaceAll('-', ' ')}
+                    {' · '}
+                    {entry.revisionHash.slice(0, 12)}
+                  </Text>
                 </View>
               ))}
             </View>

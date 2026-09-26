@@ -43,9 +43,9 @@ const BEELINE_ROOM_CAPABILITIES = [
   `To react to things that HAPPEN in this Room rather than only to what is said to you, call beeline-agent subscribe_events with the kinds you want (${SERVER_EVENT_KINDS.join(', ')}); each one then wakes you for a turn. Subscriptions are per Room and cover every way the event lands: joining a Room you subscribed to wakes you, and so does a person arriving in the Workspace when that arrival projects into this Room - subscribe to joined in an onboarding Room and every newcomer wakes you, exactly like a greeter. It replaces your list, so send every kind you want - list_event_subscriptions shows the current one. You do this yourself: nobody has to configure it for you. grant-decided carries the grant id and status and resumes the turn that asked for the grant. choice-answered, choice-skipped, and poll-closed start a new input turn for the asking agent; they do not resume a paused grant.`,
   'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Open-ended asks stay tagged prose. Never put Always / Once / No on a preference.',
   'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
-  'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
-  'Before opening a corner, consult beeline-triage and beeline-spec. Pass a brief in open_corner for every new assignment: compact for a settled small fix, complete with relevant Room file identifiers for complex work. The short objective is only a summary.',
-  'Use existing authorization to proceed. Ask one focused question only when an unresolved choice materially changes behavior, scope, irreversible effects, or the intended result. Do not require approval merely because a brief was written or a task is large. Honor an explicit request to review the brief first.',
+  'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words and a navigation objective of no more than 24 words. The objective titles and locates the work; it is never the product authority. The host-governed call is the only way to start write work.',
+  'Before opening a corner, consult beeline-triage and beeline-spec. Pass the typed brief authority contract in open_corner for every repository or research assignment: compact for a settled small fix, complete with relevant Room file identifiers for complex work.',
+  'Use existing authorization only when the initiating human command already settles the exact material scope, and record that exact command as the approval basis. Ask one focused question only when an unresolved choice materially changes behavior, scope, irreversible effects, or the intended result; record the exact answer against the resulting brief revision. Never infer approval from silence. Do not require approval merely because a brief was written or a task is large, and honor an explicit request to review the brief first.',
   'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
@@ -168,7 +168,7 @@ When the mock needs a real product photo, do not draw an SVG stand-in. Call beel
 export function beelineReviewSkillMarkdown(releaseId: string): string {
   return `---
 name: beeline-review
-description: Review a corner pull request against its objective and the Beeline merge gate.
+description: Review a corner pull request against verbatim human intent, every current criterion, and the Beeline merge gate.
 ---
 
 <!-- beeline-release: ${releaseId} -->
@@ -184,24 +184,26 @@ Follow these steps in order. Do not skip or reorder them.
 - Check out that exact head in a new scratch git worktree. Never use the author's worktree.
 - Review and test only the recorded revision. If the head moves, start over.
 
-## 2. P0 - OBJECTIVE FULFILLED, DEMONSTRATED
+## 2. P0 - HUMAN INTENT AND CRITERIA FULFILLED, DEMONSTRATED
 
-Read the server-assigned brief and its current revision, including every required file. The short objective and PR description cannot narrow it. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. For each applicable criterion, record met, unmet, unverified, or out of scope, citing observed evidence; out of scope requires a user-authorized revision. A passing narrow test does not prove a broader requirement. Review a deliberate user choice as written, even if it is unusual.
+Read the server-assigned brief and its current revision, including every required file. Quote every verbatim human-intent entry with its source message ID before considering the short objective. The verbatim intent plus current numbered criteria are product truth; the short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
+
+Before general correctness, produce a criterion ledger in brief order. List every current criterion ID exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence. Any missing, unmet, or unverified criterion blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
 
 Before judging the implementation, independently repeat the two judgment legs from request triage:
 
 - **Work warranted:** For a bug, reproduce the reported behavior on the target branch. For another request, establish the unmet user need from the request and current product. Search current code, history, issues, and open or recently merged pull requests for work that already resolves or supersedes it. Treat title similarity only as a candidate, not proof of duplication. FAIL confirmed duplicate or obsolete work.
 - **Desirable:** Check repository-owned goals, invariants, architecture, and established product behavior. Require a concrete user benefit, the smallest coherent solution, and no unapproved scope. FAIL a confirmed conflict or an unsupported product judgment; put merely plausible concerns below as non-blocking findings.
 
-- Quote the corner objective verbatim.
-- Derive its end-user story in one sentence: \`a user who does X sees Y\`.
+- Quote the verbatim human intent, with message IDs, exactly as stored. Do not quote the short objective as product truth.
+- Derive the end-user story from that intent and the current criteria in one sentence: \`a user who does X sees Y\`.
 - Make Y happen against the built PR head: run the app or affected service and perform X.
 - If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
 - Record the command and the observed Y.
 - A unit test of an inner function, a log line, \`the code looks right\`, or any other proxy does not count.
 - If the user-visible Y cannot be produced, FAIL now. Nothing below can rescue the review.
 - For a bug, if a \`Reproduction <id>\` was recorded, quote it, re-run that exact user path on the PR head, and record that the wrong result is gone. FAIL if that proof does not name the identifier, even when other tests pass. If none was obtained, require the proof to say so plainly and show the regression instead; do not fail the review for a missing identifier.
-- State whether the diff fulfills that objective and only that objective.
+- State whether the diff fulfills the authoritative intent and every current criterion without unapproved scope.
 
 ## 3. Empirical pass second
 
@@ -210,7 +212,7 @@ Use record_validation_stage for each assessed stage, naming the current brief re
 Only the author may report final_authorization as passed, after pr_checks_status reports checks passed and mergeAllowed true for the current head. A reviewer's approval or a passed stage row alone is not the composite gate.
 
 - Run the repository typecheck and tests touched by the diff.
-- If the objective names a user path, exercise that path.
+- If the intent or a criterion names a user path, exercise that path.
 - Record every command and exit code.
 - A review with no executed command is invalid and must FAIL.
 
@@ -226,9 +228,9 @@ Only the author may report final_authorization as passed, after pr_checks_status
 
 ## 6. Bloat guard
 
-- Compare net lines with the objective.
+- Compare net lines with the authoritative intent, current criteria, and typed non-goals.
 - FAIL backwards-compatibility shims, dual paths, feature flags, or abstractions with one caller.
-- FAIL machinery the objective did not ask for.
+- FAIL machinery the authoritative intent and current criteria did not ask for.
 
 ## 7. Security and data
 
@@ -237,10 +239,10 @@ Only the author may report final_authorization as passed, after pr_checks_status
 ## 8. Gate and verdict
 
 - Review the exact green head named in your reviewer instruction. If the head moved, do not approve it.
-- Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Give the author stable finding IDs, affected criteria, location, severity, evidence, and repair disposition. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
+- Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Keep product-completeness findings (missing or contradicted intent/criteria) separate from engineering findings (correctness, security, maintainability, tests). Give every confirmed finding a stable ID that survives rereview, affected criterion IDs or \`engineering\`, location, severity, evidence, and repair disposition. Reuse the same ID until that finding is resolved. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
 - Always use this exact verdict shape:
 
-\`objective quoted:\`
+\`verbatim human intent quoted with source message IDs:\`
 \`user story:\`
 \`work warranted evidence:\`
 \`desirability evidence:\`
@@ -248,9 +250,11 @@ Only the author may report final_authorization as passed, after pr_checks_status
 \`proof of that reproduction (or none obtained + regression):\`
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
-\`brief revision and criterion evidence:\`
+\`brief revision and hash:\`
+\`criterion ledger (every current ID + status + evidence):\`
 \`validation stages and evidence:\`
-\`critical findings (block):\`
+\`product-completeness findings (block):\`
+\`engineering findings (block):\`
 \`plausible findings (do not block):\`
 \`net lines:\`
 \`decision: PASS|FAIL\`
@@ -273,17 +277,69 @@ description: Prepare or revise a durable corner assignment from Room decisions b
 
 # Durable corner brief
 
-Write an assignment another session can execute without the parent transcript. Separate human decisions, observed current behavior, agent recommendations, and unresolved questions. Preserve deliberate unusual choices. Do not invent approval from prose.
-For each settled human decision, include its Room message ID when available. Keep the agent's recommendation labelled as a recommendation; neither a summary nor an approval-sounding sentence is authorization.
-Acceptance criteria must follow settled behavior. Do not promote a plausible UX detail, algorithm, failure message, or extra test case into a requirement merely because it sounds helpful; label it as a recommendation or an assumption to check against the existing product. Keep the brief executable without silently expanding scope.
+Create an assignment a fresh session can execute without the parent transcript. The typed outer contract is mandatory for repository and research work:
 
-For an obvious small fix, use a compact brief: outcome, scope, and observable criteria. For complex work, include relevant user stories, stable criterion IDs, exclusions, file references with purpose and authority, failure behavior, and proof at the appropriate boundary. An optional mock is not styling authority unless the user made it so. The short corner objective is navigation text, not a substitute for the brief.
+- \`intentVerbatim[]\`: exact human words plus each Room message ID. Copy snapshots exactly; never substitute a summary.
+- \`buildSpec\`: agent-authored Markdown implementation guidance.
+- \`criteria[]\`: observable acceptance criteria with stable numbered IDs such as AC-1. Retain IDs across revisions; do not renumber unaffected criteria.
+- \`nonGoals[]\`: explicit exclusions.
+- \`references[]\`: each reference or mock with a label, description, optional object ID, and authority label. An optional or agent-generated mock is not styling authority unless a human made it so.
+- \`approvalBasis\`: either the initiating human command when it already settled the exact material scope, or the exact later human answer that settled a specific unresolved choice or requested brief slice.
 
-Examples: “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs a brief with that visible label, the two exclusions, and no confirmation question. “Ban this person” leaves removal versus preventing rejoining unresolved; ask that one choice before dependent work. A content-only mock supplies content, not a new styling authority. A complex plan already authorized by the user needs a full brief but no repeat go-ahead.
+Do not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a requirement merely because it sounds helpful.
 
-Ask one focused question only when an unresolved choice materially changes the result. Existing authorization permits dispatch within scope; drafting a brief does not create an approval step. If the user explicitly asks to review before work, wait for that review.
+## Compact path for a settled small fix
 
-Pass the complete brief as open_corner.brief.content. Name relevant files in the manifest with their server object IDs, purpose, and whether each is required. A local path or transcript reference cannot substitute for the file. Read the current brief revision before revising; use revise_corner_brief with a complete replacement and a concise change description. Preserve settled decisions and update affected criteria. The latest revision governs implementation and review.
+Use this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write the exact intent snapshot, a short build spec, stable observable criteria, non-goals, references, and the initiating-command approval basis. Dispatch without a proposal/go ceremony. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label criterion and both exclusions, not another confirmation question.
+
+## Complex-work planning loop
+
+Use this default-on loop when work crosses components, changes architecture or authorization, needs a visual choice, has multiple user stories, or still contains a material unknown.
+
+### 1. Scope and current state
+
+- Collect every relevant human message, including corrections; later corrections supersede only what they explicitly change. Preserve their exact text and IDs in \`intentVerbatim\`.
+- Inspect current code, data contracts, tests, recent related work, repository invariants, and existing behavior. State what exists, what is missing, and what is deliberately out of scope.
+- Separate facts, human decisions, agent recommendations, and unresolved choices.
+
+### 2. User stories and product boundary
+
+- Write the actor/action/observable-result stories.
+- Map each story to one or more stable criterion IDs and explicit non-goals.
+- If one unresolved choice would materially change behavior, scope, irreversible effects, or the intended result, present only that choice or the affected brief slice to the human. Record the exact answer message in \`approvalBasis\`. Never treat no answer as approval.
+
+### 3. Architecture and data flow
+
+- Trace inputs, authorities, state transitions, persistence, outputs, and trust boundaries.
+- Name the existing components to reuse and the smallest coherent changes.
+- Describe migration and compatibility behavior only where the human intent or existing data requires it.
+
+### 4. Failure modes and test map
+
+- Enumerate missing/stale data, retries, concurrency, partial failure, authorization failure, rollback, and boundary-specific hazards that apply.
+- Build an acceptance map from every criterion ID to its proof boundary: unit, integration, device/browser, server authorization, migration, or live harness. No criterion may be left without planned evidence.
+
+### 5. Mocks and references
+
+- When a visual or interaction decision needs eyes, create and post one self-contained mock using the using-beeline mock procedure.
+- A mock/file posted with \`post_artifact\` in this planning turn is added automatically to the brief attachment manifest; do not manually copy its object ID. Still add a typed reference explaining its authority. Existing human-posted files must be named explicitly in attachments.
+
+### 6. Implementation tasks
+
+- Synthesize ordered, independently verifiable tasks. For each task name the affected boundary, criterion IDs, expected files/components, failure handling, and proof.
+- Keep the build spec actionable, not a transcript summary.
+
+### 7. Bounded adversarial second read (default on)
+
+- Spend one pass, bounded to the drafted scope, trying to disprove completeness: find a missing story, authority mismatch, unhandled failure, criterion without proof, mock ambiguity, accidental scope expansion, or task-order hazard.
+- Return findings to the planning agent and repair the draft. Escalate only a genuinely material product choice to the human; engineering choices and mechanical gaps are resolved in the plan.
+- End after one adversarial pass unless its repair exposes one new material product choice. Do not recursively review the review.
+
+## Dispatch and revision
+
+Existing authorization permits dispatch when the initiating command already settles the exact material scope. Drafting a brief does not create approval. Honor an explicit request to review first. When a later answer is needed, bind that exact message snapshot as \`explicit-human-answer\`; the server records it against the exact revision hash.
+
+Pass the typed contract as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner_brief\` with the complete replacement plus a concise change description. Preserve unaffected intent, criteria IDs, and authority labels. The latest revision governs implementation and review; chat prose alone never changes scope.
 `;
 }
 

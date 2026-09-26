@@ -5,7 +5,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type {
+  CornerBrief,
+  DaemonAttachment,
+  DaemonOperationMap,
+} from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   isPureRetryNarration,
@@ -151,13 +155,13 @@ export function cornerSelfReviewerInstruction(input: {
   return "You are this Room's reviewer, so your own pull request needs no review: do not request one, do not tag any agent for review, and merge yourself with gh once checks pass and no hold exists.";
 }
 
-export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
-When a server-assigned brief is present, implement all of its current acceptance criteria and use its file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
+export const CORNER_AUTHOR_CONTRACT = `The current assigned brief's verbatim human intent and numbered acceptance criteria are the product authority. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
+Implement every current acceptance criterion and use the brief's file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
 When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
-Follow the beeline-triage skill's bugfix execution contract when the objective reports a defect.
+Follow the beeline-triage skill's bugfix execution contract when the verbatim human intent reports a defect.
 Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Narrow the fix to the reported behavior. When a reproduction exists, change only what removes it.
+Narrow the fix to the authorized intent and current criteria. When a reproduction exists, change only what removes it while satisfying those criteria.
 Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
 If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
 A unit test of an inner function, a log line, or reading the code is not a demonstration.
@@ -165,7 +169,49 @@ The pull request body MUST contain two sections with exactly these headings: ## 
 Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not obtained" when reproduction failed, or "not a defect report" for feature work.
 Under ## Demonstrated, cite the same identifier and show that reproduction now passing when one exists; when none was obtained, state that plainly and show the regression instead.
 A pull request without both sections is not deliverable and the Room's reviewer will fail it.
-Change only what the objective asks. No unrequested features, flags, compatibility shims, or refactors.`;
+Change only what the verbatim intent and current criteria authorize. No unrequested features, flags, compatibility shims, or refactors.`;
+
+export function renderAssignedCornerBrief(brief: CornerBrief): string {
+  if (brief.legacy || !Array.isArray(brief.intentVerbatim) || !Array.isArray(brief.criteria)) {
+    return `Legacy assigned corner brief ${brief.id} revision ${brief.revision}:\n${brief.content}`;
+  }
+  const intent = brief.intentVerbatim
+    .map((item) => `- [message ${item.sourceMessageId}] ${item.snapshot}`)
+    .join('\n');
+  const criteria = brief.criteria.map((item) => `- ${item.id}: ${item.text}`).join('\n');
+  const nonGoals = brief.nonGoals?.map((item) => `- ${item}`).join('\n') || '(none)';
+  const references =
+    brief.references
+      ?.map(
+        (item) =>
+          `- ${item.label} [${item.authority}]${item.objectId ? ` object ${item.objectId}` : ''}: ${item.description}`,
+      )
+      .join('\n') || '(none)';
+  const basis = brief.approvalBasis;
+  const approval =
+    basis.kind === 'legacy-pre-migration'
+      ? basis.reason
+      : `${basis.kind} by ${basis.approvedBy}, message ${basis.sourceMessageId}: ${basis.snapshot}`;
+  return `Assigned corner brief ${brief.id} revision ${brief.revision} (hash ${brief.revisionHash}; current server revision):
+
+Verbatim human intent — authoritative:
+${intent}
+
+Current acceptance criteria — authoritative:
+${criteria}
+
+Non-goals:
+${nonGoals}
+
+References and authority:
+${references}
+
+Approval basis bound to this revision:
+${approval}
+
+Build spec — implementation guidance:
+${brief.buildSpec}`;
+}
 
 export const CORNER_DELIVERY_NUDGE =
   'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
@@ -699,10 +745,17 @@ export class MonolithCornerTurnLoop {
       );
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-      }))])];
+      return [
+        ...new Set([
+          ...approved,
+          ...Object.keys(
+            hostImportedMcpDeclarations({
+              operatorHome: this.options.config.operatorHome,
+              agentKind: this.options.config.agentKind,
+            }),
+          ),
+        ]),
+      ];
     } catch {
       return [];
     }
@@ -966,7 +1019,11 @@ export class MonolithCornerTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
+    const youtube = youtubeMcpServer(
+      this.options.config,
+      this.options.youtubeAccessToken,
+      resourceAuthFile,
+    );
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
@@ -1048,8 +1105,8 @@ export class MonolithCornerTurnLoop {
               // attached final reply reports delivery to the requester. The
               // corner remains open until a human explicitly closes it.
               this.options.requesterHandle
-                ? `Deliver the result as artifacts: post_artifact everything the objective asked for. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted. The corner stays open until a human explicitly closes it.`
-                : `Deliver the result as artifacts: post_artifact everything the objective asked for. Finish the turn by replying with one line on what you posted. The corner stays open until a human explicitly closes it.`,
+                ? `Deliver the result as artifacts: post_artifact everything the assigned intent and criteria require. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted. The corner stays open until a human explicitly closes it.`
+                : `Deliver the result as artifacts: post_artifact everything the assigned intent and criteria require. Finish the turn by replying with one line on what you posted. The corner stays open until a human explicitly closes it.`,
             ]),
       ]
         .filter(Boolean)
@@ -1332,9 +1389,9 @@ export class MonolithCornerTurnLoop {
               const buildPrompt = (): string =>
                 [
                   this.turnIdentityInstructions,
-                  `Corner objective:\n${this.options.objective}`,
+                  `Corner navigation summary (not product authority):\n${this.options.objective}`,
                   restored.brief
-                    ? `Assigned corner brief ${restored.brief.id} revision ${restored.brief.revision} (current server revision):\n${restored.brief.content}\n\nAssigned files:\n${briefFileLines.join('\n') || '(none)'}${missingRequiredBriefFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
+                    ? `${renderAssignedCornerBrief(restored.brief)}\n\nAssigned files:\n${briefFileLines.join('\n') || '(none)'}${missingRequiredBriefFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
                     : 'Legacy corner: no assigned brief; use the objective and corner conversation.',
                   WarmTranscript.render(
                     this.warmTranscript.select(this.sessionId, transcriptRows),
@@ -1349,8 +1406,8 @@ export class MonolithCornerTurnLoop {
                     ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
                   ].join('\n'),
                   this.options.repository
-                    ? 'Continue the objective. Obey the PR checks and human hold rules in your session instructions.'
-                    : 'Continue the objective. Attach completed files; only a human can close this corner.',
+                    ? 'Continue the current assigned brief. Obey the PR checks and human hold rules in your session instructions.'
+                    : 'Continue the current assigned brief. Attach completed files; only a human can close this corner.',
                   MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                 ]
                   .filter(Boolean)

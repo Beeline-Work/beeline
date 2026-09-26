@@ -598,7 +598,10 @@ function projectedMessage(
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
-      return { ...base, squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']> };
+      return {
+        ...base,
+        squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']>,
+      };
     case 'connector-offer':
       return {
         ...base,
@@ -1444,6 +1447,22 @@ export class PhoneService {
     const cornerBrief = room.parent_id
       ? await currentCornerBrief(this.database, roomId).catch(() => undefined)
       : undefined;
+    const cornerBriefHistory = cornerBrief
+      ? await this.database
+          .query<{
+            revision: number;
+            revision_hash: string | null;
+            change: string | null;
+            approval_kind: string | null;
+          }>(
+            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind
+             FROM corner_brief_revisions WHERE corner_id=$1
+             ORDER BY revision DESC LIMIT 20`,
+            [roomId],
+          )
+          .then((result) => result.rows)
+          .catch(() => [])
+      : [];
     const cornerValidation = cornerBrief
       ? await this.database
           .query<{
@@ -1604,7 +1623,23 @@ export class PhoneService {
         ? {
             cornerBrief: {
               revision: cornerBrief.revision,
+              revisionHash: cornerBrief.revisionHash,
+              legacy: cornerBrief.legacy,
               content: cornerBrief.content,
+              intentVerbatim: cornerBrief.intentVerbatim,
+              buildSpec: cornerBrief.buildSpec,
+              criteria: cornerBrief.criteria,
+              nonGoals: cornerBrief.nonGoals,
+              references: cornerBrief.references,
+              approvalBasis: cornerBrief.approvalBasis,
+              history: cornerBriefHistory.map((item) => ({
+                revision: item.revision,
+                revisionHash:
+                  item.revision_hash ??
+                  (item.revision === cornerBrief.revision ? cornerBrief.revisionHash : 'legacy'),
+                ...(item.change ? { change: item.change } : {}),
+                approvalKind: item.approval_kind ?? 'legacy-pre-migration',
+              })),
               attachments: cornerBrief.attachments.map((file) => ({
                 title: file.title,
                 purpose: file.purpose,
@@ -6569,7 +6604,10 @@ export class PhoneService {
         (entry.connectorType === 'composio' && !composioScopeForOwner(viewerId))
           ? { ...entry, available: false }
           : entry.connectorType === 'composio'
-            ? { ...entry, approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat() }
+            ? {
+                ...entry,
+                approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat(),
+              }
             : entry,
       ),
       ...(walletRow
@@ -6727,8 +6765,8 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
-    const composioScope = input.connectorType === 'composio'
-      ? composioScopeForOwner(input.ownerIdentityId) : undefined;
+    const composioScope =
+      input.connectorType === 'composio' ? composioScopeForOwner(input.ownerIdentityId) : undefined;
     if (input.connectorType === 'composio' && !composioScope)
       throw new Error('Composio scope is not configured on this Beeline server');
     if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
@@ -6788,12 +6826,14 @@ export class PhoneService {
         input.connectorType,
         matched.agent_id,
         machineId,
-        JSON.stringify(input.connectorType === 'composio'
-          ? [
-              { label: 'Prepare Composio session', status: 'pending' },
-              { label: 'Link account', status: 'pending' },
-            ]
-          : defaultConnectorSteps()),
+        JSON.stringify(
+          input.connectorType === 'composio'
+            ? [
+                { label: 'Prepare Composio session', status: 'pending' },
+                { label: 'Link account', status: 'pending' },
+              ]
+            : defaultConnectorSteps(),
+        ),
         composioScope ? JSON.stringify(composioScope) : null,
       ],
     );

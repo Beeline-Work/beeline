@@ -64,6 +64,12 @@ describe('monolith Room inspection mount', () => {
         name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
         value: `/agent-home/${agentSkillDir(agentKind)}/skills`,
       });
+      if (agentKind === 'goose' || agentKind === 'reference' || agentKind === 'custom') {
+        expect(server.env).toContainEqual({
+          name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
+          value: '/agent-home/codex/skills',
+        });
+      }
     }
   });
 
@@ -125,8 +131,10 @@ describe('monolith Room inspection mount', () => {
     expect(server!.env).toEqual([
       { name: 'BEELINE_MCP_SURFACE', value: 'youtube' },
       { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: 'ya29.local' },
-      { name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
-        value: expect.stringContaining('google-credentials.json') },
+      {
+        name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
+        value: expect.stringContaining('google-credentials.json'),
+      },
     ]);
     expect(server!.command).not.toMatch(/smithery|npx/i);
   });

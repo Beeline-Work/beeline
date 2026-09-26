@@ -177,46 +177,49 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])('does not start an autonomous harness while %s is pending', async (gate) => {
-    const agent = stored('11'.repeat(32), 'Bee');
-    const execute = vi.fn(async (name: string) =>
-      name === gate
-        ? { allowed: false, status: 'pending' }
-        : { allowed: true, id: 'write', createdAt: 1 },
-    );
-    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
-    const schedule = vi.spyOn(scheduler, 'run');
-    const createAcpClient = vi.fn();
-    const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
-    roots.push(root);
-    const loop = new MonolithCornerTurnLoop({
-      cornerId: 'corner-id',
-      parentRoomId: 'room-id',
-      workspaceId: 'workspace',
-      objective: 'Edit the repository',
-      worktreePath: root,
-      runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
-      config: { agentHomeRoot: root } as BodyConfig,
-      api: { execute } as unknown as DaemonApiClient,
-      scheduler,
-      onPoll: vi.fn(),
-      onFailure: vi.fn(),
-      onCloseRequested: vi.fn(),
-      createAcpClient,
-    });
-    await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
-      'request',
-      'work',
-    );
-    expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
-    expect(schedule).not.toHaveBeenCalled();
-    expect(createAcpClient).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledWith(
-      'postAgentTurnReceipt',
-      expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
-    );
-    await scheduler.dispose();
-  });
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])(
+    'does not start an autonomous harness while %s is pending',
+    async (gate) => {
+      const agent = stored('11'.repeat(32), 'Bee');
+      const execute = vi.fn(async (name: string) =>
+        name === gate
+          ? { allowed: false, status: 'pending' }
+          : { allowed: true, id: 'write', createdAt: 1 },
+      );
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+      const schedule = vi.spyOn(scheduler, 'run');
+      const createAcpClient = vi.fn();
+      const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
+      roots.push(root);
+      const loop = new MonolithCornerTurnLoop({
+        cornerId: 'corner-id',
+        parentRoomId: 'room-id',
+        workspaceId: 'workspace',
+        objective: 'Edit the repository',
+        worktreePath: root,
+        runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
+        config: { agentHomeRoot: root } as BodyConfig,
+        api: { execute } as unknown as DaemonApiClient,
+        scheduler,
+        onPoll: vi.fn(),
+        onFailure: vi.fn(),
+        onCloseRequested: vi.fn(),
+        createAcpClient,
+      });
+      await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
+        'request',
+        'work',
+      );
+      expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(createAcpClient).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledWith(
+        'postAgentTurnReceipt',
+        expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
+      );
+      await scheduler.dispose();
+    },
+  );
 
   it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
@@ -247,7 +250,8 @@ describe('corner merge instructions', () => {
     } as unknown as AgentRuntimeRecord;
     const api = {
       execute: vi.fn(async (name: string) => {
-        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall') return { allowed: true };
+        if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
+          return { allowed: true };
         if (name === 'getAgentConfiguration')
           return { commands: [], yoloMode: true, reviewerHandle: 'echo' };
         if (name === 'getWorkspaceRoster')
@@ -2425,10 +2429,43 @@ describe('thin monolith corner turn', () => {
           brief: {
             id: 'corner-id',
             revision: 2,
+            legacy: false,
             authorId: runtime.agent.publicKey,
             sourceRoomId: 'room-id',
+            sourceMessageId: 'correction-message',
             attachments: [],
-            content: 'A1: preserve the requested widget size. A2: keep the deliberate amber label.',
+            content: 'Preserve the requested widget size and deliberate amber label.',
+            intentVerbatim: [
+              {
+                sourceMessageId: 'intent-message',
+                snapshot: 'Build the requested widget at the agreed size.',
+              },
+              {
+                sourceMessageId: 'correction-message',
+                snapshot: 'Correction: keep the label amber, not blue.',
+              },
+            ],
+            buildSpec: 'Preserve the requested widget size and deliberate amber label.',
+            criteria: [
+              { id: 'AC-1', text: 'The widget keeps the requested size.' },
+              { id: 'AC-2', text: 'The label remains amber.' },
+            ],
+            nonGoals: ['Changing the label to the conventional blue.'],
+            references: [
+              {
+                label: 'Approved widget mock',
+                authority: 'approved-reference',
+                description: 'The corrected amber visual.',
+              },
+            ],
+            approvalBasis: {
+              kind: 'explicit-human-answer',
+              sourceMessageId: 'correction-message',
+              snapshot: 'Correction: keep the label amber, not blue.',
+              approvedBy: 'human-pubkey',
+              briefHash: 'a'.repeat(64),
+            },
+            revisionHash: 'a'.repeat(64),
           },
         };
       writes.push({ name, input });
@@ -2519,8 +2556,12 @@ describe('thin monolith corner turn', () => {
     // on every prompt.
     expect(secondPrompt).toContain('New in the corner since your last turn');
     expect(secondPrompt).not.toContain('corner row 1\n');
-    expect(firstPrompt).toContain('Corner objective:\nImplement the widget');
-    expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
+    expect(firstPrompt).toContain(
+      'Corner navigation summary (not product authority):\nImplement the widget',
+    );
+    expect(secondPrompt).toContain(
+      'Corner navigation summary (not product authority):\nImplement the widget',
+    );
     expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
     expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -2621,7 +2662,13 @@ describe('thin monolith corner turn', () => {
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
       expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
-      expect(call[1]).toContain('A2: keep the deliberate amber label.');
+      expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
+      expect(call[1]).toContain(
+        '[message correction-message] Correction: keep the label amber, not blue.',
+      );
+      expect(call[1]).toContain('AC-2: The label remains amber.');
+      expect(call[1]).toContain('Approval basis bound to this revision:');
+      expect(call[1]).toContain('explicit-human-answer by human-pubkey');
       expect(call[1]).toContain('Your Beeline identity is Bee.');
       expect(call[1]).toContain(
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',

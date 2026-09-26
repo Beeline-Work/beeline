@@ -1009,6 +1009,17 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 );
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
+-- Structured authority was added after the original opaque content field.
+-- Keep that column as the compatibility representation of build_spec; old rows
+-- intentionally retain null authority fields and read back as legacy.
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS intent_verbatim jsonb;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS build_spec text;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS criteria jsonb;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS non_goals jsonb;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS brief_references jsonb;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS approval_basis jsonb;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS revision_hash text;
+UPDATE corner_brief_revisions SET build_spec=content WHERE build_spec IS NULL;
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,
@@ -1073,7 +1084,7 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS brief_revision integer;
-ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS patch_id text;
+ALTER TABLE corner_merge_approvals DROP COLUMN IF EXISTS patch_id;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,

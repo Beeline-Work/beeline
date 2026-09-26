@@ -77,6 +77,18 @@ describe('open_corner arguments', () => {
     expect(schema.properties.name?.description).toBe(
       "The corner's title: at most 3 words, no line breaks.",
     );
+    const brief = schema.properties.brief as unknown as {
+      required: string[];
+      properties: Record<string, unknown>;
+    };
+    expect(brief.required).toEqual([
+      'intentVerbatim',
+      'buildSpec',
+      'criteria',
+      'references',
+      'approvalBasis',
+    ]);
+    expect(Object.keys(brief.properties)).not.toContain('content');
   });
 
   it('flattens an untidy call instead of refusing it', () => {

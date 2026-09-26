@@ -94,7 +94,6 @@ import {
   MAX_ATTACHMENT_BYTES,
   fetchBoundedBytes,
 } from './attachment-delivery.js';
-import { computePatchId } from './patch-identity.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
 
 type JsonObject = Record<string, unknown>;
@@ -600,18 +599,88 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
-          description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
+          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the typed brief carries product authority.`,
         },
         brief: {
           type: 'object',
-          required: ['content'],
+          required: ['intentVerbatim', 'buildSpec', 'criteria', 'references', 'approvalBasis'],
           properties: {
-            content: {
+            intentVerbatim: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 50,
+              items: {
+                type: 'object',
+                required: ['sourceMessageId', 'snapshot'],
+                properties: {
+                  sourceMessageId: { type: 'string' },
+                  snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+                },
+                additionalProperties: false,
+              },
+              description: 'Exact human message text and its durable Room message ID.',
+            },
+            buildSpec: {
               type: 'string',
               minLength: 1,
               maxLength: 65536,
-              description:
-                'Complete assigned requirements and acceptance criteria; never truncate to the objective limit.',
+              description: 'Agent-authored Markdown implementation specification.',
+            },
+            criteria: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 100,
+              items: {
+                type: 'object',
+                required: ['id', 'text'],
+                properties: {
+                  id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
+                  text: { type: 'string', minLength: 1, maxLength: 2000 },
+                },
+                additionalProperties: false,
+              },
+            },
+            nonGoals: {
+              type: 'array',
+              maxItems: 50,
+              items: { type: 'string', minLength: 1, maxLength: 1000 },
+            },
+            references: {
+              type: 'array',
+              maxItems: 50,
+              items: {
+                type: 'object',
+                required: ['label', 'authority', 'description'],
+                properties: {
+                  label: { type: 'string', minLength: 1, maxLength: 200 },
+                  authority: {
+                    type: 'string',
+                    enum: [
+                      'human-authoritative',
+                      'repository-authoritative',
+                      'approved-reference',
+                      'informational',
+                      'agent-recommendation',
+                    ],
+                  },
+                  description: { type: 'string', minLength: 1, maxLength: 1000 },
+                  objectId: { type: 'string', format: 'uuid' },
+                },
+                additionalProperties: false,
+              },
+            },
+            approvalBasis: {
+              type: 'object',
+              required: ['kind', 'sourceMessageId', 'snapshot'],
+              properties: {
+                kind: {
+                  type: 'string',
+                  enum: ['initiating-command', 'explicit-human-answer'],
+                },
+                sourceMessageId: { type: 'string' },
+                snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+              },
+              additionalProperties: false,
             },
             attachments: {
               type: 'array',
@@ -646,10 +715,88 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
     inputSchema: {
       type: 'object',
-      required: ['expectedRevision', 'content', 'change'],
+      required: [
+        'expectedRevision',
+        'intentVerbatim',
+        'buildSpec',
+        'criteria',
+        'references',
+        'approvalBasis',
+        'change',
+      ],
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        content: { type: 'string', minLength: 1, maxLength: 65536 },
+        intentVerbatim: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['sourceMessageId', 'snapshot'],
+            properties: {
+              sourceMessageId: { type: 'string' },
+              snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+            },
+            additionalProperties: false,
+          },
+        },
+        buildSpec: { type: 'string', minLength: 1, maxLength: 65536 },
+        criteria: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100,
+          items: {
+            type: 'object',
+            required: ['id', 'text'],
+            properties: {
+              id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
+              text: { type: 'string', minLength: 1, maxLength: 2000 },
+            },
+            additionalProperties: false,
+          },
+        },
+        nonGoals: {
+          type: 'array',
+          maxItems: 50,
+          items: { type: 'string', minLength: 1, maxLength: 1000 },
+        },
+        references: {
+          type: 'array',
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['label', 'authority', 'description'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: 200 },
+              authority: {
+                type: 'string',
+                enum: [
+                  'human-authoritative',
+                  'repository-authoritative',
+                  'approved-reference',
+                  'informational',
+                  'agent-recommendation',
+                ],
+              },
+              description: { type: 'string', minLength: 1, maxLength: 1000 },
+              objectId: { type: 'string', format: 'uuid' },
+            },
+            additionalProperties: false,
+          },
+        },
+        approvalBasis: {
+          type: 'object',
+          required: ['kind', 'sourceMessageId', 'snapshot'],
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['initiating-command', 'explicit-human-answer'],
+            },
+            sourceMessageId: { type: 'string' },
+            snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+          },
+          additionalProperties: false,
+        },
         change: { type: 'string', maxLength: 1000 },
         attachments: {
           type: 'array',
@@ -976,12 +1123,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'composio_tools',
-    description: 'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
+    description:
+      'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'composio_execute',
-    description: 'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
+    description:
+      'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
     inputSchema: {
       type: 'object',
       required: ['toolkit', 'tool', 'arguments'],
@@ -1765,7 +1914,17 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       requestId,
       expectedRevision: args.expectedRevision as number,
       brief: {
-        content: args.content as string,
+        intentVerbatim:
+          args.intentVerbatim as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['intentVerbatim'],
+        buildSpec: args.buildSpec as string,
+        criteria:
+          args.criteria as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['criteria'],
+        nonGoals:
+          args.nonGoals as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['nonGoals'],
+        references:
+          args.references as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['references'],
+        approvalBasis:
+          args.approvalBasis as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['approvalBasis'],
         change: args.change as string | undefined,
         attachments:
           args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
@@ -1819,20 +1978,6 @@ async function closeCorner(): Promise<string> {
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
-}
-
-/** Best-effort patch-id of this worktree's HEAD against the corner's target
- * branch. Never throws: an absent id just falls back to exact head-sha
- * matching on the server side. */
-async function cornerPatchId(cornerId: string): Promise<string | undefined> {
-  try {
-    const result = await daemonExecute('getRoomTargetBranch', { roomId: cornerId });
-    const targetBranch = result.targetBranch;
-    if (typeof targetBranch !== 'string' || !targetBranch) return undefined;
-    return await computePatchId({ worktreePath: configuredRoot(), targetBranch });
-  } catch {
-    return undefined;
-  }
 }
 
 function cornerMergeAllowed(input: {
@@ -1975,12 +2120,10 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  const patchId = await cornerPatchId(cornerId);
   return JSON.stringify(
     await daemonExecute('approveCornerMerge', {
       cornerId,
       headSha,
-      patchId,
       ...(Number.isInteger(args.briefRevision)
         ? { briefRevision: args.briefRevision as number }
         : {}),
@@ -2238,6 +2381,9 @@ export interface PostArtifactDeps {
   queue: (attachment: JsonObject) => Promise<void>;
 }
 
+const POSTED_MEDIA_ID =
+  /\/v1\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|[?#])/i;
+
 function isArtifactMime(value: unknown): value is ArtifactMimeType {
   return typeof value === 'string' && (ARTIFACT_MIME_TYPES as readonly string[]).includes(value);
 }
@@ -2325,9 +2471,10 @@ export async function postArtifact(
   const uploaded = await deps.upload(bytes, mime, title);
   if (!uploaded.url) throw new Error('the artifact upload returned no url');
   await deps.queue({ url: uploaded.url, name: title, mimeType: mime, size: bytes.length });
+  const objectId = POSTED_MEDIA_ID.exec(uploaded.url)?.[1];
   return (
     `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
-    'final reply. Ask for feedback here in the Room.'
+    `final reply.${objectId ? ` Object ${objectId} will be included automatically if this turn opens or revises a corner brief.` : ''} Ask for feedback here in the Room.`
   );
 }
 
@@ -2723,8 +2870,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   return {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
-    tailscaleReach: (enabled) =>
-      describeTailscaleReach({ enabled, installIfMissing: enabled }),
+    tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
   };
 }
 
@@ -2758,7 +2904,9 @@ export async function workbenchStatus(
   const who = view.owner?.handle
     ? `@${view.owner.handle}`
     : (view.owner?.name ??
-      (view.addressee?.handle ? `@${view.addressee.handle}` : (view.addressee?.name ?? 'the owner of this machine')));
+      (view.addressee?.handle
+        ? `@${view.addressee.handle}`
+        : (view.addressee?.name ?? 'the owner of this machine')));
   const machine = view.machine?.name ?? 'this machine';
   const lines = [
     `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
@@ -3276,15 +3424,22 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
     }
     case 'composio_execute': {
       const context = await activeCommandContext();
-      if (typeof args.toolkit !== 'string' || typeof args.tool !== 'string' ||
-          !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+      if (
+        typeof args.toolkit !== 'string' ||
+        typeof args.tool !== 'string' ||
+        !args.arguments ||
+        typeof args.arguments !== 'object' ||
+        Array.isArray(args.arguments)
+      )
         throw new Error('Composio toolkit, tool and arguments are required');
-      return JSON.stringify(await daemonExecute('executeComposioTool', {
-        ...context,
-        toolkit: args.toolkit,
-        tool: args.tool,
-        arguments: args.arguments,
-      }));
+      return JSON.stringify(
+        await daemonExecute('executeComposioTool', {
+          ...context,
+          toolkit: args.toolkit,
+          tool: args.tool,
+          arguments: args.arguments,
+        }),
+      );
     }
     case 'offer_connector':
       return offerConnector(args);

@@ -189,8 +189,8 @@ describe('monolith integration', () => {
       database,
       live,
       async () => ({
-      token: 'github-room-token',
-      expiresAt: Date.now() + 60_000,
+        token: 'github-room-token',
+        expiresAt: Date.now() + 60_000,
       }),
       undefined,
       false,
@@ -276,6 +276,8 @@ describe('monolith integration', () => {
   // directly in agent-command.integration.test.ts and never use this helper.
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
+    const fixtureOmitBrief = input.fixtureOmitBrief === true;
+    delete input.fixtureOmitBrief;
     const writes = new Set([
       'postRoomMessage',
       'postAgentDraft',
@@ -350,6 +352,51 @@ describe('monolith integration', () => {
             String(input.generationId),
           );
       });
+      const suppliedBrief = input.brief as
+        | { content?: unknown; attachments?: unknown; change?: unknown; buildSpec?: unknown }
+        | undefined;
+      if (suppliedBrief?.content && suppliedBrief.buildSpec === undefined) {
+        input.brief = {
+          intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
+          buildSpec: String(suppliedBrief.content),
+          criteria: [{ id: 'AC-1', text: String(suppliedBrief.content) }],
+          references: [],
+          approvalBasis: {
+            kind: 'initiating-command',
+            sourceMessageId: sourceId,
+            snapshot: 'Fixture command',
+          },
+          ...(suppliedBrief.attachments ? { attachments: suppliedBrief.attachments } : {}),
+          ...(suppliedBrief.change ? { change: suppliedBrief.change } : {}),
+        };
+      } else if (name === 'createCorner' && input.brief === undefined && !fixtureOmitBrief) {
+        const sourceRoom = (
+          await database.query<{ repository_key: string | null; repository_resolution: string }>(
+            `SELECT repository_key,repository_resolution FROM rooms WHERE id=$1`,
+            [input.roomId],
+          )
+        ).rows[0];
+        if (
+          input.lane === 'research' ||
+          input.repository ||
+          sourceRoom?.repository_key ||
+          sourceRoom?.repository_resolution === 'repository'
+        ) {
+          input.brief = {
+            intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
+            buildSpec: String(input.objective ?? 'Complete the requested work.'),
+            criteria: [
+              { id: 'AC-1', text: String(input.objective ?? 'Complete the requested work.') },
+            ],
+            references: [],
+            approvalBasis: {
+              kind: 'initiating-command',
+              sourceMessageId: sourceId,
+              snapshot: 'Fixture command',
+            },
+          };
+        }
+      }
     }
     return request(`/v1/daemon/operations/${name}`, 'POST', input, token);
   };
@@ -402,8 +449,9 @@ describe('monolith integration', () => {
     expect((await call({ ...input, agentId: 'c'.repeat(64) })).status).not.toBe(200);
     expect((await call({ ...input, drawing: [] })).status).not.toBe(200);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBeUndefined();
-    const completionMessages = () => database.query(
-      `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
+    const completionMessages = () =>
+      database.query(
+        `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
        WHERE r.workspace_id=$1 AND r.direct_participants @> $2::jsonb
          AND m.text LIKE '%Your avatar is ready.%'`,
         [WORKSPACE, JSON.stringify([HUMAN, AGENT])],
@@ -432,8 +480,12 @@ describe('monolith integration', () => {
     );
     expect((await completionMessages()).rowCount).toBe(1);
     const soulSave = await operation('updateAgentSoul', {
-      workspaceId: WORKSPACE, agentId: AGENT, name: 'Bee', instructions: 'A star god',
-      avatarSeed: AGENT, avatar: 'https://example.com/old-avatar.png',
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      name: 'Bee',
+      instructions: 'A star god',
+      avatarSeed: AGENT,
+      avatar: 'https://example.com/old-avatar.png',
     });
     expect(soulSave.status).toBe(204);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
@@ -7636,7 +7688,6 @@ describe('monolith integration', () => {
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
-
   it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -7706,11 +7757,13 @@ describe('monolith integration', () => {
         ...input,
         brief: {
           ...input.brief,
-          attachments: [{
-            objectId: '65432109-0000-4000-8000-000000000001',
-            purpose: 'Approved mock',
-            required: true,
-          }],
+          attachments: [
+            {
+              objectId: '65432109-0000-4000-8000-000000000001',
+              purpose: 'Approved mock',
+              required: true,
+            },
+          ],
         },
       },
     ]) {
@@ -7719,7 +7772,12 @@ describe('monolith integration', () => {
       expect(await retry.text()).toContain('different assignment');
     }
 
-    const stored = await database.query<{ corners: number; cards: number; commands: number; briefs: number }>(
+    const stored = await database.query<{
+      corners: number;
+      cards: number;
+      commands: number;
+      briefs: number;
+    }>(
       `SELECT
          (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
          (SELECT count(*)::integer FROM messages
@@ -7782,6 +7840,17 @@ describe('monolith integration', () => {
       brief: {
         revision: 1,
         content: brief.content,
+        legacy: false,
+        intentVerbatim: [{ snapshot: 'Fixture command' }],
+        buildSpec: brief.content,
+        criteria: [{ id: 'AC-1', text: brief.content }],
+        references: [],
+        approvalBasis: {
+          kind: 'initiating-command',
+          snapshot: 'Fixture command',
+          approvedBy: HUMAN,
+        },
+        revisionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
         attachments: [
           { objectId: mediaId, sha256: sha, purpose: 'approved visual dimensions', required: true },
         ],
@@ -7791,6 +7860,11 @@ describe('monolith integration', () => {
     expect(viewed?.cornerBrief).toMatchObject({
       revision: 1,
       content: brief.content,
+      legacy: false,
+      buildSpec: brief.content,
+      criteria: [{ id: 'AC-1' }],
+      approvalBasis: { kind: 'initiating-command', approvedBy: HUMAN },
+      history: [{ revision: 1, approvalKind: 'initiating-command' }],
       attachments: [{ title: 'approved-mock.txt', purpose: 'approved visual dimensions' }],
     });
     expect(
@@ -8032,6 +8106,134 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
+  it('automatically binds a planning artifact posted in the opening turn', async () => {
+    const objectId = '65432109-0000-4000-8000-000000000099';
+    const bytes = Buffer.from('<html><body>approved mock</body></html>');
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/html','planning-mock.html',$4,$5,'ready',now()+interval '1 hour')`,
+      [objectId, AGENT, `media/${AGENT}/${sha}`, bytes.length, sha],
+    );
+    const requestId = 'auto-bind-planning-artifact';
+    expect(
+      (
+        await daemonOperation('postAgentAttachment', {
+          roomId: ROOM,
+          requestId,
+          attachment: {
+            url: `${origin}/v1/media/${objectId}`,
+            name: 'planning-mock.html',
+            mimeType: 'text/html',
+            size: bytes.length,
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId,
+      idempotencyKey: `${requestId}:open`,
+      name: 'Bound mock',
+      objective: 'Build the approved mock',
+      repository: 'example/repository',
+      brief: { content: 'Implement the approved visual mock exactly.' },
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      brief: {
+        attachments: [
+          {
+            objectId,
+            title: 'planning-mock.html',
+            purpose: 'Planning artifact posted during brief preparation',
+            required: true,
+            sha256: sha,
+          },
+        ],
+      },
+    });
+  });
+
+  it('refuses new repository and research corners without a structured brief at the server boundary', async () => {
+    for (const [requestId, lane] of [
+      ['missing-code-brief', 'code'],
+      ['missing-research-brief', 'research'],
+    ] as const) {
+      const response = await daemonOperation('createCorner', {
+        roomId: ROOM,
+        requestId,
+        name: 'Missing brief',
+        objective: 'Do repository work',
+        lane,
+        repository: 'example/repository',
+        fixtureOmitBrief: true,
+      });
+      expect(response.status).not.toBe(200);
+      expect(await response.text()).toContain('require a structured brief');
+    }
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM corner_facts WHERE request_id IN ('missing-code-brief','missing-research-brief')`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('rejects paraphrased human intent and approval snapshots', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'forged-brief-provenance',
+      name: 'Forged brief',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: {
+        intentVerbatim: [
+          { sourceMessageId: 'not-a-real-message', snapshot: 'A paraphrase written by the agent' },
+        ],
+        buildSpec: 'Implement the paraphrased request.',
+        criteria: [{ id: 'AC-1', text: 'Ship the paraphrase.' }],
+        references: [],
+        approvalBasis: {
+          kind: 'explicit-human-answer',
+          sourceMessageId: 'not-a-real-message',
+          snapshot: 'A paraphrase written by the agent',
+        },
+      },
+    });
+    expect(response.status).not.toBe(200);
+    expect(await response.text()).toContain('must quote an exact human Room message');
+
+    const omittedApproval = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'omitted-approval-intent',
+      name: 'Omitted approval',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: {
+        intentVerbatim: [
+          { sourceMessageId: 'intent-only', snapshot: 'An alleged intent snapshot' },
+        ],
+        buildSpec: 'Implement it.',
+        criteria: [{ id: 'AC-1', text: 'Implement it.' }],
+        references: [],
+        approvalBasis: {
+          kind: 'explicit-human-answer',
+          sourceMessageId: 'different-message',
+          snapshot: 'Looks good',
+        },
+      },
+    });
+    expect(omittedApproval.status).not.toBe(200);
+    expect(await omittedApproval.text()).toContain(
+      'approval basis must be retained in verbatim human intent',
+    );
+  });
+
   it('rolls back the corner and worker command when brief persistence fails', async () => {
     await database.query(
       `ALTER TABLE corner_brief_revisions ADD CONSTRAINT reject_test_brief
@@ -8046,8 +8248,11 @@ describe('monolith integration', () => {
     });
     expect(response.status).not.toBe(200);
     expect(
-      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`))
-        .rows,
+      (
+        await database.query(
+          `SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`,
+        )
+      ).rows,
     ).toEqual([]);
     expect(
       (
@@ -8073,7 +8278,10 @@ describe('monolith integration', () => {
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Reviewer','reviewer')`,
       [reviewerId],
     );
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [reviewerId, HUMAN]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      reviewerId,
+      HUMAN,
+    ]);
     for (const memberRoom of [null, ROOM, cornerId])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
@@ -8093,7 +8301,10 @@ describe('monolith integration', () => {
       cornerId,
       requestId: 'reviewer-brief-correction',
       expectedRevision: 1,
-      brief: { content: 'A1: keep the agreed behavior. A2: retain the corrected label.', change: 'Corrected label' },
+      brief: {
+        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+        change: 'Corrected label',
+      },
     });
     expect(revised.status).toBe(200);
     expect(await revised.json()).toMatchObject({ revision: 2, change: 'Corrected label' });
@@ -8144,8 +8355,13 @@ describe('monolith integration', () => {
         reviewerId,
       ),
     ).resolves.toMatchObject({ stage: 'review', status: 'passed', actorId: reviewerId });
-    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
-      brief: { revision: 2, content: 'A1: keep the agreed behavior. A2: retain the corrected label.' },
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      brief: {
+        revision: 2,
+        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+      },
       validation: expect.arrayContaining([
         expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
         expect.objectContaining({ stage: 'tests', status: 'pending' }),
@@ -8765,9 +8981,22 @@ describe('monolith integration', () => {
       const host = await (await daemonOperation('authorizeHostCall', context)).json();
       expect(host.allowed).toBe(yolo && ownerRequester);
       if (!host.allowed) {
-        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }, token)).status).toBe(403);
-        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' })).status).toBe(200);
-        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(true);
+        expect(
+          (
+            await operation(
+              'decideAgentGrant',
+              { grantId: host.grantId, decision: 'always' },
+              token,
+            )
+          ).status,
+        ).toBe(403);
+        expect(
+          (await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }))
+            .status,
+        ).toBe(200);
+        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(
+          true,
+        );
       }
       const resource = await (
         await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
@@ -8844,17 +9073,28 @@ describe('monolith integration', () => {
       'foreign-approval',
       'retired-budget',
     ]) {
-      grants.push(await (await daemonOperation('requestAgentGrant', {
-        roomId: ROOM, kind: 'host', target, reason: 'use the host',
-      })).json());
+      grants.push(
+        await (
+          await daemonOperation('requestAgentGrant', {
+            roomId: ROOM,
+            kind: 'host',
+            target,
+            reason: 'use the host',
+          })
+        ).json(),
+      );
     }
-    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [grants[1]!.grantId]);
+    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [
+      grants[1]!.grantId,
+    ]);
     await database.query(`UPDATE agent_grants SET requested_by=$2 WHERE id=$1`, [
       grants[2]!.grantId,
       AGENT,
     ]);
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`,
-      [grants[3]!.grantId, AGENT]);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [
+      grants[3]!.grantId,
+      AGENT,
+    ]);
     await database.query(`UPDATE agent_grants SET kind='budget' WHERE id=$1`, [grants[4]!.grantId]);
     // Production already ran the old migration. These rows retain only the
     // shapes from which the corrective ledger can recover without guessing.
@@ -8862,31 +9102,63 @@ describe('monolith integration', () => {
       [grants[1]!.grantId, grants[2]!.grantId, grants[3]!.grantId],
     ]);
     // Reproduce the pre-upgrade shared Room placement.
-    await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [ROOM, grants[0]!.messageId]);
+    await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [
+      ROOM,
+      grants[0]!.messageId,
+    ]);
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
-    const automatic = await (await daemonOperation('requestAgentGrant', {
-      roomId: ROOM, kind: 'host', target: 'automatic-resource', reason: 'use the host',
-    })).json();
-    await database.query(`UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
-      [ROOM, automatic.grantId]);
+    const automatic = await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'host',
+        target: 'automatic-resource',
+        reason: 'use the host',
+      })
+    ).json();
+    await database.query(
+      `UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
+      [ROOM, automatic.grantId],
+    );
     await upgradeGrantPolicy(database);
     await upgradeGrantPolicy(database);
-    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-auto'
-      AND card->>'grantId'=$2`, [ROOM, automatic.grantId])).rowCount).toBe(0);
-    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId])).rows)
-      .toEqual([{status: 'approved'}]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-auto'
+      AND card->>'grantId'=$2`,
+          [ROOM, automatic.grantId],
+        )
+      ).rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId]))
+        .rows,
+    ).toEqual([{ status: 'approved' }]);
     const rows = await database.query<{ id: string; status: string }>(
-      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
-    expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
-      [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
-      [grants[3]!.grantId]: 'revoked', [grants[4]!.grantId]: 'revoked',
+      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`,
+      [grants.map((g) => g.grantId)],
+    );
+    expect(Object.fromEntries(rows.rows.map((r) => [r.id, r.status]))).toEqual({
+      [grants[0]!.grantId]: 'pending',
+      [grants[1]!.grantId]: 'revoked',
+      [grants[2]!.grantId]: 'revoked',
+      [grants[3]!.grantId]: 'revoked',
+      [grants[4]!.grantId]: 'revoked',
     });
-    const card = (await database.query<{ room_id: string; card: { sourceRoomId: string; grants: Array<{status: string}> } }>(
-      `SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])).rows[0]!;
+    const card = (
+      await database.query<{
+        room_id: string;
+        card: { sourceRoomId: string; grants: Array<{ status: string }> };
+      }>(`SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])
+    ).rows[0]!;
     expect(card.room_id).not.toBe(ROOM);
     expect(card.card.sourceRoomId).toBe(ROOM);
-    expect(card.card.grants.map(g => g.status)).toEqual([
-      'pending', 'revoked', 'revoked', 'revoked', 'revoked',
+    expect(card.card.grants.map((g) => g.status)).toEqual([
+      'pending',
+      'revoked',
+      'revoked',
+      'revoked',
+      'revoked',
     ]);
     const ledger = await database.query<{
       grant_id: string;
@@ -8915,17 +9187,26 @@ describe('monolith integration', () => {
         turn_disposition: 'resumed',
       },
     ]);
-    expect((await database.query(
-      `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
        WHERE g.id=$1 AND resume.action='resume' AND resume.root_source_message_id=(
          SELECT root_source_message_id FROM agent_commands WHERE id=g.command_id
-       )`, [grants[4]!.grantId],
-    )).rowCount).toBe(1);
-    expect((await database.query<{ state: string }>(
-      `SELECT command.state FROM agent_commands command
+       )`,
+          [grants[4]!.grantId],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT command.state FROM agent_commands command
        JOIN agent_grants g ON g.command_id=command.id WHERE g.id=$1`,
-      [grants[2]!.grantId],
-    )).rows).toEqual([{ state: 'cancelled' }]);
+          [grants[2]!.grantId],
+        )
+      ).rows,
+    ).toEqual([{ state: 'cancelled' }]);
     const ownerNotices = await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL
        AND text LIKE '%had a legacy grant revoked%' ORDER BY text`,
@@ -8936,8 +9217,14 @@ describe('monolith integration', () => {
       expect.stringContaining('mismatched-root'),
       expect.stringContaining('missing-provenance'),
     ]);
-    expect((await operation('decideAgentGrant', {grantId: grants[1]!.grantId, decision:'always'})).status).toBe(409);
-    expect((await operation('decideAgentGrant', {grantId: grants[0]!.grantId, decision:'always'})).status).toBe(200);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[1]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[0]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(200);
   });
 
   it('forces both bypasses off in a public Workspace and rejects calls without live command authority', async () => {
@@ -9821,7 +10108,11 @@ describe('monolith integration', () => {
   it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {
     const zekeToken = await phoneToken('zeke');
     const zekeId = createHash('sha256').update('github:zeke').digest('hex');
-    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: zekeId, role: 'member' });
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: zekeId,
+      role: 'member',
+    });
     await operation('addRoomMember', { roomId: ROOM, memberId: zekeId });
     expect(
       (
@@ -9850,7 +10141,10 @@ describe('monolith integration', () => {
     ).json()) as {
       addressee: { identityId: string };
       owner?: { identityId: string; handle?: string };
-      catalog: Array<{ connectorType: string; paired?: { status: string; onThisMachine: boolean } }>;
+      catalog: Array<{
+        connectorType: string;
+        paired?: { status: string; onThisMachine: boolean };
+      }>;
     };
     expect(status.addressee.identityId).toBe(zekeId);
     expect(status.owner).toEqual({ identityId: HUMAN, name: 'Owner', handle: 'owner' });
@@ -9859,7 +10153,9 @@ describe('monolith integration', () => {
       helperName: 'chode',
       onThisMachine: true,
     });
-    expect(status.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toBeUndefined();
+    expect(
+      status.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired,
+    ).toBeUndefined();
   });
 
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
@@ -10163,22 +10459,33 @@ describe('monolith integration', () => {
       target: 'facade-resource',
     };
     expect(
-      (await (await daemonOperation('authorizeResourceCall', {
-        ...discoveryContext, consume: false,
-      })).json()).allowed,
+      (
+        await (
+          await daemonOperation('authorizeResourceCall', {
+            ...discoveryContext,
+            consume: false,
+          })
+        ).json()
+      ).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ status: string; expires_at: Date | null }>(
-        `SELECT status,expires_at FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ status: string; expires_at: Date | null }>(
+          `SELECT status,expires_at FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ status: 'once', expires_at: null });
     expect(
       (await (await daemonOperation('authorizeResourceCall', discoveryContext)).json()).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ expired: boolean }>(
-        `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ expired: boolean }>(
+          `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ expired: true });
     expect(
       (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,

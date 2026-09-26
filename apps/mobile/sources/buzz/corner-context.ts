@@ -1,14 +1,13 @@
 /**
  * A corner's inherited context: the Room discussion that led to it, and the
- * one-line objective it was opened for.
+ * one-line navigation summary it was opened with.
  *
  * Both answer the same complaint — a corner opened mid-conversation used to
  * start blank, with no trace of the discussion that produced it — and both are
  * deliberately built from *human-authored, already-durable* data:
  *
- *   - the objective is the human's own request with the "open a corner"
- *     scaffolding peeled off, published by the daemon on the corner's
- *     immutable kind:9007 create event (`task` tag);
+ *   - the objective is navigation-only compatibility text, published by the
+ *     daemon on the corner's immutable kind:9007 create event (`task` tag);
  *   - the context is the bounded briefing returned by the parent Room endpoint.
  *
  * Neither ever renders raw harness output. That is the lesson of the first
@@ -35,9 +34,10 @@ export type RoomContextEntry = {
  * The corner's objective, as independently readable items — without treating
  * commas, code, or abbreviations as list boundaries.
  *
- * The human's task from the immutable corner create event wins for the life of
- * the corner. A plan objective is only a compatibility fallback for corners
- * opened before the `task` tag shipped. A generated room name is never content.
+ * This is a compact navigation label only. The current structured brief's
+ * verbatim intent and numbered criteria carry product authority. A plan
+ * objective is only a compatibility fallback for corners opened before the
+ * `task` tag shipped. A generated room name is never content.
  * An empty result means "say nothing" — never a placeholder, and never raw text.
  */
 export function cornerObjectiveItems(input: {

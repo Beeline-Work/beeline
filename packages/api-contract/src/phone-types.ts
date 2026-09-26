@@ -513,7 +513,33 @@ export type RoomView = {
   /** The latest durable assignment; older revisions remain server-owned. */
   readonly cornerBrief?: {
     readonly revision: number;
+    readonly revisionHash: string;
+    readonly legacy: boolean;
     readonly content: string;
+    readonly intentVerbatim: readonly { sourceMessageId: string; snapshot: string }[];
+    readonly buildSpec: string;
+    readonly criteria: readonly { id: string; text: string }[];
+    readonly nonGoals: readonly string[];
+    readonly references: readonly {
+      label: string;
+      authority: string;
+      description: string;
+      objectId?: string;
+    }[];
+    readonly approvalBasis: {
+      kind: string;
+      sourceMessageId?: string;
+      snapshot?: string;
+      approvedBy?: string;
+      briefHash: string;
+      reason?: string;
+    };
+    readonly history: readonly {
+      revision: number;
+      revisionHash: string;
+      change?: string;
+      approvalKind: string;
+    }[];
     readonly attachments: readonly {
       readonly title: string;
       readonly purpose: string;

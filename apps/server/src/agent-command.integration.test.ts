@@ -104,6 +104,8 @@ beforeEach(async () => {
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
+  await db.query(`DELETE FROM corner_merge_approvals`);
+  await db.query(`DELETE FROM corner_brief_revisions`);
   await db.query(`DELETE FROM corner_apps`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
@@ -876,9 +878,53 @@ it('recovers a green head whose earlier GitHub note never dispatched its reviewe
     commands: 0,
   });
 });
-it('runs green review, fixes, exact-head approval, and implementer clearance as commands', async () => {
+it('runs revised-brief refusal, repair, rereview, exact-head approval, and implementer clearance as commands', async () => {
   const firstHead = '1'.repeat(40);
   const approvedHead = '2'.repeat(40);
+  await db.query(
+    `INSERT INTO corner_brief_revisions(
+       corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+       brief_references,approval_basis,revision_hash,author_id,source_room_id,source_message_id
+     ) VALUES
+       ($1,1,'Build the full release card',$2::jsonb,'Build the full release card',$3::jsonb,
+        '[]'::jsonb,'[]'::jsonb,$4::jsonb,$5,$6,$7,'intent-1'),
+       ($1,2,'Build the corrected full release card',$8::jsonb,'Build the corrected full release card',$9::jsonb,
+        '[]'::jsonb,'[]'::jsonb,$10::jsonb,$11,$6,$7,'correction-1')`,
+    [
+      C,
+      JSON.stringify([{ sourceMessageId: 'intent-1', snapshot: 'Show status and owner.' }]),
+      JSON.stringify([
+        { id: 'AC-1', text: 'Show status.' },
+        { id: 'AC-2', text: 'Show the corrected owner label from the approved mock.' },
+      ]),
+      JSON.stringify({
+        kind: 'initiating-command',
+        sourceMessageId: 'intent-1',
+        snapshot: 'Show status and owner.',
+        approvedBy: H,
+        briefHash: '3'.repeat(64),
+      }),
+      '3'.repeat(64),
+      B,
+      R,
+      JSON.stringify([
+        { sourceMessageId: 'intent-1', snapshot: 'Show status and owner.' },
+        { sourceMessageId: 'correction-1', snapshot: 'Correction: label it Responsible owner.' },
+      ]),
+      JSON.stringify([
+        { id: 'AC-1', text: 'Show status.' },
+        { id: 'AC-2', text: 'Show Responsible owner exactly as in the approved mock.' },
+      ]),
+      JSON.stringify({
+        kind: 'explicit-human-answer',
+        sourceMessageId: 'correction-1',
+        snapshot: 'Correction: label it Responsible owner.',
+        approvedBy: H,
+        briefHash: '4'.repeat(64),
+      }),
+      '4'.repeat(64),
+    ],
+  );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   await db.query(
     `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
@@ -903,7 +949,10 @@ it('runs green review, fixes, exact-head approval, and implementer clearance as 
   expect(firstReview?.reason).toBe('subscribed_event');
   expect(await commands(A, C)).toHaveLength(1);
   await claim(firstReview!);
-  await result(firstReview!, '@goosy confirmed finding: fix the race');
+  await result(
+    firstReview!,
+    '@goosy PROD-AC-2-1 [AC-2] confirmed: the partial PR omits the corrected Responsible owner label; repair and preserve this finding ID.',
+  );
 
   const [fix] = await commands(B, C);
   expect(fix?.reason).toBe('agent_tag');
@@ -929,8 +978,27 @@ it('runs green review, fixes, exact-head approval, and implementer clearance as 
   });
   const [secondReview] = await commands(A, C);
   await claim(secondReview!, 'g2');
+  await daemon.execute(
+    'postCornerValidationStage',
+    {
+      cornerId: C,
+      requestId: secondReview!.turnRequestId,
+      generationId: 'g2',
+      briefRevision: 2,
+      headSha: approvedHead,
+      stage: 'review',
+      status: 'passed',
+      evidence:
+        'AC-1 met: status rendered. AC-2 met: Responsible owner matches the approved mock. PROD-AC-2-1 resolved.',
+    },
+    A,
+  );
   await expect(
-    daemon.execute('approveCornerMerge', { cornerId: C, headSha: approvedHead }, A),
+    daemon.execute(
+      'approveCornerMerge',
+      { cornerId: C, headSha: approvedHead, briefRevision: 2 },
+      A,
+    ),
   ).resolves.toEqual({ status: 'approved', pullRequestNumber: 7, headSha: approvedHead });
   await result(secondReview!, `@goosy approved ${approvedHead}, merge`, 'g2');
 
@@ -938,7 +1006,8 @@ it('runs green review, fixes, exact-head approval, and implementer clearance as 
     (
       await db.query(
         `SELECT 1 FROM corner_merge_approvals
-         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=7 AND head_sha=$3`,
+         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=7 AND head_sha=$3
+           AND brief_revision=2`,
         [C, A, approvedHead],
       )
     ).rowCount,
@@ -1853,16 +1922,20 @@ describe('heartbeat authority across a lapsed lease', () => {
   });
 });
 
-
 it('excludes concurrent avatar jobs across rooms and refuses non-owner generation', async () => {
   const outcomes = await Promise.allSettled([
-    send('@hoots /draw-avatar', R), send('@hoots /draw-avatar brighter eyes', C),
+    send('@hoots /draw-avatar', R),
+    send('@hoots /draw-avatar brighter eyes', C),
   ]);
   expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
   expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
   expect((await phone.readAgent(W, A, H))?.avatarGenerationPending).toBe(true);
-  await expect(phone.execute('sendRoomMessage', { roomId: R, text: '@hoots /draw-avatar' }, P)).rejects.toThrow();
-  await db.query(`UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND avatar_job`, [A]);
+  await expect(
+    phone.execute('sendRoomMessage', { roomId: R, text: '@hoots /draw-avatar' }, P),
+  ).rejects.toThrow();
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND avatar_job`, [
+    A,
+  ]);
   expect((await phone.readAgent(W, A, H))?.avatarGenerationPending).toBe(false);
   await expect(send('@hoots /draw-avatar', R)).resolves.toBeDefined();
 });

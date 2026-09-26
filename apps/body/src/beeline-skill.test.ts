@@ -8,6 +8,7 @@ import {
   isConfiguredReviewer,
   usingBeelineSkillMarkdown,
   beelineReviewSkillMarkdown,
+  beelineSpecSkillMarkdown,
 } from './beeline-skill.js';
 
 describe('using-beeline Room guidance', () => {
@@ -33,7 +34,7 @@ describe('using-beeline Room guidance', () => {
     expect(beelinePrimer()).toContain('embed as a data: URL');
     // The primer asks for the corner's NAME as well as its objective (C89).
     expect(beelinePrimer()).toContain(
-      'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
+      'call beeline-agent open_corner with a name of at most three words and a navigation objective of no more than 24 words',
     );
     expect(beelinePrimer()).toContain(
       'Before opening a corner, consult beeline-triage and beeline-spec',
@@ -251,6 +252,51 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('reproduction id (or none obtained):');
     expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
+
+  it('treats verbatim intent and every criterion as product truth', () => {
+    expect(markdown).toContain(
+      'Quote every verbatim human-intent entry with its source message ID',
+    );
+    expect(markdown).toContain('short objective is navigation-only text');
+    expect(markdown).toContain('List every current criterion ID exactly once');
+    expect(markdown).toContain('criterion ledger (every current ID + status + evidence):');
+    expect(markdown).toContain('product-completeness findings (block):');
+    expect(markdown).toContain('engineering findings (block):');
+    expect(markdown).toContain('stable ID that survives rereview');
+    expect(markdown).toContain('only through a new human-authorized brief revision');
+  });
+});
+
+describe('beeline-spec planning skill', () => {
+  const markdown = beelineSpecSkillMarkdown('test-release');
+
+  it('keeps the compact path and adds the bounded complex planning loop', () => {
+    expect(markdown).toContain('## Compact path for a settled small fix');
+    expect(markdown).toContain('## Complex-work planning loop');
+    expect(markdown).toContain('### 1. Scope and current state');
+    expect(markdown).toContain('### 2. User stories and product boundary');
+    expect(markdown).toContain('### 3. Architecture and data flow');
+    expect(markdown).toContain('### 4. Failure modes and test map');
+    expect(markdown).toContain('### 5. Mocks and references');
+    expect(markdown).toContain('### 6. Implementation tasks');
+    expect(markdown).toContain('### 7. Bounded adversarial second read (default on)');
+    expect(markdown).toContain('Do not recursively review the review');
+  });
+
+  it('defines typed authority and proportional durable approval without blanket go', () => {
+    for (const field of [
+      'intentVerbatim[]',
+      'buildSpec',
+      'criteria[]',
+      'references[]',
+      'approvalBasis',
+    ])
+      expect(markdown).toContain(field);
+    expect(markdown).toContain('Do not infer approval from silence');
+    expect(markdown).toContain('Dispatch without a proposal/go ceremony');
+    expect(markdown).toContain('server records it against the exact revision hash');
+    expect(markdown).toContain('added automatically to the brief attachment manifest');
+  });
 });
 
 describe('isConfiguredReviewer', () => {
@@ -278,9 +324,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     );
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');
-    expect(markdown).toContain(
-      "I can/can't reach X on this machine because Y; to fix it, Z.",
-    );
+    expect(markdown).toContain("I can/can't reach X on this machine because Y; to fix it, Z.");
   });
 
   // R5: earlier skill text sent the person to Settings → Workbench → Tools
@@ -322,9 +366,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   });
 
   it('holds the key-sovereignty rule', () => {
-    expect(markdown).toContain(
-      "the agent owner cannot authorize someone else’s resources.",
-    );
+    expect(markdown).toContain('the agent owner cannot authorize someone else’s resources.');
   });
 });
 

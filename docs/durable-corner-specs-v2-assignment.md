@@ -9,12 +9,14 @@ Status: specification only; no implementation or skill installation performed.
 A person should be able to develop a product plan in a Room, authorize work, and have an implementation agent and reviewer receive the same complete assignment even when each starts with a fresh context.
 
 This specification implements the four components requested by lunchboxfortwo:
+
 1. A skill for writing an appropriate specification.
 2. Confirmation only when the request leaves material choices unresolved.
 3. Delivery of the brief and relevant files when opening a corner.
 4. Review against that specification, through the existing review procedure.
 
 Settled user decisions:
+
 - Obvious changes, such as a well-specified button fix, must not require reading and approving a formal spec.
 - Complex work must preserve acceptance criteria, user stories, mocks, and required tests through the handoff.
 - The reviewer must assess whether the requested product was built.
@@ -28,6 +30,7 @@ The Resource Permission Policy corner received a short objective referring to an
 This is a concrete acceptance fixture: the new workflow must deliver the matrix before implementation begins and prevent a partial budget-removal change from passing review as the complete assignment.
 
 Current inspected entry points:
+
 - apps/body/src/read-only-mcp.ts: open_corner accepts name, objective, and lane, with no full brief.
 - apps/server/src/daemon-service.ts: createCorner persists the objective and queues the opener.
 - apps/body/src/monolith-corner-turn.ts: constructs the worker prompt from objective, corner conversation, and trigger.
@@ -46,15 +49,15 @@ Keep short corner names and objectives for navigation. They are summaries, not s
 
 ## User stories
 
-| ID | Story | Successful outcome |
-|---|---|---|
-| U1 | As a user discussing a complex feature, I want settled decisions retained. | A new worker receives the agreed behaviors, exclusions, references, and proof requirements without reconstructing the conversation. |
-| U2 | As a user requesting a precise small fix, I want action without paperwork. | The agent writes a compact brief and proceeds under existing authorization without asking me to approve the obvious. |
-| U3 | As a user whose request contains a meaningful ambiguity, I want one focused question. | The answer resolves the affected requirement; already settled choices are not reopened. |
-| U4 | As a worker starting or restarting a corner, I need the assignment and its files. | I receive the current assigned revision and usable attachments before doing dependent work. |
-| U5 | As a user correcting work in progress, I want the correction to reach implementation and review. | A new revision records the change and supersedes the old assignment explicitly. |
-| U6 | As a reviewer, I need to distinguish working code from complete delivery. | My verdict identifies which criteria pass, fail, or remain unverified, with evidence. |
-| U7 | As a user checking progress, I want to inspect the assignment. | The Room/corner exposes the brief revision and attached references in a readable form. |
+| ID  | Story                                                                                            | Successful outcome                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| U1  | As a user discussing a complex feature, I want settled decisions retained.                       | A new worker receives the agreed behaviors, exclusions, references, and proof requirements without reconstructing the conversation. |
+| U2  | As a user requesting a precise small fix, I want action without paperwork.                       | The agent writes a compact brief and proceeds under existing authorization without asking me to approve the obvious.                |
+| U3  | As a user whose request contains a meaningful ambiguity, I want one focused question.            | The answer resolves the affected requirement; already settled choices are not reopened.                                             |
+| U4  | As a worker starting or restarting a corner, I need the assignment and its files.                | I receive the current assigned revision and usable attachments before doing dependent work.                                         |
+| U5  | As a user correcting work in progress, I want the correction to reach implementation and review. | A new revision records the change and supersedes the old assignment explicitly.                                                     |
+| U6  | As a reviewer, I need to distinguish working code from complete delivery.                        | My verdict identifies which criteria pass, fail, or remain unverified, with evidence.                                               |
+| U7  | As a user checking progress, I want to inspect the assignment.                                   | The Room/corner exposes the brief revision and attached references in a readable form.                                              |
 
 ## Component 1: Specification-writing skill
 
@@ -63,6 +66,7 @@ Proposed skill name: beeline-spec.
 Use it when preparing repository work for a corner or revising an existing assignment. It is not a prerequisite for ordinary conversation, explanations, or unrelated artifact delivery.
 
 The skill gathers relevant settled decisions and references, checks enough existing behavior to avoid inventing requirements, and writes a brief that another session can execute independently. It separates:
+
 - Human intent and explicit decisions.
 - Observed current behavior and evidence.
 - Proposed implementation approach and stated assumptions.
@@ -89,6 +93,7 @@ Update Room instructions and skills that currently require a proposal/go exchang
 ## Component 3: Durable delivery and revision
 
 Proposed product contract:
+
 - A brief has an ID, immutable revision, source Room, author, intent, requirements, and attachment manifest.
 - Human decision references identify their source messages where available. Agent recommendations remain labelled.
 - A corner assignment references a specific brief revision.
@@ -112,6 +117,7 @@ Legacy corners remain readable and operable. Their objective/transcript can seed
 Modify the existing bundled review procedure rather than introduce an independent reviewer.
 
 The reviewer receives the assigned brief, applicable mocks/files, implementation diff, and evidence. Review has two obligations:
+
 1. Product completeness: every applicable acceptance criterion is met.
 2. Engineering correctness: code, security/authorization, regressions, and maintainability are acceptable.
 
@@ -123,20 +129,20 @@ Use the existing reviewer verdict and handback mechanism. Do not invent a new nu
 
 ## Acceptance criteria and verification
 
-| ID | Acceptance criterion | Required demonstration |
-|---|---|---|
-| A1 | A fresh worker can identify all settled requirements without the parent transcript. | Integration fixture with a long Room discussion, corrections, and a fresh worker prompt; required decisions all present. |
-| A2 | A precise button fix requires no additional spec-confirmation exchange. | Behavioral skill trial: exact visible label request with settled location and scope; compact brief, zero redundant questions. |
-| A3 | A material unresolved choice triggers a targeted question before dependent work. | Behavioral trial with ambiguous “ban”: clarify removal versus prevention of rejoining; no invented decision. |
-| A4 | Dispatch cannot wake a worker with a missing or different brief. | Integration test for successful dispatch, persistence failure, invalid required attachment, and idempotent retry. |
-| A5 | Relevant mock/file bytes reach a different session or helper. | Deliver an attachment from server storage after source scratch deletion; verify content identity and purpose. |
-| A6 | Restarts and transcript truncation preserve the assigned spec. | Fresh-session prompt construction after a long conversation includes current revision and required references. |
-| A7 | A correction changes the assignment explicitly for worker and reviewer. | Revision update test; old revision retained, new one delivered; concurrent stale review cannot satisfy current assignment. |
-| A8 | Requirement completeness is part of review. | Permissions fixture: budget-only diff fails full-matrix review despite passing its narrow tests. |
-| A9 | Reviewer checks evidence appropriate to each requirement. | A visual requirement without required screenshot proof is unverified; authorization criteria require server-boundary evidence. |
-| A10 | Existing access and command authorities remain intact. | Unauthorized brief/attachment reads and mutations are refused; dispatch still requires authorized command context. |
-| A11 | The human can inspect the dispatched brief and references. | App-level verification of brief access from the corner/Room handoff, including revision and attachment titles. |
-| A12 | Existing corners and merge rules continue working. | Focused regression coverage for legacy corner startup, reviewer dispatch, exact-head approval, and clean catch-up behavior. |
+| ID  | Acceptance criterion                                                                | Required demonstration                                                                                                         |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| A1  | A fresh worker can identify all settled requirements without the parent transcript. | Integration fixture with a long Room discussion, corrections, and a fresh worker prompt; required decisions all present.       |
+| A2  | A precise button fix requires no additional spec-confirmation exchange.             | Behavioral skill trial: exact visible label request with settled location and scope; compact brief, zero redundant questions.  |
+| A3  | A material unresolved choice triggers a targeted question before dependent work.    | Behavioral trial with ambiguous “ban”: clarify removal versus prevention of rejoining; no invented decision.                   |
+| A4  | Dispatch cannot wake a worker with a missing or different brief.                    | Integration test for successful dispatch, persistence failure, invalid required attachment, and idempotent retry.              |
+| A5  | Relevant mock/file bytes reach a different session or helper.                       | Deliver an attachment from server storage after source scratch deletion; verify content identity and purpose.                  |
+| A6  | Restarts and transcript truncation preserve the assigned spec.                      | Fresh-session prompt construction after a long conversation includes current revision and required references.                 |
+| A7  | A correction changes the assignment explicitly for worker and reviewer.             | Revision update test; old revision retained, new one delivered; concurrent stale review cannot satisfy current assignment.     |
+| A8  | Requirement completeness is part of review.                                         | Permissions fixture: budget-only diff fails full-matrix review despite passing its narrow tests.                               |
+| A9  | Reviewer checks evidence appropriate to each requirement.                           | A visual requirement without required screenshot proof is unverified; authorization criteria require server-boundary evidence. |
+| A10 | Existing access and command authorities remain intact.                              | Unauthorized brief/attachment reads and mutations are refused; dispatch still requires authorized command context.             |
+| A11 | The human can inspect the dispatched brief and references.                          | App-level verification of brief access from the corner/Room handoff, including revision and attachment titles.                 |
+| A12 | Existing corners and merge rules continue working.                                  | Focused regression coverage for legacy corner startup, reviewer dispatch, exact-head approval, and clean catch-up behavior.    |
 
 Tests should target behavior and actual boundaries. Avoid tests that merely check whether a prompt contains a heading. Behavioral skill evaluations should judge decision preservation and appropriate questions, not exact wording.
 
@@ -155,6 +161,7 @@ A single lead owns the contract. If delegating, writing/review guidance and app 
 This was a manual authoring and scenario walkthrough, not an installed-skill or runtime test.
 
 Trial 1 — this feature:
+
 - Turned the user's four components into U1–U7 and A1–A12.
 - Preserved “confirmation only when needed”; rejected a blanket full-spec approval gate.
 - Identified that skill instructions cannot guarantee atomic handoff or restart recovery; those require product changes.
@@ -177,6 +184,7 @@ The expected review outcome is incomplete delivery against the matrix, not appro
 The missing matrix was already delivered by steering in the preceding Room turn. No claim is made here that the subsequent implementation has passed.
 
 What changed because of the trial:
+
 - Keep a compact path, not a mandatory long template.
 - Label the authority and approval status of mocks.
 - Include the exact revision in review, not merely in worker startup.
@@ -188,6 +196,7 @@ What changed because of the trial:
 Build one focused writing skill, beeline-spec, and extend the existing review skill/procedure.
 
 Suggested package:
+
 - SKILL.md: when to use it, scaling brief depth, source decisions, clarification rule, dispatch readiness, and revision handling.
 - references/brief-template.md: optional expanded structure for complex work.
 - references/examples.md: one compact button brief and one complex example demonstrating decisions, criteria, references, and proof.
@@ -197,7 +206,6 @@ Do not put database transactions, attachment transfer, polling loops, or merge a
 
 Before shipping the skill, run independent fresh-context evaluations and one real Room-to-corner-to-review exercise. This draft establishes the candidate behavior; those evaluations have not yet run.
 
-
 ## Revision 2: Review modeled on no-mistakes
 
 Requested by lunchboxfortwo after revision 1. This section extends Component 4 and the delivery acceptance criteria. It specifies native Beeline behavior patterned on the inspected no-mistakes skill; it does not claim that the no-mistakes executable ran or passed.
@@ -206,28 +214,29 @@ Requested by lunchboxfortwo after revision 1. This section extends Component 4 a
 
 Use one visible validation record for a brief revision and code head. Mirror the sequence intent -> base synchronization -> review -> tests -> documentation -> lint/type checks -> publication -> CI -> final Beeline authorization.
 
-| Stage | Responsibility | Evidence |
-|---|---|---|
-| Intent | Coordinator prepares; worker and reviewer consume. | Complete brief revision, explicit user decisions, exclusions, and attachment manifest; not a diff summary. |
-| Base synchronization | Author or the single active pipeline executor. | Branch/base state and resolution of conflicts under existing branch rules. |
-| Independent review | Configured reviewer. | Acceptance-criterion coverage plus correctness findings, each with location, severity, evidence, and proposed disposition. |
-| Tests | Author/executor runs; reviewer assesses coverage and results and performs targeted independent checks when needed. | Executed behavior tests, regression proof where feasible, and required visual or integration evidence. |
-| Documentation | Author updates relevant docs; reviewer verifies. | Behavior/API/workflow documentation changes, or a specific reason none are needed. |
-| Lint/type checks | Author/executor runs. | Applicable project check results bound to the delivered code version. |
-| Publication | Author or authorized executor publishes branch and PR. | Actual PR/head reference; never a reviewer-owned merge. |
-| CI | GitHub remains authoritative. | Current-head check rollup through existing Beeline gate. |
-| Final authorization | Reviewer records verdict; author checks composite merge gate. | Current requirements satisfied, applicable evidence, exact-head/revision authority, existing yolo and human-hold rules. |
+| Stage                | Responsibility                                                                                                     | Evidence                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Intent               | Coordinator prepares; worker and reviewer consume.                                                                 | Complete brief revision, explicit user decisions, exclusions, and attachment manifest; not a diff summary.                 |
+| Base synchronization | Author or the single active pipeline executor.                                                                     | Branch/base state and resolution of conflicts under existing branch rules.                                                 |
+| Independent review   | Configured reviewer.                                                                                               | Acceptance-criterion coverage plus correctness findings, each with location, severity, evidence, and proposed disposition. |
+| Tests                | Author/executor runs; reviewer assesses coverage and results and performs targeted independent checks when needed. | Executed behavior tests, regression proof where feasible, and required visual or integration evidence.                     |
+| Documentation        | Author updates relevant docs; reviewer verifies.                                                                   | Behavior/API/workflow documentation changes, or a specific reason none are needed.                                         |
+| Lint/type checks     | Author/executor runs.                                                                                              | Applicable project check results bound to the delivered code version.                                                      |
+| Publication          | Author or authorized executor publishes branch and PR.                                                             | Actual PR/head reference; never a reviewer-owned merge.                                                                    |
+| CI                   | GitHub remains authoritative.                                                                                      | Current-head check rollup through existing Beeline gate.                                                                   |
+| Final authorization  | Reviewer records verdict; author checks composite merge gate.                                                      | Current requirements satisfied, applicable evidence, exact-head/revision authority, existing yolo and human-hold rules.    |
 
 The stages describe obligations, not a second scheduler or rigid new reviewer activation order. The existing reviewer can still wake after CI is green and examine the collected record. Relevant docs/tests/lint may already have run before that wake. Reuse applicable evidence instead of mechanically rerunning the whole suite.
 
 ### Findings and repair loop
 
 Each finding has a stable ID, affected criterion (when applicable), location, severity, explanation, evidence, and disposition:
+
 - Mechanical or correctness fix within settled intent: return to the author/executor to repair without another human approval request.
 - Informational: record; do not block delivery.
 - Product decision: ask the human only when genuinely unresolved or when a change to deliberate intent is needed. Existing decisions must be applied, not repeatedly reopened.
 
-The reviewer identifies issues and verifies their resolution. The author owns repairs and delivery. After a repair, rerun affected checks and invalidate dependent evidence. A changed requirement invalidates the relevant prior requirement verdict even if code is unchanged. Preserve existing patch-identity rules for content-equivalent branch catch-ups; do not weaken Beeline's final merge gate.
+The reviewer identifies issues and verifies their resolution. The author owns repairs and delivery. After a repair, rerun affected checks and invalidate dependent evidence. A changed requirement invalidates the relevant prior requirement verdict even if code is unchanged. Approval is exact-head-only: every new PR head requires a fresh reviewer verdict, including a base catch-up. Do not weaken Beeline's final merge gate.
 
 If the actual no-mistakes tool is used by an author, it remains the sole owner of its active run and fixes. Do not start nested pipelines from a review phase or edit around its branch custody. This native review design does not require that CLI to be installed.
 
@@ -241,14 +250,14 @@ Only report "no-mistakes passed" when an actual run supports that claim. Native 
 
 ### Added acceptance criteria
 
-| ID | Acceptance criterion | Required demonstration |
-|---|---|---|
-| A13 | Validation uses the complete brief and its assigned revision. | A deliberate, unusual user choice is retained during review rather than flagged because only the diff was supplied. |
-| A14 | Review covers intent, correctness, tests, docs, lint/type checks, publication, and CI as applicable. | End-to-end record shows evidence or explicit non-applicability for every stage; no false all-clear when a required stage is skipped. |
-| A15 | Findings produce a bounded, observable repair handoff. | Reviewer refuses an incomplete head, author fixes it, affected checks rerun, and reviewer assesses the updated head/revision using existing handback limits. |
-| A16 | Review avoids redundant human decisions. | Mechanical defect returns to author; unresolved product tradeoff reaches human; already-settled tradeoff is not asked again. |
-| A17 | Pipeline execution preserves responsibility and gate authority. | Reviewer never pushes or merges as part of review; author still needs the existing composite gate; no nested actual no-mistakes run. |
-| A18 | Reported validation matches actual evidence. | Missing CI, skipped required checks, stale head/revision, and unavailable tooling cannot produce a claimed complete validation. |
+| ID  | Acceptance criterion                                                                                 | Required demonstration                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A13 | Validation uses the complete brief and its assigned revision.                                        | A deliberate, unusual user choice is retained during review rather than flagged because only the diff was supplied.                                          |
+| A14 | Review covers intent, correctness, tests, docs, lint/type checks, publication, and CI as applicable. | End-to-end record shows evidence or explicit non-applicability for every stage; no false all-clear when a required stage is skipped.                         |
+| A15 | Findings produce a bounded, observable repair handoff.                                               | Reviewer refuses an incomplete head, author fixes it, affected checks rerun, and reviewer assesses the updated head/revision using existing handback limits. |
+| A16 | Review avoids redundant human decisions.                                                             | Mechanical defect returns to author; unresolved product tradeoff reaches human; already-settled tradeoff is not asked again.                                 |
+| A17 | Pipeline execution preserves responsibility and gate authority.                                      | Reviewer never pushes or merges as part of review; author still needs the existing composite gate; no nested actual no-mistakes run.                         |
+| A18 | Reported validation matches actual evidence.                                                         | Missing CI, skipped required checks, stale head/revision, and unavailable tooling cannot produce a claimed complete validation.                              |
 
 ### Updated skill recommendation
 

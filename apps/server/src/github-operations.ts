@@ -15,7 +15,6 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
-import { githubPrPatchId } from './github-pr-patch-id.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   queueCornerMergeConflict,
@@ -639,33 +638,14 @@ export class GitHubOperations {
       corner.lifecycle.pr?.headSha === pr.headSha;
     const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
     const configuredReviewerId = corner.configured_reviewer_id;
-    const approval = await this.database.query<{ head_sha: string; patch_id: string | null }>(
-      `SELECT a.head_sha,a.patch_id FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
-       WHERE r.parent_id=$1 AND a.pull_request_number=$2
+    const approval = await this.database.query(
+      `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
+       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
          AND a.brief_revision IS NOT DISTINCT FROM
            (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=a.corner_id)
-         AND ($3::text IS NULL OR a.approved_by=$3) LIMIT 1`,
-      [corner.parent_id, number, configuredReviewerId],
+         AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
+      [corner.parent_id, number, pr.headSha, configuredReviewerId],
     );
-    const recordedApproval = approval.rows[0];
-    let approvalMatches = recordedApproval?.head_sha === pr.headSha;
-    if (!approvalMatches && recordedApproval?.patch_id && checks === 'passed') {
-      try {
-        const currentPatchId = githubPrPatchId(
-          await this.app.readPullRequestDiff(target.token, target.repository, number),
-        );
-        const [patchId, confirmedPr] = await Promise.all([
-          currentPatchId,
-          this.app.readPullRequest(target.token, target.repository, number),
-        ]);
-        approvalMatches =
-          confirmedPr.headSha === pr.headSha &&
-          confirmedPr.baseSha === pr.baseSha &&
-          patchId === recordedApproval.patch_id;
-      } catch {
-        // Missing or incomplete diff proof cannot transfer an approval.
-      }
-    }
     // The parent Room's reviewer opened this very corner: no OTHER agent's
     // approve_merge can ever exist for it, so requiring one is a permanent
     // deadlock, not a real gate.
@@ -677,7 +657,7 @@ export class GitHubOperations {
     const approvalPending = reviewerIsAuthor
       ? false
       : configuredReviewerId
-        ? !approvalMatches
+        ? approval.rowCount === 0
         : false;
     const reviewer = corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
     const reviewerExists = Boolean(configuredReviewerId);

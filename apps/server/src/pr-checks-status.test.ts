@@ -10,7 +10,6 @@ import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { githubPrPatchId } from './github-pr-patch-id.js';
 
 const W = '11111111-1111-4111-8111-111111111111';
 const R = '22222222-2222-4222-8222-222222222222';
@@ -29,7 +28,6 @@ let app: GitHubAppClient;
 let head: string;
 let rollupState: string | null;
 let requests: string[];
-let diffBody: string;
 let server: Server | undefined;
 
 beforeEach(async () => {
@@ -85,8 +83,6 @@ beforeEach(async () => {
   head = SHA;
   rollupState = 'SUCCESS';
   requests = [];
-  diffBody =
-    'diff --git a/button.txt b/button.txt\nindex 1111111..2222222 100644\n--- a/button.txt\n+++ b/button.txt\n@@ -1 +1 @@\n-Remove\n+Delete\n';
   app = new GitHubAppClient({
     appId: '1',
     privateKey: 'unused',
@@ -103,10 +99,7 @@ beforeEach(async () => {
     if (!url.startsWith('https://api.github.test/')) return realFetch(input, init);
     requests.push(url);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer room-token');
-    if (url.endsWith('/pulls/614'))
-      return new Headers(init?.headers).get('accept') === 'application/vnd.github.diff'
-        ? new Response(diffBody, { headers: { 'content-type': 'text/plain' } })
-        : Response.json({ head: { sha: head } });
+    if (url.endsWith('/pulls/614')) return Response.json({ head: { sha: head } });
     if (url.endsWith('/graphql')) {
       const variables = JSON.parse(String(init?.body)).variables as { expression: string };
       return Response.json({
@@ -337,7 +330,7 @@ describe('PR-scoped check gate', () => {
     expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
   });
 
-  it('carries approval across a clean catch-up only for the same patch and brief revision', async () => {
+  it('requires a fresh approval for every changed head and brief revision', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
@@ -345,26 +338,48 @@ describe('PR-scoped check gate', () => {
        VALUES($1,1,'A1: change the button label',$2,$3)`,
       [AUTHOR, A, R],
     );
-    const patchId = await githubPrPatchId(diffBody);
     await daemon.execute(
       'approveCornerMerge',
-      { cornerId: AUTHOR, headSha: SHA, briefRevision: 1, patchId },
+      { cornerId: AUTHOR, headSha: SHA, briefRevision: 1 },
       REVIEWER,
     );
     head = '9'.repeat(40);
-    diffBody = diffBody
-      .replace('1111111..2222222', 'aaaaaaa..bbbbbbb')
-      .replace('@@ -1 +1 @@', '@@ -10 +10 @@');
-    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approvalPending: false });
-    diffBody = diffBody.replace('+Delete', '+Discard');
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
-    diffBody = diffBody.replace('+Discard', '+Delete');
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approvalPending: true });
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [AUTHOR, head],
+    );
+    await daemon.execute(
+      'approveCornerMerge',
+      { cornerId: AUTHOR, headSha: head, briefRevision: 1 },
+      REVIEWER,
+    );
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
     await db.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id)
        VALUES($1,2,'A1: use a different label','The requester changed the label',$2,$3)`,
       [AUTHOR, A, R],
     );
     expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
+  });
+
+  it('never transfers approval across whitespace, line-ending, metadata, or binary edits', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER);
+    const collisionClasses = [
+      'string whitespace',
+      'indentation',
+      'CRLF',
+      'rename only',
+      'mode only',
+      'binary',
+    ];
+    for (const [index, collisionClass] of collisionClasses.entries()) {
+      head = (index + 1).toString(16).repeat(40);
+      expect(await gate(AUTHOR), collisionClass).toMatchObject({ approvalPending: true });
+    }
+    expect(requests.some((request) => request.includes('.diff'))).toBe(false);
   });
 
   it('names a configured reviewer who is not a parent member and does not drop the gate', async () => {

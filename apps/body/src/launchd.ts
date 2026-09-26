@@ -20,6 +20,9 @@ export const LAUNCHD_AGENT_LABEL_PREFIX = 'app.usebeeline.agent.';
 export const LAUNCHD_BROKER_LABEL = 'app.usebeeline.trusty-squire-broker';
 export const LAUNCHD_COMMAND_TIMEOUT_MS = 15_000;
 export const LAUNCHD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
+/** How long a bootstrap keeps retrying the refusal a just-removed label causes. */
+export const LAUNCHD_BOOTSTRAP_WAIT_MS = 10_000;
+const LAUNCHD_BOOTSTRAP_RETRY_INTERVAL_MS = 100;
 /** Mirrors systemd's `TimeoutStopSec=10min`: a legitimate drain lasts minutes. */
 export const LAUNCHD_EXIT_TIMEOUT_SECONDS = 600;
 export const LAUNCHD_STOP_TIMEOUT_MS = LAUNCHD_EXIT_TIMEOUT_SECONDS * 1_000 + 30_000;
@@ -264,6 +267,13 @@ async function writeManagedFile(path: string, content: string, mode: number): Pr
   return true;
 }
 
+/** The message and stderr launchd's CLI wrote, for matching and reporting. */
+function launchctlFailureText(error: unknown): string {
+  return `${error instanceof Error ? error.message : String(error)}\n${
+    (error as { stderr?: unknown } | null)?.stderr ?? ''
+  }`;
+}
+
 async function launchdStatus(
   run: LaunchdRunner,
   target: string,
@@ -313,10 +323,66 @@ async function bootoutIfLoaded(run: LaunchdRunner, target: string): Promise<void
 }
 
 function bootoutRemovalInProgress(error: unknown): boolean {
-  const reported = `${error instanceof Error ? error.message : String(error)}\n${
-    (error as { stderr?: unknown } | null)?.stderr ?? ''
-  }`;
-  return /failed:\s*36\b/.test(reported);
+  return /failed:\s*36\b/.test(launchctlFailureText(error));
+}
+
+/**
+ * launchd refuses to load a label it has not finished removing, and reports
+ * that refusal with a numeric code rather than a phrase: `5: Input/output
+ * error` and `37: Operation already in progress` are both the same
+ * remove-then-load race seen at a different point in the teardown. A malformed
+ * plist answers 5 as well, so this only ever bounds a retry — the refusal that
+ * never clears is still reported, unchanged, by its caller.
+ */
+function bootstrapRefusedWhileRemoving(error: unknown): boolean {
+  return /Bootstrap failed:\s*(?:5|36|37)\b/.test(launchctlFailureText(error));
+}
+
+/** The loaded/pid view of one installed agent job, for callers that must wait. */
+export async function launchdAgentJobStatus(
+  publicKey: string,
+  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner } = {},
+): Promise<{ pid: number; state: string; lastExitStatus?: number }> {
+  const label = launchdAgentLabel(publicKey);
+  return launchdStatus(options.run ?? runLaunchctl, `${launchdUserDomain()}/${label}`);
+}
+
+/**
+ * Load the installed plist, which is what a login and a `beeline start` both do.
+ * `launchctl bootout` returns before launchd has taken its job out of the
+ * domain, and a bootstrap of a label still in the domain is refused — so an
+ * install that follows a stop, a removal, or a re-pair races launchd's own
+ * bookkeeping. The refusal is transient and the identical call succeeds moments
+ * later, so this retries it up to `waitMs` and otherwise rethrows it with what
+ * launchd reports for the label.
+ */
+export async function bootstrapLaunchdAgentService(
+  publicKey: string,
+  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner; waitMs?: number } = {},
+): Promise<void> {
+  const env = options.env ?? process.env;
+  const run = options.run ?? runLaunchctl;
+  const domain = launchdUserDomain();
+  const label = launchdAgentLabel(publicKey);
+  const plistPath = launchdAgentPlistPath(publicKey, env);
+  const deadline = Date.now() + (options.waitMs ?? LAUNCHD_BOOTSTRAP_WAIT_MS);
+  for (;;) {
+    try {
+      await run(['bootstrap', domain, plistPath]);
+      return;
+    } catch (error) {
+      if (!bootstrapRefusedWhileRemoving(error)) throw error;
+      if (Date.now() >= deadline) {
+        const status = await launchdStatus(run, `${domain}/${label}`);
+        throw new Error(
+          `launchctl bootstrap never accepted ${label}: ${launchctlFailureText(error).trim()}` +
+            ` · launchd reports state=${status.state || 'unknown'} pid=${status.pid}`,
+          { cause: error },
+        );
+      }
+      await sleep(LAUNCHD_BOOTSTRAP_RETRY_INTERVAL_MS);
+    }
+  }
 }
 
 export async function installLaunchdAgentService(
@@ -344,7 +410,7 @@ export async function installLaunchdAgentService(
   await run(['enable', target]);
   // `RunAtLoad` starts the job as part of bootstrap, and the job was booted
   // out above, so there is nothing left for a `kickstart -k` to replace.
-  await run(['bootstrap', domain, plistPath]);
+  await bootstrapLaunchdAgentService(publicKey, { env, run });
   const deadline = Date.now() + (options.waitTimeoutMs ?? LAUNCHD_RESTART_WAIT_MS);
   do {
     const status = await launchdStatus(run, target);

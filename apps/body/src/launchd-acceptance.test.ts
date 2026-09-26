@@ -2,12 +2,14 @@ import { execFile } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  bootstrapLaunchdAgentService,
   installLaunchdAgentService,
+  launchdAgentJobStatus,
   launchdAgentLabel,
-  launchdAgentPlistPath,
   launchdUserDomain,
 } from './launchd.js';
 
@@ -80,10 +82,49 @@ while :; do sleep 1; done
   }
 
   async function waitForCountGreaterThan(previous: number): Promise<void> {
-    await vi.waitFor(async () => expect(await count()).toBeGreaterThan(previous), {
-      timeout: 20_000,
-      interval: 250,
-    });
+    try {
+      await vi.waitFor(async () => expect(await count()).toBeGreaterThan(previous), {
+        timeout: 20_000,
+        interval: 250,
+      });
+    } catch (error) {
+      // A bare count assertion cannot say whether launchd refused the job, left
+      // it stopped, or started it and had it die, and that is the whole
+      // difference between a supervision bug and a fixture bug.
+      const status = await launchdAgentJobStatus(publicKey, { env });
+      throw new Error(
+        `launchd did not reach start #${previous + 1} within 20s: ` +
+          `state=${status.state || 'unknown'} pid=${status.pid} ` +
+          `lastExit=${status.lastExitStatus ?? 'none'} · ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  /**
+   * The closest non-destructive CI equivalent of the next login: no job loaded
+   * for the label, then the installed plist bootstrapped from
+   * `~/Library/LaunchAgents`.
+   *
+   * `launchctl bootout` returns before launchd has taken the job out of the
+   * domain, and a bootstrap of a label still there is refused, so the removal is
+   * waited out. The fixture's supervisor exits 1 on the SIGTERM bootout sends
+   * (a clean daemon stop is an unsuccessful launchd exit, which is exactly what
+   * `KeepAlive.SuccessfulExit=false` restarts), so a removal launchd reads as a
+   * crash can put the job back; the label is re-booted out until it stays gone.
+   */
+  async function loginBootstrap(): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      await run('launchctl', ['bootout', target]).catch(() => undefined);
+      await sleep(250);
+      if ((await launchdAgentJobStatus(publicKey, { env })).state === 'unloaded') break;
+      if (Date.now() >= deadline) {
+        throw new Error(`launchd never removed ${launchdAgentLabel(publicKey)} after bootout`);
+      }
+    }
+    await bootstrapLaunchdAgentService(publicKey, { env });
   }
 
   it('restarts after a crash and is loaded again at the next login bootstrap', async () => {
@@ -92,22 +133,24 @@ while :; do sleep 1; done
     await waitForCountGreaterThan(first);
 
     const afterCrash = await count();
-    await run('launchctl', ['bootout', target]);
-    await run('launchctl', [
-      'bootstrap',
-      launchdUserDomain(),
-      launchdAgentPlistPath(publicKey, env),
-    ]);
+    await loginBootstrap();
     await waitForCountGreaterThan(afterCrash);
-  }, 45_000);
+  }, 60_000);
 
   it('does not restart a deliberate terminal status', async () => {
+    // Both tests run in one process against one job, so this one re-establishes
+    // a loaded, running daemon rather than inheriting it: a bootstrap failure
+    // above must read as that failure, not as an unexplained timeout here.
+    const loaded = await count();
+    await loginBootstrap();
+    await waitForCountGreaterThan(loaded);
+
     await writeFile(resolve(stateRoot, 'mode'), 'terminal\n');
     const before = await count();
     await killFixture();
     await waitForCountGreaterThan(before);
     const stoppedAt = await count();
-    await new Promise((resolveWait) => setTimeout(resolveWait, 7_000));
+    await sleep(7_000);
     expect(await count()).toBe(stoppedAt);
-  }, 35_000);
+  }, 60_000);
 });

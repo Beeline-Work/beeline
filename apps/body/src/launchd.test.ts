@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  LAUNCHD_BOOTSTRAP_WAIT_MS,
   LAUNCHD_BROKER_LABEL,
   LAUNCHD_EXIT_TIMEOUT_SECONDS,
   LAUNCHD_STOP_TIMEOUT_MS,
+  bootstrapLaunchdAgentService,
   cleanupLaunchdAgentService,
   disableLaunchdAgentService,
   installLaunchdAgentService,
@@ -410,6 +412,72 @@ describe('launchd supervision contract', () => {
       /Input\/output error/,
     );
     await expect(stat(launchdAgentPlistPath(publicKey, env))).resolves.toMatchObject({});
+  });
+
+  it('retries a bootstrap launchd refused while it was still removing the label', async () => {
+    const { env } = await canonicalEnv();
+    const publicKey = '2'.repeat(64);
+    // `bootout` returns before launchd is done with its job, and the refusal it
+    // answers a bootstrap with while the label is still in the domain clears on
+    // a later attempt: `5: Input/output error` on this host, `37: Operation
+    // already in progress` elsewhere.
+    const refusals = [
+      'Bootstrap failed: 5: Input/output error',
+      'Bootstrap failed: 37: Operation already in progress',
+      'Bootstrap failed: 36: Operation now in progress',
+    ];
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      const refusal = args[0] === 'bootstrap' ? refusals.shift() : undefined;
+      if (refusal) throw Object.assign(new Error(refusal), { stderr: `${refusal}\n` });
+      return { stdout: '' };
+    });
+
+    await expect(
+      bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 5_000 }),
+    ).resolves.toBeUndefined();
+    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(4);
+    expect(LAUNCHD_BOOTSTRAP_WAIT_MS).toBeGreaterThan(0);
+  }, 20_000);
+
+  it('reports the refusal that never cleared with launchd own view of the label', async () => {
+    const { env } = await canonicalEnv();
+    const publicKey = '3'.repeat(64);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'bootstrap') {
+        throw Object.assign(new Error('Command failed: launchctl bootstrap'), {
+          stderr: 'Bootstrap failed: 5: Input/output error\n',
+        });
+      }
+      return { stdout: 'state = not running\npid = 0\n' };
+    });
+
+    // A plist launchd will never accept answers 5 too, so the retry is only a
+    // bound: what surfaces is launchd's own refusal plus what it says about the
+    // label, never a made-up cause.
+    await expect(bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 0 })).rejects.toThrow(
+      /never accepted app\.usebeeline\.agent\.3{64}[^]*Input\/output error/,
+    );
+    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(1);
+  });
+
+  it('does not retry a bootstrap launchd refused for any other reason', async () => {
+    const { env } = await canonicalEnv();
+    const publicKey = '4'.repeat(64);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'bootstrap') throw new Error('Bootstrap failed: 3: No such process');
+      return { stdout: '' };
+    });
+
+    await expect(
+      bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 5_000 }),
+    ).rejects.toThrow(/No such process/);
+    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(1);
   });
 
   it('fails fast when launchd leaves the job stopped after a terminal daemon exit', async () => {

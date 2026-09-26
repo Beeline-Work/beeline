@@ -9,8 +9,8 @@
  * allow the user to pick". Claude-shaped catalogs (`{ id, name }`) were never
  * affected; #226's pickers were built against that shape.
  *
- * `mode` / `collaboration_mode` / `fast-mode` stay in the raw capture so the
- * allow-list filter is tested against a real Codex catalog, not a toy one.
+ * `mode` / `collaboration_mode` stay in the raw capture to test their exclusion;
+ * the exact `fast-mode` axis tests the narrow model_config exception.
  */
 export const CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS = {
   sessionId: 'codex-session-fixture',
@@ -92,7 +92,11 @@ export const CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS = {
           name: 'Medium',
           description: 'Balances speed and reasoning depth for everyday tasks',
         },
-        { value: 'high', name: 'High', description: 'Greater reasoning depth for complex problems' },
+        {
+          value: 'high',
+          name: 'High',
+          description: 'Greater reasoning depth for complex problems',
+        },
         {
           value: 'xhigh',
           name: 'Xhigh',

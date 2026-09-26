@@ -55,7 +55,11 @@ const client = vi.hoisted(() => ({
   }),
   waitUntilMemberRole: vi.fn(async () => undefined),
   setAgentModelConfig: vi.fn(async (_workspaceId: string, _pubkey: string, input: any) => {
-    state.agent = { ...state.agent, selected: { ...state.agent.selected, ...input } };
+    state.agent = {
+      ...state.agent,
+      selected: { ...state.agent.selected, ...input },
+      ...(typeof input.fastMode === 'boolean' ? { fastMode: input.fastMode } : {}),
+    };
   }),
   refreshAgentModelCatalog: vi.fn(async () => {
     const model = state.agent.selected?.model ?? 'sonnet';
@@ -888,6 +892,30 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
+  });
+
+  it('offers Fast mode only to the owner when the live catalog advertises it', async () => {
+    state.agent.catalog.push({
+      id: 'fast-mode',
+      category: 'model_config',
+      currentValue: 'off',
+      options: [{ id: 'off' }, { id: 'on' }],
+    });
+    state.agent.fastMode = false;
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: 'fast-mode-setting' })).toBeDefined();
+    await press(renderer, 'fast-mode-on');
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: true });
+    await press(renderer, 'fast-mode-off');
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: false });
+    state.agent = {
+      ...state.agent,
+      catalog: state.agent.catalog.filter((axis: any) => axis.id !== 'fast-mode'),
+    };
+    const unsupported = await render();
+    await openAgentManagement(unsupported);
+    expect(unsupported.root.findAllByProps({ testID: 'fast-mode-setting' })).toHaveLength(0);
   });
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {

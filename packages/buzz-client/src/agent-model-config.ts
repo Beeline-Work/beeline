@@ -53,8 +53,8 @@ function modelConfigKey(communityId: string, agentPubkey: string): string {
 
 /**
  * The only `configOptions` categories a picker may ever read or write.
- * `mode` / `fast-mode` / `collaboration_mode` (or any other permission axis)
- * must never appear here — those control Beeline's read-only/edit boundary.
+ * `mode` / `collaboration_mode` (or any other permission axis) must never
+ * appear here. Only the exact `fast-mode` id is admitted from `model_config`.
  */
 export const ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES = [
   'model',
@@ -63,8 +63,11 @@ export const ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES = [
   'reasoning_effort',
 ] as const;
 
-export function isAllowedAgentModelConfigCategory(category: string): boolean {
-  return (ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES as readonly string[]).includes(category);
+export function isAllowedAgentModelConfigCategory(category: string, id?: string): boolean {
+  return (
+    (ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES as readonly string[]).includes(category) ||
+    (category === 'model_config' && id === 'fast-mode')
+  );
 }
 
 function parseOptionEntries(value: unknown): AgentModelConfigOption[] {
@@ -76,7 +79,7 @@ function parseOptionEntries(value: unknown): AgentModelConfigOption[] {
     const id = record.id;
     const category = record.category;
     if (typeof id !== 'string' || typeof category !== 'string') continue;
-    if (!isAllowedAgentModelConfigCategory(category)) continue;
+    if (!isAllowedAgentModelConfigCategory(category, id)) continue;
     const rawChoices = Array.isArray(record.options) ? record.options : [];
     const choices = rawChoices
       .filter(
@@ -113,7 +116,8 @@ export function parseAgentModelCatalog(event: NostrEvent): AgentModelCatalog | n
       const raw = content.selection as Record<string, unknown>;
       const model = typeof raw.model === 'string' ? raw.model : undefined;
       const effort = typeof raw.effort === 'string' ? raw.effort : undefined;
-      if (model || effort) selection = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+      if (model || effort)
+        selection = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
     }
     return {
       communityId,
@@ -183,7 +187,11 @@ export async function getAgentModelCatalog(
   agentPubkey: string,
 ): Promise<AgentModelCatalog | null> {
   const events = await query(ctx, [
-    { kinds: [KIND_AGENT_MODEL_CATALOG], '#d': [modelConfigKey(communityId, agentPubkey)], limit: 5 },
+    {
+      kinds: [KIND_AGENT_MODEL_CATALOG],
+      '#d': [modelConfigKey(communityId, agentPubkey)],
+      limit: 5,
+    },
   ]);
   let latest: AgentModelCatalog | null = null;
   for (const event of events) {
@@ -249,7 +257,7 @@ export async function setAgentModelConfig(
   // model (and vice versa).
   const current = await getAgentModelConfig(ctx, communityId, agentPubkey);
   const nextModel = model ?? current?.model;
-  const nextEffort = clearEffort ? undefined : effort ?? current?.effort;
+  const nextEffort = clearEffort ? undefined : (effort ?? current?.effort);
   const event = signEvent(
     {
       pubkey: ctx.identity.publicKey,
@@ -280,7 +288,11 @@ export async function getAgentModelConfig(
   agentPubkey: string,
 ): Promise<AgentModelConfig | null> {
   const events = await query(ctx, [
-    { kinds: [KIND_AGENT_MODEL_CONFIG], '#d': [modelConfigKey(communityId, agentPubkey)], limit: 20 },
+    {
+      kinds: [KIND_AGENT_MODEL_CONFIG],
+      '#d': [modelConfigKey(communityId, agentPubkey)],
+      limit: 20,
+    },
   ]);
   const members = await communityMembers(ctx, communityId);
   const memberPubkeys = new Set(members.map((member) => member.pubkey));

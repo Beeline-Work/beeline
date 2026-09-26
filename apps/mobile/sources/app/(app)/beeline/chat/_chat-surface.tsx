@@ -217,10 +217,13 @@ import {
   availableSlashVerbs,
   availableCornerAppCommands,
   availableAgentMentionCommands,
+  fastModeCommandState,
+  FAST_MODE_COMMAND,
   slashVerbQuery,
   agentMentionSlashQuery,
   insertAgentSlashCommand,
   type BuiltInSlashVerbId,
+  type FastModeCommandState,
 } from '@/buzz/slash-verbs';
 import {
   cachedChannelKind,
@@ -625,6 +628,10 @@ export function BuzzChatSurface({
   /** Per-Room+agent command lists (undefined = unresolved, empty = advertises none). */
   const [agentCommandsByScope, setAgentCommandsByScope] = useState<
     Record<string, readonly AgentComposerCommand[]>
+  >({});
+  /** Per-Room+agent Fast mode toggle (undefined = unread, null = not offered to this viewer). */
+  const [agentFastModeByScope, setAgentFastModeByScope] = useState<
+    Record<string, FastModeCommandState | null>
   >({});
   const [sending, setSending] = useState(false);
   const [cornerProposalAction, setCornerProposalAction] = useState<{
@@ -1776,8 +1783,12 @@ export function BuzzChatSurface({
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
     const published = agentCommandsByScope[mentionAgentCommandScope];
-    return availableAgentMentionCommands(published ?? [], mentionSlash.query);
-  }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
+    return availableAgentMentionCommands(
+      published ?? [],
+      mentionSlash.query,
+      agentFastModeByScope[mentionAgentCommandScope],
+    );
+  }, [agentCommandsByScope, agentFastModeByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
@@ -1823,7 +1834,9 @@ export function BuzzChatSurface({
     const pubkey = mentionSlashAgentPubkey;
     const scope = mentionAgentCommandScope;
     if (!pubkey || !scope || !roomClient || !activeCommunityId) return;
-    if (agentCommandsByScope[scope] !== undefined) return;
+    if (agentCommandsByScope[scope] !== undefined && agentFastModeByScope[scope] !== undefined) {
+      return;
+    }
     let cancelled = false;
     roomClient
       .agent(activeCommunityId, pubkey)
@@ -1832,6 +1845,10 @@ export function BuzzChatSurface({
           setAgentCommandsByScope((current) => ({
             ...current,
             [scope]: detail.commands ?? [],
+          }));
+          setAgentFastModeByScope((current) => ({
+            ...current,
+            [scope]: fastModeCommandState(detail, viewerPubkey),
           }));
         }
       })
@@ -1845,11 +1862,19 @@ export function BuzzChatSurface({
   }, [
     activeCommunityId,
     agentCommandsByScope,
+    agentFastModeByScope,
     decodedId,
     mentionAgentCommandScope,
     mentionSlashAgentPubkey,
     roomClient,
+    viewerPubkey,
   ]);
+  // Fast mode can change on the agent's profile, so each opening of an
+  // agent's palette reads it again rather than trusting an earlier answer.
+  useEffect(() => {
+    if (mentionSlashAgentPubkey) return;
+    setAgentFastModeByScope((current) => (Object.keys(current).length ? {} : current));
+  }, [mentionSlashAgentPubkey]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
@@ -2186,11 +2211,12 @@ export function BuzzChatSurface({
             !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
           ),
         },
-        currentSlashQuery ?? '',
+        currentSlashQuery ?? mentionSlash?.query ?? '',
       ),
     [
       catchUpOfferVisible,
       currentSlashQuery,
+      mentionSlash?.query,
       canManageWorkspace,
       isCorner,
       isDirectMessage,
@@ -4655,6 +4681,62 @@ export function BuzzChatSurface({
     [inputText],
   );
 
+  /**
+   * Fast mode is the owner's toggle, not text: it writes through the same
+   * `updateAgentModelSelection` operation as the profile switch and leaves
+   * the palette open on the new state.
+   */
+  const toggleAgentFastMode = useCallback(async () => {
+    const pubkey = mentionSlashAgentPubkey;
+    const scope = mentionAgentCommandScope;
+    const current = scope ? agentFastModeByScope[scope] : null;
+    if (!pubkey || !scope || !current || current.status === 'saving' || !activeCommunityId) {
+      return;
+    }
+    const enabled = !current.enabled;
+    setAgentFastModeByScope((state) => ({
+      ...state,
+      [scope]: { enabled: current.enabled, status: 'saving' },
+    }));
+    void Haptics.selectionAsync();
+    try {
+      let writeTransport = transport;
+      if (!writeTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        writeTransport = new BuzzRigTransport(identity);
+        setSessionTransport(writeTransport);
+      }
+      const client = await writeTransport.ensureClient();
+      await client.setAgentModelConfig(activeCommunityId, pubkey, { fastMode: enabled });
+      setAgentFastModeByScope((state) => ({ ...state, [scope]: { enabled } }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setAgentFastModeByScope((state) => ({
+        ...state,
+        [scope]: { enabled: current.enabled, status: 'failed' },
+      }));
+    }
+  }, [
+    activeCommunityId,
+    agentFastModeByScope,
+    mentionAgentCommandScope,
+    mentionSlashAgentPubkey,
+    setSessionTransport,
+    transport,
+  ]);
+
+  const selectAgentCommand = useCallback(
+    (name: string) => {
+      if (name === FAST_MODE_COMMAND) {
+        void toggleAgentFastMode();
+        return;
+      }
+      insertAgentCommand(name);
+    },
+    [insertAgentCommand, toggleAgentFastMode],
+  );
+
   const runSlashVerb = useCallback(
     (verb: BuiltInSlashVerbId) => {
       clearSlashComposer();
@@ -4754,7 +4836,7 @@ export function BuzzChatSurface({
     if (commandIndex < 0) {
       const command = mentionAgentCommands[highlightedSlashVerbIndex];
       if (command) {
-        insertAgentCommand(command.name);
+        selectAgentCommand(command.name);
         return;
       }
     } else if (commandIndex < cornerAppCommands.length) {
@@ -4777,7 +4859,7 @@ export function BuzzChatSurface({
   }, [
     handleSend,
     highlightedSlashVerbIndex,
-    insertAgentCommand,
+    selectAgentCommand,
     inputText,
     cornerAppCommands,
     mentionAgentCommands,
@@ -5712,7 +5794,7 @@ export function BuzzChatSurface({
                       apps={cornerAppCommands}
                       agentName={mentionAgentName}
                       agentLacksCommands={mentionAgentLacksCommands}
-                      onSelectCommand={insertAgentCommand}
+                      onSelectCommand={selectAgentCommand}
                       onSelectApp={openCornerApp}
                     />
                   );

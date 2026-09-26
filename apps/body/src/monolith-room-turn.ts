@@ -646,6 +646,7 @@ export class MonolithRoomTurnLoop {
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
@@ -728,10 +729,11 @@ export class MonolithRoomTurnLoop {
     await mkdir(this.options.cwd, { recursive: true });
     const selectionModel = configuration.model ?? this.options.config.modelSelection?.model;
     const selectionEffort = configuration.effort ?? this.options.config.modelSelection?.effort;
-    const selection =
-      selectionModel || selectionEffort
-        ? { model: selectionModel, effort: selectionEffort }
-        : undefined;
+    const selection = {
+      model: selectionModel,
+      effort: selectionEffort,
+      fastMode: configuration.fastMode,
+    };
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
@@ -810,6 +812,7 @@ export class MonolithRoomTurnLoop {
     const fingerprint = sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(

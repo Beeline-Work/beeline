@@ -53,6 +53,8 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
+  effortConfigAxis,
+  fastModeConfigAxis,
   filterAgentModelOptions,
 } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
@@ -220,7 +222,7 @@ function modelSelectionInput(
     return axisValue(detail, 'model', undefined) === model ? { model } : { model, effort: null };
   }
   if (axis.currentValue !== model) return { model, effort: null };
-  const effortAxis = detail.catalog.find((candidate) => candidate.category !== 'model');
+  const effortAxis = effortConfigAxis(detail.catalog);
   const effort = effortAxis?.currentValue;
   return effort && effortAxis.options.some((choice) => choice.id === effort)
     ? { model, effort }
@@ -784,6 +786,25 @@ export default function BuzzMembers({
     }
   };
 
+  const setFastMode = async (enabled: boolean) => {
+    if (!selectedAgent || !ownsSelectedAgent || !modelAxes.fast) return;
+    setWorking('model-config');
+    setError(null);
+    try {
+      const pubkey = selectedAgent.agent.identity.pubkey;
+      const client = await writeClient();
+      await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, { fastMode: enabled });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.fastMode === enabled,
+      );
+    } catch (reason) {
+      setError(`Could not set Fast mode: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const toggleModelAxis = async (
     kind: ModelAxisKind,
     open: boolean,
@@ -817,11 +838,12 @@ export default function BuzzMembers({
         },
         MODEL_CATALOG_CONFIRM_ATTEMPTS,
       );
-      const effort = refreshed.catalog.find(
-        (candidate) =>
-          candidate.category !== 'model' &&
-          isAllowedAgentModelConfigCategory(candidate.category) &&
-          candidate.options.length > 0,
+      const effort = effortConfigAxis(
+        refreshed.catalog.filter(
+          (candidate) =>
+            isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
+            candidate.options.length > 0,
+        ),
       );
       if (!effort) {
         setModelAxisError('effort');
@@ -937,16 +959,16 @@ export default function BuzzMembers({
       Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
     const live =
       selectedAgent?.catalog.filter(
-        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+        (axis) =>
+          isAllowedAgentModelConfigCategory(axis.category, axis.id) && axis.options.length > 0,
       ) ?? [];
     return {
       model: live.find((axis) => axis.category === 'model'),
       // Effort choices may be model-specific. After a model switch, offer
       // nothing until the agent republishes a catalog whose current model
       // matches the persisted human selection.
-      effort: awaitingSelectedModelCatalog
-        ? undefined
-        : live.find((axis) => axis.category !== 'model'),
+      effort: awaitingSelectedModelCatalog ? undefined : effortConfigAxis(live),
+      fast: awaitingSelectedModelCatalog ? undefined : fastModeConfigAxis(live),
     };
   }, [selectedAgent]);
 
@@ -1109,6 +1131,33 @@ export default function BuzzMembers({
                       </View>
                     );
                   })}
+                  {modelAxes.fast && (
+                    <View style={styles.axisBlock} testID="fast-mode-setting">
+                      <Text style={styles.profileSettingLabel}>Fast mode</Text>
+                      <Text style={styles.profileSettingCopy}>
+                        Faster responses use more ChatGPT credits where available.
+                      </Text>
+                      {([false, true] as const).map((enabled) => (
+                        <TouchableOpacity
+                          key={String(enabled)}
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            disabled: busy,
+                            selected: selectedAgent.fastMode === enabled,
+                          }}
+                          disabled={busy}
+                          onPress={() => void setFastMode(enabled)}
+                          style={styles.choice}
+                          testID={`fast-mode-${enabled ? 'on' : 'off'}`}
+                        >
+                          <Text style={styles.choiceText}>{enabled ? 'On' : 'Off'}</Text>
+                          {selectedAgent.fastMode === enabled && (
+                            <Text style={styles.choiceText}>✓</Text>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
               {ownsSelectedAgent && (

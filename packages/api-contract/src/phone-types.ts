@@ -834,6 +834,7 @@ export type AgentDetailView = {
   readonly commands?: readonly AgentComposerCommand[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;
+  readonly fastMode?: boolean;
   /** Which persisted selection axis failed the daemon's live startup validation. */
   readonly modelUnavailable?: 'model' | 'effort' | 'selection';
   /**

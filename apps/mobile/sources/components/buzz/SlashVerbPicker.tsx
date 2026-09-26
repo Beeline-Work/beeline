@@ -82,8 +82,12 @@ export function SlashVerbPicker({
             return (
               <TouchableOpacity
                 accessibilityLabel={`/${command.name}. ${command.description ?? 'Advertised command'}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
+                accessibilityRole={command.toggle === undefined ? 'button' : 'switch'}
+                accessibilityState={
+                  command.toggle === undefined
+                    ? { selected }
+                    : { selected, checked: command.toggle }
+                }
                 key={`command:${command.name}`}
                 onPress={() => onSelectCommand(command.name)}
                 style={[styles.row, styles.commandRow, selected && styles.rowSelected]}
@@ -104,7 +108,16 @@ export function SlashVerbPicker({
                     </Text>
                   ) : null}
                 </View>
-                <Text style={styles.enter}>↵</Text>
+                {command.toggle === undefined ? (
+                  <Text style={styles.enter}>↵</Text>
+                ) : (
+                  <Text
+                    style={[styles.enter, styles.toggleState, command.toggle && styles.toggleOn]}
+                    testID={`slash-agent-command-${command.name}-state`}
+                  >
+                    {command.toggle ? 'ON' : 'OFF'}
+                  </Text>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -266,6 +279,8 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textDisabled,
       fontSize: 12,
     },
+    toggleState: { color: groknight.textMuted },
+    toggleOn: { color: groknight.accent },
     empty: {
       ...Typography.mono(),
       paddingHorizontal: 12,

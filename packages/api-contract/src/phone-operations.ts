@@ -349,7 +349,10 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
   readonly avatar?: string;
 };
 export type UpdateAgentModelInput = WorkspaceAgentInput &
-  Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
+  Omit<AgentModelSelection, 'effort'> & {
+    readonly effort?: string | null;
+    readonly fastMode?: boolean;
+  };
 export type UpdateAgentYoloInput = WorkspaceAgentInput & { readonly enabled: boolean };
 /** The owner's answer to "who may address this agent" (`agent-access.ts`). */
 export type UpdateAgentAccessPolicyInput = WorkspaceAgentInput & {

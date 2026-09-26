@@ -238,6 +238,7 @@ const cases: Case[] = [
       'runtimeSelection',
       'selected',
       'modelUnavailable',
+      'fastMode',
       'yolo',
       'access',
       'grants',

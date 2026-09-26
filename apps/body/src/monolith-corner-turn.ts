@@ -776,6 +776,7 @@ export class MonolithCornerTurnLoop {
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
@@ -868,10 +869,11 @@ export class MonolithCornerTurnLoop {
         ? 'Research hold: keep this corner open. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge; a human closes this corner.'
         : cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle));
     await mkdir(this.options.worktreePath, { recursive: true });
-    const selection =
-      configuration.model || configuration.effort
-        ? { model: configuration.model, effort: configuration.effort }
-        : this.options.config.modelSelection;
+    const selection = {
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
+    };
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
@@ -1043,6 +1045,7 @@ export class MonolithCornerTurnLoop {
     const fingerprint = sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,

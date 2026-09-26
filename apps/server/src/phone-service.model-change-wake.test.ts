@@ -7,6 +7,7 @@ import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'c'.repeat(64);
+const OTHER = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM_A = '22222222-2222-4222-8222-222222222221';
 const ROOM_B = '22222222-2222-4222-8222-222222222222';
@@ -46,8 +47,9 @@ async function fixture() {
   await migrate(database);
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
-      ($1,'human','Charles','lunchboxfortwo'),($2,'agent','Bee','bee')`,
-    [OWNER, AGENT],
+      ($1,'human','Charles','lunchboxfortwo'),($2,'agent','Bee','bee'),
+      ($3,'human','Other','other')`,
+    [OWNER, AGENT, OTHER],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
   await database.query(
@@ -58,8 +60,9 @@ async function fixture() {
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner'),
-      ($1,NULL,$5,'member'),($1,$3,$5,'member'),($1,$4,$5,'member')`,
-    [WORKSPACE, OWNER, ROOM_A, ROOM_B, AGENT],
+      ($1,NULL,$5,'member'),($1,$3,$5,'member'),($1,$4,$5,'member'),
+      ($1,NULL,$6,'member')`,
+    [WORKSPACE, OWNER, ROOM_A, ROOM_B, AGENT, OTHER],
   );
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
   await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
@@ -89,6 +92,123 @@ const refresh = (database: RecordingDatabase) =>
 const wake = (notify: Notify) => notify.payload;
 
 describe('a model/effort selection change wakes the agent daemon', () => {
+  it('persists Fast mode, wakes sessions, and rejects unsupported or other-owner changes', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(false);
+      await expect(change(recorder, { fastMode: true })).rejects.toThrow(
+        'Fast mode is unavailable',
+      );
+      await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+        AGENT,
+        JSON.stringify([
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'sonnet-5',
+            options: [{ id: 'sonnet-5' }],
+          },
+          { id: 'fast-mode', category: 'model_config', options: [{ id: 'off' }, { id: 'on' }] },
+        ]),
+      ]);
+      await expect(
+        new PhoneService(database, 'http://local.test').execute(
+          'updateAgentModelSelection',
+          { workspaceId: WORKSPACE, agentId: AGENT, fastMode: true },
+          OTHER,
+        ),
+      ).rejects.toThrow();
+      await change(recorder, { fastMode: true });
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(true);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(true);
+      await database.query(`UPDATE agents SET selected_model='other-model' WHERE agent_id=$1`, [
+        AGENT,
+      ]);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(false);
+      await database.query(`UPDATE agents SET selected_model=NULL WHERE agent_id=$1`, [AGENT]);
+      expect(recorder.notifies).toHaveLength(2);
+      await change(recorder, { fastMode: false });
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(false);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(false);
+    } finally {
+      await database.close();
+    }
+  });
+  it('prefers a known effort category and falls back to the first non-model, non-Fast axis', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      const setCatalog = (catalog: unknown[]) =>
+        database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+          AGENT,
+          JSON.stringify(catalog),
+        ]);
+      const model = { id: 'model', category: 'model', options: [{ id: 'sonnet-5' }] };
+      const fast = {
+        id: 'fast-mode',
+        category: 'model_config',
+        options: [{ id: 'off' }, { id: 'on' }],
+      };
+      // A harness that names its effort category differently keeps its picker,
+      // and Fast mode listed first is never mistaken for it.
+      await setCatalog([
+        model,
+        fast,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+      ]);
+      await change(recorder, { effort: 'deep' });
+      await expect(change(recorder, { effort: 'on' })).rejects.toThrow('effort is not available');
+      // A known category still wins over an earlier unknown axis.
+      await setCatalog([
+        model,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+        { id: 'effort', category: 'reasoning_effort', options: [{ id: 'high' }] },
+      ]);
+      await change(recorder, { effort: 'high' });
+      await expect(change(recorder, { effort: 'deep' })).rejects.toThrow('effort is not available');
+      expect(
+        (
+          await database.query<{ selected_effort: string }>(
+            `SELECT selected_effort FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.selected_effort,
+      ).toBe('high');
+    } finally {
+      await database.close();
+    }
+  });
   it('clears stale choices and wakes the daemon for an explicit catalog refresh', async () => {
     const database = await fixture();
     try {

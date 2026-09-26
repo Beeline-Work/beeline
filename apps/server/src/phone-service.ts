@@ -422,6 +422,24 @@ function selectedModelLabel(
   if (!value) return undefined;
   return axis?.options?.find((option) => option.id === value)?.name ?? value;
 }
+/**
+ * The catalog's effort axis: a known effort category first; otherwise the
+ * first axis that is neither the model nor Fast mode, so a harness naming its
+ * effort category differently keeps its effort picker.
+ */
+function effortCatalogAxis(
+  catalog: AgentDetailView['catalog'],
+): AgentDetailView['catalog'][number] | undefined {
+  return (
+    catalog.find((axis) =>
+      ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
+    ) ??
+    catalog.find(
+      (axis) =>
+        axis.category !== 'model' && !(axis.id === 'fast-mode' && axis.category === 'model_config'),
+    )
+  );
+}
 function roomHeader(row: RoomRow, publicOrigin: string) {
   return {
     id: row.id,
@@ -2207,6 +2225,7 @@ export class PhoneService {
         commands: AgentDetailView['commands'];
         selected_model: string | null;
         selected_effort: string | null;
+        fast_mode: boolean;
         model_unavailable: 'model' | 'effort' | 'selection' | null;
         yolo_mode: boolean;
         yolo_forced_off: boolean;
@@ -2221,7 +2240,7 @@ export class PhoneService {
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
+        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -2309,6 +2328,19 @@ export class PhoneService {
           }
         : {}),
       catalog: config?.model_catalog ?? [],
+      fastMode: Boolean(
+        config?.fast_mode &&
+        (!config.selected_model ||
+          config.model_catalog?.find((axis) => axis.category === 'model')?.currentValue ===
+            config.selected_model) &&
+        config.model_catalog?.some(
+          (axis) =>
+            axis.id === 'fast-mode' &&
+            axis.category === 'model_config' &&
+            axis.options.some((choice) => choice.id === 'on') &&
+            axis.options.some((choice) => choice.id === 'off'),
+        ),
+      ),
       commands: config?.commands ?? [],
       ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
       ...(config?.selected_model || config?.selected_effort
@@ -5329,11 +5361,15 @@ export class PhoneService {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     const hasModel = Object.prototype.hasOwnProperty.call(input, 'model');
     const hasEffort = Object.prototype.hasOwnProperty.call(input, 'effort');
+    const hasFastMode = Object.prototype.hasOwnProperty.call(input, 'fastMode');
+    if (hasFastMode && typeof input.fastMode !== 'boolean')
+      throw new Error('invalid Fast mode value');
     await this.database.transaction(async (database) => {
       const context = (
         await database.query<{
           selected_model: string | null;
           selected_effort: string | null;
+          fast_mode: boolean;
           model_catalog: AgentDetailView['catalog'];
           agent_id: string;
           agent_kind: 'human' | 'agent';
@@ -5344,7 +5380,7 @@ export class PhoneService {
           actor_name: string;
           actor_handle: string | null;
         }>(
-          `SELECT config.selected_model,config.selected_effort,config.model_catalog,
+          `SELECT config.selected_model,config.selected_effort,config.fast_mode,config.model_catalog,
                   agent.id agent_id,agent.kind agent_kind,agent.name agent_name,agent.handle agent_handle,
                   actor.id actor_id,actor.kind actor_kind,actor.name actor_name,actor.handle actor_handle
            FROM agents config JOIN identities agent ON agent.id=config.agent_id
@@ -5360,24 +5396,56 @@ export class PhoneService {
         }
       }
       if (hasEffort && input.effort) {
-        const axis = context.model_catalog.find((candidate) => candidate.category !== 'model');
+        const axis = effortCatalogAxis(context.model_catalog);
         if (!axis?.options.some((choice) => choice.id === input.effort)) {
           throw new Error('effort is not available in the live harness catalog');
         }
       }
+      if (input.fastMode === true) {
+        const axis = context.model_catalog.find(
+          (candidate) => candidate.id === 'fast-mode' && candidate.category === 'model_config',
+        );
+        const modelAxis = context.model_catalog.find((candidate) => candidate.category === 'model');
+        if (
+          !axis?.options.some((choice) => choice.id === 'on') ||
+          !axis.options.some((choice) => choice.id === 'off') ||
+          (hasModel && input.model !== context.selected_model) ||
+          (modelAxis && context.selected_model && modelAxis.currentValue !== context.selected_model)
+        ) {
+          throw new Error('Fast mode is unavailable for the selected model and harness');
+        }
+      }
+      const resetFastMode = hasModel && input.model !== context.selected_model;
       await database.query(
         `UPDATE agents
          SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
              selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
+             fast_mode=CASE WHEN $6 THEN $7 WHEN $8 THEN false ELSE fast_mode END,
              updated_at=now()
          WHERE agent_id=$1`,
-        [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
+        [
+          input.agentId,
+          hasModel,
+          input.model ?? null,
+          hasEffort,
+          input.effort ?? null,
+          hasFastMode,
+          input.fastMode ?? false,
+          resetFastMode,
+        ],
       );
-      const changes: Array<{ axis: 'model' | 'effort'; value: string | null }> = [];
+      const changes: Array<{ axis: 'model' | 'effort' | 'fast mode'; value: string | null }> = [];
       if (hasModel && (input.model ?? null) !== context.selected_model)
         changes.push({ axis: 'model', value: input.model ?? null });
       if (hasEffort && (input.effort ?? null) !== context.selected_effort)
         changes.push({ axis: 'effort', value: input.effort ?? null });
+      const nextFastMode = hasFastMode
+        ? input.fastMode!
+        : resetFastMode
+          ? false
+          : context.fast_mode;
+      if (nextFastMode !== context.fast_mode)
+        changes.push({ axis: 'fast mode', value: nextFastMode ? 'on' : 'off' });
       if (!changes.length) return;
       const rooms = await database.query<{ room_id: string }>(
         `SELECT membership.room_id FROM memberships membership

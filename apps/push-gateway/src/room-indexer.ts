@@ -72,7 +72,7 @@ function modelCatalogOptions(catalog: Json): AgentDetailView['catalog'] {
         const option = json(candidate);
         const id = text(option.id);
         const category = text(option.category);
-        if (!id || !category || !isAllowedAgentModelConfigCategory(category)) return [];
+        if (!id || !category || !isAllowedAgentModelConfigCategory(category, id)) return [];
         const choices = Array.isArray(option.options)
           ? option.options.flatMap((raw) => {
               const choice = json(raw);
@@ -312,7 +312,8 @@ export class RoomIndexer {
       agents,
       peopleTotal: allMembers[0]?.kindTotal ?? allMembers.length,
       agentTotal: allAgents[0]?.kindTotal ?? allAgents.length,
-      membersTruncated: (allMembers[0]?.kindTotal ?? allMembers.length) > WORKSPACE_MEMBER_PAGE_SIZE,
+      membersTruncated:
+        (allMembers[0]?.kindTotal ?? allMembers.length) > WORKSPACE_MEMBER_PAGE_SIZE,
       agentsTruncated: (allAgents[0]?.kindTotal ?? allAgents.length) > WORKSPACE_MEMBER_PAGE_SIZE,
       viewer: {
         identity: currentViewer?.identity ?? identity({ pubkey: viewerPubkey }),

@@ -2901,11 +2901,12 @@ export class DaemonService {
         soul: { name: string; instructions: string } | null;
         selected_model: string | null;
         selected_effort: string | null;
+        fast_mode: boolean;
         commands: Array<{ name: string; description?: string; inputHint?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
       }>(
-        `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
+        `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NOT NULL
                            AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
@@ -2950,6 +2951,7 @@ export class DaemonService {
       ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
       ...(row?.selected_effort ? { effort: row.selected_effort } : {}),
+      fastMode: row?.fast_mode ?? false,
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
@@ -4463,7 +4465,8 @@ export class DaemonService {
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     await this.database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
-         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,updated_at=now()
+         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
+         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,updated_at=now()
        WHERE agent_id=$1`,
       [
         agentId,
@@ -4471,6 +4474,13 @@ export class DaemonService {
         input.selection?.model ?? null,
         input.selection?.effort ?? null,
         input.unavailable ?? null,
+        input.options.some(
+          (axis) =>
+            axis.id === 'fast-mode' &&
+            axis.category === 'model_config' &&
+            axis.options.some((choice) => choice.id === 'on') &&
+            axis.options.some((choice) => choice.id === 'off'),
+        ),
       ],
     );
     return this.writeResult();

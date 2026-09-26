@@ -7,7 +7,7 @@
  * `configOptions` also carries a `mode` category — Beeline's entire
  * read-only/edit boundary is `session/set_mode` picking `read-only` vs
  * `edit` (`acp.ts`'s `applySessionMode`). If the picker ever surfaced or set
- * `mode`/`fast-mode`/`collaboration_mode`, a user could flip an agent to
+ * `mode`/`collaboration_mode`, a user could flip an agent to
  * bypass the session authority boundary. `isAllowedAgentModelConfigCategory`
  * from the local daemon model contract is the one gate, and
  * `assertModelConfigOptionAllowed` re-checks it independently against the
@@ -41,11 +41,12 @@ export function isGrokAgentCommand(agent: AgentLaunchCommand): boolean {
  */
 export function agentArgsWithModelSelection(
   agent: AgentLaunchCommand,
-  selection: { model?: string; effort?: string } | null | undefined,
+  selection: { model?: string; effort?: string; fastMode?: boolean } | null | undefined,
 ): string[] {
   const original = [...agent.args];
   if (
     !selection ||
+    (!selection.model && !selection.effort) ||
     !isGrokAgentCommand(agent) ||
     !original.includes('agent') ||
     !original.includes('stdio')
@@ -218,7 +219,7 @@ export function parseAdvertisedConfigOptions(
 export function filterAllowedModelConfigOptions(
   options: AgentModelConfigOption[],
 ): AgentModelConfigOption[] {
-  return options.filter((option) => isAllowedAgentModelConfigCategory(option.category));
+  return options.filter((option) => isAllowedAgentModelConfigCategory(option.category, option.id));
 }
 
 /**
@@ -332,7 +333,7 @@ export class DisallowedModelConfigOptionError extends Error {
 /**
  * The set path's security gate. Takes the RAW advertised catalog (not
  * pre-filtered) and independently re-derives the allow-list check, so a
- * `mode`/`fast-mode`/`collaboration_mode` axis is refused here even if an
+ * `mode`/`collaboration_mode` axis is refused here even if an
  * upstream filtering step were ever skipped or buggy.
  */
 export function assertModelConfigOptionAllowed(
@@ -341,7 +342,7 @@ export function assertModelConfigOptionAllowed(
   advertisedOptions: AgentModelConfigOption[],
 ): void {
   const axis = advertisedOptions.find((option) => option.id === configId);
-  if (!axis || !isAllowedAgentModelConfigCategory(axis.category)) {
+  if (!axis || !isAllowedAgentModelConfigCategory(axis.category, axis.id)) {
     throw new DisallowedModelConfigOptionError(configId);
   }
   if (!axis.options.some((choice) => choice.id === value)) {
@@ -352,6 +353,16 @@ export function assertModelConfigOptionAllowed(
 }
 
 export type ModelSelectionLabel = 'model' | 'effort';
+
+export function supportsFastMode(options: AgentModelConfigOption[]): boolean {
+  const axis = options.find(
+    (option) => option.id === 'fast-mode' && option.category === 'model_config',
+  );
+  return Boolean(
+    axis?.options.some((choice) => choice.id === 'on') &&
+    axis.options.some((choice) => choice.id === 'off'),
+  );
+}
 
 export class ModelSelectionUnavailableError extends Error {
   readonly label: ModelSelectionLabel;
@@ -460,7 +471,7 @@ export function assertModelSelectionAdvertised(
  * The set path's axis-level security gate: `configId` must exist in the raw
  * advertised catalog AND its category must be picker allow-listed. Unlike
  * `assertModelConfigOptionAllowed` it says nothing about the value because
- * `assertModelSelectionAdvertised` owns that check; a `mode`/`fast-mode` axis
+ * `assertModelSelectionAdvertised` owns that check; a `mode` axis
  * is refused whatever value it would carry.
  */
 export function assertModelConfigAxisAllowed(
@@ -468,7 +479,7 @@ export function assertModelConfigAxisAllowed(
   advertisedOptions: AgentModelConfigOption[],
 ): void {
   const axis = advertisedOptions.find((option) => option.id === configId);
-  if (!axis || !isAllowedAgentModelConfigCategory(axis.category)) {
+  if (!axis || !isAllowedAgentModelConfigCategory(axis.category, axis.id)) {
     throw new DisallowedModelConfigOptionError(configId);
   }
 }
@@ -483,7 +494,7 @@ export interface ModelConfigSettable {
  * Apply a persisted `{model, effort}` selection to a live ACP session. Each
  * target category group is only ever searched among the RAW advertised
  * axes, and the axis itself is re-validated against the category allow-list
- * immediately before every call — a `mode`/`fast-mode` axis is refused here
+ * immediately before every call — a `mode` axis is refused here
  * even if an upstream filtering step were skipped.
  *
  * Values are checked immediately before their setter call. A successful model
@@ -497,7 +508,7 @@ export async function applyAgentModelSelectionWithUpdatedCatalog(
   client: ModelConfigSettable,
   sessionId: string,
   advertisedOptions: AgentModelConfigOption[],
-  selection: { model?: string; effort?: string },
+  selection: { model?: string; effort?: string; fastMode?: boolean },
 ): Promise<AgentModelConfigOption[]> {
   let currentOptions = advertisedOptions;
   for (const target of modelSelectionTargets(selection)) {
@@ -538,6 +549,12 @@ export async function applyAgentModelSelectionWithUpdatedCatalog(
       });
     }
   }
+  if (selection.fastMode && !supportsFastMode(currentOptions)) {
+    throw new Error('Fast mode is unavailable for the selected model and harness');
+  }
+  if (supportsFastMode(currentOptions)) {
+    await client.setConfigOption(sessionId, 'fast-mode', selection.fastMode ? 'on' : 'off');
+  }
   return currentOptions;
 }
 
@@ -545,7 +562,7 @@ export async function applyAgentModelSelection(
   client: ModelConfigSettable,
   sessionId: string,
   advertisedOptions: AgentModelConfigOption[],
-  selection: { model?: string; effort?: string },
+  selection: { model?: string; effort?: string; fastMode?: boolean },
 ): Promise<void> {
   await applyAgentModelSelectionWithUpdatedCatalog(client, sessionId, advertisedOptions, selection);
 }

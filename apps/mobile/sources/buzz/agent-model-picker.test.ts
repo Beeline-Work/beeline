@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { filterAgentModelOptions } from './agent-model-picker';
+import {
+  effortConfigAxis,
+  fastModeConfigAxis,
+  filterAgentModelOptions,
+} from './agent-model-picker';
 
 describe('filterAgentModelOptions', () => {
   const options = [
@@ -16,5 +20,38 @@ describe('filterAgentModelOptions', () => {
 
   it('keeps every catalog option for an empty search', () => {
     expect(filterAgentModelOptions(options, '   ')).toEqual(options);
+  });
+});
+
+describe('effortConfigAxis', () => {
+  const model = { id: 'model', category: 'model', options: [{ id: 'gpt-5.6' }] };
+  const fast = {
+    id: 'fast-mode',
+    category: 'model_config',
+    options: [{ id: 'off' }, { id: 'on' }],
+  };
+  const reasoning = { id: 'reasoning_effort', category: 'reasoning_effort', options: [] };
+  const depth = { id: 'depth', category: 'thinking_depth', options: [] };
+
+  it('prefers a known effort category over an earlier axis', () => {
+    expect(effortConfigAxis([model, fast, depth, reasoning])).toBe(reasoning);
+  });
+
+  it('falls back to the first axis that is neither the model nor Fast mode', () => {
+    expect(effortConfigAxis([model, fast, depth])).toBe(depth);
+    expect(effortConfigAxis([model, fast])).toBeUndefined();
+  });
+});
+
+describe('fastModeConfigAxis', () => {
+  it('admits only the exact Fast mode axis offering both on and off', () => {
+    const fast = {
+      id: 'fast-mode',
+      category: 'model_config',
+      options: [{ id: 'off' }, { id: 'on' }],
+    };
+    expect(fastModeConfigAxis([fast])).toBe(fast);
+    expect(fastModeConfigAxis([{ ...fast, options: [{ id: 'on' }] }])).toBeUndefined();
+    expect(fastModeConfigAxis([{ ...fast, category: 'mode' }])).toBeUndefined();
   });
 });

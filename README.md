@@ -129,16 +129,19 @@ corners also mount the release-owned `codegraph` server after its local index is
 
 `beeline-readonly-mcp` — reading, in a Room and in a corner:
 
-| Tool                                            | What it does                                         |
-| ----------------------------------------------- | ---------------------------------------------------- |
-| `list_files`, `read_file`                       | Walk and read the checkout                           |
-| `search_text`                                   | Search the checkout                                  |
-| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                    |
-| `read_agent_file`                               | Read the agent's approved materialized skills        |
+| Tool                                            | What it does                                  |
+| ----------------------------------------------- | --------------------------------------------- |
+| `list_files`, `read_file`                       | Walk and read the checkout                    |
+| `search_text`                                   | Search the checkout                           |
+| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state             |
+| `read_agent_file`                               | Read the agent's approved materialized skills |
 
 The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
-Room/corner runtime. Institutional-memory shadow extraction is dark by default and is not served
-to agent prompts.
+Room/corner runtime. With `BEELINE_INSTITUTIONAL_MEMORY_ENABLED=true` on both server and Body,
+host-side review records sourced Workspace facts and requester-profile preferences. Each turn
+receives one relevance-selected, command-bound snapshot capped at 8,000 UTF-8 bytes; failures
+omit the optional block. `propose_memory_item` is the active-command-bound write path. The older
+`BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=true` mode remains measurement-only.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
@@ -160,6 +163,7 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere      | Run a prompt again later — interval minutes or a 5-field cron |
 | `request_grant`                                        | Everywhere      | Ask the owner for reach outside the sandbox                   |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
+| `propose_memory_item`                                  | Live memory     | Propose one sourced fact or requester working preference      |
 
 ## The app
 

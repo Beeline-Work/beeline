@@ -92,6 +92,7 @@ jobs:
       run_website: ${{ steps.plan.outputs.run_website }}
       stage_server: ${{ steps.plan.outputs.stage_server }}
       stage_helper: ${{ steps.plan.outputs.stage_helper }}
+      helper_reuse_run_id: ${{ steps.helper_reuse.outputs.run_id }}
       stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
       native_android: ${{ steps.plan.outputs.native_android }}
@@ -264,6 +265,40 @@ jobs:
             ${{ runner.temp }}/release-component-paths.json
           if-no-files-found: error
           retention-days: 90
+      - name: Find a downloadable daemon artifact for this exact release SHA
+        # The same lookup .github/actions/daemon-leg's `reuse` step runs. A
+        # retry of an already-attempted release identity still has the earlier
+        # attempt's complete, merged three-platform daemon artifact, so
+        # helper_macos (which only exists to feed that merge) can be skipped
+        # and the helper promote/publish path runs on the reused bytes. A
+        # fresh identity has no artifact under this name, so the Mac bundles
+        # build exactly as before. The result is one signal, not a second
+        # notion of "already built".
+        if: >-
+          inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
+          steps.plan.outputs.stage_helper == 'pending'
+        id: helper_reuse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const name = `daemon-artifact-${{ steps.plan.outputs.release_version }}-${{ steps.plan.outputs.release_sha }}`;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+            });
+            const artifact = artifacts
+              .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (artifact) {
+              try {
+                await github.rest.actions.downloadArtifact({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  artifact_id: artifact.id, archive_format: 'zip',
+                });
+                core.setOutput('run_id', String(artifact.workflow_run.id));
+              } catch (error) {
+                core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
+              }
+            }
 
   server_deploy_plan:
     needs: initialize
@@ -411,7 +446,8 @@ jobs:
     needs: initialize
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      needs.initialize.outputs.stage_helper == 'pending'
+      needs.initialize.outputs.stage_helper == 'pending' &&
+      needs.initialize.outputs.helper_reuse_run_id == ''
     runs-on: ${{ fromJSON(matrix.runs_on) }}
     # Every run is cold: the bundle builds buzz-agent and buzz-dev-mcp with
     # `cargo build --release --locked` from a fresh clone, and checkout's
@@ -459,7 +495,8 @@ jobs:
     needs: [initialize, helper_macos]
     if: >-
       !cancelled() && inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      (needs.initialize.outputs.stage_helper != 'pending' || needs.helper_macos.result == 'success')
+      (needs.initialize.outputs.stage_helper != 'pending' || needs.helper_macos.result == 'success' ||
+        needs.initialize.outputs.helper_reuse_run_id != '')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 12
     permissions:
@@ -476,12 +513,14 @@ jobs:
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
       - uses: actions/download-artifact@v4
-        if: needs.initialize.outputs.stage_helper == 'pending'
+        if: >-
+          needs.initialize.outputs.stage_helper == 'pending' && needs.helper_macos.result == 'success'
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
-        if: needs.initialize.outputs.stage_helper == 'pending'
+        if: >-
+          needs.initialize.outputs.stage_helper == 'pending' && needs.helper_macos.result == 'success'
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64

@@ -870,6 +870,20 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-helper/);
   assert.match(source, /stage_server:[\s\S]*stage_helper:[\s\S]*stage_mobile_ota:/);
   assert.match(source, /stage_server == 'pending'/);
+  // A retry whose earlier attempt already produced the complete merged helper
+  // artifact skips the cold Mac cargo builds and reuses it; a fresh identity
+  // (no artifact under this name) builds the Mac bundles exactly as before.
+  const helperReuse = workflow.jobs.initialize.steps.find((step) => step.id === 'helper_reuse');
+  assert.match(helperReuse.uses, /actions\/github-script@v7/);
+  assert.match(helperReuse.with.script, /daemon-artifact-\$\{\{ steps\.plan\.outputs\.release_version \}\}-\$\{\{ steps\.plan\.outputs\.release_sha \}\}/);
+  assert.match(workflow.jobs.initialize.outputs.helper_reuse_run_id, /steps\.helper_reuse\.outputs\.run_id/);
+  assert.match(workflow.jobs.helper_macos.if, /needs\.initialize\.outputs\.helper_reuse_run_id == ''/);
+  assert.match(workflow.jobs.helper.if, /needs\.initialize\.outputs\.helper_reuse_run_id != ''/);
+  const darwinDownloads = workflow.jobs.helper.steps.filter(
+    (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
+  );
+  assert.equal(darwinDownloads.length, 2);
+  for (const step of darwinDownloads) assert.match(step.if, /needs\.helper_macos\.result == 'success'/);
   assert.match(source, /\["pending","built"\][\s\S]*stage_server/);
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);

@@ -36,6 +36,10 @@ const unifiedWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/unified-release.yml'),
   'utf8',
 );
+const unifiedReleaseScript = readFileSync(
+  resolve(mobileRoot, '../../scripts/unified-release.mjs'),
+  'utf8',
+);
 const serverReleaseSmoke = readFileSync(
   resolve(mobileRoot, '../../scripts/server-release-smoke.mjs'),
   'utf8',
@@ -2025,15 +2029,29 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('measures the selective release from dispatch and enforces the 20-minute default budget', () => {
+  it('measures fix-to-phone through OTA completion and marks slow whole runs without failing them', () => {
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
-    expect(unifiedWorkflow).toContain('elapsed=$((now - TRIGGER_EPOCH))');
+    expect(unifiedWorkflow).toContain('completedAt:Number(completedAt)');
+    expect(unifiedWorkflow).toContain('"$(date +%s)"');
+    expect(unifiedWorkflow).toContain('unified-release.mjs classify-attempt');
+    expect(unifiedWorkflow).toContain('--trigger-epoch "$TRIGGER_EPOCH"');
+    expect(unifiedWorkflow).toContain('--checkpoints "$RUNNER_TEMP/checkpoints.json"');
     // The 20-minute fix-to-phone budget stays the default; only a native
     // store-binary leg extends it (60 minutes).
-    expect(unifiedWorkflow).toContain('budget_seconds=1200');
-    expect(unifiedWorkflow).toContain('if [ "$elapsed" -ge "$budget_seconds" ]');
-    expect(unifiedWorkflow).toContain('failure_class=budget');
+    expect(unifiedReleaseScript).toContain(
+      'RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60',
+    );
+    expect(unifiedReleaseScript).toContain('RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60');
+    expect(unifiedReleaseScript).toContain("checkpoint?.component === 'mobile-ota' && checkpoint.state === 'checked'");
+    expect(unifiedReleaseScript).toContain('const otaElapsedSeconds = otaCompletedAt === undefined');
+    expect(unifiedReleaseScript).toContain('const failureClass = otaElapsedSeconds >= budgetSeconds');
+    expect(unifiedReleaseScript).toContain('RELEASE_SOFT_LIMIT_SECONDS = 45 * 60');
+    expect(unifiedReleaseScript).toContain(
+      "slow: outcome === 'success' && wholeRunElapsedSeconds > RELEASE_SOFT_LIMIT_SECONDS",
+    );
+    expect(unifiedWorkflow).toContain('if (process.env.SLOW === \'true\')');
+    expect(unifiedWorkflow).not.toContain('elapsed=$((now - TRIGGER_EPOCH))');
     expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
     expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
   });

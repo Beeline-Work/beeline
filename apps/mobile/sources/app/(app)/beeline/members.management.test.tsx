@@ -329,6 +329,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 import MembersScreen from './members';
 import { router } from 'expo-router';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { AGENT_MODEL_PICKER_VISIBLE_ROWS } from '@/buzz/agent-model-picker';
 
 /**
  * The disclosure mark is a drawn shape, so it is not part of a row's copy any
@@ -866,6 +867,12 @@ describe('Members workspace management', () => {
     );
 
     await press(renderer, 'model-axis-model');
+    // However long the catalog, the open list scrolls inside five rows.
+    const options = renderer.root.findByProps({ testID: 'model-options-model' });
+    expect(options.props.nestedScrollEnabled).toBe(true);
+    expect(options.props.style).toEqual(
+      expect.objectContaining({ maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 }),
+    );
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
     });
@@ -1325,7 +1332,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
 
-  it("offers an admin only the ban affordance for another owner's agent", async () => {
+  it("offers an admin only Remove from Workspace for another owner's agent", async () => {
     state.workspace = baseWorkspace('admin');
     state.agent = {
       ...baseAgent(),
@@ -1351,9 +1358,20 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('clara');
-    const ban = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(ban.props.accessibilityLabel).toBe('Ban agent');
-    expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
+    // An agent is never banned: its owner could pair it back as a new agent.
+    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
+    const remove = renderer.root.findByProps({ testID: 'remove-agent' });
+    expect(remove.props.accessibilityLabel).toBe('Remove from Workspace');
+    expect(remove.findAllByType('Text')[0].props.children).toBe('Remove from Workspace');
+
+    await press(renderer, 'remove-agent');
+    expect(modal.confirm).toHaveBeenCalledWith('Remove Clara?', expect.any(String), {
+      cancelText: 'Cancel',
+      confirmText: 'Remove agent',
+      destructive: true,
+    });
+    expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
+    expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
   });
 
   it('lets the owner flip yolo and shows who set it', async () => {
@@ -1479,9 +1497,13 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('viewer');
+    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(control.props.accessibilityLabel).toBe('Remove agent');
-    expect(control.findAllByType('Text')[0].props.children).toBe('Remove');
+    expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
+    const word = control.findAllByType('Text')[0];
+    expect(word.props.children).toBe('Remove from Workspace');
+    // One full-width destructive button, its words centred like a button.
+    expect(word.props.style).toEqual(expect.objectContaining({ textAlign: 'center' }));
 
     await press(renderer, 'remove-agent');
 

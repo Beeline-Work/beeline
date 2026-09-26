@@ -299,8 +299,6 @@ export class DaemonService {
       'walletPay',
       'walletSwap',
 
-      'authorizeRepositoryCall',
-      'authorizeHostCall',
       'listTurnAgentGrants',
       'offerConnector',
       'connectMcpServer',
@@ -452,8 +450,6 @@ export class DaemonService {
           [
             'authorizeSquireCall',
             'authorizeResourceCall',
-            'authorizeRepositoryCall',
-            'authorizeHostCall',
             ...[
               'getWalletToolState',
               'getWalletToolBalance',
@@ -1146,29 +1142,6 @@ export class DaemonService {
           input as Input<'authorizeResourceCall'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'authorizeHostCall':
-        return (await this.authorizeScopedGrant(
-          input as Input<'authorizeHostCall'>,
-          authenticatedAgentId,
-          'host',
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'authorizeRepositoryCall': {
-        const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
-        const room = (
-          await this.database.query<{ repository_key: string | null }>(
-            `SELECT COALESCE(parent.repository_key,room.repository_key) repository_key
-           FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$1`,
-            [roomId],
-          )
-        ).rows[0];
-        return (await this.authorizeScopedGrant(
-          input as Input<'authorizeRepositoryCall'>,
-          authenticatedAgentId,
-          'repository',
-          room?.repository_key ?? `scratch:${roomId}`,
-        )) as Output<Name>;
-      }
       case 'authorizeSquireCall':
         return (await this.authorizeSquireCall(
           input as Input<'authorizeSquireCall'>,
@@ -4453,10 +4426,10 @@ export class DaemonService {
 
   /**
    * request_grant: the agent raises its hand. Under yolo the grant is approved
-   * on the spot (auto=true) and one quiet system line records it; otherwise a
-   * repository grant asks a Workspace manager in the Room. Personal resources
-   * ask only their owner in a private system or connector DM. Every bypass and
-   * approval is scoped to the active command's original requester. Budget asks are retired.
+   * on the spot (auto=true) and one quiet system line records it. Personal
+   * resources ask only their owner in a private system or connector DM. Every
+   * bypass and approval is scoped to the active command's original requester.
+   * Budget and repository asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -4543,9 +4516,7 @@ export class DaemonService {
     };
     const grantId = randomUUID();
     const auto =
-      context.yolo_mode &&
-      (kind === 'repository' || requesterRow.id === context.owner_id) &&
-      escalations.length === 0;
+      context.yolo_mode && requesterRow.id === context.owner_id && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -4586,33 +4557,30 @@ export class DaemonService {
         auto,
         ...(script ? { script } : {}),
       };
-      let resourceRoomId: string | undefined;
-      if (kind !== 'repository') {
-        const member = await database.query(
-          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL`,
-          [context.workspace_id, context.owner_id],
-        );
-        if (!member.rowCount) throw new Error('resource owner access denied');
-        resourceRoomId = squireRoute
+      const member = await database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL`,
+        [context.workspace_id, context.owner_id],
+      );
+      if (!member.rowCount) throw new Error('resource owner access denied');
+      const resourceRoomId = squireRoute
+        ? await ensureConnectorDirectMessageRoom(
+            database,
+            context.workspace_id,
+            'trusty-squire',
+            context.owner_id,
+          )
+        : kind === 'mcp' && target === 'wallet'
           ? await ensureConnectorDirectMessageRoom(
               database,
               context.workspace_id,
-              'trusty-squire',
+              'wallet',
               context.owner_id,
             )
-          : kind === 'mcp' && target === 'wallet'
-            ? await ensureConnectorDirectMessageRoom(
-                database,
-                context.workspace_id,
-                'wallet',
-                context.owner_id,
-              )
-            : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
-      }
+          : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
       if (auto) {
         await systemLine(database, {
-          roomId: resourceRoomId ?? input.roomId,
+          roomId: resourceRoomId,
           subject: { kind: 'agent', id: agentId, name: agent.name },
           verb: 'was granted',
           object: `${kind} ${target}`,
@@ -4622,90 +4590,48 @@ export class DaemonService {
         });
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
-      if (resourceRoomId) {
-        const dmRoomId = resourceRoomId;
-        const open = (
-          await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
-            `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
+      const dmRoomId = resourceRoomId;
+      const open = (
+        await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
+          `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
            AND card->'requester'->>'pubkey'=$4 AND created_at>now()-interval '2 minutes'
            AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
              JOIN agent_grants g ON g.id=(entry->>'grantId')::uuid WHERE g.status<>'pending')
            ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-            [dmRoomId, agentId, input.roomId, requester.pubkey],
-          )
-        ).rows[0];
-        if (open) {
-          const grants = [...open.card.grants, grantView];
-          await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
-            agent,
-            owner,
-            requester,
-            grants,
-            sourceRoomId: input.roomId,
-            ...(sourceMessageId ? { sourceMessageId } : {}),
-          });
-          return { messageId: open.id, cardRoomId: dmRoomId };
-        }
-        const messageId = id();
-        await systemLine(database, {
-          id: messageId,
-          roomId: dmRoomId,
-          authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
-          ...grantCardPhrase(agent, owner, [grantView]),
-          presentation: 'card',
-          cardType: 'grant-request',
-          card: {
-            agent,
-            owner,
-            requester,
-            grants: [grantView],
-            sourceRoomId: input.roomId,
-            ...(sourceMessageId ? { sourceMessageId } : {}),
-          },
-        });
-        return { messageId, cardRoomId: dmRoomId };
-      }
-      // Several asks in one turn become one card: join this agent's open card
-      // in the Room while every grant on it is still pending and it is recent.
-      const open = (
-        await database.query<{ id: string; card: { grants: unknown[] } }>(
-          `SELECT m.id,m.card FROM messages m
-           WHERE m.room_id=$1 AND m.author_id=$2 AND m.card_type='grant-request'
-             AND m.created_at>now()-interval '2 minutes'
-             AND NOT EXISTS (
-               SELECT 1 FROM jsonb_array_elements(m.card->'grants') entry
-               JOIN agent_grants pending_grant ON pending_grant.id=(entry->>'grantId')::uuid
-               WHERE pending_grant.status<>'pending'
-             )
-           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
-           FOR UPDATE`,
-          [input.roomId, agentId],
+          [dmRoomId, agentId, input.roomId, requester.pubkey],
         )
       ).rows[0];
       if (open) {
-        const grants = [...(open.card.grants ?? []), grantView] as (typeof grantView)[];
+        const grants = [...open.card.grants, grantView];
         await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
           agent,
           owner,
           requester,
           grants,
+          sourceRoomId: input.roomId,
+          ...(sourceMessageId ? { sourceMessageId } : {}),
         });
-        return { messageId: open.id };
+        return { messageId: open.id, cardRoomId: dmRoomId };
       }
       const messageId = id();
       await systemLine(database, {
         id: messageId,
-        roomId: input.roomId,
+        roomId: dmRoomId,
+        authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
         ...grantCardPhrase(agent, owner, [grantView]),
-        // The owner is reached by the card itself in the Room — a card is
-        // outside `background.ts`'s push ceiling — not by a wake: this line
-        // has no kind, so it starts no turn and never did.
         presentation: 'card',
         cardType: 'grant-request',
-        card: { agent, owner, requester, grants: [grantView] },
+        card: {
+          agent,
+          owner,
+          requester,
+          grants: [grantView],
+          sourceRoomId: input.roomId,
+          ...(sourceMessageId ? { sourceMessageId } : {}),
+        },
       });
-      return { messageId };
+      return { messageId, cardRoomId: dmRoomId };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
     if (result.cardRoomId)
@@ -4718,18 +4644,12 @@ export class DaemonService {
       ...(!auto
         ? {
             approval: {
-              destination:
-                kind === 'repository'
-                  ? ('room' as const)
-                  : squireRoute
-                    ? ('trusty-squire-dm' as const)
-                    : kind === 'mcp' && target === 'wallet'
-                      ? ('wallet-dm' as const)
-                      : ('system-dm' as const),
-              authority:
-                kind === 'repository'
-                  ? ('workspace-manager' as const)
-                  : ('resource-owner' as const),
+              destination: squireRoute
+                ? ('trusty-squire-dm' as const)
+                : kind === 'mcp' && target === 'wallet'
+                  ? ('wallet-dm' as const)
+                  : ('system-dm' as const),
+              authority: 'resource-owner' as const,
             },
           }
         : {}),
@@ -4860,7 +4780,7 @@ export class DaemonService {
   private async authorizeScopedGrant(
     input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
-    kind: 'mcp' | 'repository' | 'host',
+    kind: 'mcp',
     target: string,
   ) {
     if (
@@ -4874,11 +4794,10 @@ export class DaemonService {
     const context = (
       await this.database.query<{
         owner_id: string;
-        owner_handle: string | null;
         yolo_mode: boolean;
         owner_present: boolean;
       }>(
-        `SELECT a.owner_id,owner.handle owner_handle,
+        `SELECT a.owner_id,
        EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
@@ -4889,13 +4808,11 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    if (kind !== 'repository' && !context.owner_present)
-      throw new Error('resource owner access denied');
-    if (context.yolo_mode && (kind === 'repository' || requester.id === context.owner_id))
-      return { allowed: true };
+    if (!context.owner_present) throw new Error('resource owner access denied');
+    if (context.yolo_mode && requester.id === context.owner_id) return { allowed: true };
     const listed = await this.listAgentGrants(agentId, input.roomId);
     const scopedGrants = listed.grants.filter((g) => g.roomId === input.roomId);
-    if (kind === 'mcp' && target === 'squire') {
+    if (target === 'squire') {
       const verdict = squireCallAllowed({
         requesterId: requester.id,
         ownerId: context.owner_id,
@@ -4928,94 +4845,22 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) {
-      if (kind !== 'mcp')
-        await this.noteBlockedTurnGate({
-          roomId: input.roomId,
-          agentId,
-          kind,
-          ownerHandle: context.owner_handle,
-          grantId: pending.id,
-        });
-      return { allowed: false, grantId: pending.id, status: 'pending' as const };
-    }
+    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
     const asked = await this.requestAgentGrant(
       {
         ...input,
         kind,
         target,
-        reason:
-          kind === 'repository'
-            ? 'edit this repository'
-            : kind === 'host'
-              ? 'run this corner on your machine with host filesystem and command access'
-              : 'use this resource, including paid calls within this approval scope',
+        reason: 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
-    if (kind === 'host')
-      await this.noteBlockedTurnGate({
-        roomId: input.roomId,
-        agentId,
-        kind,
-        ownerHandle: context.owner_handle,
-        grantId: asked.grantId,
-      });
     return {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
-  }
-
-  /**
-   * A gate that stopped a corner turn before its harness could start is a fact
-   * the SERVER states, not prose the agent wrote. Inscribing it here, once per
-   * pending grant per TURN (the derived id carries the grant and the turn
-   * request, so a retried authorization inside one turn collides while a later
-   * turn blocked on the same grant still speaks instead of settling silently),
-   * is what keeps it out of `postRoomMessage`: a system line is never an agent
-   * reply, so it never reaches `routeAgentResult`,
-   * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
-   * writes no message and records a plain `complete` receipt, so neither gate
-   * can settle as the calm `had nothing to add` line.
-   *
-   * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
-   * already reaches the agent as its tool error, not a turn that never started.
-   * A repository ask that MINTS its grant this turn is excluded too, because
-   * `requestAgentGrant` puts that grant's actionable card in this same corner
-   * one row earlier; only a host ask, whose card goes to the owner's `@system`
-   * DM, and a later turn blocked on an already-pending grant, which writes no
-   * card at all, leave the corner with nothing else to say.
-   */
-  private async noteBlockedTurnGate(input: {
-    readonly roomId: string;
-    readonly agentId: string;
-    readonly kind: 'repository' | 'host';
-    readonly ownerHandle: string | null;
-    readonly grantId: string;
-  }) {
-    const id = createHash('sha256')
-      .update(
-        `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
-      )
-      .digest('hex');
-    await systemLine(this.database, {
-      id,
-      roomId: input.roomId,
-      subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
-      verb: 'asked',
-      object: {
-        text:
-          input.kind === 'host'
-            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
-            : 'a Workspace admin to approve repository access',
-      },
-      ...(this.authorizedCommand?.source_message_id
-        ? { afterMessageId: this.authorizedCommand.source_message_id }
-        : {}),
-    });
   }
 
   // --- R5: connector offers -------------------------------------------------
@@ -6528,8 +6373,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   consumeAgentGrant: true,
   authorizeSquireCall: true,
   authorizeResourceCall: true,
-  authorizeRepositoryCall: true,
-  authorizeHostCall: true,
   listTurnAgentGrants: true,
   readAgentWorkbench: true,
   searchMcpRegistry: true,

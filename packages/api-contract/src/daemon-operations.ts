@@ -286,8 +286,6 @@ export type DaemonOperationMap = {
     },
     AuthorizeSquireCallResult
   >;
-  authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
-  authorizeHostCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   listTurnAgentGrants: Operation<AuthorizeSquireCallInput, AgentGrantListResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
   readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;

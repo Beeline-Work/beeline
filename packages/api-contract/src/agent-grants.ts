@@ -17,8 +17,10 @@ export const AGENT_GRANT_KINDS = [
 ] as const;
 export type AgentGrantKind = (typeof AGENT_GRANT_KINDS)[number];
 
-/** Budget is retained for historical records, but cannot create a new prompt. */
-export const REQUESTABLE_AGENT_GRANT_KINDS = AGENT_GRANT_KINDS.filter((kind) => kind !== 'budget');
+/** Budget and repository are retained for historical records, but cannot create new prompts. */
+export const REQUESTABLE_AGENT_GRANT_KINDS = AGENT_GRANT_KINDS.filter(
+  (kind) => kind !== 'budget' && kind !== 'repository',
+);
 export function isRequestableAgentGrantKind(
   value: unknown,
 ): value is (typeof REQUESTABLE_AGENT_GRANT_KINDS)[number] {
@@ -428,4 +430,3 @@ export function squireCallAllowed(input: {
     ...(match.status === 'once' ? { consume: true } : {}),
   };
 }
-

@@ -35,12 +35,14 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       return;
     }
     let cancelled = false;
-    monolithPhoneOperation('countNeedsYou', { workspaceId })
-      .then((result) => {
+    void (async () => {
+      try {
+        const result = await monolithPhoneOperation('countNeedsYou', { workspaceId });
         if (!cancelled) setCount(result.count);
-      })
-      // A failed count keeps the last one: the tray itself is the truth.
-      .catch(() => undefined);
+      } catch {
+        // A failed count keeps the last one: the tray itself is the truth.
+      }
+    })();
     return () => {
       cancelled = true;
     };

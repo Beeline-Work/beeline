@@ -28,13 +28,7 @@ export function TrayGlyph({
 }) {
   const strokeWidth = chromeStrokeWidth(size);
   return (
-    <Svg
-      {...DECORATIVE_GLYPH_PROPS}
-      height={size}
-      testID={testID}
-      viewBox="0 0 24 24"
-      width={size}
-    >
+    <Svg {...DECORATIVE_GLYPH_PROPS} height={size} testID={testID} viewBox="0 0 24 24" width={size}>
       <Path
         d={BOX}
         fill={filled && cutColor ? color : 'none'}

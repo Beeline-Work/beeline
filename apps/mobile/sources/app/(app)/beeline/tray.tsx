@@ -132,8 +132,13 @@ export default function TrayScreen() {
     };
   }, [desktop, workspaceId]);
 
+  const selectedUnavailable = selected
+    ? bookmarks.some(
+        (bookmark) => bookmark.messageId === selected.messageId && !bookmark.available,
+      )
+    : false;
   useEffect(() => {
-    if (!desktop || !client || !selected) {
+    if (!desktop || !client || !selected || selectedUnavailable) {
       setInspectRoom(null);
       setPaneCornerId(null);
       setInspectError(null);
@@ -162,7 +167,7 @@ export default function TrayScreen() {
     return () => {
       cancelled = true;
     };
-  }, [client, desktop, selected]);
+  }, [client, desktop, selected, selectedUnavailable]);
 
   const open = useCallback(
     (target: Target, via: 'bookmark' | 'needs-you') => {
@@ -293,14 +298,17 @@ export default function TrayScreen() {
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
       accessibilityLabel={`${sourceLabel(bookmark)}, ${bookmark.author?.name ?? 'Unavailable message'}`}
-      accessibilityRole={bookmark.available ? 'button' : undefined}
+      accessibilityRole={bookmark.available || desktop ? 'button' : undefined}
       accessibilityState={
-        bookmark.available ? { selected: selected?.messageId === bookmark.messageId } : undefined
+        desktop ? { selected: selected?.messageId === bookmark.messageId } : undefined
       }
+      // A desktop pane explains an unavailable source; a phone has nowhere to go.
       onPress={
-        bookmark.available
-          ? () => (desktop ? setSelected(bookmark) : open(bookmark, 'bookmark'))
-          : undefined
+        desktop
+          ? () => setSelected(bookmark)
+          : bookmark.available
+            ? () => open(bookmark, 'bookmark')
+            : undefined
       }
       style={({ pressed }) => [
         styles.row,

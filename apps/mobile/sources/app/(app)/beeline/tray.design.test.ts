@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const bookmarks = readFileSync(new URL('./bookmarks.tsx', import.meta.url), 'utf8');
+const bookmarks = readFileSync(new URL('./tray.tsx', import.meta.url), 'utf8');
+const cell = readFileSync(
+  new URL('../../../components/buzz/NeedsYouCell.tsx', import.meta.url),
+  'utf8',
+);
 const channels = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 const toolbar = readFileSync(
   new URL('../../../components/buzz/RoomListToolbar.tsx', import.meta.url),
@@ -18,20 +22,22 @@ const ledger = readFileSync(
   'utf8',
 );
 
-describe('private bookmark surfaces', () => {
-  it('opens phone and desktop bookmarks from the conversation toolbar', () => {
+describe('the tray: Needs you and Saved', () => {
+  it('opens the tray from the conversation toolbar, badged only while something needs you', () => {
     expect(channels).not.toContain('bookmarks-cell');
     expect(channels).not.toContain('bookmarkCount');
     expect(channels).toContain('<RoomListToolbar');
-    expect(toolbar).toContain('testID={desktop ? \'desktop-bookmarks\' : \'workspace-bookmarks\'}');
-    expect(toolbar).toContain('<BookmarksGlyph');
-    expect(channels).toContain("pathname: '/beeline/bookmarks'");
+    expect(toolbar).toContain("testID={desktop ? 'desktop-tray' : 'workspace-tray'}");
+    expect(toolbar).toContain('<TrayGlyph');
+    expect(toolbar).toContain('needsYouCount > 0 ? (');
+    expect(toolbar).toContain('compactNeedsYouCount(needsYouCount)');
+    expect(channels).toContain("pathname: '/beeline/tray'");
     const sidebar = readFileSync(
       new URL('../../../components/SidebarView.tsx', import.meta.url),
       'utf8',
     );
     expect(sidebar).toContain('<RoomListToolbar');
-    expect(sidebar).toContain("pathname: '/beeline/bookmarks'");
+    expect(sidebar).toContain("pathname: '/beeline/tray'");
   });
 
   it('offers the toggle in mobile and desktop message actions and marks saved timestamps', () => {
@@ -42,7 +48,7 @@ describe('private bookmark surfaces', () => {
   });
 
   it('opens the exact original and pages beyond the cached tail', () => {
-    expect(bookmarks).toContain('notificationMessageId: bookmark.messageId');
+    expect(bookmarks).toContain('notificationMessageId: target.messageId');
     expect(chat).toContain(
       "if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();",
     );
@@ -61,8 +67,8 @@ describe('private bookmark surfaces', () => {
     expect(inspector).toContain('desktop-work-focused-message');
   });
 
-  it('names the header count without a PRIVATE label', () => {
-    expect(bookmarks).toContain('trailing={`${bookmarks.length} SAVED`}');
+  it('names both section counts in the header without a PRIVATE label', () => {
+    expect(bookmarks).toContain('trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}');
     expect(bookmarks).toContain('eyebrow={workspaceName');
     expect(bookmarks).not.toContain('PRIVATE');
   });
@@ -80,5 +86,14 @@ describe('private bookmark surfaces', () => {
   it('does not expose cached content for unavailable sources', () => {
     expect(bookmarks).toContain('Deleted or no longer accessible');
     expect(bookmarks).toContain('This bookmark no longer exposes message content.');
+  });
+
+  it('draws Needs-you cells as plain equal rows: no tag, no dot, no type label', () => {
+    expect(cell).toContain('{item.text}');
+    expect(cell).not.toContain('author');
+    expect(cell).not.toContain('statusMark');
+    expect(cell).toContain('renderLeftActions');
+    expect(cell).toContain('onHoverIn');
+    expect(cell).toContain('DISMISS');
   });
 });

@@ -57,6 +57,8 @@ const theme = vi.hoisted(() => ({
     textSecondary: '#c9c9d1',
     ledgerQuiet: '#90909b',
     ledgerGhost: '#6c6c76',
+    brassWash: 'rgba(176,138,74,0.18)',
+    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     type: { body: {}, bodyStrong: {}, meta: {}, sectionHead: {} },
   },
 }));
@@ -92,6 +94,12 @@ vi.mock('@/components/DesktopRoomInspector', async () => {
     DesktopRoomInspector: (props: any) => ReactModule.createElement('DesktopRoomInspector', props),
   };
 });
+vi.mock('react-native-gesture-handler', async () => {
+  const ReactModule = await import('react');
+  return {
+    Swipeable: (props: any) => ReactModule.createElement('Swipeable', props, props.children),
+  };
+});
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
   return {
@@ -99,7 +107,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 
-import BookmarksScreen from './bookmarks';
+import TrayScreen from './tray';
 
 const person = {
   pubkey: 'person-1',
@@ -168,6 +176,33 @@ function bookmark(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function need(overrides: Record<string, unknown> = {}) {
+  return {
+    messageId: 'ask-1',
+    workspaceId: 'ws',
+    roomId: 'room-1',
+    roomName: 'Launch room',
+    roomKind: 'room',
+    text: 'can you confirm the review note?',
+    createdAt: 1_700_000_000,
+    expiresAt: 1_700_080_000,
+    author: person,
+    ...overrides,
+  };
+}
+
+/** The phone operations the tray reads, answered by name. */
+function serve({
+  needs = [] as unknown[],
+  bookmarks = [] as unknown[],
+}: { needs?: unknown[]; bookmarks?: unknown[] } = {}) {
+  phoneOperation.mockImplementation(async (name: string) => {
+    if (name === 'readNeedsYou') return { items: needs };
+    if (name === 'listMessageBookmarks') return { bookmarks };
+    return undefined;
+  });
+}
+
 function textOf(tree: ReactTestRenderer): string {
   return tree.root
     .findAllByType('Text' as any)
@@ -193,14 +228,14 @@ beforeEach(() => {
   navigation.push.mockReset();
   phoneOperation.mockReset();
   roomRead.mockReset();
-  phoneOperation.mockResolvedValue({ bookmarks: [bookmark()] });
+  serve({ bookmarks: [bookmark()] });
   roomRead.mockImplementation(async (id: string) => (id === 'room-1' ? parentRoom : cornerRoom));
 });
 
-async function renderBookmarks(): Promise<ReactTestRenderer> {
+async function renderTray(): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
   await act(async () => {
-    tree = create(<BookmarksScreen />);
+    tree = create(<TrayScreen />);
   });
   await act(async () => undefined);
   return tree;
@@ -216,7 +251,7 @@ describe.each([
     const now = 1_700_010_000_000;
     const nowSeconds = now / 1000;
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
-    phoneOperation.mockResolvedValue({
+    serve({
       bookmarks: [
         bookmark({ messageCreatedAt: nowSeconds - 7200, bookmarkedAt: nowSeconds - 120 }),
         bookmark({
@@ -230,7 +265,7 @@ describe.each([
       ],
     });
     try {
-      const tree = await renderBookmarks();
+      const tree = await renderTray();
       for (const [id, age] of [
         ['msg-1', '2m'],
         ['gone', '1h'],
@@ -254,14 +289,14 @@ describe.each([
 });
 
 describe('Bookmarks desktop second pane', () => {
-  it('shows the workspace above Bookmarks and the saved count at the right', async () => {
-    const tree = await renderBookmarks();
-    const header = tree.root.findByProps({ testID: 'bookmarks-header' });
+  it('shows the workspace above Tray and both section counts at the right', async () => {
+    const tree = await renderTray();
+    const header = tree.root.findByProps({ testID: 'tray-header' });
     const words = header.findAllByType('Text' as any).map((node: any) => node.props.children);
-    expect(words).toEqual(['Clover Workspace', 'Bookmarks', '1 SAVED']);
+    expect(words).toEqual(['Clover Workspace', 'Tray', '0 NEED YOU · 1 SAVED']);
   });
   it('opens a clicked corner bookmark in DesktopRoomInspector at that message', async () => {
-    phoneOperation.mockResolvedValue({
+    serve({
       bookmarks: [
         bookmark(),
         bookmark({
@@ -271,7 +306,7 @@ describe('Bookmarks desktop second pane', () => {
         }),
       ],
     });
-    const tree = await renderBookmarks();
+    const tree = await renderTray();
     await act(async () => {
       tree.root.findByProps({ testID: 'bookmark-msg-2' }).props.onPress();
     });
@@ -282,11 +317,11 @@ describe('Bookmarks desktop second pane', () => {
     expect(pane.props.focusMessageId).toBe('msg-2');
     expect(pane.props.room.room.id).toBe('room-1');
     expect(textOf(tree)).not.toContain('OPEN IN');
-    expect(tree.root.findAllByProps({ testID: 'bookmark-pane' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'tray-pane' })).toHaveLength(0);
   });
 
   it('does not restate an unavailable bookmark in the second pane', async () => {
-    phoneOperation.mockResolvedValue({
+    serve({
       bookmarks: [
         bookmark({
           messageId: 'gone',
@@ -296,9 +331,12 @@ describe('Bookmarks desktop second pane', () => {
         }),
       ],
     });
-    const tree = await renderBookmarks();
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'bookmark-gone' }).props.onPress?.();
+    });
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
-    const pane = tree.root.findByProps({ testID: 'bookmark-pane' });
+    const pane = tree.root.findByProps({ testID: 'tray-pane' });
     const paneText = pane
       .findAllByType('Text' as any)
       .flatMap((node: any) => node.props.children)
@@ -314,8 +352,8 @@ describe('Bookmarks desktop second pane', () => {
 
 describe('Bookmarks empty state', () => {
   it('tells a desktop reader about the strip its pointer reaches, and nothing about long press', async () => {
-    phoneOperation.mockResolvedValue({ bookmarks: [] });
-    const empty = textOf(await renderBookmarks());
+    serve({ bookmarks: [] });
+    const empty = textOf(await renderTray());
     expect(empty).toContain('No bookmarks yet');
     expect(empty).toContain('Hover a message and press its bookmark mark.');
     expect(empty).not.toContain('Long press');
@@ -324,8 +362,8 @@ describe('Bookmarks empty state', () => {
   it('tells a touch reader to long press, and nothing about a desktop strip', async () => {
     layout.os = 'ios';
     layout.width = 390;
-    phoneOperation.mockResolvedValue({ bookmarks: [] });
-    const empty = textOf(await renderBookmarks());
+    serve({ bookmarks: [] });
+    const empty = textOf(await renderTray());
     expect(empty).toContain('No bookmarks yet');
     expect(empty).toContain('Long press a message and pick Bookmark.');
     expect(empty).not.toContain('desktop');
@@ -337,7 +375,7 @@ describe('Bookmarks mobile open', () => {
   it('opens the original message in its room from a compact tap', async () => {
     layout.os = 'ios';
     layout.width = 390;
-    const tree = await renderBookmarks();
+    const tree = await renderTray();
     await act(async () => {
       tree.root.findByProps({ testID: 'bookmark-msg-1' }).props.onPress();
     });
@@ -351,5 +389,143 @@ describe('Bookmarks mobile open', () => {
       },
     });
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
+  });
+});
+
+describe('Tray Needs you', () => {
+  function cleared() {
+    return phoneOperation.mock.calls.filter(([name]) => name === 'clearNeedsYou');
+  }
+
+  it('shows exactly two sections, Needs you then Saved, each cell only its sentence and source', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_300_000);
+    serve({
+      needs: [need(), need({ messageId: 'ask-2', roomKind: 'corner', roomName: 'signing' })],
+      bookmarks: [bookmark()],
+    });
+    try {
+      const tree = await renderTray();
+      const order = tree.root
+        .findAll((node: any) =>
+          /^(tray-section-|needs-you-ask|bookmark-msg)/.test(String(node.props.testID ?? '')),
+        )
+        .map((node: any) => node.props.testID)
+        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index)
+        .filter((id: string) => !id.startsWith('needs-you-text'));
+      expect(order).toEqual([
+        'tray-section-needs',
+        'needs-you-ask-1',
+        'needs-you-ask-2',
+        'tray-section-saved',
+        'bookmark-msg-1',
+      ]);
+      const cell = tree.root.findByProps({ testID: 'needs-you-text-ask-1' });
+      expect(cell.props.children).toBe('can you confirm the review note?');
+      expect(textOf(tree)).not.toContain('@');
+      expect(textOf(tree)).toContain('Launch room · 5m');
+      const header = tree.root.findByProps({ testID: 'tray-header' });
+      expect(header.findAllByType('Text' as any).map((node: any) => node.props.children)).toContain(
+        '2 NEED YOU · 1 SAVED',
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('shows the countdown only in a cell’s last six hours', async () => {
+    const now = 1_700_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    serve({
+      needs: [
+        need({ expiresAt: now / 1000 + 5.5 * 3600 }),
+        need({ messageId: 'ask-2', expiresAt: now / 1000 + 20 * 3600 }),
+      ],
+    });
+    try {
+      const text = textOf(await renderTray());
+      expect(text).toContain('expires in 6h');
+      expect(text.match(/expires in/g)).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('opening a cell on the phone clears it and lands on that exact message', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress();
+    });
+    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'ask-1' }]]);
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: {
+        channelId: 'room-1',
+        communityId: 'ws',
+        notificationResponseId: 'needs-you:ask-1',
+        notificationMessageId: 'ask-1',
+      },
+    });
+    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
+  });
+
+  it('a phone swipe right dismisses the cell without opening it', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'needs-you-swipe-ask-1' }).props.onSwipeableOpen('left');
+    });
+    expect(cleared()).toHaveLength(1);
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
+  });
+
+  it('a desktop click clears the cell and keeps its message open in the pane', async () => {
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress();
+    });
+    await act(async () => undefined);
+    expect(cleared()).toHaveLength(1);
+    const pane = tree.root.findByType('DesktopRoomInspector' as any);
+    expect(pane.props.focusMessageId).toBe('ask-1');
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it('a desktop hover reveals DISMISS in place of the chevron', async () => {
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    const cell = () => tree.root.findByProps({ testID: 'needs-you-ask-1' });
+    expect(tree.root.findAllByProps({ testID: 'needs-you-dismiss-ask-1' })).toHaveLength(0);
+    await act(async () => cell().props.onHoverIn());
+    await act(async () => {
+      tree.root
+        .findByProps({ testID: 'needs-you-dismiss-ask-1' })
+        .props.onPress({ stopPropagation: () => undefined });
+    });
+    expect(cleared()).toHaveLength(1);
+    expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
+  });
+
+  it('puts a cell back when the server refuses to clear it', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'clearNeedsYou') throw new Error('message is not available');
+      return undefined;
+    });
+    await act(async () => {
+      tree.root.findByProps({ testID: 'needs-you-swipe-ask-1' }).props.onSwipeableOpen('left');
+    });
+    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
+    expect(textOf(tree)).toContain('message is not available');
   });
 });

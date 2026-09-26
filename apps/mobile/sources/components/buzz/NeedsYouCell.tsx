@@ -14,7 +14,11 @@ const SWIPE_RAIL_WIDTH = 96;
 
 function sourceLabel(item: NeedsYouItemView): string {
   const name = item.roomName.replace(/^#/, '');
-  return item.roomKind === 'corner' ? `corner ${name}` : item.roomKind === 'room' ? `#${name}` : name;
+  return item.roomKind === 'corner'
+    ? `corner ${name}`
+    : item.roomKind === 'room'
+      ? `#${name}`
+      : name;
 }
 
 /**

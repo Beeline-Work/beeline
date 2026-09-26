@@ -400,7 +400,7 @@ describe('desktop Workspace navigation', () => {
     });
   });
 
-  it('routes the heading glyphs to Members and Bookmarks, with no Workbench sidebar entry', () => {
+  it('routes the heading glyphs to Members and Tray, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 
     openMenu();
@@ -412,9 +412,9 @@ describe('desktop Workspace navigation', () => {
     });
 
     openMenu();
-    act(() => control('workspace-menu-bookmarks').props.onPress());
+    act(() => control('workspace-menu-tray').props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/bookmarks',
+      pathname: '/beeline/tray',
       params: { communityId: 'workspace-a' },
     });
   });
@@ -453,7 +453,7 @@ describe('desktop Workspace navigation', () => {
 
     openMenu();
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
-    expect(control('workspace-menu-bookmarks')).toBeDefined();
+    expect(control('workspace-menu-tray')).toBeDefined();
   });
 
   it('keeps Workspace settings and profile settings from appearing selected together', async () => {
@@ -519,7 +519,7 @@ describe('desktop Workspace navigation', () => {
     openMenu();
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
     expect(control('desktop-new-direct-message')).toBeDefined();
-    expect(control('workspace-menu-bookmarks')).toBeDefined();
+    expect(control('workspace-menu-tray')).toBeDefined();
     expect(control('workspace-menu-members')).toBeDefined();
     expect(control('profile-settings-navigation')).toBeDefined();
   });
@@ -536,28 +536,28 @@ describe('desktop Workspace navigation', () => {
     expect(control('workspace-menu-settings')).toBeDefined();
   });
 
-  it('keeps Bookmarks and profile settings from appearing selected together', async () => {
-    route.pathname = '/beeline/bookmarks';
+  it('keeps Tray and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/tray';
     await act(async () => {
-      tree.update(<SidebarView key="bookmarks-route" />);
+      tree.update(<SidebarView key="tray-route" />);
     });
     await settle();
 
     openMenu();
-    expect(control('workspace-menu-bookmarks').props.selected).toBe(true);
+    expect(control('workspace-menu-tray').props.selected).toBe(true);
     expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
       selected: false,
     });
   });
 
-  it('keeps Bookmarks unselected on the Members route', async () => {
+  it('keeps Tray unselected on the Members route', async () => {
     route.pathname = '/beeline/members';
     await act(async () => {
       tree.update(<SidebarView key="members-route" />);
     });
     await settle();
     openMenu();
-    expect(control('workspace-menu-bookmarks').props.selected).toBe(false);
+    expect(control('workspace-menu-tray').props.selected).toBe(false);
   });
 
   it('exposes the active conversation to assistive technology', async () => {

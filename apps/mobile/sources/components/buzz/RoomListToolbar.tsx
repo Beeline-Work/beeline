@@ -69,9 +69,7 @@ export function RoomListToolbar({
       {onTray && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'
-          }
+          accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
           accessibilityState={{ selected: traySelected }}
           onPress={onTray}
           style={styles.action}

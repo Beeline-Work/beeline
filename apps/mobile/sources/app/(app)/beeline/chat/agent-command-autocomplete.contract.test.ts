@@ -9,6 +9,15 @@ describe('preview agent-command autocomplete wiring', () => {
     expect(source).toContain('.agent(activeCommunityId, pubkey)');
     expect(source).toContain('[scope]: detail.commands ?? []');
     expect(source).toContain('commands={mentionAgentCommands}');
-    expect(source).toContain('onSelectCommand={insertAgentCommand}');
+    expect(source).toContain('onSelectCommand={selectAgentCommand}');
+  });
+
+  it('offers the owner Fast mode from the same agent read and toggles it through the profile operation', () => {
+    expect(source).toContain('[scope]: fastModeCommandState(detail, viewerPubkey)');
+    expect(source).toContain('agentFastModeByScope[mentionAgentCommandScope]');
+    expect(source).toContain(
+      'client.setAgentModelConfig(activeCommunityId, pubkey, { fastMode: enabled })',
+    );
+    expect(source).toMatch(/name === FAST_MODE_COMMAND\)\s*{\s*void toggleAgentFastMode\(\);/);
   });
 });

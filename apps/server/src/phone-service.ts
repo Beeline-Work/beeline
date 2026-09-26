@@ -422,6 +422,24 @@ function selectedModelLabel(
   if (!value) return undefined;
   return axis?.options?.find((option) => option.id === value)?.name ?? value;
 }
+/**
+ * The catalog's effort axis: a known effort category first; otherwise the
+ * first axis that is neither the model nor Fast mode, so a harness naming its
+ * effort category differently keeps its effort picker.
+ */
+function effortCatalogAxis(
+  catalog: AgentDetailView['catalog'],
+): AgentDetailView['catalog'][number] | undefined {
+  return (
+    catalog.find((axis) =>
+      ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
+    ) ??
+    catalog.find(
+      (axis) =>
+        axis.category !== 'model' && !(axis.id === 'fast-mode' && axis.category === 'model_config'),
+    )
+  );
+}
 function roomHeader(row: RoomRow, publicOrigin: string) {
   return {
     id: row.id,
@@ -5378,9 +5396,7 @@ export class PhoneService {
         }
       }
       if (hasEffort && input.effort) {
-        const axis = context.model_catalog.find((candidate) =>
-          ['thought_level', 'effort', 'reasoning_effort'].includes(candidate.category),
-        );
+        const axis = effortCatalogAxis(context.model_catalog);
         if (!axis?.options.some((choice) => choice.id === input.effort)) {
           throw new Error('effort is not available in the live harness catalog');
         }

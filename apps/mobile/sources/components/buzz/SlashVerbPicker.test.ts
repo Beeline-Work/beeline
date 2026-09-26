@@ -117,6 +117,38 @@ describe('SlashVerbPicker agent command palette', () => {
     );
   });
 
+  it('shows the owner Fast mode as an ON/OFF switch and selects it by name', () => {
+    const onCommand = vi.fn();
+    const picker = (enabled: boolean) =>
+      render(
+        React.createElement(SlashVerbPicker, {
+          verbs: [],
+          query: 'fa',
+          highlightedIndex: 0,
+          onDismiss: () => undefined,
+          onSelect: () => undefined,
+          commands: availableAgentMentionCommands([], 'fa', { enabled }),
+          agentName: 'bee',
+          agentLacksCommands: true,
+          onSelectCommand: onCommand,
+        }),
+      );
+    const stateText = (renderer: ReactTestRenderer) =>
+      renderer.root.find(
+        (node) =>
+          node.type === 'Text' && node.props.testID === 'slash-agent-command-fast-mode-state',
+      ).props.children;
+    const off = picker(false);
+    const row = find_by_test_id(off, 'slash-agent-command-fast-mode');
+    expect(row).toHaveLength(1);
+    expect(row[0].props.accessibilityRole).toBe('switch');
+    expect(row[0].props.accessibilityState).toEqual({ selected: true, checked: false });
+    expect(stateText(off)).toBe('OFF');
+    row[0].props.onPress();
+    expect(onCommand).toHaveBeenCalledWith('fast-mode');
+    expect(stateText(picker(true))).toBe('ON');
+  });
+
   it('shows the server restart command and selects it when the harness has no catalog', () => {
     const onCommand = vi.fn();
     const renderer = render(

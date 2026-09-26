@@ -165,6 +165,50 @@ describe('a model/effort selection change wakes the agent daemon', () => {
       await database.close();
     }
   });
+  it('prefers a known effort category and falls back to the first non-model, non-Fast axis', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      const setCatalog = (catalog: unknown[]) =>
+        database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+          AGENT,
+          JSON.stringify(catalog),
+        ]);
+      const model = { id: 'model', category: 'model', options: [{ id: 'sonnet-5' }] };
+      const fast = {
+        id: 'fast-mode',
+        category: 'model_config',
+        options: [{ id: 'off' }, { id: 'on' }],
+      };
+      // A harness that names its effort category differently keeps its picker,
+      // and Fast mode listed first is never mistaken for it.
+      await setCatalog([
+        model,
+        fast,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+      ]);
+      await change(recorder, { effort: 'deep' });
+      await expect(change(recorder, { effort: 'on' })).rejects.toThrow('effort is not available');
+      // A known category still wins over an earlier unknown axis.
+      await setCatalog([
+        model,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+        { id: 'effort', category: 'reasoning_effort', options: [{ id: 'high' }] },
+      ]);
+      await change(recorder, { effort: 'high' });
+      await expect(change(recorder, { effort: 'deep' })).rejects.toThrow('effort is not available');
+      expect(
+        (
+          await database.query<{ selected_effort: string }>(
+            `SELECT selected_effort FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.selected_effort,
+      ).toBe('high');
+    } finally {
+      await database.close();
+    }
+  });
   it('clears stale choices and wakes the daemon for an explicit catalog refresh', async () => {
     const database = await fixture();
     try {

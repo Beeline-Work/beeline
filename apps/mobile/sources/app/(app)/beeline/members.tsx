@@ -53,6 +53,8 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
+  effortConfigAxis,
+  fastModeConfigAxis,
   filterAgentModelOptions,
 } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
@@ -220,9 +222,7 @@ function modelSelectionInput(
     return axisValue(detail, 'model', undefined) === model ? { model } : { model, effort: null };
   }
   if (axis.currentValue !== model) return { model, effort: null };
-  const effortAxis = detail.catalog.find((candidate) =>
-    ['thought_level', 'effort', 'reasoning_effort'].includes(candidate.category),
-  );
+  const effortAxis = effortConfigAxis(detail.catalog);
   const effort = effortAxis?.currentValue;
   return effort && effortAxis.options.some((choice) => choice.id === effort)
     ? { model, effort }
@@ -838,11 +838,12 @@ export default function BuzzMembers({
         },
         MODEL_CATALOG_CONFIRM_ATTEMPTS,
       );
-      const effort = refreshed.catalog.find(
-        (candidate) =>
-          candidate.category !== 'model' &&
-          isAllowedAgentModelConfigCategory(candidate.category) &&
-          candidate.options.length > 0,
+      const effort = effortConfigAxis(
+        refreshed.catalog.filter(
+          (candidate) =>
+            isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
+            candidate.options.length > 0,
+        ),
       );
       if (!effort) {
         setModelAxisError('effort');
@@ -966,20 +967,8 @@ export default function BuzzMembers({
       // Effort choices may be model-specific. After a model switch, offer
       // nothing until the agent republishes a catalog whose current model
       // matches the persisted human selection.
-      effort: awaitingSelectedModelCatalog
-        ? undefined
-        : live.find((axis) =>
-            ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
-          ),
-      fast: awaitingSelectedModelCatalog
-        ? undefined
-        : live.find(
-            (axis) =>
-              axis.id === 'fast-mode' &&
-              axis.category === 'model_config' &&
-              axis.options.some((choice) => choice.id === 'on') &&
-              axis.options.some((choice) => choice.id === 'off'),
-          ),
+      effort: awaitingSelectedModelCatalog ? undefined : effortConfigAxis(live),
+      fast: awaitingSelectedModelCatalog ? undefined : fastModeConfigAxis(live),
     };
   }, [selectedAgent]);
 

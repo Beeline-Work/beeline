@@ -1,3 +1,6 @@
+import type { AgentDetailView } from '@beeline/api-contract/phone';
+import { fastModeConfigAxis } from './agent-model-picker';
+
 export type BuiltInSlashVerbId =
   | 'build'
   | 'poll'
@@ -128,7 +131,44 @@ export type AgentPaletteCommand = {
   name: string;
   description?: string;
   inputHint?: string;
+  /** Present only on a Beeline toggle row: its current state, shown ON/OFF instead of ↵. */
+  toggle?: boolean;
 };
+
+/** The owner's Fast mode toggle in the `@agent /` palette. */
+export const FAST_MODE_COMMAND = 'fast-mode';
+
+/** What the palette knows about an agent's Fast mode: offered only to its owner. */
+export type FastModeCommandState = {
+  enabled: boolean;
+  status?: 'saving' | 'failed';
+};
+
+/**
+ * The palette offers Fast mode only to the agent's owner, and only while its
+ * live catalog advertises the axis (Codex today). Everyone else gets `null`.
+ */
+export function fastModeCommandState(
+  detail: Pick<AgentDetailView, 'catalog' | 'fastMode' | 'access'>,
+  viewerId: string | undefined,
+): FastModeCommandState | null {
+  if (!viewerId || detail.access?.owner?.id !== viewerId) return null;
+  if (!fastModeConfigAxis(detail.catalog)) return null;
+  return { enabled: detail.fastMode === true };
+}
+
+function fastModePaletteCommand(state: FastModeCommandState): AgentPaletteCommand {
+  return {
+    name: FAST_MODE_COMMAND,
+    description:
+      state.status === 'saving'
+        ? 'Fast mode · saving'
+        : state.status === 'failed'
+          ? 'Fast mode · could not change, try again'
+          : 'Fast mode · faster replies, more credits',
+    toggle: state.enabled,
+  };
+}
 
 /**
  * A slash token typed right after a completed @Agent mention, e.g.
@@ -163,15 +203,25 @@ export function matchesAgentCommand(command: AgentPaletteCommand, query: string)
   );
 }
 
-/** Restart is a Beeline lifecycle action, available even without a harness catalog. */
+/**
+ * Restart is a Beeline lifecycle action, available even without a harness
+ * catalog. Fast mode joins it only when `fastMode` is given — the owner of an
+ * agent whose live catalog supports it.
+ */
 export function availableAgentMentionCommands(
   advertised: readonly AgentPaletteCommand[],
   query: string,
+  fastMode?: FastModeCommandState | null,
 ): AgentPaletteCommand[] {
   const restart = { name: 'restart', description: 'Restart this agent' };
-  return [restart, ...advertised.filter((command) => command.name.toLowerCase() !== 'restart')]
-    .filter((command) => matchesAgentCommand(command, query));
+  const beeline = fastMode ? [restart, fastModePaletteCommand(fastMode)] : [restart];
+  const reserved = new Set(beeline.map((command) => command.name));
+  return [
+    ...beeline,
+    ...advertised.filter((command) => !reserved.has(command.name.toLowerCase())),
+  ].filter((command) => matchesAgentCommand(command, query));
 }
+
 
 /** Replace only the active slash token, preserving the exact agent mention that authorizes it. */
 export function insertAgentSlashCommand(text: string, command: string): string {

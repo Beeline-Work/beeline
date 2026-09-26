@@ -7,6 +7,8 @@ import {
   agentMentionSlashQuery,
   insertAgentSlashCommand,
   availableAgentMentionCommands,
+  fastModeCommandState,
+  FAST_MODE_COMMAND,
   matchesAgentCommand,
   type SlashVerbAvailability,
 } from './slash-verbs';
@@ -125,6 +127,54 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
       'add-agent',
       'invite',
       'close-corner',
+    ]);
+  });
+});
+
+describe('the Fast mode palette entry', () => {
+  const OWNER = 'owner-id';
+  const fastAxis = {
+    id: 'fast-mode',
+    category: 'model_config',
+    currentValue: 'off',
+    options: [{ id: 'off' }, { id: 'on' }],
+  };
+  const codex = {
+    catalog: [{ id: 'model', category: 'model', options: [{ id: 'gpt-5.6' }] }, fastAxis],
+    fastMode: false,
+    access: { policy: 'everyone' as const, owner: { id: OWNER, name: 'Owner' }, canChange: true },
+  };
+
+  it('is offered only to the owner of an agent whose live catalog supports it', () => {
+    expect(fastModeCommandState(codex, OWNER)).toEqual({ enabled: false });
+    expect(fastModeCommandState({ ...codex, fastMode: true }, OWNER)).toEqual({ enabled: true });
+    expect(fastModeCommandState(codex, 'someone-else')).toBeNull();
+    expect(fastModeCommandState(codex, undefined)).toBeNull();
+    expect(fastModeCommandState({ ...codex, catalog: codex.catalog.slice(0, 1) }, OWNER)).toBeNull();
+  });
+
+  it('filters as the owner types and shows the current state', () => {
+    const names = (query: string, enabled = false) =>
+      availableAgentMentionCommands([], query, { enabled }).map((command) => command.name);
+    expect(names('')).toEqual(['restart', FAST_MODE_COMMAND]);
+    expect(names('fa')).toEqual([FAST_MODE_COMMAND]);
+    expect(names('fast')).toEqual([FAST_MODE_COMMAND]);
+    expect(names('res')).toEqual(['restart']);
+    expect(availableAgentMentionCommands([], 'fa', { enabled: true })[0]?.toggle).toBe(true);
+    expect(availableAgentMentionCommands([], 'fa', { enabled: false })[0]?.toggle).toBe(false);
+  });
+
+  it('never appears without a Fast mode state, and a harness command cannot shadow it', () => {
+    expect(availableAgentMentionCommands([], 'fa', null)).toEqual([]);
+    expect(availableAgentMentionCommands([], 'fa')).toEqual([]);
+    const listed = availableAgentMentionCommands(
+      [{ name: 'fast-mode', description: 'Harness copy' }, { name: 'fast' }],
+      'fa',
+      { enabled: false },
+    );
+    expect(listed.map((command) => [command.name, command.toggle])).toEqual([
+      [FAST_MODE_COMMAND, false],
+      ['fast', undefined],
     ]);
   });
 });

@@ -415,7 +415,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       // The one per-call gate a Registry route has: the server's existing
       // requester-aware resource approval, asked here because the broker
       // socket — not the harness MCP client — is what every caller reaches.
-      async ({ roomId, requestId, generationId, target, consume }) =>
+      async ({ roomId, requestId, generationId, target, consume, operation }) =>
         (
           await daemonApi.execute('authorizeResourceCall', {
             roomId,
@@ -423,6 +423,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             generationId,
             target,
             consume,
+            ...(operation ? { operation } : {}),
           })
         ).allowed === true,
     );

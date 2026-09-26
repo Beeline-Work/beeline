@@ -5,7 +5,10 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LAUNCHD_BROKER_LABEL,
+  LAUNCHD_EXIT_TIMEOUT_SECONDS,
+  LAUNCHD_STOP_TIMEOUT_MS,
   cleanupLaunchdAgentService,
+  disableLaunchdAgentService,
   installLaunchdAgentService,
   installLaunchdTrustySquireBrokerService,
   launchdAgentLabel,
@@ -125,6 +128,14 @@ async function runSupervisor(
   return { status, signal, log: await readFile(log, 'utf8').catch(() => '') };
 }
 
+/** A launchd that reports a fresh pid each time, so an install sees a replacement. */
+function installRun(): (args: string[]) => Promise<{ stdout: string }> {
+  let pid = 100;
+  return async (args) => ({
+    stdout: args[0] === 'print' ? `state = running\npid = ${pid++}\n` : '',
+  });
+}
+
 async function canonicalEnv() {
   const home = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-home-'));
   roots.push(home);
@@ -150,6 +161,9 @@ describe('launchd supervision contract', () => {
     expect(job.KeepAlive).toEqual({ SuccessfulExit: false });
     expect(job.ThrottleInterval).toBe(5);
     expect(job.ExitTimeOut).toBe(600);
+    // A `Background` ProcessType puts the job — and every ACP harness and build
+    // it spawns — in darwin's throttled background task role.
+    expect(job.ProcessType).toBeUndefined();
     expect(job.WorkingDirectory).toBe('/Users/operator');
     const environment = job.EnvironmentVariables as Record<string, PlistValue>;
     expect(environment.HOME).toBe('/Users/operator');
@@ -231,16 +245,93 @@ describe('launchd supervision contract', () => {
       return { stdout: '' };
     });
     await installLaunchdTrustySquireBrokerService({ env, invocationPath, run });
+    // `RunAtLoad` starts the elector with bootstrap, so no kickstart follows it:
+    // a second start would land mid socket bind.
     expect(calls).toEqual([
       ['print', target],
       ['enable', target],
       ['print', target],
       ['bootstrap', launchdUserDomain(), launchdBrokerPlistPath(env)],
-      ['kickstart', '-k', target],
     ]);
-    const plist = await readFile(launchdBrokerPlistPath(env), 'utf8');
-    expect(plist).toBe(launchdBrokerPlist(env));
-    expect(plist).toContain(`${env.HOME}/.trusty-squire/broker.sock`);
+    const broker = parsePlist(await readFile(launchdBrokerPlistPath(env), 'utf8'));
+    expect(broker.Label).toBe(LAUNCHD_BROKER_LABEL);
+    expect(broker.RunAtLoad).toBe(true);
+    expect(broker.ProcessType).toBeUndefined();
+    const environment = broker.EnvironmentVariables as Record<string, PlistValue>;
+    expect(environment.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(`${env.HOME}/.trusty-squire/broker.sock`);
+  });
+
+  it('starts an already-loaded broker in place when its job is unchanged', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const target = `${launchdUserDomain()}/${LAUNCHD_BROKER_LABEL}`;
+    const first = vi.fn(async (args: string[]) => {
+      if (args[0] === 'print') throw new Error('not loaded');
+      return { stdout: '' };
+    });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run: first });
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: args[0] === 'print' ? 'state = running\npid = 321\n' : '' };
+    });
+
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run });
+
+    expect(calls).toEqual([
+      ['enable', target],
+      ['print', target],
+      ['kickstart', target],
+    ]);
+  });
+
+  it('lets a bootout outlast the daemon drain and accepts removal in progress', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const publicKey = 'c'.repeat(64);
+    const timeouts: (number | undefined)[] = [];
+    const run = vi.fn(async (args: string[], options?: { timeoutMs?: number }) => {
+      if (args[0] === 'bootout') {
+        timeouts.push(options?.timeoutMs);
+        throw Object.assign(new Error('Command failed: launchctl bootout'), {
+          stderr: 'Boot-out failed: 36: Operation now in progress\n',
+        });
+      }
+      return { stdout: args[0] === 'print' ? 'state = running\npid = 777\n' : '' };
+    });
+    await installLaunchdAgentService(publicKey, {
+      env,
+      invocationPath,
+      waitTimeoutMs: 1_000,
+      run: installRun(),
+    });
+
+    await expect(disableLaunchdAgentService(publicKey, { env, run })).resolves.toBeUndefined();
+
+    // The plist is gone even though launchd was still tearing the job down.
+    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    expect(timeouts).toEqual([LAUNCHD_STOP_TIMEOUT_MS]);
+    expect(LAUNCHD_STOP_TIMEOUT_MS).toBeGreaterThan(LAUNCHD_EXIT_TIMEOUT_SECONDS * 1_000);
+  });
+
+  it('still reports a bootout that failed for any other reason', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const publicKey = 'd'.repeat(64);
+    await installLaunchdAgentService(publicKey, {
+      env,
+      invocationPath,
+      waitTimeoutMs: 1_000,
+      run: installRun(),
+    });
+    const run = vi.fn(async (args: string[]) => {
+      if (args[0] === 'bootout') throw new Error('Boot-out failed: 5: Input/output error');
+      return { stdout: args[0] === 'print' ? 'state = running\npid = 777\n' : '' };
+    });
+
+    await expect(disableLaunchdAgentService(publicKey, { env, run })).rejects.toThrow(
+      /Input\/output error/,
+    );
+    await expect(stat(launchdAgentPlistPath(publicKey, env))).resolves.toMatchObject({});
   });
 
   it('fails fast when launchd leaves the job stopped after a terminal daemon exit', async () => {

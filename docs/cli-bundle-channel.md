@@ -81,6 +81,17 @@ children without an OS-level filesystem sandbox, and relies on the permission
 handler for the Room read-only rule. This is the same behavior as a Linux host
 without a working `bwrap`; this release adds no substitute sandbox.
 
+Two supervision guarantees the Linux systemd unit provides have no launchd
+counterpart, and are accepted platform gaps rather than omissions. Agent
+stdout and stderr go to the single plain file
+`~/Library/Logs/Beeline/agent-<key>.log` with no rotation and no size cap,
+where Linux writes to the capped and rotated journal — a crash loop or months
+of ordinary logging grow that file without bound, and pruning it is the
+operator's. And launchd has no `sd_notify` protocol, so the unit's
+`Type=notify` plus `WatchdogSec=180s` recovery of a wedged-but-running daemon
+does not exist on macOS: such a daemon stays up and silent until a human
+restarts it. This release adds neither a rotating writer nor a watchdog.
+
 Redirects are refused in the hosting proof: a github.io redirect back to the
 old dev origin must not count as a successful Pages verification. Use the
 direct github.io URL before custom-domain setup and the public Cloudflare URL

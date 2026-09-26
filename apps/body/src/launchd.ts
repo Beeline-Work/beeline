@@ -24,9 +24,12 @@ export const LAUNCHD_AGENT_LABEL_PREFIX = 'app.usebeeline.agent.';
 export const LAUNCHD_BROKER_LABEL = 'app.usebeeline.trusty-squire-broker';
 export const LAUNCHD_COMMAND_TIMEOUT_MS = 15_000;
 export const LAUNCHD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
+/** Mirrors systemd's `TimeoutStopSec=10min`: a legitimate drain lasts minutes. */
+export const LAUNCHD_EXIT_TIMEOUT_SECONDS = 600;
+export const LAUNCHD_STOP_TIMEOUT_MS = LAUNCHD_EXIT_TIMEOUT_SECONDS * 1_000 + 30_000;
 
 export interface LaunchdRunner {
-  (args: string[]): Promise<{ stdout: string }>;
+  (args: string[], options?: { timeoutMs?: number }): Promise<{ stdout: string }>;
 }
 
 function xml(value: string): string {
@@ -166,10 +169,8 @@ ${environmentXml({ HOME: home, PATH: path })}
   </dict>
   <key>ThrottleInterval</key>
   <integer>5</integer>
-  <key>ProcessType</key>
-  <string>Background</string>
   <key>ExitTimeOut</key>
-  <integer>600</integer>
+  <integer>${LAUNCHD_EXIT_TIMEOUT_SECONDS}</integer>
   <key>Umask</key>
   <integer>63</integer>
   <key>StandardOutPath</key>
@@ -219,8 +220,6 @@ ${environmentXml({ HOME: home, PATH: path, ...host })}
   </dict>
   <key>ThrottleInterval</key>
   <integer>5</integer>
-  <key>ProcessType</key>
-  <string>Background</string>
   <key>Umask</key>
   <integer>63</integer>
   <key>StandardOutPath</key>
@@ -239,9 +238,9 @@ function assertCanonicalInstalledLauncher(env: NodeJS.ProcessEnv, invocationPath
   );
 }
 
-const runLaunchctl: LaunchdRunner = async (args) => {
+const runLaunchctl: LaunchdRunner = async (args, options) => {
   const result = await execFileAsync('launchctl', args, {
-    timeout: LAUNCHD_COMMAND_TIMEOUT_MS,
+    timeout: options?.timeoutMs ?? LAUNCHD_COMMAND_TIMEOUT_MS,
     encoding: 'utf8',
   });
   return { stdout: result.stdout };
@@ -279,9 +278,27 @@ async function launchdStatus(
   }
 }
 
+/**
+ * `bootout` inherits the daemon's whole drain, because the supervisor wrapper
+ * forwards launchd's SIGTERM and waits: the generic 15-second command deadline
+ * would kill the operator's `beeline stop` on exactly the busy agent the drain
+ * exists for. launchd also answers `36: Operation now in progress` while the
+ * job is still terminating, which is removal accepted, not a failure.
+ */
 async function bootoutIfLoaded(run: LaunchdRunner, target: string): Promise<void> {
   if ((await launchdStatus(run, target)).state === 'unloaded') return;
-  await run(['bootout', target]);
+  try {
+    await run(['bootout', target], { timeoutMs: LAUNCHD_STOP_TIMEOUT_MS });
+  } catch (error) {
+    if (!bootoutRemovalInProgress(error)) throw error;
+  }
+}
+
+function bootoutRemovalInProgress(error: unknown): boolean {
+  const reported = `${error instanceof Error ? error.message : String(error)}\n${
+    (error as { stderr?: unknown } | null)?.stderr ?? ''
+  }`;
+  return /operation now in progress/i.test(reported) || /failed:\s*36\b/i.test(reported);
 }
 
 export async function installLaunchdAgentService(
@@ -432,10 +449,13 @@ export async function installLaunchdTrustySquireBrokerService(
   const target = `${domain}/${LAUNCHD_BROKER_LABEL}`;
   if (changed || options.restart) await bootoutIfLoaded(run, target);
   await run(['enable', target]);
+  // `RunAtLoad` starts the job as part of bootstrap; a job that is still loaded
+  // was not replaced here, so it is the one that needs starting.
   if ((await launchdStatus(run, target)).state === 'unloaded') {
     await run(['bootstrap', domain, plistPath]);
+    return;
   }
-  await run(changed || options.restart ? ['kickstart', '-k', target] : ['kickstart', target]);
+  await run(['kickstart', target]);
 }
 
 export async function convergeLaunchdTrustySquireBrokerService(options: {

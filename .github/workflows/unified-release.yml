@@ -1201,7 +1201,7 @@ jobs:
           # whose server leg touched a Fly Machine are all PERMANENT for this
           # release identity — the retry job must never re-dispatch them.
           cancelled=false
-          for need_result in "$SERVER_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
+          for need_result in "$SERVER_RESULT" "$HELPER_MACOS_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
             if [ "$need_result" = cancelled ]; then cancelled=true; fi
           done
           machines_touched=false

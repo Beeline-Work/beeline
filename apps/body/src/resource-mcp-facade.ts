@@ -183,36 +183,32 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
   return shortString(args[name]);
 }
 
+/** The Squire verbs that point the shared browser at a page. */
+const SQUIRE_NAVIGATION_TOOLS = new Set(['operate_start', 'operate_navigate', 'operate_login']);
+
 /**
- * The absolute page a Squire call was pointed at. It is what correlates an
- * approval Squire emits later in the same session with the one Registry
- * authorization attempt whose sign-in page Squire is driving.
+ * The page a Squire NAVIGATION call was pointed at — its own `url` argument,
+ * nothing else. It correlates an approval Squire emits later with the one
+ * Registry authorization attempt whose sign-in page Squire is driving, so it
+ * must not be satisfied by any URL that happens to ride some other call's
+ * arguments (`use_credential`'s request url, say): that would carry a
+ * `signInUrl` matching no attempt and silently skip the deduplication.
  */
-export function drivenUrlIn(value: unknown, depth = 0): string | undefined {
-  if (depth > 6) return undefined;
-  if (typeof value === 'string') {
-    if (value.length > 2_048 || !/^https?:\/\//i.test(value.trim())) return undefined;
-    try {
-      const url = new URL(value.trim());
-      return url.username || url.password ? undefined : url.toString();
-    } catch {
+export function drivenUrlIn(
+  tool: string | undefined,
+  args: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!tool || !SQUIRE_NAVIGATION_TOOLS.has(tool)) return undefined;
+  const value = args?.url;
+  if (typeof value !== 'string' || value.length > 2_048) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
       return undefined;
-    }
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = drivenUrlIn(entry, depth + 1);
-      if (found) return found;
-    }
+    return url.toString();
+  } catch {
     return undefined;
   }
-  const item = record(value);
-  if (!item) return undefined;
-  for (const entry of Object.values(item)) {
-    const found = drivenUrlIn(entry, depth + 1);
-    if (found) return found;
-  }
-  return undefined;
 }
 
 function credentialLabel(args: Record<string, unknown>): string | undefined {
@@ -446,7 +442,9 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant)))
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call') {
-          squireDrivenUrl = drivenUrlIn(record(message.params)?.arguments) ?? squireDrivenUrl;
+          const call = record(message.params);
+          squireDrivenUrl =
+            drivenUrlIn(shortString(call?.name), record(call?.arguments)) ?? squireDrivenUrl;
           if (message.id !== undefined) squireRequests.set(JSON.stringify(message.id), message);
         }
         if (command) {

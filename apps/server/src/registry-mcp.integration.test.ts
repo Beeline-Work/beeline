@@ -260,7 +260,13 @@ describe('Registry MCP connection orchestration', () => {
           [connectorIdentityId('registry-mcp'), ROOM],
         )
       ).rows,
-    ).toEqual([{ text: 'Linear connected · the requesting agent can continue the original task' }]);
+      // The subject is the PINNED registry coordinate, never the publisher's
+      // free-text title, which the Ledger would speak as an identity.
+    ).toEqual([
+      {
+        text: 'app.linear/linear connected · the requesting agent can continue the original task',
+      },
+    ]);
     const connected = await database.query<{ status: string; sign_in: unknown }>(
       `SELECT status,sign_in FROM workspace_connectors WHERE id=$1`,
       [connectorId],

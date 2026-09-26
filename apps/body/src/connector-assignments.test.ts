@@ -70,8 +70,7 @@ async function settle(): Promise<void> {
 }
 
 const connectedInstall =
-  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) =>
-  async (options) => {
+  (): ((options: InstallSquireOptions) => Promise<InstallSquireResult>) => async (options) => {
     const steps = [
       { id: 'prereq', label: 'prerequisites', status: 'done' as const },
       { id: 'install', label: 'trusty-squire 1.4.2 installed', status: 'done' as const },
@@ -85,9 +84,86 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('ends a Registry sign-in nobody completed instead of re-arming forever', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: 'registry-1',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+    };
+    const api = apiMock([assignment]);
+    const timers: (() => void)[] = [];
+    const cancelled: unknown[] = [];
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installRegistry: async () => ({
+        status: 'installing',
+        steps: [],
+        authorizationUrl: 'https://mcp.linear.app/authorize?state=a',
+        attemptId: 'attempt-one',
+      }),
+      schedule: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      cancel: (handle) => {
+        cancelled.push(handle);
+      },
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const started = 1_000;
+      clock.mockReturnValue(started);
+      await loop.runOnce();
+      await settle();
+      expect(timers.length).toBe(1);
+
+      // Still inside the ceremony's life: the watch keeps re-arming.
+      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS - 1);
+      await loop.runOnce();
+      await settle();
+      const waiting = api.calls.filter((call) => call.op === 'postConnectorStatus');
+      expect(waiting.at(-1)?.input.errorMessage).toBeUndefined();
+      expect(waiting.at(-1)?.input.signIn).toBeDefined();
+      expect(cancelled).toEqual([]);
+
+      // Past it the row ends and says why, rather than spending a claim
+      // round trip and a row UPDATE every two seconds for the daemon's life.
+      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS);
+      await loop.runOnce();
+      await settle();
+      const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
+      expect(expired?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+      expect(expired?.input.signIn).toBeNull();
+      expect(cancelled).toEqual([1]);
+
+      // And the row is done: a later pass arms no further watch.
+      clock.mockReturnValue(started + CONNECT_TIMEOUT_MS + 60_000);
+      await loop.runOnce();
+      await settle();
+      expect(timers.length).toBe(1);
+    } finally {
+      clock.mockRestore();
+      loop.stop();
+    }
+  });
+
   it('publishes the Composio owner link and completes only after the server confirms it', async () => {
     const assignment: ConnectorAssignment = {
-      kind: 'install', connectorId: 'composio-1', connectorType: 'composio', pairingGeneration: 4,
+      kind: 'install',
+      connectorId: 'composio-1',
+      connectorType: 'composio',
+      pairingGeneration: 4,
     };
     const calls: ExecuteCall[] = [];
     let linked = false;
@@ -95,9 +171,10 @@ describe('ConnectorAssignmentLoop', () => {
       async execute(op: string, input: Record<string, unknown>) {
         calls.push({ op, input });
         if (op === 'getConnectorAssignments') return { assignments: [assignment] };
-        if (op === 'getComposioLink') return linked
-          ? { status: 'connected' }
-          : { status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_1' };
+        if (op === 'getComposioLink')
+          return linked
+            ? { status: 'connected' }
+            : { status: 'pending', toolkit: 'github', url: 'https://app.composio.dev/link/lt_1' };
         return {};
       },
     };
@@ -105,8 +182,13 @@ describe('ConnectorAssignmentLoop', () => {
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
-      install: async () => { throw new Error('Squire must not run'); },
-      schedule: (fn) => { timers.push(fn); return fn; },
+      install: async () => {
+        throw new Error('Squire must not run');
+      },
+      schedule: (fn) => {
+        timers.push(fn);
+        return fn;
+      },
       cancel: () => {},
     });
     await loop.runOnce();
@@ -114,7 +196,9 @@ describe('ConnectorAssignmentLoop', () => {
     expect(calls).toContainEqual({
       op: 'postConnectorStatus',
       input: {
-        agentId: 'agent-1', connectorId: 'composio-1', pairingGeneration: 4,
+        agentId: 'agent-1',
+        connectorId: 'composio-1',
+        pairingGeneration: 4,
         steps: [{ label: 'Link github', status: 'running' }],
         signIn: { method: 'oauth', url: 'https://app.composio.dev/link/lt_1' },
       },
@@ -274,7 +358,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({ errorMessage: 'npx failed' });
   });
 
@@ -292,7 +379,10 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments', 'postConnectorStatus']);
+    expect(api.calls.map((call) => call.op)).toEqual([
+      'getConnectorAssignments',
+      'postConnectorStatus',
+    ]);
     expect(api.calls[1].input).toMatchObject({
       signIn: { method: 'streamed-page', url: 'https://squire.example/vnc' },
     });
@@ -326,9 +416,7 @@ describe('ConnectorAssignmentLoop', () => {
   });
 
   it('leaves revoke queued when the provider drop fails', async () => {
-    const api = apiMock([
-      { kind: 'revoke-grants', connectorId: 'conn-1', reference: 'cred_a' },
-    ]);
+    const api = apiMock([{ kind: 'revoke-grants', connectorId: 'conn-1', reference: 'cred_a' }]);
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
@@ -470,8 +558,9 @@ describe('ConnectorAssignmentLoop', () => {
       await settle();
       expect(started).toBe(1);
       expect(
-        api.calls.some((call) =>
-          call.op === 'installConnector' && call.input.connectorId === 'conn-1'),
+        api.calls.some(
+          (call) => call.op === 'installConnector' && call.input.connectorId === 'conn-1',
+        ),
       ).toBe(true);
     } finally {
       connect.abort();
@@ -632,7 +721,9 @@ describe('ConnectorAssignmentLoop', () => {
   });
 
   it('routes Google tool connectors through the Google installer without vault reporting', async () => {
-    const api = apiMock([{ kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' }]);
+    const api = apiMock([
+      { kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' },
+    ]);
     const googleCalls: string[] = [];
     const squireCalls: string[] = [];
     const loop = new ConnectorAssignmentLoop({
@@ -719,14 +810,17 @@ describe('ConnectorAssignmentLoop', () => {
       async execute(op: string, input: Record<string, unknown>) {
         calls.push({ op, input });
         if (op === 'getConnectorAssignments') return { assignments };
-        if (op === 'getGoogleOAuthGrant') return input.connectorId === 'ready'
-          ? { status: 'ready', credentials: { accessToken: 'old-token' } }
-          : { status: 'pending' };
+        if (op === 'getGoogleOAuthGrant')
+          return input.connectorId === 'ready'
+            ? { status: 'ready', credentials: { accessToken: 'old-token' } }
+            : { status: 'pending' };
         return {};
       },
     };
     const loop = new ConnectorAssignmentLoop({
-      api: api as never, agentId: 'agent-1', mcp,
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
       installGoogle: async (_kind, _onProgress, resolve) => {
         const grant = await resolve!();
         return grant.source === 'pending'
@@ -736,10 +830,14 @@ describe('ConnectorAssignmentLoop', () => {
     });
     await loop.runOnce();
     await settle();
-    expect(calls.filter((call) => call.op === 'getGoogleOAuthGrant').map((call) =>
-      call.input.connectorId)).toEqual(['ready', 'retry']);
-    expect(calls.filter((call) => call.op === 'installConnector').map((call) =>
-      call.input.connectorId)).toEqual(['ready']);
+    expect(
+      calls
+        .filter((call) => call.op === 'getGoogleOAuthGrant')
+        .map((call) => call.input.connectorId),
+    ).toEqual(['ready', 'retry']);
+    expect(
+      calls.filter((call) => call.op === 'installConnector').map((call) => call.input.connectorId),
+    ).toEqual(['ready']);
     loop.stop();
   });
 
@@ -757,7 +855,13 @@ describe('ConnectorAssignmentLoop', () => {
         if (connectorType === 'google-gmail') {
           return {
             status: 'error' as const,
-            steps: [{ label: 'authorized with Google', status: 'failed' as const, reason: 'scope refused' }],
+            steps: [
+              {
+                label: 'authorized with Google',
+                status: 'failed' as const,
+                reason: 'scope refused',
+              },
+            ],
             errorMessage: 'scope refused',
           };
         }
@@ -770,9 +874,7 @@ describe('ConnectorAssignmentLoop', () => {
     await settle();
     expect(installed).toEqual(['google-drive']);
     expect(
-      api.calls.some(
-        (call) => call.op === 'installConnector' && call.input.connectorId === 'g2',
-      ),
+      api.calls.some((call) => call.op === 'installConnector' && call.input.connectorId === 'g2'),
     ).toBe(true);
     expect(
       api.calls.some(
@@ -831,8 +933,12 @@ describe('ConnectorAssignmentLoop', () => {
       { kind: 'uninstall', connectorId: 'yt', connectorType: 'google-youtube' },
       { kind: 'refresh-google-grant', connectorId: 'mail', connectorType: 'google-gmail' },
     ]);
-    const loop = new ConnectorAssignmentLoop({ api: api as never,
-      agentId: 'agent-1', googleHome: home, mcp });
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      googleHome: home,
+      mcp,
+    });
     await loop.runOnce();
     expect(existsSync(path)).toBe(false);
     loop.stop();

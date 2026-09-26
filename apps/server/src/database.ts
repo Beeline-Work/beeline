@@ -1525,9 +1525,13 @@ CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
 -- Per-machine unique: one connector per (workspace, owner, type, machine).
 -- NULL machine_id (legacy agents before this migration) are each their own
 -- machine; PostgreSQL treats NULL as distinct in unique indexes.
+-- Both DROPs name indexes nothing here creates, so each is a one-time
+-- conversion and every later migrate() leaves the live index in place. A
+-- drop-and-recreate under the SAME name would reopen a window on every
+-- release in which an ON CONFLICT upsert can infer no arbiter index.
 DROP INDEX IF EXISTS workspace_connectors_owner_unique;
 DROP INDEX IF EXISTS workspace_connectors_machine_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_machine_unique
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_fixed_machine_unique
   ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id)
   WHERE connector_type <> 'registry-mcp';
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_registry_machine_unique

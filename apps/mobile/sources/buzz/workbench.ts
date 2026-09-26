@@ -10,7 +10,7 @@
  * projection the screens render from, so member B's Workbench never paints
  * member A's connections even if a rogue payload arrives.
  */
-import { connectorAdapter } from '@beeline/api-contract/workbench';
+import { connectorAdapter, isConnectorKind } from '@beeline/api-contract/workbench';
 
 export type WorkbenchConnectorId =
   | 'trusty-squire'
@@ -151,6 +151,13 @@ export function connectorInstrument(
     return { value: 'soon', connect: false, ...NO_ADAPTER_ACTIONS };
   }
   const adapter = connectorId ? connectorAdapter(connectorId) : undefined;
+  // A dynamic row (a Registry server, keyed by its own connector uuid) is not
+  // a catalog connector type, so the connect screen has no flow to hand it to
+  // and its Connect would dead-end on "<uuid> is not connectable yet". Such a
+  // row carries its status word and its helper's own error text instead.
+  const unconnectable = connectorId !== undefined && !isConnectorKind(connectorId);
+  const NO_CONNECT = { connect: false, ...NO_ADAPTER_ACTIONS };
+  const unadapted = unconnectable ? NO_CONNECT : { connect: true, ...NO_ADAPTER_ACTIONS };
   const actions = adapter?.workbenchActions(
     !status || status === 'disconnected' ? undefined : status,
   );
@@ -162,22 +169,18 @@ export function connectorInstrument(
   };
   switch (status) {
     case 'connected':
-      return {
-        value: 'connected',
-        glyph: 'live',
-        ...(adapter ? adapted : { connect: false, ...NO_ADAPTER_ACTIONS }),
-      };
+      return { value: 'connected', glyph: 'live', ...(adapter ? adapted : NO_CONNECT) };
     case 'installing':
       return {
         value: 'installing',
         glyph: 'pulse',
         valueTone: 'accent',
-        ...(adapter ? adapted : { connect: false, ...NO_ADAPTER_ACTIONS }),
+        ...(adapter ? adapted : NO_CONNECT),
       };
     case 'error':
-      return adapter ? adapted : { connect: true, ...NO_ADAPTER_ACTIONS };
+      return adapter ? adapted : unadapted;
     default:
-      return adapter ? adapted : { connect: true, ...NO_ADAPTER_ACTIONS };
+      return adapter ? adapted : unadapted;
   }
 }
 

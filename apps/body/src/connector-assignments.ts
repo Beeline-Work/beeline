@@ -136,6 +136,11 @@ export class ConnectorAssignmentLoop {
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
   private readonly composioWatches = new Map<string, unknown>();
+  /** When each registry sign-in attempt started, so one can time out. */
+  private readonly registryCeremonies = new Map<
+    string,
+    { attemptId: string; startedAt: number; expired?: boolean }
+  >();
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
     mcp: SquireMcpClient,
@@ -163,14 +168,14 @@ export class ConnectorAssignmentLoop {
     this.installGoogle =
       options.installGoogle ??
       ((connectorType, onProgress, sharedCredentials) =>
-      installGoogleTool({
-        connectorType,
-        home: this.googleHome(),
-        onProgress,
-        resolvedCredentials: sharedCredentials
-          ? sharedCredentials()
-          : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
-      }));
+        installGoogleTool({
+          connectorType,
+          home: this.googleHome(),
+          onProgress,
+          resolvedCredentials: sharedCredentials
+            ? sharedCredentials()
+            : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
+        }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
@@ -386,16 +391,53 @@ export class ConnectorAssignmentLoop {
       assignment,
       home: this.registryHomeDir,
     });
-    if (result.status === 'connected') {
+    const stopWatch = () => {
       const watch = this.composioWatches.get(assignment.connectorId);
       if (watch !== undefined) this.cancel(watch);
       this.composioWatches.delete(assignment.connectorId);
+    };
+    if (result.status === 'connected') {
+      stopWatch();
+      this.registryCeremonies.delete(assignment.connectorId);
       await this.api.execute('installConnector', {
         agentId: this.agentId,
         connectorId: assignment.connectorId,
         ...generation,
       });
       return;
+    }
+    if (result.status === 'installing') {
+      const ceremony = this.registryCeremonies.get(assignment.connectorId);
+      if (!ceremony || ceremony.attemptId !== result.attemptId) {
+        this.registryCeremonies.set(assignment.connectorId, {
+          attemptId: result.attemptId,
+          startedAt: Date.now(),
+        });
+      } else if (ceremony.expired) {
+        // Already ended and already said why. A fresh attempt (a re-pair
+        // mints a new authorization page) starts its own window above.
+        return;
+      } else if (Date.now() - ceremony.startedAt >= CONNECT_TIMEOUT_MS) {
+        // A sign-in nobody completed: the row stays `installing`, so the
+        // server re-issues this assignment forever and the 2s re-arm below
+        // would keep spending a claim round trip and a row UPDATE for the
+        // daemon's life. End the row and say why — Retry re-arms it.
+        stopWatch();
+        this.registryCeremonies.set(assignment.connectorId, { ...ceremony, expired: true });
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId: assignment.connectorId,
+          steps: [
+            { label: 'Connect provider account', status: 'failed', reason: CEREMONY_EXPIRED },
+          ],
+          signIn: null,
+          errorMessage: CEREMONY_EXPIRED,
+          ...generation,
+        });
+        return;
+      }
+    } else {
+      this.registryCeremonies.delete(assignment.connectorId);
     }
     await this.api.execute('postConnectorStatus', {
       agentId: this.agentId,

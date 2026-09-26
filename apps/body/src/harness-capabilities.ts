@@ -23,8 +23,10 @@
  *   - `claude-agent-acp` (@agentclientprotocol/claude-agent-acp): routes every
  *     tool through the SDK's `canUseTool` -> `session/request_permission`. It
  *     advertises no read-only mode, so a Room stays in `default`, which asks —
- *     our handler then denies. Corners select its ACP `bypassPermissions` mode.
- *     No built-in OS sandbox; Room enforcement is the callback alone.
+ *     our handler approves its mounted MCP calls and, while bwrap wraps the
+ *     session, the `execute`-kind shell it requests, and denies native reads and
+ *     writes. Corners select its ACP `bypassPermissions` mode. No built-in OS
+ *     sandbox; Room enforcement is the daemon callback plus bubblewrap.
  *   - `pi-acp` (pi-acp, driving @earendil-works/pi-coding-agent): **never** calls
  *     `requestPermission` for a tool. Its only permission requests are pi's own
  *     extension-UI `select`/`confirm` events; read/write/edit/bash are emitted
@@ -301,8 +303,8 @@ export type RoomShellCapability = 'runs' | 'refused' | 'unknown';
 function harnessDeclaresShellExecuteKind(agentCommand: string | undefined): boolean {
   return Boolean(
     agentCommand &&
-      (/(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand) ||
-        /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)),
+    (/(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand) ||
+      /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)),
   );
 }
 

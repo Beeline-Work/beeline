@@ -77,6 +77,7 @@ export type LedgerAttributionMessage = {
   daemonFact?: unknown;
   durableFact?: unknown;
   grantRequest?: unknown;
+  squireApproval?: unknown;
   connectorOffer?: unknown;
   choice?: unknown;
   writePermission?: unknown;
@@ -110,6 +111,7 @@ export function ledgerSpeakerKey(
     message.daemonFact ||
     message.durableFact ||
     message.grantRequest ||
+    message.squireApproval ||
     message.connectorOffer ||
     message.cornerApp ||
     message.choice

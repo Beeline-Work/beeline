@@ -2550,15 +2550,30 @@ export async function requestGrant(
     ? (result.escalations as AgentGrantEscalation[])
     : [];
   const because = formatGrantEscalationReason(escalations);
+  const approval = asObject(result.approval);
+  const authority =
+    approval.authority === 'workspace-manager'
+      ? 'A Workspace owner or admin'
+      : approval.authority === 'resource-owner'
+        ? 'The resource owner'
+        : 'An authorized person';
+  const destination =
+    approval.destination === 'room'
+      ? 'on the card in this Room'
+      : approval.destination === 'trusty-squire-dm'
+        ? "in the resource owner's private Trusty Squire DM"
+        : approval.destination === 'wallet-dm'
+          ? "in the resource owner's private Wallet DM"
+          : approval.destination === 'system-dm'
+            ? "in the resource owner's private @system DM"
+            : 'on the approval card';
   return (
     `pending, card posted: ${ask} [grant ${grantId}]. ` +
     (because ? `A human always answers this one because ${because}. ` : '') +
     (script
       ? `The card shows ${script.path} in full, and the approval is bound to those bytes. `
       : '') +
-    (kind === 'mcp' && target === 'squire'
-      ? 'Your owner must answer ALWAYS, ONCE, or NO in the Trusty Squire DM; '
-      : 'Your owner must answer ALWAYS, ONCE, or NO in this Room; ') +
+    `${authority} must answer ALWAYS, ONCE, or NO ${destination}; ` +
     'your turn is paused on this grant. Tell the human what you are waiting for and end your turn now; ' +
     (kind === 'mcp'
       ? 'the approval wake starts the fresh session with that route mounted, so use it immediately without restarting or scheduling another turn.'

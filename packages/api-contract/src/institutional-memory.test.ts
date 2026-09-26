@@ -111,24 +111,33 @@ describe('institutional merge review contract', () => {
     expect(parseInstitutionalMergeReviewProposal(proposal)).toEqual(proposal);
   });
 
-  it('refuses a code anchor that is not verifiable provenance', () => {
+  it('drops an unverifiable code anchor without discarding the procedure', () => {
     const withAnchor = (anchor: Record<string, unknown>) => ({
       ...proposal,
       skill: { ...proposal.skill, anchor: { ...proposal.skill.anchor, ...anchor } },
     });
-    // A digest nobody can check is not provenance.
-    expect(() =>
-      parseInstitutionalMergeReviewProposal(withAnchor({ contentHash: 'looks-about-right' })),
-    ).toThrow(/sha256 digest/);
-    expect(() =>
-      parseInstitutionalMergeReviewProposal(withAnchor({ contentHash: 'A'.repeat(64) })),
-    ).toThrow(/sha256 digest/);
-    // Nor does a path that escapes or leaves the anchored repository.
-    for (const path of ['/etc/passwd', '../secrets.txt', 'apps/../../outside.ts', 'a//b.ts']) {
-      expect(() => parseInstitutionalMergeReviewProposal(withAnchor({ path }))).toThrow(
-        /repository-relative/,
-      );
+    // A value nobody can check is not provenance, but the procedure and its
+    // review findings are still valid work: keep them and forget the field.
+    for (const anchor of [
+      { contentHash: 'looks-about-right' },
+      { contentHash: 'A'.repeat(64) },
+      { contentHash: 'a'.repeat(40) },
+      { contentHash: null },
+      { path: '/etc/passwd' },
+      { path: '../secrets.txt' },
+      { path: 'apps/../../outside.ts' },
+      { path: 'a//b.ts' },
+      { path: 42 },
+    ]) {
+      const parsed = parseInstitutionalMergeReviewProposal(withAnchor(anchor));
+      expect(parsed.skill?.markdown).toBe(proposal.skill.markdown);
+      expect(parsed.findings).toHaveLength(1);
+      expect(parsed.skill?.anchor).toEqual({
+        repository: proposal.skill.anchor.repository,
+        targetCommit: proposal.skill.anchor.targetCommit,
+      });
     }
+    // A verifiable anchor is kept exactly.
     expect(
       parseInstitutionalMergeReviewProposal(
         withAnchor({ path: 'apps/server/src/database.ts', contentHash: 'b'.repeat(64) }),

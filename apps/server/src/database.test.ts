@@ -278,6 +278,65 @@ describe('message search vectors', () => {
 });
 
 describe('institutional cascades', () => {
+  it('keeps a consolidated fact when an unrelated Room is deleted', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '11110000-0000-4000-8000-000000000002';
+    const jobRoom = '22220000-0000-4000-8000-000000000002';
+    const factRoom = '22220000-0000-4000-8000-000000000003';
+    const human = 'b'.repeat(64);
+    const job = '33330000-0000-4000-8000-000000000002';
+    const item = '55550000-0000-4000-8000-000000000002';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      human,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Shared')`, [workspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Job room'),($2,$3,'Fact room')`,
+      [jobRoom, factRoom, workspace],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES
+         ('job-room-source',$1,$3,'A source.'),('fact-room-source',$2,$3,'Another source.')`,
+      [jobRoom, factRoom, human],
+    );
+    // The curator queues the workspace-facts partition against whichever Room
+    // its first candidate came from, but consolidates a fact that lives in another.
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,'job-room-source',$4,'workspace_candidate','cross-room')`,
+      [job, workspace, jobRoom, human],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_job_id)
+       VALUES($1,$2,'workspace_fact','cross-room-key','A consolidated fact.',$3,
+              'fact-room-source','workspace',0.9,2,$4)`,
+      [item, workspace, factRoom, job],
+    );
+
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [jobRoom]);
+
+    // The fact survives its own Room's untouched lifetime; only the provenance
+    // pointer to the deleted job is forgotten.
+    expect(
+      (
+        await database.query<{ id: string; state: string; created_by_job_id: string | null }>(
+          `SELECT id,state,created_by_job_id FROM institutional_memory_items WHERE id=$1`,
+          [item],
+        )
+      ).rows[0],
+    ).toMatchObject({ id: item, state: 'active', created_by_job_id: null });
+
+    // Deleting the fact's own Room still removes it.
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [factRoom]);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
+    database.close();
+  });
+
   it('lets a Workspace delete carry every institutional row with it', async () => {
     const database = new PgliteDatabase();
     await migrate(database);

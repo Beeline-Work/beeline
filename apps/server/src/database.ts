@@ -789,7 +789,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
   version integer NOT NULL CHECK (version > 0),
   supersedes_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL,
-  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL,
   created_by_command_id text,
   repository text,
   target_commit text,
@@ -804,20 +804,25 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
     (deleted_at IS NOT NULL AND body='')
   ),
   CONSTRAINT institutional_memory_items_creator_check
-    CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL)),
+    CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL)),
   CHECK (
     (kind='workspace_fact' AND subject_identity_id IS NULL AND audience_kind='workspace') OR
     (kind='human_profile_fact' AND subject_identity_id IS NOT NULL AND audience_kind='human_profile')
   )
 );
 ALTER TABLE institutional_memory_items ALTER COLUMN created_by_job_id DROP NOT NULL;
--- RESTRICT here aborts DELETE FROM workspaces: the jobs cascade fires before
--- the items cascade has removed the referencing row, so the whole delete fails.
+-- created_by_job_id is PROVENANCE, never ownership. RESTRICT aborts
+-- DELETE FROM workspaces (the jobs cascade fires before the items cascade), and
+-- CASCADE is worse: a curator job queued against one Room can create a
+-- consolidated Workspace fact whose own Room is a different one, so deleting
+-- the job's Room would silently destroy a fact that Room never held. The item's
+-- lifecycle belongs to its workspace, Room and source message; forgetting which
+-- job wrote it is the only thing a job delete may do.
 ALTER TABLE institutional_memory_items
   DROP CONSTRAINT IF EXISTS institutional_memory_items_created_by_job_id_fkey;
 ALTER TABLE institutional_memory_items
   ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
-  FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE;
+  FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
@@ -828,7 +833,7 @@ ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items
 );
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
-  CHECK ((created_by_job_id IS NULL) <> (created_by_command_id IS NULL));
+  CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind

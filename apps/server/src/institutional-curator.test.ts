@@ -1192,6 +1192,37 @@ describe('weekly institutional curator', () => {
     ).toBe(1);
   });
 
+  it('reports the stale serve rate and whether the curator gate is open', async () => {
+    const serve = randomUUID();
+    await database.query(
+      `INSERT INTO institutional_context_serves
+       (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,
+        mode,served,total_bytes,estimated_tokens,item_ids)
+       VALUES($1,$2,$3,'stale-serve-proof',$4,1,'live',true,900,225,
+              ARRAY[$5,$6]::uuid[])`,
+      [serve, WORKSPACE, ROOM, HUMAN, TARGET, STALE],
+    );
+
+    // TARGET is active; STALE is not, so exactly half of what was served has
+    // since stopped being current.
+    const dashboard = await institutionalObjectiveDashboard(database, WORKSPACE);
+    expect(dashboard).toMatchObject({
+      servedItems: 2,
+      staleServedItems: 1,
+      staleServeRate: 0.5,
+      curatorEnabled: true,
+    });
+
+    // A Workspace staged live with the curator gate shut says so, rather than
+    // silently running none of the lifecycle.
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET curator_enabled=false
+       WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    expect((await institutionalObjectiveDashboard(database, WORKSPACE)).curatorEnabled).toBe(false);
+  });
+
   it('advances a pilot cohort only after successful bounded live outcomes', async () => {
     for (let index = 0; index < 20; index += 1) {
       const serveId = randomUUID();

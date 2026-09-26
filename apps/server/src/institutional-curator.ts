@@ -172,6 +172,15 @@ export interface InstitutionalObjectiveDashboard {
   readonly skillsLoaded: number;
   readonly searches: number;
   readonly deadJobs: number;
+  /** Items this Workspace actually served, and how many have since stopped being active. */
+  readonly servedItems: number;
+  readonly staleServedItems: number;
+  readonly staleServeRate: number;
+  /**
+   * False leaves a staged Workspace serving memory with no lifecycle pass at
+   * all, so the dashboard names it rather than leaving the half state silent.
+   */
+  readonly curatorEnabled: boolean;
   readonly shadowReady: boolean;
   readonly rolloutReady: boolean;
 }
@@ -199,6 +208,9 @@ export async function institutionalObjectiveDashboard(
       skills_loaded: string;
       searches: string;
       dead_jobs: string;
+      served_items: string;
+      stale_served_items: string;
+      curator_enabled: boolean | null;
     }>(
       `SELECT
          (SELECT count(*) FROM institutional_context_serves
@@ -220,7 +232,19 @@ export async function institutionalObjectiveDashboard(
          (SELECT count(*) FROM institutional_history_searches WHERE workspace_id=$1) searches,
          (SELECT count(*) FROM institutional_memory_jobs
           WHERE workspace_id=$1 AND status='dead'
-            AND updated_at>=now()-interval '24 hours') dead_jobs`,
+            AND updated_at>=now()-interval '24 hours') dead_jobs,
+         -- Stale serve rate: of every item this Workspace actually served, how
+         -- many have since been staled, archived or tombstoned.
+         (SELECT count(*) FROM institutional_context_serves serve
+          CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
+          WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served) served_items,
+         (SELECT count(*) FROM institutional_context_serves serve
+          CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
+          JOIN institutional_memory_items item ON item.id=served.item_id
+          WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served
+            AND (item.state<>'active' OR item.deleted_at IS NOT NULL)) stale_served_items,
+         (SELECT curator_enabled FROM institutional_memory_workspace_rollouts
+          WHERE workspace_id=$1) curator_enabled`,
       [workspaceId],
     )
   ).rows[0];
@@ -231,6 +255,8 @@ export async function institutionalObjectiveDashboard(
   const p95ContextBytes = Number(row?.p95_context_bytes ?? 0);
   const p95ContextTokens = Number(row?.p95_context_tokens ?? 0);
   const deadJobs = Number(row?.dead_jobs ?? 0);
+  const servedItems = Number(row?.served_items ?? 0);
+  const staleServedItems = Number(row?.stale_served_items ?? 0);
   return {
     workspaceId,
     contextServes,
@@ -243,6 +269,10 @@ export async function institutionalObjectiveDashboard(
     skillsLoaded: Number(row?.skills_loaded ?? 0),
     searches: Number(row?.searches ?? 0),
     deadJobs,
+    servedItems,
+    staleServedItems,
+    staleServeRate: servedItems ? staleServedItems / servedItems : 0,
+    curatorEnabled: row?.curator_enabled === true,
     shadowReady: completedJobs >= 20 && deadJobs === 0,
     rolloutReady:
       completedTurns >= 20 &&

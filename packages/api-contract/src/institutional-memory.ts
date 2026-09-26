@@ -505,28 +505,30 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
 
 /** Strict parser for one merge-derived, restricted procedure proposal. */
 /**
- * A code anchor is stored provenance, so its shape is checked rather than taken
- * on the model's word: an arbitrary string is not a digest, and an absolute or
- * escaping path does not name a file inside the anchored repository.
+ * The two optional anchor fields are stored provenance, so an unverifiable value
+ * is DROPPED rather than kept or treated as fatal: keeping it would record a
+ * digest nobody can check, and rejecting the proposal would discard a whole
+ * valid procedure and its review findings over metadata the model was told was
+ * optional.
  */
-function codeContentDigest(value: unknown): string {
-  const digest = boundedText(value, 'workspace skill content hash', 64);
-  if (!/^[0-9a-f]{64}$/.test(digest)) {
-    throw new Error('workspace skill content hash is not a sha256 digest');
-  }
-  return digest;
+function codeContentDigest(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? value : undefined;
 }
 
-function repositoryRelativePath(value: unknown): string {
-  const path = boundedText(value, 'workspace skill path', 500);
+function repositoryRelativePath(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 500) return undefined;
   if (
-    path.startsWith('/') ||
-    path.includes('\\') ||
-    path.split('/').some((segment) => segment === '..' || segment === '')
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    value.split('/').some((segment) => segment === '..' || segment === '')
   ) {
-    throw new Error('workspace skill path is not repository-relative');
+    return undefined;
   }
-  return path;
+  return value;
+}
+
+function optionalAnchorField(key: 'path' | 'contentHash', value: string | undefined) {
+  return value === undefined ? {} : { [key]: value };
 }
 
 export function parseInstitutionalMergeReviewProposal(
@@ -586,10 +588,8 @@ export function parseInstitutionalMergeReviewProposal(
       anchor: {
         repository: boundedText(anchor.repository, 'workspace skill repository', 300),
         targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
-        ...(anchor.path === undefined ? {} : { path: repositoryRelativePath(anchor.path) }),
-        ...(anchor.contentHash === undefined
-          ? {}
-          : { contentHash: codeContentDigest(anchor.contentHash) }),
+        ...optionalAnchorField('path', repositoryRelativePath(anchor.path)),
+        ...optionalAnchorField('contentHash', codeContentDigest(anchor.contentHash)),
       },
     };
   }

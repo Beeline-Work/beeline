@@ -81,6 +81,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
+  await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
@@ -356,6 +357,41 @@ describe('corner message attribution', () => {
     await result(review!, verdict);
     expect(await stored(verdict)).toBe(1);
     expect((await commands(A, C)).map((command) => command.reason)).toEqual(['corner_review']);
+  });
+
+  it('hands a brief mismatch to the author, then reviews the repaired head', async () => {
+    await db.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'A1: preserve the agreed label',$2,$3)`,
+      [C, A, R],
+    );
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(19, '1'.repeat(40));
+    const [firstReview] = await commands(B, C);
+    await claim(firstReview!);
+    await result(firstReview!, 'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.');
+    const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
+    expect(repair).toBeDefined();
+    await claim(repair!);
+    await result(repair!, 'Fixed F1; the agreed label is present and the affected check passed.');
+    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [C])).rowCount).toBe(0);
+
+    await greenHead(19, '2'.repeat(40));
+    const [secondReview] = await commands(B, C);
+    expect(secondReview).toBeDefined();
+    await claim(secondReview!);
+    await expect(
+      daemon.execute('approveCornerMerge', {
+        cornerId: C,
+        headSha: '2'.repeat(40),
+        briefRevision: 1,
+      }, B),
+    ).resolves.toMatchObject({ status: 'approved', headSha: '2'.repeat(40) });
+    expect(
+      (await db.query<{ head_sha: string; brief_revision: number }>(
+        `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`, [C],
+      )).rows,
+    ).toEqual([{ head_sha: '2'.repeat(40), brief_revision: 1 }]);
   });
 
   /**

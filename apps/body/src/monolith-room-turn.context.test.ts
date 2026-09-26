@@ -224,13 +224,13 @@ describe('monolith Room turn context', () => {
     expect(prompts[2]).toContain('Institutional memory snapshot 3');
 
     expect(systemPrompts[0]).toContain(
-      'For every ask, first reply on one line `Proposed corner: <name> — <objective>`',
+      'Ask one focused question only when an unresolved choice materially changes behavior',
     );
     expect(systemPrompts[0]).toContain(
-      'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill',
+      'Before opening a corner, consult beeline-triage and beeline-spec',
     );
     expect(systemPrompts[0]).toContain(
-      'If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives',
+      'Pass the typed brief authority contract in open_corner for every repository or research assignment',
     );
 
     for (const prompt of prompts) {

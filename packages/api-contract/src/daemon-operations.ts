@@ -158,6 +158,15 @@ export type DaemonOperationMap = {
   getTargetAgentAuthority: Operation<TargetAgentAuthorityInput, AuthorityDecisionResult>;
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
+  listCornerBriefRevisions: Operation<
+    CornerInput & { readonly beforeRevision?: number },
+    {
+      readonly revisions: readonly CornerBrief[];
+      readonly nextBeforeRevision?: number;
+    }
+  >;
+  reviseCornerBrief: Operation<ReviseCornerBriefInput, CornerBrief>;
+  postCornerValidationStage: Operation<PostCornerValidationStageInput, CornerValidationStage>;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
     {
@@ -188,7 +197,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string },
+    CornerInput & { readonly headSha: string; readonly briefRevision?: number },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;
@@ -282,13 +291,14 @@ export type DaemonOperationMap = {
       }
     | { readonly status: 'permission-required'; readonly grantId?: string }
   >;
-  executeComposioTool: Operation<RoomInput & {
-    readonly requestId: string;
-    readonly generationId: string;
-    readonly toolkit: string;
-    readonly tool: string;
-    readonly arguments: Record<string, unknown>;
-  },
+  executeComposioTool: Operation<
+    RoomInput & {
+      readonly requestId: string;
+      readonly generationId: string;
+      readonly toolkit: string;
+      readonly tool: string;
+      readonly arguments: Record<string, unknown>;
+    },
     | { readonly data: unknown; readonly logId?: string }
     | { readonly status: 'permission-required'; readonly grantId?: string }
   >;
@@ -510,6 +520,9 @@ export type CornerRestoreResult = {
   readonly cornerId: string;
   /** Immutable objective from the authoritative corner fact. */
   readonly objective: string;
+  /** Current immutable assignment, absent on corners opened before briefs. */
+  readonly brief?: CornerBrief;
+  readonly validation?: readonly CornerValidationStage[];
   /** Human-created corners are title-only; their title supplies runtime context after a tag. */
   readonly title?: string;
   readonly kind?: 'agent' | 'human';
@@ -733,6 +746,8 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly name: string;
     /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
     readonly objective: string;
+    /** Full assignment; the short objective remains a navigation summary. */
+    readonly brief?: CornerBriefDraft;
     readonly repository?: string;
     readonly targetBranch?: string;
     /**
@@ -743,6 +758,136 @@ export type CreateCornerInput = TurnOutputAuthority &
      * `research` keeps a writable worktree under a durable delivery and merge hold.
      */
     readonly lane?: CornerLane;
+  };
+export type CornerBriefAttachment = {
+  readonly objectId: string;
+  readonly title: string;
+  readonly purpose: string;
+  readonly required: boolean;
+  readonly mime: string;
+  readonly sha256: string;
+  readonly size: number;
+};
+export type CornerBriefIntentVerbatim = {
+  /** Durable provenance for the exact human words below. */
+  readonly sourceMessageId: string;
+  /** Exact message text at assignment time; never an agent paraphrase. */
+  readonly snapshot: string;
+};
+export type CornerBriefCriterion = {
+  /** Stable numbered identifier such as AC-1; retained across revisions. */
+  readonly id: string;
+  readonly text: string;
+};
+export type CornerBriefReferenceAuthority =
+  | 'human-authoritative'
+  | 'repository-authoritative'
+  | 'approved-reference'
+  | 'informational'
+  | 'agent-recommendation';
+export type CornerBriefReference = {
+  readonly label: string;
+  readonly authority: CornerBriefReferenceAuthority;
+  readonly description: string;
+  readonly objectId?: string;
+};
+export type CornerBriefApprovalBasisDraft =
+  | {
+      /** The initiating human command already settled this exact material scope. */
+      readonly kind: 'initiating-command';
+      readonly sourceMessageId: string;
+      readonly snapshot: string;
+    }
+  | {
+      /** A later human answer settled the named choice or requested brief slice. */
+      readonly kind: 'explicit-human-answer';
+      readonly sourceMessageId: string;
+      readonly snapshot: string;
+    };
+export type CornerBriefApprovalBasis =
+  | (CornerBriefApprovalBasisDraft & {
+      readonly approvedBy: string;
+      /** SHA-256 of the complete stored revision this evidence authorizes. */
+      readonly briefHash: string;
+    })
+  | {
+      /** Read-only marker for rows created before structured briefs existed. */
+      readonly kind: 'legacy-pre-migration';
+      readonly reason: string;
+      readonly briefHash: string;
+    };
+export type CornerBriefStructuredDraft = {
+  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
+  readonly buildSpec: string;
+  readonly criteria: readonly CornerBriefCriterion[];
+  readonly nonGoals?: readonly string[];
+  readonly references: readonly CornerBriefReference[];
+  readonly approvalBasis: CornerBriefApprovalBasisDraft;
+  readonly attachments?: readonly {
+    readonly objectId: string;
+    readonly purpose: string;
+    readonly required: boolean;
+  }[];
+  readonly change?: string;
+};
+/** Accepted only when revising a pre-migration brief; new assignments must be structured. */
+export type CornerBriefLegacyDraft = {
+  readonly content: string;
+  readonly attachments?: CornerBriefStructuredDraft['attachments'];
+  readonly change?: string;
+};
+export type CornerBriefDraft = CornerBriefStructuredDraft | CornerBriefLegacyDraft;
+export type CornerBrief = {
+  readonly id: string;
+  readonly revision: number;
+  /** Compatibility projection: the build spec, or the old opaque content for legacy rows. */
+  readonly content: string;
+  readonly legacy: boolean;
+  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
+  readonly buildSpec: string;
+  readonly criteria: readonly CornerBriefCriterion[];
+  readonly nonGoals: readonly string[];
+  readonly references: readonly CornerBriefReference[];
+  readonly approvalBasis: CornerBriefApprovalBasis;
+  readonly revisionHash: string;
+  readonly change?: string;
+  readonly authorId: string;
+  readonly sourceRoomId: string;
+  readonly sourceMessageId?: string;
+  readonly attachments: readonly CornerBriefAttachment[];
+};
+export type ReviseCornerBriefInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly requestId: string;
+    readonly expectedRevision: number;
+    readonly brief: CornerBriefDraft;
+  };
+export type CornerValidationStageName =
+  | 'intent'
+  | 'base'
+  | 'review'
+  | 'tests'
+  | 'docs'
+  | 'lint_types'
+  | 'publication'
+  | 'ci'
+  | 'final_authorization';
+export type CornerValidationStage = {
+  readonly briefRevision: number;
+  readonly headSha: string;
+  readonly stage: CornerValidationStageName;
+  readonly status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'not_applicable';
+  readonly evidence: string;
+  readonly actorId: string;
+};
+export type PostCornerValidationStageInput = TurnOutputAuthority &
+  CornerInput & {
+    readonly requestId: string;
+    readonly briefRevision: number;
+    readonly headSha: string;
+    readonly stage: CornerValidationStageName;
+    readonly status: CornerValidationStage['status'];
+    readonly evidence: string;
   };
 export type CornerResult = { readonly cornerId: string };
 export type CornerLane = 'code' | 'no_code' | 'research';

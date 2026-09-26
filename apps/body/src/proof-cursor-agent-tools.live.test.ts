@@ -1,11 +1,13 @@
 /**
  * The acceptance path for the cursor ACP bridge delivering session MCP.
  *
- * A real cursor-agent, in a real Room on a real monolith server, is told to
- * open a corner. It must reach `beeline-agent open_corner` through the
- * isolated `mcp.json` the bridge writes — the field `session/new` used to
- * drop. A hermetic test that only asserts a file was written cannot catch
- * cursor-agent silently skipping that file.
+ * A real cursor-agent, in a real Room on a real monolith server, receives a
+ * corrected discussion, posts a visual mock, and opens a corner with the
+ * exact correction and initiating command in a typed brief. It must reach
+ * `beeline-agent post_artifact` and `open_corner` through the isolated
+ * `mcp.json` the bridge writes — the field `session/new` used to drop. A
+ * hermetic test that only asserts a file was written cannot catch cursor-agent
+ * silently skipping that file.
  *
  * Reuses one dedicated test Workspace id. Never mints a production Workspace.
  *
@@ -23,13 +25,14 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../../server/src/database.js';
-import { PgliteDatabase } from '../../server/src/test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
+import { ObjectService } from '../../server/src/object-service.js';
 import { prepareRoomAgentHome } from './agent-home.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
@@ -49,6 +52,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
   let auth: TokenAuth;
   let phone: PhoneService;
   let mountedAuth: MonolithAuthMount;
+  let objectStorage: MemoryObjectStorage;
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
   let root: string;
@@ -112,6 +116,13 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
       },
     });
     const live = new LiveHub();
+    objectStorage = new MemoryObjectStorage();
+    await objectStorage.listen();
+    const objectService = new ObjectService(
+      database,
+      objectStorage.asStorage(),
+      'http://placeholder',
+    );
     server = createBeelineServer({
       database,
       auth,
@@ -119,6 +130,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
       daemon: new DaemonService(database, live),
       live,
       mediaMaximumBytes: 1024,
+      objectService,
       authHandler: mountedAuth.handle,
     });
     await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
@@ -130,12 +142,13 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
     if (!enabled) return;
     await new Promise<void>((closed) => server.close(() => closed()));
     await mountedAuth.close();
+    await objectStorage.close();
     await database.close();
     await rm(root, { recursive: true, force: true });
   }, 30_000);
 
   it.skipIf(!enabled)(
-    'reaches open_corner from a cursor turn and the Room carries the corner',
+    'carries corrected intent and an automatically bound visual mock through open_corner',
     { timeout: 600_000 },
     async () => {
       // cursor-agent spawns this from the Room cwd, so the command must be
@@ -222,25 +235,59 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
       const configPath = join(root, 'runtime.json');
       await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
       const client = new DaemonApiClient(origin, daemonToken, AGENT);
-      const core = new ThinDaemonCore(runtime, configPath, config as never, {
+      let core = new ThinDaemonCore(runtime, configPath, config as never, {
         daemonApi: client,
         reconcileHeartbeatMs: 60_000,
       });
-      const abort = new AbortController();
-      const run = core.run({ pollMs: 100, signal: abort.signal });
+      let abort = new AbortController();
+      let run = core.run({ pollMs: 100, signal: abort.signal });
       try {
         await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), {
           timeout: 30_000,
           interval: 200,
         });
         await new Promise((settle) => setTimeout(settle, 1_000));
+        const initialMessageId = createHash('sha256')
+          .update('cursor-open-corner-proof-initial')
+          .digest('hex');
+        const initialText =
+          'For the release-status card, show a blue status label, the responsible owner, and a short explanation. Keep the layout compact enough for a phone.';
         await phone.execute(
           'sendRoomMessage',
           {
             roomId: ROOM,
-            messageId: createHash('sha256').update('cursor-open-corner-proof').digest('hex'),
+            messageId: initialMessageId,
+            wakes: [],
+            text: initialText,
+          },
+          HUMAN,
+        );
+        const correctionMessageId = createHash('sha256')
+          .update('cursor-open-corner-proof-correction')
+          .digest('hex');
+        const correctionText =
+          'Correction: the status label must be amber, not blue. Keep the responsible owner and compact phone layout unchanged.';
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: correctionMessageId,
+            wakes: [],
+            text: correctionText,
+          },
+          HUMAN,
+        );
+        const commandMessageId = createHash('sha256')
+          .update('cursor-open-corner-proof-command')
+          .digest('hex');
+        const commandText = `@nerd The release-card scope is settled exactly by this command and the correction above. Create and post one self-contained HTML visual mock with an amber status label and Responsible owner. Then use beeline-agent open_corner to open Proof Corner. Pass a typed brief: intentVerbatim must preserve the exact correction (${correctionMessageId}) and this exact command (${commandMessageId}); buildSpec must describe the approved amber card; criteria must include stable IDs AC-1 for amber status and AC-2 for Responsible owner; references must label the posted mock as agent-recommendation; approvalBasis must be initiating-command with this message ID and this entire exact message snapshot. Do not manually copy the posted object's ID into attachments: same-turn artifact binding must add it automatically. Do not merely describe these tool calls; perform them.`;
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: commandMessageId,
             wakes: [AGENT],
-            text: '@nerd Open a corner named Proof Corner whose objective is prove cursor can call open_corner. Use the beeline-agent open_corner tool. Do not describe the tool; call it.',
+            text: commandText,
           },
           HUMAN,
         );
@@ -251,6 +298,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
         expect(Number(queued.rows[0]?.n ?? 0)).toBeGreaterThan(0);
 
         const deadline = Date.now() + 420_000;
+        let openedCornerId: string | undefined;
         for (;;) {
           const failed = await database.query<{ reason: string | null }>(
             `SELECT failure_reason reason FROM agent_turns
@@ -268,7 +316,47 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
             [ROOM],
           );
           if (corners.rows.length > 0) {
+            openedCornerId = corners.rows[0]!.id;
             expect(corners.rows[0]?.name.toLowerCase()).toMatch(/proof/);
+            const brief = await database.query<{
+              build_spec: string;
+              intent_verbatim: { sourceMessageId: string; snapshot: string }[];
+              criteria: { id: string; text: string }[];
+              approval_basis: { kind: string; sourceMessageId: string; briefHash: string };
+              revision_hash: string;
+              attachments: { objectId: string; purpose: string; required: boolean }[];
+            }>(
+              `SELECT build_spec,intent_verbatim,criteria,approval_basis,revision_hash,attachments
+               FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
+              [corners.rows[0]!.id],
+            );
+            const stored = brief.rows[0]!;
+            expect(stored.build_spec.toLowerCase()).toContain('amber');
+            expect(stored.intent_verbatim).toEqual(
+              expect.arrayContaining([
+                { sourceMessageId: correctionMessageId, snapshot: correctionText },
+                { sourceMessageId: commandMessageId, snapshot: commandText },
+              ]),
+            );
+            expect(stored.criteria).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ id: 'AC-1' }),
+                expect.objectContaining({ id: 'AC-2' }),
+              ]),
+            );
+            expect(stored.approval_basis).toEqual(
+              expect.objectContaining({
+                kind: 'initiating-command',
+                sourceMessageId: commandMessageId,
+                briefHash: stored.revision_hash,
+              }),
+            );
+            expect(stored.attachments).toEqual([expect.objectContaining({ required: true })]);
+            const posted = await database.query<{ n: string }>(
+              `SELECT count(*)::text n FROM objects WHERE owner_id=$1 AND mime='text/html'`,
+              [AGENT],
+            );
+            expect(Number(posted.rows[0]?.n ?? 0)).toBeGreaterThan(0);
             break;
           }
           const settled = await database.query<{ status: string; text: string | null }>(
@@ -300,6 +388,79 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
           }
           await new Promise((settle) => setTimeout(settle, 1_000));
         }
+
+        // Stop the Room daemon immediately after assignment. A new daemon
+        // instance must discover the already-durable corner command, create a
+        // fresh worker session, and restore the typed brief without help from
+        // the planning session's context.
+        abort.abort();
+        await run.catch(() => undefined);
+        core = new ThinDaemonCore(runtime, configPath, config as never, {
+          daemonApi: client,
+          reconcileHeartbeatMs: 60_000,
+        });
+        abort = new AbortController();
+        run = core.run({ pollMs: 100, signal: abort.signal });
+        await vi.waitFor(
+          async () => {
+            const failed = await database.query<{ reason: string | null }>(
+              `SELECT failure_reason reason FROM agent_turns
+               WHERE room_id=$1 AND agent_id=$2 AND status='failed'
+               ORDER BY created_at DESC LIMIT 1`,
+              [openedCornerId!, AGENT],
+            );
+            if (failed.rows[0])
+              throw new Error(`fresh corner worker failed: ${failed.rows[0].reason ?? 'unknown'}`);
+            const completed = await database.query<{ n: string }>(
+              `SELECT count(*)::text n FROM agent_turns
+               WHERE room_id=$1 AND agent_id=$2 AND status='complete'`,
+              [openedCornerId!, AGENT],
+            );
+            expect(Number(completed.rows[0]?.n ?? 0)).toBeGreaterThan(0);
+          },
+          { timeout: 420_000, interval: 1_000 },
+        );
+
+        const revisionMessageId = createHash('sha256')
+          .update('cursor-open-corner-proof-revision')
+          .digest('hex');
+        const revisionText = `@nerd Midstream correction: replace the Responsible owner label with Account owner. Keep AC-1 unchanged, update AC-2 without renumbering it, retain the prior verbatim intent, add this exact message (${revisionMessageId}), and call revise_corner_brief with this entire exact message as explicit-human-answer plus a concise change description.`;
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: openedCornerId!,
+            messageId: revisionMessageId,
+            wakes: [AGENT],
+            text: revisionText,
+          },
+          HUMAN,
+        );
+        await vi.waitFor(
+          async () => {
+            const revision = await database.query<{
+              revision: number;
+              build_spec: string;
+              approval_basis: { kind: string; sourceMessageId: string; snapshot: string };
+            }>(
+              `SELECT revision,build_spec,approval_basis
+               FROM corner_brief_revisions
+               WHERE corner_id=$1
+               ORDER BY revision DESC
+               LIMIT 1`,
+              [openedCornerId!],
+            );
+            expect(revision.rows[0]?.revision).toBeGreaterThanOrEqual(2);
+            expect(revision.rows[0]?.build_spec).toMatch(/Account owner/i);
+            expect(revision.rows[0]?.approval_basis).toEqual(
+              expect.objectContaining({
+                kind: 'explicit-human-answer',
+                sourceMessageId: revisionMessageId,
+                snapshot: revisionText,
+              }),
+            );
+          },
+          { timeout: 420_000, interval: 1_000 },
+        );
       } finally {
         abort.abort();
         await run.catch(() => undefined);

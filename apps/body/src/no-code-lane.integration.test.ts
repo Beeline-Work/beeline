@@ -548,7 +548,10 @@ it(
     const delivery = (await readFile(artifactLog, 'utf8'))
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { ok: boolean; wrote?: string; posted?: string; detail?: string });
+      .map(
+        (line) =>
+          JSON.parse(line) as { ok: boolean; wrote?: string; posted?: string; detail?: string },
+      );
     expect(delivery[0]?.ok, `post_artifact failed: ${JSON.stringify(delivery[0])}`).toBe(true);
 
     // The tag and the artifact have to arrive on the SAME message: that one
@@ -581,8 +584,11 @@ it(
         `artifact on that reply: ${attachment.name} (${attachment.mimeType}, ${attachment.size} bytes)`,
         `artifact opens as:      ${JSON.stringify(contents.split('\n')[0])} ...`,
         `feature branch cut:     ${
-          (await database.query(`SELECT feature_branch FROM corner_facts WHERE feature_branch IS NOT NULL`))
-            .rows.length
+          (
+            await database.query(
+              `SELECT feature_branch FROM corner_facts WHERE feature_branch IS NOT NULL`,
+            )
+          ).rows.length
         } (0 means none)`,
         `pull request opened:    ${
           (await database.query(`SELECT 1 FROM corner_merge_approvals`)).rows.length
@@ -605,11 +611,16 @@ it(
 
     // No branch was cut and no merge was ever on the table.
     expect(
-      (await database.query(`SELECT feature_branch FROM corner_facts WHERE feature_branch IS NOT NULL`))
-        .rows,
+      (
+        await database.query(
+          `SELECT feature_branch FROM corner_facts WHERE feature_branch IS NOT NULL`,
+        )
+      ).rows,
     ).toHaveLength(0);
     expect((await database.query(`SELECT 1 FROM corner_merge_approvals`)).rows).toHaveLength(0);
-    expect(cornerPrompt.systemPrompt).toContain('post_artifact everything the objective asked for');
+    expect(cornerPrompt.systemPrompt).toContain(
+      'post_artifact everything the assigned intent and criteria require',
+    );
     expect(cornerPrompt.systemPrompt).not.toContain('Open the pull request with gh');
     expect(cornerPrompt.systemPrompt).not.toContain('gh pr merge');
   },

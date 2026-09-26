@@ -70,8 +70,10 @@ import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-s
 import type { AgentKind } from './agent-command.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   beelineReviewSkillMarkdown,
+  beelineSpecSkillMarkdown,
   beelineTriageSkillMarkdown,
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_NAME,
@@ -156,6 +158,7 @@ const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
  */
 export const BEELINE_DEFAULT_SKILL_NAMES = [
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   DRAW_AVATAR_SKILL_NAME,
   USING_BEELINE_SKILL_NAME,
@@ -502,6 +505,7 @@ async function provisionAgentSkillsAndMcp(
     { name: DRAW_AVATAR_SKILL_NAME, content: drawAvatarSkillMarkdown(skillReleaseId) },
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
     { name: BEELINE_TRIAGE_SKILL_NAME, content: beelineTriageSkillMarkdown(skillReleaseId) },
+    { name: BEELINE_SPEC_SKILL_NAME, content: beelineSpecSkillMarkdown(skillReleaseId) },
     ...(isReviewer
       ? [{ name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) }]
       : []),

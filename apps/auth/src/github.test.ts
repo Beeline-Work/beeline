@@ -13,20 +13,21 @@ it('reads merged PR evidence needed to recover a missed webhook', async () => {
   const sha = 'a'.repeat(40);
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          head: { sha, ref: 'feature/recovery' },
-          base: { sha: 'b'.repeat(40), ref: 'main' },
-          title: 'Recover merged corner',
-          merged: true,
-          merged_at: '2026-09-24T12:00:00Z',
-          merge_commit_sha: 'c'.repeat(40),
-          merged_by: { login: 'owner' },
-          mergeable_state: 'unknown',
-        }),
-        { status: 200 },
-      ),
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            head: { sha, ref: 'feature/recovery' },
+            base: { sha: 'b'.repeat(40), ref: 'main' },
+            title: 'Recover merged corner',
+            merged: true,
+            merged_at: '2026-09-24T12:00:00Z',
+            merge_commit_sha: 'c'.repeat(40),
+            merged_by: { login: 'owner' },
+            mergeable_state: 'unknown',
+          }),
+          { status: 200 },
+        ),
     ),
   );
   const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });

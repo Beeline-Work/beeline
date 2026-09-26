@@ -32,6 +32,8 @@ RUN npm run build -w @beeline/nostr \
   && npm run build -w @beeline/server
 
 FROM node:22-bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+  && rm -rf /var/lib/apt/lists/*
 ARG BEELINE_RELEASE_VERSION=development
 ARG BEELINE_RELEASE_SHA=unknown
 ENV NODE_ENV=production

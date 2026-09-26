@@ -94,7 +94,6 @@ import {
   MAX_ATTACHMENT_BYTES,
   fetchBoundedBytes,
 } from './attachment-delivery.js';
-import { computePatchId } from './patch-identity.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
 
 type JsonObject = Record<string, unknown>;
@@ -621,7 +620,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" for artifact work without a checkout, or lane="research" for writable repository investigation held open without automatic commit, pull request, merge, or agent closure. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -636,7 +635,105 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
-          description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
+          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the typed brief carries product authority.`,
+        },
+        brief: {
+          type: 'object',
+          required: ['intentVerbatim', 'buildSpec', 'criteria', 'references', 'approvalBasis'],
+          properties: {
+            intentVerbatim: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 50,
+              items: {
+                type: 'object',
+                required: ['sourceMessageId', 'snapshot'],
+                properties: {
+                  sourceMessageId: { type: 'string' },
+                  snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+                },
+                additionalProperties: false,
+              },
+              description: 'Exact human message text and its durable Room message ID.',
+            },
+            buildSpec: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 65536,
+              description: 'Agent-authored Markdown implementation specification.',
+            },
+            criteria: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 100,
+              items: {
+                type: 'object',
+                required: ['id', 'text'],
+                properties: {
+                  id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
+                  text: { type: 'string', minLength: 1, maxLength: 2000 },
+                },
+                additionalProperties: false,
+              },
+            },
+            nonGoals: {
+              type: 'array',
+              maxItems: 50,
+              items: { type: 'string', minLength: 1, maxLength: 1000 },
+            },
+            references: {
+              type: 'array',
+              maxItems: 50,
+              items: {
+                type: 'object',
+                required: ['label', 'authority', 'description'],
+                properties: {
+                  label: { type: 'string', minLength: 1, maxLength: 200 },
+                  authority: {
+                    type: 'string',
+                    enum: [
+                      'human-authoritative',
+                      'repository-authoritative',
+                      'approved-reference',
+                      'informational',
+                      'agent-recommendation',
+                    ],
+                  },
+                  description: { type: 'string', minLength: 1, maxLength: 1000 },
+                  objectId: { type: 'string', format: 'uuid' },
+                },
+                additionalProperties: false,
+              },
+            },
+            approvalBasis: {
+              type: 'object',
+              required: ['kind', 'sourceMessageId', 'snapshot'],
+              properties: {
+                kind: {
+                  type: 'string',
+                  enum: ['initiating-command', 'explicit-human-answer'],
+                },
+                sourceMessageId: { type: 'string' },
+                snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+              },
+              additionalProperties: false,
+            },
+            attachments: {
+              type: 'array',
+              maxItems: 16,
+              items: {
+                type: 'object',
+                required: ['objectId', 'purpose', 'required'],
+                properties: {
+                  objectId: { type: 'string', format: 'uuid' },
+                  purpose: { type: 'string', maxLength: 500 },
+                  required: { type: 'boolean' },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
         },
         lane: {
           type: 'string',
@@ -644,6 +741,160 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description:
             'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
         },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'revise_corner_brief',
+    description:
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
+    inputSchema: {
+      type: 'object',
+      required: [
+        'expectedRevision',
+        'intentVerbatim',
+        'buildSpec',
+        'criteria',
+        'references',
+        'approvalBasis',
+        'change',
+      ],
+      properties: {
+        expectedRevision: { type: 'integer', minimum: 0 },
+        intentVerbatim: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['sourceMessageId', 'snapshot'],
+            properties: {
+              sourceMessageId: { type: 'string' },
+              snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+            },
+            additionalProperties: false,
+          },
+        },
+        buildSpec: { type: 'string', minLength: 1, maxLength: 65536 },
+        criteria: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100,
+          items: {
+            type: 'object',
+            required: ['id', 'text'],
+            properties: {
+              id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
+              text: { type: 'string', minLength: 1, maxLength: 2000 },
+            },
+            additionalProperties: false,
+          },
+        },
+        nonGoals: {
+          type: 'array',
+          maxItems: 50,
+          items: { type: 'string', minLength: 1, maxLength: 1000 },
+        },
+        references: {
+          type: 'array',
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['label', 'authority', 'description'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: 200 },
+              authority: {
+                type: 'string',
+                enum: [
+                  'human-authoritative',
+                  'repository-authoritative',
+                  'approved-reference',
+                  'informational',
+                  'agent-recommendation',
+                ],
+              },
+              description: { type: 'string', minLength: 1, maxLength: 1000 },
+              objectId: { type: 'string', format: 'uuid' },
+            },
+            additionalProperties: false,
+          },
+        },
+        approvalBasis: {
+          type: 'object',
+          required: ['kind', 'sourceMessageId', 'snapshot'],
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['initiating-command', 'explicit-human-answer'],
+            },
+            sourceMessageId: { type: 'string' },
+            snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
+          },
+          additionalProperties: false,
+        },
+        change: { type: 'string', maxLength: 1000 },
+        attachments: {
+          type: 'array',
+          maxItems: 16,
+          items: {
+            type: 'object',
+            required: ['objectId', 'purpose', 'required'],
+            properties: {
+              objectId: { type: 'string', format: 'uuid' },
+              purpose: { type: 'string', maxLength: 500 },
+              required: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_corner_brief',
+    description:
+      'Read the current and earlier immutable brief revisions for a corner you belong to. Use before revising or reviewing an assignment. Results are paged newest first.',
+    inputSchema: {
+      type: 'object',
+      required: [],
+      properties: {
+        cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' },
+        beforeRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'record_validation_stage',
+    description:
+      'Record one observed Beeline validation stage for the current brief revision and code head. This is evidence, not merge authorization. Use headSha="draft" before publication; after publication use the exact current PR head. Give a concrete command, observation, finding, or reason.',
+    inputSchema: {
+      type: 'object',
+      required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],
+      properties: {
+        briefRevision: { type: 'integer', minimum: 0 },
+        headSha: { type: 'string' },
+        stage: {
+          type: 'string',
+          enum: [
+            'intent',
+            'base',
+            'review',
+            'tests',
+            'docs',
+            'lint_types',
+            'publication',
+            'ci',
+            'final_authorization',
+          ],
+        },
+        status: {
+          type: 'string',
+          enum: ['pending', 'running', 'passed', 'failed', 'skipped', 'not_applicable'],
+        },
+        evidence: { type: 'string', maxLength: 4000 },
       },
       additionalProperties: false,
     },
@@ -816,6 +1067,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
           description: 'The exact 40-character Git head SHA that passed review.',
+        },
+        briefRevision: {
+          type: 'integer',
+          minimum: 1,
+          description: 'The assigned brief revision reviewed; omit only on legacy corners.',
         },
       },
       additionalProperties: false,
@@ -1081,6 +1337,8 @@ export function agentToolsFor(
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
+    if (tool.name === 'revise_corner_brief') return cornerTurn;
+    if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
@@ -1658,6 +1916,9 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     idempotencyKey,
     name,
     objective,
+    ...(args.brief
+      ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
+      : {}),
     lane,
     ...(repository.resolution === 'repository'
       ? {
@@ -1675,10 +1936,68 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     cornerId: created.cornerId,
     name,
     objective,
+    ...(args.brief ? { briefRevision: 1 } : {}),
     // A chat-only Room has no code lane to take, so report what was recorded.
     lane: repository.resolution === 'repository' ? lane : 'no_code',
     status: 'starting',
   });
+}
+
+async function reviseCornerBrief(args: JsonObject): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const requestId = (await activeCommandContext()).requestId;
+  return JSON.stringify(
+    await daemonExecute('reviseCornerBrief', {
+      cornerId,
+      requestId,
+      expectedRevision: args.expectedRevision as number,
+      brief: {
+        intentVerbatim:
+          args.intentVerbatim as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['intentVerbatim'],
+        buildSpec: args.buildSpec as string,
+        criteria:
+          args.criteria as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['criteria'],
+        nonGoals:
+          args.nonGoals as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['nonGoals'],
+        references:
+          args.references as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['references'],
+        approvalBasis:
+          args.approvalBasis as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['approvalBasis'],
+        change: args.change as string | undefined,
+        attachments:
+          args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
+      },
+    }),
+  );
+}
+
+async function readCornerBrief(args: JsonObject): Promise<string> {
+  const cornerId =
+    typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  return JSON.stringify(
+    await daemonExecute('listCornerBriefRevisions', {
+      cornerId,
+      ...(Number.isInteger(args.beforeRevision)
+        ? { beforeRevision: args.beforeRevision as number }
+        : {}),
+    }),
+  );
+}
+
+async function recordValidationStage(args: JsonObject): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const requestId = (await activeCommandContext()).requestId;
+  return JSON.stringify(
+    await daemonExecute('postCornerValidationStage', {
+      cornerId,
+      requestId,
+      briefRevision: args.briefRevision as number,
+      headSha: args.headSha as string,
+      stage: args.stage as import('@beeline/api-contract/daemon').CornerValidationStageName,
+      status: args.status as import('@beeline/api-contract/daemon').CornerValidationStage['status'],
+      evidence: args.evidence as string,
+    }),
+  );
 }
 
 /**
@@ -1697,20 +2016,6 @@ async function closeCorner(): Promise<string> {
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
-}
-
-/** Best-effort patch-id of this worktree's HEAD against the corner's target
- * branch. Never throws: an absent id just falls back to exact head-sha
- * matching on the server side. */
-async function cornerPatchId(cornerId: string): Promise<string | undefined> {
-  try {
-    const result = await daemonExecute('getRoomTargetBranch', { roomId: cornerId });
-    const targetBranch = result.targetBranch;
-    if (typeof targetBranch !== 'string' || !targetBranch) return undefined;
-    return await computePatchId({ worktreePath: configuredRoot(), targetBranch });
-  } catch {
-    return undefined;
-  }
 }
 
 function cornerMergeAllowed(input: {
@@ -1853,8 +2158,15 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  const patchId = await cornerPatchId(cornerId);
-  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha, patchId }));
+  return JSON.stringify(
+    await daemonExecute('approveCornerMerge', {
+      cornerId,
+      headSha,
+      ...(Number.isInteger(args.briefRevision)
+        ? { briefRevision: args.briefRevision as number }
+        : {}),
+    }),
+  );
 }
 
 export interface WriteScratchFileDeps {
@@ -2107,6 +2419,9 @@ export interface PostArtifactDeps {
   queue: (attachment: JsonObject) => Promise<void>;
 }
 
+const POSTED_MEDIA_ID =
+  /\/v1\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|[?#])/i;
+
 function isArtifactMime(value: unknown): value is ArtifactMimeType {
   return typeof value === 'string' && (ARTIFACT_MIME_TYPES as readonly string[]).includes(value);
 }
@@ -2194,9 +2509,10 @@ export async function postArtifact(
   const uploaded = await deps.upload(bytes, mime, title);
   if (!uploaded.url) throw new Error('the artifact upload returned no url');
   await deps.queue({ url: uploaded.url, name: title, mimeType: mime, size: bytes.length });
+  const objectId = POSTED_MEDIA_ID.exec(uploaded.url)?.[1];
   return (
     `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
-    'final reply. Ask for feedback here in the Room.'
+    `final reply.${objectId ? ` Object ${objectId} will be included automatically if this turn opens or revises a corner brief.` : ''} Ask for feedback here in the Room.`
   );
 }
 
@@ -2950,6 +3266,12 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       );
     case 'open_corner':
       return openCorner(args, toolCallId);
+    case 'revise_corner_brief':
+      return reviseCornerBrief(args);
+    case 'read_corner_brief':
+      return readCornerBrief(args);
+    case 'record_validation_stage':
+      return recordValidationStage(args);
     case 'steer_corner':
       return relayMessage('down', args);
     case 'ask_corner':

@@ -6,6 +6,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { GoogleOAuth } from './google-oauth.js';
 import { approvedComposioTools, composioScopeForOwner } from './composio-config.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
@@ -598,7 +599,10 @@ function projectedMessage(
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
-      return { ...base, squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']> };
+      return {
+        ...base,
+        squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']>,
+      };
     case 'connector-offer':
       return {
         ...base,
@@ -1470,6 +1474,42 @@ export class PhoneService {
           )
         ).rows[0]
       : undefined;
+    const cornerBrief = room.parent_id
+      ? await currentCornerBrief(this.database, roomId).catch(() => undefined)
+      : undefined;
+    const cornerBriefHistory = cornerBrief
+      ? await this.database
+          .query<{
+            revision: number;
+            revision_hash: string | null;
+            change: string | null;
+            approval_kind: string | null;
+          }>(
+            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind
+             FROM corner_brief_revisions WHERE corner_id=$1
+             ORDER BY revision DESC LIMIT 20`,
+            [roomId],
+          )
+          .then((result) => result.rows)
+          .catch(() => [])
+      : [];
+    const cornerValidation = cornerBrief
+      ? await this.database
+          .query<{
+            stage: string;
+            status: string;
+            evidence: string;
+          }>(
+            `SELECT stage.stage,stage.status,stage.evidence FROM corner_validation_stages stage
+       JOIN corner_facts fact ON fact.corner_id=stage.corner_id
+       WHERE stage.corner_id=$1 AND stage.brief_revision=$2
+         AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft')
+       ORDER BY stage.stage`,
+            [roomId, cornerBrief.revision],
+          )
+          .then((result) => result.rows)
+          .catch(() => [])
+      : [];
     const boundApp = room.parent_id
       ? (
           await measured(
@@ -1609,6 +1649,48 @@ export class PhoneService {
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
+      ...(cornerBrief
+        ? {
+            cornerBrief: {
+              revision: cornerBrief.revision,
+              revisionHash: cornerBrief.revisionHash,
+              legacy: cornerBrief.legacy,
+              content: cornerBrief.content,
+              intentVerbatim: cornerBrief.intentVerbatim,
+              buildSpec: cornerBrief.buildSpec,
+              criteria: cornerBrief.criteria,
+              nonGoals: cornerBrief.nonGoals,
+              references: cornerBrief.references,
+              approvalBasis: cornerBrief.approvalBasis,
+              history: cornerBriefHistory.map((item) => ({
+                revision: item.revision,
+                revisionHash:
+                  item.revision_hash ??
+                  (item.revision === cornerBrief.revision ? cornerBrief.revisionHash : 'legacy'),
+                ...(item.change ? { change: item.change } : {}),
+                approvalKind: item.approval_kind ?? 'legacy-pre-migration',
+              })),
+              attachments: cornerBrief.attachments.map((file) => ({
+                title: file.title,
+                purpose: file.purpose,
+                required: file.required,
+                url: `${this.publicOrigin}/v1/media/${file.objectId}`,
+              })),
+            },
+          }
+        : {}),
+      ...(cornerBrief
+        ? {
+            cornerValidation: CORNER_VALIDATION_STAGES.map(
+              (stage) =>
+                cornerValidation.find((record) => record.stage === stage) ?? {
+                  stage,
+                  status: 'pending',
+                  evidence: '',
+                },
+            ),
+          }
+        : {}),
       ...((parent ?? room).repository_key && (parent ?? room).repository_remote
         ? {
             repository: {

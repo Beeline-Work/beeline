@@ -81,11 +81,10 @@ async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
      VALUES($1,$2,'Widgets','owner/widgets','https://github.com/owner/widgets.git','repository','main')`,
     [ROOM, WORKSPACE],
   );
-  await database.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [
-    CORNER,
-    WORKSPACE,
-    ROOM,
-  ]);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`,
+    [CORNER, WORKSPACE, ROOM],
+  );
   await database.query(
     `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,lane,lifecycle)
      VALUES($1,$2,$3,'Survey the five nearest competitors and write it up',$4,'{"checks":"unknown"}')`,
@@ -202,11 +201,14 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   const execute = vi.fn(async (name: string) => {
     if (name === 'getAgentConfiguration') return { commands: [] };
     if (name === 'getWorkspaceRoster') {
-      return { members: [{ identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' }] };
+      return {
+        members: [{ identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' }],
+      };
     }
     if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
     if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
-    if (name === 'getCornerCloseRequests') return { items: [], cursor: 'latest', closeRequested: true };
+    if (name === 'getCornerCloseRequests')
+      return { items: [], cursor: 'latest', closeRequested: true };
     return { id: 'write-id', createdAt: 1 };
   });
   const api = {
@@ -257,7 +259,7 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
-  expect(prompt).toContain('post_artifact everything the objective asked for');
+  expect(prompt).toContain('post_artifact everything the assigned intent and criteria require');
   expect(prompt).toContain('The corner stays open until a human explicitly closes it');
   expect(prompt).not.toContain('close_corner');
   const agentServer = sessionInput?.mcpServers.find((server) => server.name === 'beeline-agent');

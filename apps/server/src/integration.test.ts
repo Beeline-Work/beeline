@@ -1,7 +1,10 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
@@ -273,6 +276,8 @@ describe('monolith integration', () => {
   // directly in agent-command.integration.test.ts and never use this helper.
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
+    const fixtureOmitBrief = input.fixtureOmitBrief === true;
+    delete input.fixtureOmitBrief;
     const writes = new Set([
       'postRoomMessage',
       'postAgentDraft',
@@ -283,6 +288,8 @@ describe('monolith integration', () => {
       'retractAgentLiveOutput',
       'postSquireApproval',
       'createCorner',
+      'reviseCornerBrief',
+      'postCornerValidationStage',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -345,6 +352,51 @@ describe('monolith integration', () => {
             String(input.generationId),
           );
       });
+      const suppliedBrief = input.brief as
+        | { content?: unknown; attachments?: unknown; change?: unknown; buildSpec?: unknown }
+        | undefined;
+      if (suppliedBrief?.content && suppliedBrief.buildSpec === undefined) {
+        input.brief = {
+          intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
+          buildSpec: String(suppliedBrief.content),
+          criteria: [{ id: 'AC-1', text: String(suppliedBrief.content) }],
+          references: [],
+          approvalBasis: {
+            kind: 'initiating-command',
+            sourceMessageId: sourceId,
+            snapshot: 'Fixture command',
+          },
+          ...(suppliedBrief.attachments ? { attachments: suppliedBrief.attachments } : {}),
+          ...(suppliedBrief.change ? { change: suppliedBrief.change } : {}),
+        };
+      } else if (name === 'createCorner' && input.brief === undefined && !fixtureOmitBrief) {
+        const sourceRoom = (
+          await database.query<{ repository_key: string | null; repository_resolution: string }>(
+            `SELECT repository_key,repository_resolution FROM rooms WHERE id=$1`,
+            [input.roomId],
+          )
+        ).rows[0];
+        if (
+          input.lane === 'research' ||
+          input.repository ||
+          sourceRoom?.repository_key ||
+          sourceRoom?.repository_resolution === 'repository'
+        ) {
+          input.brief = {
+            intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
+            buildSpec: String(input.objective ?? 'Complete the requested work.'),
+            criteria: [
+              { id: 'AC-1', text: String(input.objective ?? 'Complete the requested work.') },
+            ],
+            references: [],
+            approvalBasis: {
+              kind: 'initiating-command',
+              sourceMessageId: sourceId,
+              snapshot: 'Fixture command',
+            },
+          };
+        }
+      }
     }
     return request(`/v1/daemon/operations/${name}`, 'POST', input, token);
   };
@@ -7750,6 +7802,7 @@ describe('monolith integration', () => {
       idempotencyKey: 'repeated-corner-open:call-1',
       name: 'Ship widget',
       objective: 'Ship the widget end to end',
+      brief: { content: 'A1: ship the agreed widget behavior.' },
     };
     const first = await daemonOperation('createCorner', input);
     const second = await daemonOperation('createCorner', input);
@@ -7757,17 +7810,625 @@ describe('monolith integration', () => {
     expect(second.status).toBe(200);
     const firstResult = (await first.json()) as { cornerId: string };
     expect(await second.json()).toEqual(firstResult);
+    for (const changed of [
+      { ...input, objective: 'Ship a different widget' },
+      { ...input, brief: { content: 'A1: ship only a partial widget.' } },
+      {
+        ...input,
+        brief: {
+          ...input.brief,
+          attachments: [
+            {
+              objectId: '65432109-0000-4000-8000-000000000001',
+              purpose: 'Approved mock',
+              required: true,
+            },
+          ],
+        },
+      },
+    ]) {
+      const retry = await daemonOperation('createCorner', changed);
+      expect(retry.status).toBe(409);
+      expect(await retry.text()).toContain('different assignment');
+    }
 
-    const stored = await database.query<{ corners: number; cards: number; commands: number }>(
+    const stored = await database.query<{
+      corners: number;
+      cards: number;
+      commands: number;
+      briefs: number;
+    }>(
       `SELECT
          (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
          (SELECT count(*)::integer FROM agent_commands
-          WHERE room_id=$4 AND reason='corner_objective') commands`,
+          WHERE room_id=$4 AND reason='corner_objective') commands,
+         (SELECT count(*)::integer FROM corner_brief_revisions WHERE corner_id=$4) briefs`,
       [input.requestId, ROOM, firstResult.cornerId, firstResult.cornerId],
     );
-    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
+    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1, briefs: 1 });
+  });
+
+  it('commits a full brief and its Room file before waking the worker, then preserves the bytes', async () => {
+    const source = await mkdtemp(join(tmpdir(), 'beeline-brief-source-'));
+    await writeFile(join(source, 'approved-mock.txt'), 'approved visual dimensions');
+    const bytes = await readFile(join(source, 'approved-mock.txt'));
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const mediaId = '65432109-0000-4000-8000-000000000001';
+    const key = `media/${HUMAN}/${sha}`;
+    await objectStorage.putObject(key, bytes, 'text/plain');
+    await rm(source, { recursive: true, force: true });
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/plain','approved-mock.txt',$4,$5,'ready',now()+interval '1 hour')`,
+      [mediaId, HUMAN, key, bytes.length, sha],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments)
+       VALUES($1,$2,$3,'Approved reference',$4::jsonb)`,
+      [
+        'a'.repeat(64),
+        ROOM,
+        HUMAN,
+        JSON.stringify([{ url: `${origin}/v1/media/${mediaId}`, name: 'approved-mock.txt' }]),
+      ],
+    );
+    const brief = {
+      content:
+        'Outcome: match the approved dimensions.\nA1: render the specified size.\nA2: preserve existing labels.',
+      attachments: [{ objectId: mediaId, purpose: 'approved visual dimensions', required: true }],
+    };
+    const input = {
+      roomId: ROOM,
+      requestId: 'durable-brief-open',
+      name: 'Render size',
+      objective: 'Match the approved dimensions',
+      brief,
+    };
+    const first = await daemonOperation('createCorner', input);
+    expect(first.status).toBe(200);
+    const { cornerId } = (await first.json()) as { cornerId: string };
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
+    const revisions = await database.query<{ revision: number }>(
+      `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`,
+      [cornerId],
+    );
+    expect(revisions.rows).toEqual([{ revision: 1 }]);
+    const restore = await daemonOperation('getCornerRestoreState', { cornerId });
+    expect(await restore.json()).toMatchObject({
+      brief: {
+        revision: 1,
+        content: brief.content,
+        legacy: false,
+        intentVerbatim: [{ snapshot: 'Fixture command' }],
+        buildSpec: brief.content,
+        criteria: [{ id: 'AC-1', text: brief.content }],
+        references: [],
+        approvalBasis: {
+          kind: 'initiating-command',
+          snapshot: 'Fixture command',
+          approvedBy: HUMAN,
+        },
+        revisionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        attachments: [
+          { objectId: mediaId, sha256: sha, purpose: 'approved visual dimensions', required: true },
+        ],
+      },
+    });
+    const viewed = await phone.readRoom(cornerId, HUMAN);
+    expect(viewed?.cornerBrief).toMatchObject({
+      revision: 1,
+      content: brief.content,
+      legacy: false,
+      buildSpec: brief.content,
+      criteria: [{ id: 'AC-1' }],
+      approvalBasis: { kind: 'initiating-command', approvedBy: HUMAN },
+      history: [{ revision: 1, approvalKind: 'initiating-command' }],
+      attachments: [{ title: 'approved-mock.txt', purpose: 'approved visual dimensions' }],
+    });
+    expect(
+      (
+        await daemonOperation('postCornerValidationStage', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-stage-old',
+          briefRevision: 1,
+          headSha: 'draft',
+          stage: 'intent',
+          status: 'passed',
+          evidence: 'Checked the original assignment.',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
+      mediaId,
+    ]);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBe(0);
+    expect((await fetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
+    const revision = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-correction',
+      expectedRevision: 1,
+      brief: {
+        content:
+          'Outcome: keep the approved dimensions and use the corrected label.\nA1: render the specified size.\nA2: show Corrected.',
+        change: 'The requester corrected the label.',
+        attachments: brief.attachments,
+      },
+    });
+    expect(revision.status).toBe(200);
+    expect(await revision.json()).toMatchObject({
+      revision: 2,
+      change: 'The requester corrected the label.',
+    });
+    // A retry of the original open still names the same corner after a later
+    // correction; the retry is compared with revision 1, not the latest brief.
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
+    expect(
+      (
+        await database.query<{ revision: number }>(
+          `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ revision: 1 }, { revision: 2 }]);
+    const freshValidation = (await (
+      await daemonOperation('getCornerRestoreState', { cornerId })
+    ).json()) as {
+      validation: Array<{ stage: string; status: string }>;
+    };
+    expect(freshValidation.validation.find((stage) => stage.stage === 'intent')?.status).toBe(
+      'pending',
+    );
+    const history = await daemonOperation('listCornerBriefRevisions', { cornerId });
+    expect(await history.json()).toMatchObject({
+      revisions: [
+        { revision: 2, change: 'The requester corrected the label.' },
+        { revision: 1, content: brief.content },
+      ],
+    });
+    const outsider = 'd'.repeat(64);
+    const isolated = new DaemonService(database, new LiveHub());
+    await expect(
+      isolated.execute('listCornerBriefRevisions', { cornerId }, outsider),
+    ).rejects.toThrow('access denied');
+    await expect(
+      isolated.execute(
+        'reviseCornerBrief',
+        {
+          cornerId,
+          requestId: 'unauthorized-brief',
+          expectedRevision: 2,
+          brief: { content: 'Remove the accepted criterion.' },
+        },
+        outsider,
+      ),
+    ).rejects.toThrow('access denied');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    const stale = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'stale-brief-correction',
+      expectedRevision: 1,
+      brief: { content: 'Stale replacement.' },
+    });
+    expect(stale.status).not.toBe(200);
+    expect(
+      (
+        await daemonOperation('reviseCornerBrief', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-without-change',
+          expectedRevision: 2,
+          brief: { content: 'A replacement with no provenance note.' },
+        })
+      ).status,
+    ).not.toBe(200);
+    expect(
+      (await database.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]))
+        .rows,
+    ).toHaveLength(2);
+    const recorded = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-intent',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'intent',
+      status: 'passed',
+      evidence: 'Compared the corrected label and approved dimensions against the brief.',
+    });
+    expect(recorded.status).toBe(200);
+    expect(
+      await daemonOperation('getCornerRestoreState', { cornerId }).then((response) =>
+        response.json(),
+      ),
+    ).toMatchObject({
+      validation: expect.arrayContaining([
+        {
+          briefRevision: 2,
+          headSha: 'draft',
+          stage: 'intent',
+          status: 'passed',
+          evidence: 'Compared the corrected label and approved dimensions against the brief.',
+          actorId: AGENT,
+        },
+      ]),
+    });
+    const falsePass = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-no-evidence',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'tests',
+      status: 'passed',
+      evidence: '',
+    });
+    expect(falsePass.status).not.toBe(200);
+    const falseReview = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-false-review',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'review',
+      status: 'passed',
+      evidence: 'Author claims independent review.',
+    });
+    expect(falseReview.status).not.toBe(200);
+    const falseCi = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-false-ci',
+      briefRevision: 2,
+      headSha: 'draft',
+      stage: 'ci',
+      status: 'passed',
+      evidence: 'No CI rollup exists.',
+    });
+    expect(falseCi.status).not.toBe(200);
+    const reviewedHead = '1'.repeat(40);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: { number: 77, url: 'https://github.com/example/repo/pull/77', headSha: reviewedHead },
+      }),
+    ]);
+    expect(
+      (
+        await daemonOperation('postCornerValidationStage', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-stage-tests-head-1',
+          briefRevision: 2,
+          headSha: reviewedHead,
+          stage: 'tests',
+          status: 'passed',
+          evidence: 'Executed the corner behavior test.',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [cornerId, '2'.repeat(40)],
+    );
+    const moved = (await (await daemonOperation('getCornerRestoreState', { cornerId })).json()) as {
+      validation: Array<{ stage: string; status: string }>;
+    };
+    expect(moved.validation.find((stage) => stage.stage === 'tests')?.status).toBe('pending');
+  });
+
+  it('does not open or wake a corner when a required brief file is unavailable', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'missing-brief-file',
+      name: 'Missing reference',
+      objective: 'Use the approved reference',
+      brief: {
+        content: 'A1: use the approved reference.',
+        attachments: [
+          {
+            objectId: '65432109-0000-4000-8000-000000000002',
+            purpose: 'approved reference',
+            required: true,
+          },
+        ],
+      },
+    });
+    expect(response.status).not.toBe(200);
+    expect(
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-brief-file'`))
+        .rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE reason='corner_objective' AND turn_request_id='missing-brief-file'`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('automatically binds a planning artifact posted in the opening turn', async () => {
+    const objectId = '65432109-0000-4000-8000-000000000099';
+    const bytes = Buffer.from('<html><body>approved mock</body></html>');
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/html','planning-mock.html',$4,$5,'ready',now()+interval '1 hour')`,
+      [objectId, AGENT, `media/${AGENT}/${sha}`, bytes.length, sha],
+    );
+    const requestId = 'auto-bind-planning-artifact';
+    expect(
+      (
+        await daemonOperation('postAgentAttachment', {
+          roomId: ROOM,
+          requestId,
+          attachment: {
+            url: `${origin}/v1/media/${objectId}`,
+            name: 'planning-mock.html',
+            mimeType: 'text/html',
+            size: bytes.length,
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId,
+      idempotencyKey: `${requestId}:open`,
+      name: 'Bound mock',
+      objective: 'Build the approved mock',
+      repository: 'example/repository',
+      brief: { content: 'Implement the approved visual mock exactly.' },
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      brief: {
+        attachments: [
+          {
+            objectId,
+            title: 'planning-mock.html',
+            purpose: 'Planning artifact posted during brief preparation',
+            required: true,
+            sha256: sha,
+          },
+        ],
+      },
+    });
+  });
+
+  it('refuses new repository and research corners without a structured brief at the server boundary', async () => {
+    for (const [requestId, lane] of [
+      ['missing-code-brief', 'code'],
+      ['missing-research-brief', 'research'],
+    ] as const) {
+      const response = await daemonOperation('createCorner', {
+        roomId: ROOM,
+        requestId,
+        name: 'Missing brief',
+        objective: 'Do repository work',
+        lane,
+        repository: 'example/repository',
+        fixtureOmitBrief: true,
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain(
+        'a structured brief is required for repository and research corners',
+      );
+    }
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM corner_facts WHERE request_id IN ('missing-code-brief','missing-research-brief')`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('rejects paraphrased human intent and approval snapshots', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'forged-brief-provenance',
+      name: 'Forged brief',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: {
+        intentVerbatim: [
+          { sourceMessageId: 'not-a-real-message', snapshot: 'A paraphrase written by the agent' },
+        ],
+        buildSpec: 'Implement the paraphrased request.',
+        criteria: [{ id: 'AC-1', text: 'Ship the paraphrase.' }],
+        references: [],
+        approvalBasis: {
+          kind: 'explicit-human-answer',
+          sourceMessageId: 'not-a-real-message',
+          snapshot: 'A paraphrase written by the agent',
+        },
+      },
+    });
+    expect(response.status).not.toBe(200);
+    expect(await response.text()).toContain('must quote an exact human Room message');
+
+    const omittedApproval = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'omitted-approval-intent',
+      name: 'Omitted approval',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: {
+        intentVerbatim: [
+          { sourceMessageId: 'intent-only', snapshot: 'An alleged intent snapshot' },
+        ],
+        buildSpec: 'Implement it.',
+        criteria: [{ id: 'AC-1', text: 'Implement it.' }],
+        references: [],
+        approvalBasis: {
+          kind: 'explicit-human-answer',
+          sourceMessageId: 'different-message',
+          snapshot: 'Looks good',
+        },
+      },
+    });
+    expect(omittedApproval.status).not.toBe(200);
+    expect(await omittedApproval.text()).toContain(
+      'approval basis must be retained in verbatim human intent',
+    );
+  });
+
+  it('rolls back the corner and worker command when brief persistence fails', async () => {
+    await database.query(
+      `ALTER TABLE corner_brief_revisions ADD CONSTRAINT reject_test_brief
+       CHECK (content <> 'reject-this-brief')`,
+    );
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'brief-persistence-failure',
+      name: 'Brief failure',
+      objective: 'Persist a complete assignment',
+      brief: { content: 'reject-this-brief' },
+    });
+    expect(response.status).not.toBe(200);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`,
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE reason='corner_objective' AND turn_request_id='brief-persistence-failure'`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('wakes the configured reviewer with a revised brief on an already green head', async () => {
+    const opened = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'reviewer-brief-open',
+      name: 'Review brief',
+      objective: 'Keep the agreed behavior',
+      brief: { content: 'A1: keep the agreed behavior.' },
+    });
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const reviewerId = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Reviewer','reviewer')`,
+      [reviewerId],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      reviewerId,
+      HUMAN,
+    ]);
+    for (const memberRoom of [null, ROOM, cornerId])
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, memberRoom, reviewerId],
+      );
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, reviewerId]);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: { number: 77, url: 'https://github.com/example/repo/pull/77', headSha: '1'.repeat(40) },
+      }),
+    ]);
+    const revised = await daemonOperation('reviseCornerBrief', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'reviewer-brief-correction',
+      expectedRevision: 1,
+      brief: {
+        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+        change: 'Corrected label',
+      },
+    });
+    expect(revised.status).toBe(200);
+    expect(await revised.json()).toMatchObject({ revision: 2, change: 'Corrected label' });
+    const commands = await database.query<{ agent_id: string; reason: string }>(
+      `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
+      [cornerId],
+    );
+    expect(commands.rows).toEqual([
+      { agent_id: AGENT, reason: 'corner_brief_revision' },
+      { agent_id: reviewerId, reason: 'corner_check' },
+    ]);
+    const reviewerCommand = (
+      await database.query<{ id: string; turn_request_id: string }>(
+        `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_check'`,
+        [cornerId, reviewerId],
+      )
+    ).rows[0]!;
+    const reviewerDaemon = new DaemonService(database, new LiveHub());
+    await reviewerDaemon.execute(
+      'claimAgentCommand',
+      { roomId: cornerId, commandId: reviewerCommand.id, generationId: 'review-generation' },
+      reviewerId,
+    );
+    await reviewerDaemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: cornerId,
+        agentId: reviewerId,
+        requestId: reviewerCommand.turn_request_id,
+        generationId: 'review-generation',
+        status: 'working',
+      },
+      reviewerId,
+    );
+    await expect(
+      reviewerDaemon.execute(
+        'postCornerValidationStage',
+        {
+          cornerId,
+          requestId: reviewerCommand.turn_request_id,
+          generationId: 'review-generation',
+          briefRevision: 2,
+          headSha: '1'.repeat(40),
+          stage: 'review',
+          status: 'passed',
+          evidence: 'Compared both acceptance criteria with the current head.',
+        },
+        reviewerId,
+      ),
+    ).resolves.toMatchObject({ stage: 'review', status: 'passed', actorId: reviewerId });
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      brief: {
+        revision: 2,
+        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+      },
+      validation: expect.arrayContaining([
+        expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
+        expect.objectContaining({ stage: 'tests', status: 'pending' }),
+      ]),
+    });
   });
 
   it('creates every independently keyed corner requested by one originating task', async () => {
@@ -8474,17 +9135,28 @@ describe('monolith integration', () => {
       'foreign-approval',
       'retired-budget',
     ]) {
-      grants.push(await (await daemonOperation('requestAgentGrant', {
-        roomId: ROOM, kind: 'host', target, reason: 'use the host',
-      })).json());
+      grants.push(
+        await (
+          await daemonOperation('requestAgentGrant', {
+            roomId: ROOM,
+            kind: 'host',
+            target,
+            reason: 'use the host',
+          })
+        ).json(),
+      );
     }
-    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [grants[1]!.grantId]);
+    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [
+      grants[1]!.grantId,
+    ]);
     await database.query(`UPDATE agent_grants SET requested_by=$2 WHERE id=$1`, [
       grants[2]!.grantId,
       AGENT,
     ]);
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`,
-      [grants[3]!.grantId, AGENT]);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [
+      grants[3]!.grantId,
+      AGENT,
+    ]);
     await database.query(`UPDATE agent_grants SET kind='budget' WHERE id=$1`, [grants[4]!.grantId]);
     // Production already ran the old migration. These rows retain only the
     // shapes from which the corrective ledger can recover without guessing.
@@ -8525,10 +9197,15 @@ describe('monolith integration', () => {
         .rows,
     ).toEqual([{ status: 'approved' }]);
     const rows = await database.query<{ id: string; status: string }>(
-      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
-    expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
-      [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
-      [grants[3]!.grantId]: 'revoked', [grants[4]!.grantId]: 'revoked',
+      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`,
+      [grants.map((g) => g.grantId)],
+    );
+    expect(Object.fromEntries(rows.rows.map((r) => [r.id, r.status]))).toEqual({
+      [grants[0]!.grantId]: 'pending',
+      [grants[1]!.grantId]: 'revoked',
+      [grants[2]!.grantId]: 'revoked',
+      [grants[3]!.grantId]: 'revoked',
+      [grants[4]!.grantId]: 'revoked',
     });
     const card = (
       await database.query<{
@@ -8538,8 +9215,12 @@ describe('monolith integration', () => {
     ).rows[0]!;
     expect(card.room_id).not.toBe(ROOM);
     expect(card.card.sourceRoomId).toBe(ROOM);
-    expect(card.card.grants.map(g => g.status)).toEqual([
-      'pending', 'revoked', 'revoked', 'revoked', 'revoked',
+    expect(card.card.grants.map((g) => g.status)).toEqual([
+      'pending',
+      'revoked',
+      'revoked',
+      'revoked',
+      'revoked',
     ]);
     const ledger = await database.query<{
       grant_id: string;
@@ -8568,17 +9249,26 @@ describe('monolith integration', () => {
         turn_disposition: 'resumed',
       },
     ]);
-    expect((await database.query(
-      `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
        WHERE g.id=$1 AND resume.action='resume' AND resume.root_source_message_id=(
          SELECT root_source_message_id FROM agent_commands WHERE id=g.command_id
-       )`, [grants[4]!.grantId],
-    )).rowCount).toBe(1);
-    expect((await database.query<{ state: string }>(
-      `SELECT command.state FROM agent_commands command
+       )`,
+          [grants[4]!.grantId],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT command.state FROM agent_commands command
        JOIN agent_grants g ON g.command_id=command.id WHERE g.id=$1`,
-      [grants[2]!.grantId],
-    )).rows).toEqual([{ state: 'cancelled' }]);
+          [grants[2]!.grantId],
+        )
+      ).rows,
+    ).toEqual([{ state: 'cancelled' }]);
     const ownerNotices = await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL
        AND text LIKE '%had a legacy grant revoked%' ORDER BY text`,
@@ -8589,8 +9279,14 @@ describe('monolith integration', () => {
       expect.stringContaining('mismatched-root'),
       expect.stringContaining('missing-provenance'),
     ]);
-    expect((await operation('decideAgentGrant', {grantId: grants[1]!.grantId, decision:'always'})).status).toBe(409);
-    expect((await operation('decideAgentGrant', {grantId: grants[0]!.grantId, decision:'always'})).status).toBe(200);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[1]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[0]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(200);
   });
 
   it('forces both bypasses off in a public Workspace and rejects calls without live command authority', async () => {
@@ -9825,22 +10521,33 @@ describe('monolith integration', () => {
       target: 'facade-resource',
     };
     expect(
-      (await (await daemonOperation('authorizeResourceCall', {
-        ...discoveryContext, consume: false,
-      })).json()).allowed,
+      (
+        await (
+          await daemonOperation('authorizeResourceCall', {
+            ...discoveryContext,
+            consume: false,
+          })
+        ).json()
+      ).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ status: string; expires_at: Date | null }>(
-        `SELECT status,expires_at FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ status: string; expires_at: Date | null }>(
+          `SELECT status,expires_at FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ status: 'once', expires_at: null });
     expect(
       (await (await daemonOperation('authorizeResourceCall', discoveryContext)).json()).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ expired: boolean }>(
-        `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ expired: boolean }>(
+          `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ expired: true });
     expect(
       (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,

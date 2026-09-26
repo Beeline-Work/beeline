@@ -20,6 +20,17 @@ import type {
 } from '@beeline/api-contract/daemon';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
+  CORNER_VALIDATION_STAGES,
+  cornerBriefRevisionHash,
+  currentCornerBrief,
+  isStructuredCornerBrief,
+  projectCornerBrief,
+  resolveCornerBriefApproval,
+  resolveCornerBriefAttachments,
+  resolvePendingCornerBriefAttachments,
+  validateCornerBrief,
+} from './corner-brief.js';
+import {
   AGENT_TO_AGENT_HOP_CAP,
   classifyTurnSilence,
   cornerTextRefusal,
@@ -238,6 +249,8 @@ export class DaemonService {
       'postAgentActivity',
       'postSquireApproval',
       'createCorner',
+      'reviseCornerBrief',
+      'postCornerValidationStage',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -737,6 +750,21 @@ export class DaemonService {
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'listCornerBriefRevisions':
+        return (await this.listCornerBriefRevisions(
+          input as Input<'listCornerBriefRevisions'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'reviseCornerBrief':
+        return (await this.reviseCornerBrief(
+          input as Input<'reviseCornerBrief'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postCornerValidationStage':
+        return (await this.postCornerValidationStage(
+          input as Input<'postCornerValidationStage'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomRepositoryState':
@@ -1432,8 +1460,9 @@ export class DaemonService {
        WHERE r.id=$1 AND c.connector_type='composio'
          AND c.status='connected' AND c.owner_identity_id=helper.owner_id
        ORDER BY c.updated_at DESC LIMIT 1`,
-      [input.roomId, agentId],
-    )).rows[0];
+        [input.roomId, agentId],
+      )
+    ).rows[0];
     if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
     const permission = await this.authorizeScopedGrant(input, agentId, 'mcp', 'composio');
     if (!permission.allowed)
@@ -2407,6 +2436,32 @@ export class DaemonService {
   }
   private async cornerRestore(cornerId: string, agentId: string) {
     await this.access(cornerId, agentId);
+    const brief = await currentCornerBrief(this.database, cornerId);
+    const recordedValidation = brief
+      ? (
+          await this.database.query<{
+            brief_revision: number;
+            head_sha: string;
+            stage: import('@beeline/api-contract/daemon').CornerValidationStageName;
+            status: import('@beeline/api-contract/daemon').CornerValidationStage['status'];
+            evidence: string;
+            actor_id: string;
+          }>(
+            `SELECT stage.brief_revision,stage.head_sha,stage.stage,stage.status,stage.evidence,stage.actor_id
+       FROM corner_validation_stages stage JOIN corner_facts fact ON fact.corner_id=stage.corner_id
+       WHERE stage.corner_id=$1 AND stage.brief_revision=$2
+         AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft') ORDER BY stage.stage`,
+            [cornerId, brief.revision],
+          )
+        ).rows.map((row) => ({
+          briefRevision: row.brief_revision,
+          headSha: row.head_sha,
+          stage: row.stage,
+          status: row.status,
+          evidence: row.evidence,
+          actorId: row.actor_id,
+        }))
+      : [];
     const row = (
       await this.database.query<{
         objective: string;
@@ -2427,6 +2482,8 @@ export class DaemonService {
          FROM corner_facts fact
          JOIN rooms room ON room.id=fact.corner_id
          LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
+           AND approval.brief_revision IS NOT DISTINCT FROM
+             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id)
          LEFT JOIN identities requester ON requester.id=fact.commissioned_by
          WHERE fact.corner_id=$1`,
         [cornerId],
@@ -2435,6 +2492,22 @@ export class DaemonService {
     return {
       cornerId,
       objective: row?.objective ?? '',
+      ...(brief ? { brief } : {}),
+      ...(brief
+        ? {
+            validation: CORNER_VALIDATION_STAGES.map(
+              (stage) =>
+                recordedValidation.find((record) => record.stage === stage) ?? {
+                  briefRevision: brief.revision,
+                  headSha: row?.lifecycle?.pr?.headSha ?? 'draft',
+                  stage,
+                  status: 'pending' as const,
+                  evidence: '',
+                  actorId: '',
+                },
+            ),
+          }
+        : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
@@ -2459,13 +2532,45 @@ export class DaemonService {
         : {}),
     };
   }
+  private async listCornerBriefRevisions(
+    input: Input<'listCornerBriefRevisions'>,
+    agentId: string,
+  ) {
+    await this.access(input.cornerId, agentId);
+    if (
+      input.beforeRevision !== undefined &&
+      (!Number.isInteger(input.beforeRevision) || input.beforeRevision < 1)
+    )
+      throw new Error('invalid brief revision cursor');
+    const rows = (
+      await this.database.query<Parameters<typeof projectCornerBrief>[1]>(
+        `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
+                brief_references,approval_basis,revision_hash,change,author_id,
+                source_room_id,source_message_id,attachments
+       FROM corner_brief_revisions WHERE corner_id=$1 AND ($2::integer IS NULL OR revision<$2)
+       ORDER BY revision DESC LIMIT 21`,
+        [input.cornerId, input.beforeRevision ?? null],
+      )
+    ).rows;
+    return {
+      revisions: rows.slice(0, 20).map((row) => projectCornerBrief(input.cornerId, row)),
+      ...(rows.length > 20 ? { nextBeforeRevision: rows[19]!.revision } : {}),
+    };
+  }
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
-    const target = (
-      await this.database.query<{
-        pull_request_number: number | null;
-        head_sha: string | null;
-      }>(
-        `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
+    return this.database.transaction(async (db) => {
+      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.cornerId]);
+      const currentBrief = await currentCornerBrief(db, input.cornerId);
+      if (currentBrief && input.briefRevision !== currentBrief.revision)
+        throw new Error(
+          'corner brief revision changed; review the current assignment before approving',
+        );
+      const target = (
+        await db.query<{
+          pull_request_number: number | null;
+          head_sha: string | null;
+        }>(
+          `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
                 fact.lifecycle->'pr'->>'headSha' head_sha
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
@@ -2474,26 +2579,27 @@ export class DaemonService {
            AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL
          JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
          WHERE corner.id=$1 AND parent.reviewer_agent_id=$2`,
-        [input.cornerId, agentId],
-      )
-    ).rows[0];
-    if (!target) throw new Error('corner reviewer approval denied');
-    if (!target.pull_request_number || !target.head_sha)
-      throw new Error('corner has no pull request');
-    if (target.head_sha !== input.headSha)
-      throw new Error('pull request head changed; review the current head before approving');
-    await recordCornerMergeApproval(this.database, {
-      cornerId: input.cornerId,
-      approvedBy: agentId,
-      force: false,
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
+          [input.cornerId, agentId],
+        )
+      ).rows[0];
+      if (!target) throw new Error('corner reviewer approval denied');
+      if (!target.pull_request_number || !target.head_sha)
+        throw new Error('corner has no pull request');
+      if (target.head_sha !== input.headSha)
+        throw new Error('pull request head changed; review the current head before approving');
+      await recordCornerMergeApproval(db, {
+        cornerId: input.cornerId,
+        approvedBy: agentId,
+        force: false,
+        pullRequestNumber: target.pull_request_number,
+        headSha: target.head_sha,
+      });
+      return {
+        pullRequestNumber: target.pull_request_number,
+        headSha: target.head_sha,
+        status: 'approved' as const,
+      };
     });
-    return {
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
-      status: 'approved' as const,
-    };
   }
   private async repository(roomId: string, agentId: string) {
     await this.access(roomId, agentId);
@@ -5070,17 +5176,34 @@ export class DaemonService {
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
     if (refusal) throw new Error(refusal);
+    if (input.brief) validateCornerBrief(input.brief);
     const idempotencyKey = input.idempotencyKey ?? input.requestId;
     if (!idempotencyKey || idempotencyKey.length > 128) {
       throw new Error('invalid corner idempotency key');
     }
     await this.access(input.roomId, agentId);
     const parent = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
-        [input.roomId],
-      )
+      await this.database.query<{
+        workspace_id: string;
+        repository_key: string | null;
+        repository_resolution: string;
+      }>(`SELECT workspace_id,repository_key,repository_resolution FROM rooms WHERE id=$1`, [
+        input.roomId,
+      ])
     ).rows[0]!;
+    // A no-code corner is scratch-backed even when its parent Room has a
+    // repository. It has no checkout or repository authority, so keep that
+    // existing lane available without pretending it is repository work.
+    const repositoryWork =
+      input.lane !== 'no_code' &&
+      (input.lane === 'research' ||
+        Boolean(input.repository) ||
+        parent.repository_resolution === 'repository' ||
+        Boolean(parent.repository_key));
+    if (repositoryWork && !input.brief)
+      throw new Error('a structured brief is required for repository and research corners');
+    if (input.brief && !isStructuredCornerBrief(input.brief))
+      throw new Error('the legacy opaque brief format is invalid for new corners');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
@@ -5090,10 +5213,39 @@ export class DaemonService {
       // creating another Room, command, or open card.
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
       const existing = (
-        await db.query<{ corner_id: string }>(
-          `SELECT child.id::text corner_id
+        await db.query<{
+          corner_id: string;
+          name: string;
+          objective: string;
+          owner_agent_id: string;
+          request_id: string;
+          repository_key: string | null;
+          repository_target_branch: string;
+          lane: string;
+          brief_content: string | null;
+          brief_intent: import('@beeline/api-contract/daemon').CornerBrief['intentVerbatim'] | null;
+          brief_build_spec: string | null;
+          brief_criteria: import('@beeline/api-contract/daemon').CornerBrief['criteria'] | null;
+          brief_non_goals: string[] | null;
+          brief_references: import('@beeline/api-contract/daemon').CornerBrief['references'] | null;
+          brief_approval_basis:
+            import('@beeline/api-contract/daemon').CornerBrief['approvalBasis'] | null;
+          brief_revision_hash: string | null;
+          brief_change: string | null;
+          brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
+        }>(
+          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
+                  fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
+                  initial.content brief_content,initial.intent_verbatim brief_intent,
+                  initial.build_spec brief_build_spec,initial.criteria brief_criteria,
+                  initial.non_goals brief_non_goals,initial.brief_references,
+                  initial.approval_basis brief_approval_basis,
+                  initial.revision_hash brief_revision_hash,initial.change brief_change,
+                  initial.attachments brief_attachments
            FROM rooms child
            JOIN corner_facts fact ON fact.corner_id=child.id
+           LEFT JOIN corner_brief_revisions initial
+             ON initial.corner_id=child.id AND initial.revision=1
            WHERE child.parent_id=$1
              AND COALESCE(fact.open_idempotency_key,fact.request_id)=$2
              AND child.archived_at IS NULL
@@ -5103,6 +5255,47 @@ export class DaemonService {
         )
       ).rows[0];
       if (existing) {
+        const sameAttachments =
+          (input.brief?.attachments?.length ?? 0) <= (existing.brief_attachments?.length ?? 0) &&
+          (input.brief?.attachments ?? []).every((item, index) => {
+            const saved = existing.brief_attachments?.[index];
+            return (
+              saved?.objectId === item.objectId.toLowerCase() &&
+              saved.purpose === item.purpose.trim() &&
+              saved.required === item.required
+            );
+          });
+        const sameBrief =
+          input.brief && isStructuredCornerBrief(input.brief)
+            ? existing.brief_revision_hash ===
+                cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
+              existing.brief_change === (input.brief.change ?? null) &&
+              sameAttachments
+            : existing.brief_content === null;
+        if (
+          existing.owner_agent_id !== agentId ||
+          existing.request_id !== input.requestId ||
+          existing.name !== name ||
+          existing.objective !== objective ||
+          existing.repository_key !== (input.repository ?? null) ||
+          existing.repository_target_branch !== (input.targetBranch ?? 'main') ||
+          existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') ||
+          !sameBrief
+        ) {
+          const mismatches = [
+            existing.owner_agent_id !== agentId && 'owner',
+            existing.request_id !== input.requestId && 'request',
+            existing.name !== name && 'name',
+            existing.objective !== objective && 'objective',
+            existing.repository_key !== (input.repository ?? null) && 'repository',
+            existing.repository_target_branch !== (input.targetBranch ?? 'main') && 'target branch',
+            existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') && 'lane',
+            !sameBrief && 'brief',
+          ].filter(Boolean);
+          throw new Error(
+            `corner assignment conflict: idempotency key was already used for a different assignment (${mismatches.join(', ')})`,
+          );
+        }
         cornerId = existing.corner_id;
         return;
       }
@@ -5162,6 +5355,56 @@ export class DaemonService {
           lane,
         ],
       );
+      if (input.brief) {
+        if (!isStructuredCornerBrief(input.brief))
+          throw new Error('new corners cannot use the legacy opaque brief format');
+        const explicitAttachments = await resolveCornerBriefAttachments(
+          db,
+          input.roomId,
+          input.brief,
+        );
+        const attachments = [
+          ...explicitAttachments,
+          ...(await resolvePendingCornerBriefAttachments(db, {
+            roomId: input.roomId,
+            agentId,
+            requestId: input.requestId,
+            generationId: input.generationId,
+            excluding: explicitAttachments.map((attachment) => attachment.objectId),
+          })),
+        ];
+        if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+        const authority = await resolveCornerBriefApproval(
+          db,
+          [input.roomId],
+          input.brief,
+          attachments,
+          parentCommand.root_source_message_id,
+        );
+        await db.query(
+          `INSERT INTO corner_brief_revisions(
+             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+             brief_references,approval_basis,revision_hash,change,author_id,
+             source_room_id,source_message_id,attachments
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [
+            cornerId,
+            input.brief.buildSpec.trim(),
+            JSON.stringify(input.brief.intentVerbatim),
+            input.brief.buildSpec.trim(),
+            JSON.stringify(input.brief.criteria),
+            JSON.stringify(input.brief.nonGoals ?? []),
+            JSON.stringify(input.brief.references),
+            JSON.stringify(authority.approvalBasis),
+            authority.revisionHash,
+            input.brief.change ?? null,
+            agentId,
+            authority.sourceRoomId,
+            input.brief.approvalBasis.sourceMessageId,
+            JSON.stringify(attachments),
+          ],
+        );
+      }
       // The objective is the OPENER's work. Every other agent is copied in as a
       // member so it can read the corner and answer when tagged, but it gets no
       // intake command: #1206 fanned the objective out to every agent member and
@@ -5193,6 +5436,207 @@ export class DaemonService {
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
     return { cornerId };
+  }
+  private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
+    validateCornerBrief(input.brief);
+    if (!isStructuredCornerBrief(input.brief))
+      throw new Error('corner brief revisions require the structured authority contract');
+    const draft = input.brief;
+    if (!draft.change?.trim())
+      throw new Error('corner brief revision requires a change description');
+    const brief = await this.database.transaction(async (db) => {
+      const corner = (
+        await db.query<{ parent_id: string; owner_agent_id: string }>(
+          `SELECT room.parent_id,fact.owner_agent_id FROM rooms room
+         JOIN corner_facts fact ON fact.corner_id=room.id
+         WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
+          [input.cornerId],
+        )
+      ).rows[0];
+      if (!corner?.parent_id || corner.owner_agent_id !== agentId)
+        throw new Error('corner brief revision denied');
+      const command = await authorizeCommandOutput(
+        db,
+        input.cornerId,
+        agentId,
+        input.requestId,
+        input.generationId,
+      );
+      const current = await currentCornerBrief(db, input.cornerId);
+      if ((current?.revision ?? 0) !== input.expectedRevision)
+        throw new Error('corner brief revision changed; read the current assignment');
+      const explicitAttachments = await resolveCornerBriefAttachments(db, corner.parent_id, draft);
+      const attachments = [
+        ...explicitAttachments,
+        ...(await resolvePendingCornerBriefAttachments(db, {
+          roomId: input.cornerId,
+          agentId,
+          requestId: input.requestId,
+          generationId: input.generationId,
+          excluding: explicitAttachments.map((attachment) => attachment.objectId),
+        })),
+      ];
+      if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+      const authority = await resolveCornerBriefApproval(
+        db,
+        [corner.parent_id, input.cornerId],
+        draft,
+        attachments,
+        command.root_source_message_id,
+      );
+      const revision = input.expectedRevision + 1;
+      await db.query(
+        `INSERT INTO corner_brief_revisions(
+           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+           brief_references,approval_basis,revision_hash,change,author_id,
+           source_room_id,source_message_id,attachments
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          input.cornerId,
+          revision,
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.intentVerbatim),
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.criteria),
+          JSON.stringify(draft.nonGoals ?? []),
+          JSON.stringify(draft.references),
+          JSON.stringify(authority.approvalBasis),
+          authority.revisionHash,
+          draft.change?.trim() ?? null,
+          agentId,
+          authority.sourceRoomId,
+          draft.approvalBasis.sourceMessageId,
+          JSON.stringify(attachments),
+        ],
+      );
+      // The revision and worker wake commit together. A green reviewer will
+      // read the latest revision at verdict time, so its old verdict cannot pass.
+      const note = await systemLine(db, {
+        roomId: input.cornerId,
+        subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },
+        verb: 'revised the corner brief',
+        object: { text: `Revision ${revision}`, id: input.cornerId },
+      });
+      await createAgentCommand(db, {
+        roomId: input.cornerId,
+        agentId,
+        sourceMessageId: note.id,
+        reason: 'corner_brief_revision',
+        parent: command,
+        retainDepth: true,
+      });
+      const reviewer = (
+        await db.query<{ reviewer_agent_id: string | null; checks: string; reachable: boolean }>(
+          `SELECT parent.reviewer_agent_id,fact.lifecycle->>'checks' checks,
+            EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=corner.id
+              AND member.identity_id=parent.reviewer_agent_id AND member.removed_at IS NULL)
+            AND EXISTS (SELECT 1 FROM memberships parent_member WHERE parent_member.room_id=parent.id
+              AND parent_member.identity_id=parent.reviewer_agent_id AND parent_member.removed_at IS NULL) reachable
+         FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id WHERE corner.id=$1`,
+          [input.cornerId],
+        )
+      ).rows[0];
+      if (
+        reviewer?.reviewer_agent_id &&
+        reviewer.reviewer_agent_id !== agentId &&
+        reviewer.checks === 'passing' &&
+        reviewer.reachable
+      ) {
+        await createAgentCommand(db, {
+          roomId: input.cornerId,
+          agentId: reviewer.reviewer_agent_id,
+          sourceMessageId: note.id,
+          reason: 'corner_check',
+          parent: command,
+          retainDepth: true,
+        });
+      }
+      return currentCornerBrief(db, input.cornerId);
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
+    return brief!;
+  }
+  private async postCornerValidationStage(
+    input: Input<'postCornerValidationStage'>,
+    agentId: string,
+  ) {
+    const stages = CORNER_VALIDATION_STAGES;
+    const states = ['pending', 'running', 'passed', 'failed', 'skipped', 'not_applicable'];
+    if (
+      !stages.includes(input.stage) ||
+      !states.includes(input.status) ||
+      typeof input.evidence !== 'string' ||
+      input.evidence.length > 4_000 ||
+      ((input.status === 'passed' ||
+        input.status === 'failed' ||
+        input.status === 'skipped' ||
+        input.status === 'not_applicable') &&
+        !input.evidence.trim())
+    )
+      throw new Error('invalid validation stage or missing evidence');
+    if (input.headSha !== 'draft' && !/^[0-9a-f]{40}$/.test(input.headSha))
+      throw new Error('validation head must be draft or a full SHA');
+    return this.database.transaction(async (db) => {
+      const corner = (
+        await db.query<{
+          reviewer_agent_id: string | null;
+          lifecycle: { pr?: { headSha?: string }; checks?: string };
+        }>(
+          `SELECT parent.reviewer_agent_id,fact.lifecycle
+         FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.id=$1 AND corner.archived_at IS NULL FOR UPDATE OF corner`,
+          [input.cornerId],
+        )
+      ).rows[0];
+      if (!corner) throw new Error('corner not found');
+      await authorizeCommandOutput(
+        db,
+        input.cornerId,
+        agentId,
+        input.requestId,
+        input.generationId,
+      );
+      const current = await currentCornerBrief(db, input.cornerId);
+      if ((current?.revision ?? 0) !== input.briefRevision)
+        throw new Error('validation brief revision changed');
+      const currentHead = corner.lifecycle?.pr?.headSha;
+      if (currentHead && input.headSha !== currentHead) throw new Error('validation head changed');
+      if (!currentHead && input.headSha !== 'draft')
+        throw new Error('validation head is not published');
+      if (input.stage === 'review' && corner.reviewer_agent_id !== agentId)
+        throw new Error('only the configured reviewer records the review stage');
+      if (
+        input.stage === 'ci' &&
+        input.status === 'passed' &&
+        corner.lifecycle?.checks !== 'passing'
+      )
+        throw new Error('CI has not passed for this head');
+      await db.query(
+        `INSERT INTO corner_validation_stages(corner_id,brief_revision,head_sha,stage,status,evidence,actor_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT(corner_id,brief_revision,head_sha,stage) DO UPDATE SET
+           status=EXCLUDED.status,evidence=EXCLUDED.evidence,actor_id=EXCLUDED.actor_id,updated_at=now()`,
+        [
+          input.cornerId,
+          input.briefRevision,
+          input.headSha,
+          input.stage,
+          input.status,
+          input.evidence,
+          agentId,
+        ],
+      );
+      return {
+        briefRevision: input.briefRevision,
+        headSha: input.headSha,
+        stage: input.stage,
+        status: input.status,
+        evidence: input.evidence,
+        actorId: agentId,
+      };
+    });
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
@@ -5491,6 +5935,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getTargetAgentAuthority: true,
   listRoomCorners: true,
   getCornerRestoreState: true,
+  listCornerBriefRevisions: true,
+  reviseCornerBrief: true,
+  postCornerValidationStage: true,
   getPrChecksStatus: true,
   approveCornerMerge: true,
   getCornerCloseRequests: true,

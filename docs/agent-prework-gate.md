@@ -2,7 +2,7 @@
 
 ## Decision
 
-Run one lightweight triage skill before an agent proposes or opens a corner:
+Run lightweight triage and brief-writing before an agent opens a corner:
 
 1. **Is it clear?** Rewrite the request as a concrete outcome with acceptance criteria and
    material exclusions. Ask a focused question when ambiguity could change the outcome.
@@ -11,7 +11,7 @@ Run one lightweight triage skill before an agent proposes or opens a corner:
 3. **Is it desirable?** Compare the request with repository-owned goals, invariants, architecture,
    user benefit, maintenance cost, and the smallest coherent solution.
 
-Clarity can require a question before work is proposed. The other two legs emit evidence-backed
+Clarity can require a question before dependent work. The other two legs emit evidence-backed
 warnings but do not block the implementer. The configured reviewer independently repeats the
 warranted-work and desirability checks against the completed change, verifies that the diff matches
 the clarified request, and checks tests and regression exposure before approving the exact head.
@@ -49,15 +49,16 @@ after a pull request exists. Beeline therefore needs a small repository-aware sk
 
 ## Triage behavior
 
-The triage skill runs in the read-only parent Room, before either the ordinary `Proposed corner:`
-line or a direct `open_corner` call.
+The triage and `beeline-spec` skills run in the read-only parent Room before `open_corner`. The
+agent carries settled decisions in a durable brief and uses existing authorization. Writing the
+brief does not require another approval exchange.
 
 ### Clear request
 
-Emit the existing proposal line without extra ceremony:
+Open the corner with the complete brief. A precise small fix needs only a compact brief:
 
 ```text
-Proposed corner: <name> — <objective>
+open_corner(name, objective, brief)
 ```
 
 ### Unclear request
@@ -67,10 +68,9 @@ criteria. Do not guess at scope.
 
 ### Warranted-work or desirability concern
 
-Keep the concern visible beside the proposal without blocking it:
+Keep the concern visible in the brief without blocking dispatch:
 
 ```text
-Proposed corner: <name> — <objective>
 Triage warning — warranted: <evidence-backed reason>
 Triage warning — desirable: <evidence-backed reason>
 ```
@@ -78,7 +78,7 @@ Triage warning — desirable: <evidence-backed reason>
 Emit only applicable warnings. A failed reproduction is a warning, not proof that the report is
 false. A similar title is a search candidate, not proof of duplication. Missing evidence alone is
 not a warning when the repository offers no practical way to obtain it. When a bug reproduction
-succeeds, emit `Reproduction <id>: <user path> → <observable wrong result>` beside the proposal so
+succeeds, record `Reproduction <id>: <user path> → <observable wrong result>` in the brief so
 the implementer can cite it.
 
 ## Bugfix execution
@@ -131,11 +131,12 @@ proof fails review. The author still owns merging after approval; the reviewer n
 
 ## Placement
 
-- `apps/body/src/beeline-skill.ts` owns the release-versioned `beeline-triage` skill (triage plus
-  bugfix execution), the mandatory pre-corner instruction, and the expanded `beeline-review` rubric.
-- `apps/body/src/agent-home.ts` provisions `beeline-triage` to every agent home and keeps
+- `apps/body/src/beeline-skill.ts` owns the release-versioned `beeline-triage` and `beeline-spec`
+  skills, proportional confirmation instructions, and the expanded `beeline-review` rubric.
+- `apps/body/src/agent-home.ts` provisions `beeline-triage` and `beeline-spec` to each selected
+  harness home and keeps
   `beeline-review` exclusive to configured reviewers.
-- The existing Room prompt invokes triage before proposal or opening. The existing green-check
+- The Room prompt invokes triage and brief writing before opening. The existing green-check
   transition invokes review against the exact pull-request head.
 
 The server needs no receipt or new blocking operation. The behavior is procedural before work and
@@ -143,8 +144,9 @@ enforced through the existing reviewer approval gate after implementation.
 
 ## Acceptance tests
 
-- Every implementer home contains `beeline-triage`; non-reviewers still lack `beeline-review`.
-- Every Room prompt explicitly requires triage before `Proposed corner:` or `open_corner`.
+- Every implementer home contains `beeline-triage` and `beeline-spec`; non-reviewers still lack
+  `beeline-review`.
+- Every Room prompt explicitly requires triage and a brief before `open_corner`.
 - Ambiguity that can alter the outcome asks a question instead of silently choosing scope.
 - Failed reproduction, plausible duplicate work, or desirability conflict warns without blocking.
 - Bugfix instruction coverage lives in `apps/body/src/beeline-skill.test.ts`; provisioning is

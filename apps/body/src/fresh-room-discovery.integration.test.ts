@@ -105,6 +105,19 @@ lines.on('line', async (line) => {
             ...ctx,
             name: 'Thing',
             objective: 'Build the thing',
+            brief: {
+              intentVerbatim: [
+                { sourceMessageId: ctx.requestId, snapshot: '@bee OPEN CORNER now' },
+              ],
+              buildSpec: 'Build the requested thing in the corner.',
+              criteria: [{ id: 'AC-1', text: 'The corner opens and runs.' }],
+              references: [],
+              approvalBasis: {
+                kind: 'initiating-command',
+                sourceMessageId: ctx.requestId,
+                snapshot: '@bee OPEN CORNER now',
+              },
+            },
             ...(process.env.BEELINE_TEST_REPO_KEY
               ? { repository: process.env.BEELINE_TEST_REPO_KEY, targetBranch: 'main' }
               : {}),

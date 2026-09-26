@@ -18,6 +18,7 @@ import { resolve } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
+import { AGENT_KINDS } from './agent-command.js';
 import {
   AGENT_SKILL_DIRS,
   agentSkillDir,
@@ -33,6 +34,7 @@ import {
 } from './agent-home.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   USING_BEELINE_SKILL_NAME,
 } from './beeline-skill.js';
@@ -432,7 +434,9 @@ describe('per-room harness state isolation', () => {
 
     await expect(prepareRoomAgentHome({ root })).resolves.toEqual({});
     await expect(prepareRoomAgentHome({ root, failClosed: true })).rejects.toThrow();
-    await expect(prepareRoomAgentHome({ root, resourceAuthFile: '/tmp/resource-auth.json' })).rejects.toThrow();
+    await expect(
+      prepareRoomAgentHome({ root, resourceAuthFile: '/tmp/resource-auth.json' }),
+    ).rejects.toThrow();
   });
 
   it('detects the local Trusty Squire state boundary', async () => {
@@ -536,7 +540,8 @@ describe('operator skills + MCP passthrough', () => {
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
     await prepareRoomAgentHome({
-      root: roomRoot, grantedHostRoutes: ['project_tools'],
+      root: roomRoot,
+      grantedHostRoutes: ['project_tools'],
       operatorHome,
       agentKind: 'claude',
       isReviewer: true,
@@ -563,7 +568,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
-    expect(reviewSkill).toContain('P0 - OBJECTIVE FULFILLED, DEMONSTRATED');
+    expect(reviewSkill).toContain('P0 - HUMAN INTENT AND CRITERIA FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
     expect(triageSkill).toContain('name: beeline-triage');
@@ -628,7 +633,13 @@ describe('operator skills + MCP passthrough', () => {
 
     await prepareRoomAgentHome({ root: implementerRoot, operatorHome, agentKind: 'claude' });
     expect(readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort()).toEqual(
-      ['greet', 'draw-avatar', BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
+      [
+        'greet',
+        'draw-avatar',
+        BEELINE_SPEC_SKILL_NAME,
+        BEELINE_TRIAGE_SKILL_NAME,
+        USING_BEELINE_SKILL_NAME,
+      ].sort(),
     );
 
     await prepareRoomAgentHome({
@@ -640,6 +651,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort()).toEqual(
       [
         BEELINE_REVIEW_SKILL_NAME,
+        BEELINE_SPEC_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
         'draw-avatar',
         'greet',
@@ -793,7 +805,11 @@ describe('operator skills + MCP passthrough', () => {
     );
 
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
-    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['files', 'tools'], operatorHome });
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      grantedHostRoutes: ['files', 'tools'],
+      operatorHome,
+    });
 
     const claudeJson = resolve(roomRoot, 'claude', '.claude.json');
     expect(lstatSync(claudeJson).isSymbolicLink()).toBe(false);
@@ -846,11 +862,19 @@ describe('operator skills + MCP passthrough', () => {
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const redirected = resolve(await scratch('beeline-redirected-'), 'config.toml');
     await writeFile(redirected, 'must stay unchanged\n');
-    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['project_tools'], operatorHome });
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      grantedHostRoutes: ['project_tools'],
+      operatorHome,
+    });
     await rm(resolve(roomRoot, 'codex', 'config.toml'));
     await symlink(redirected, resolve(roomRoot, 'codex', 'config.toml'));
 
-    await prepareRoomAgentHome({ root: roomRoot, grantedHostRoutes: ['project_tools'], operatorHome });
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      grantedHostRoutes: ['project_tools'],
+      operatorHome,
+    });
 
     expect(lstatSync(resolve(roomRoot, 'codex', 'config.toml')).isSymbolicLink()).toBe(false);
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toContain(
@@ -959,7 +983,14 @@ describe('mounted imported MCP server names', () => {
     );
 
     expect(mountedImportedMcpServerNames({ operatorHome })).toEqual([]);
-    expect(hostImportedMcpServerNames({ operatorHome })).toEqual(['files', 'filesystem', 'linear', 'squire', 'typescript', 'vault']);
+    expect(hostImportedMcpServerNames({ operatorHome })).toEqual([
+      'files',
+      'filesystem',
+      'linear',
+      'squire',
+      'typescript',
+      'vault',
+    ]);
   });
 
   it.each(['codex', 'grok'] as const)(
@@ -979,7 +1010,7 @@ describe('mounted imported MCP server names', () => {
         await writeFile(sourcePath, source);
         const preparedEnv = await prepareRoomAgentHome({
           root: agentHomeRoot,
-      grantedHostRoutes: ['files', 'context7', 'typescript'],
+          grantedHostRoutes: ['files', 'context7', 'typescript'],
           operatorHome,
           agentKind,
         });
@@ -1012,7 +1043,7 @@ describe('mounted imported MCP server names', () => {
     });
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
-    expect(hostImportedMcpServerNames(input)).toEqual(['files','squire']);
+    expect(hostImportedMcpServerNames(input)).toEqual(['files', 'squire']);
     const isolatedGoose = readFileSync(
       resolve(preparedEnv.GOOSE_PATH_ROOT!, 'config/config.yaml'),
       'utf8',
@@ -1146,7 +1177,10 @@ describe('mounted imported MCP server names', () => {
     expect(isolated.mcp_servers.files).toMatchObject({ command: 'files-mcp' });
     expect(isolated.mcp_servers.browser).toBeUndefined();
     expect(isolatedText).not.toContain('browser-mcp');
-    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['browser','files']);
+    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([
+      'browser',
+      'files',
+    ]);
     expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([]);
     expect(
       mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv }),
@@ -1170,7 +1204,11 @@ describe('mounted imported MCP server names', () => {
         mcpServers: { typescript: { command: 'typescript-mcp' } },
       }),
     );
-    const preparedEnv = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, grantedHostRoutes: ['files','typescript'] });
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      grantedHostRoutes: ['files', 'typescript'],
+    });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
     expect(mountedImportedMcpServerNames({ agentKind: 'claude', preparedEnv })).toEqual([
       'typescript',
@@ -1180,7 +1218,11 @@ describe('mounted imported MCP server names', () => {
       '[mcp_servers.squire]\nurl = "http://localhost:1234/mcp"\n',
     );
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['squire']);
-    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, grantedHostRoutes: ['files','typescript'] });
+    await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      grantedHostRoutes: ['files', 'typescript'],
+    });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
   });
 
@@ -1256,7 +1298,7 @@ describe('mounted imported MCP server names', () => {
     );
     const input = { operatorHome, agentKind: 'pi' as const };
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
-    expect(hostImportedMcpServerNames(input)).toEqual(['files','trusty-squire']);
+    expect(hostImportedMcpServerNames(input)).toEqual(['files', 'trusty-squire']);
     expect(
       expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['files', 'squire'] }),
     ).toEqual(['files', 'squire']);
@@ -1486,5 +1528,30 @@ describe('skill provision reuse', () => {
 
     await prepareRoomAgentHome({ root, operatorHome, agentKind: 'pi' });
     expect(readFileSync(resolve(root, 'pi', 'skills', 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
+  });
+
+  it('delivers release-managed guidance to newly paired homes across every agent kind', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    for (const agentKind of AGENT_KINDS) {
+      const root = resolve(await scratch(`beeline-spec-${agentKind}-`), 'agent-home');
+      await prepareRoomAgentHome({ root, operatorHome, agentKind, isReviewer: true });
+      const skills = resolve(root, agentSkillDir(agentKind), 'skills');
+      const spec = readFileSync(resolve(skills, 'beeline-spec', 'SKILL.md'), 'utf8');
+      const review = readFileSync(resolve(skills, 'beeline-review', 'SKILL.md'), 'utf8');
+      expect(spec).toContain('name: beeline-spec');
+      expect(spec).toContain('If one unresolved choice would materially change behavior');
+      expect(spec).toContain('intentVerbatim[]');
+      expect(spec).toContain('Bounded adversarial second read (default on)');
+      expect(spec).toContain('Do not infer approval from silence');
+      expect(review).toContain('Read the server-assigned brief and its current revision');
+      expect(review).toContain('Quote every verbatim human-intent entry');
+      expect(review).toContain('List every current criterion ID exactly once');
+      expect(review).toContain(
+        'Build one visible validation record for the brief revision and code head.',
+      );
+      if (agentKind === 'goose' || agentKind === 'reference' || agentKind === 'custom') {
+        expect(agentSkillDir(agentKind)).toBe('codex');
+      }
+    }
   });
 });

@@ -35,6 +35,7 @@
     "prove:private-pairing": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/prove-private-pairing.ts",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:review-handoff": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-review-handoff.ts",
+    "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
     "prove:tailscale-connector": "node --import tsx scripts/prove-tailscale-connector.ts",
     "prove:connector-adapters": "node --import tsx scripts/prove-connector-adapters.ts",

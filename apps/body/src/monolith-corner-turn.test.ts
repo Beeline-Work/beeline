@@ -99,10 +99,13 @@ describe('corner merge instructions', () => {
       openedByAgent: false,
       pullRequestNumber: 42,
       headSha: 'a'.repeat(40),
+      briefRevision: 2,
     };
     const instruction = cornerReviewerInstruction(reviewer)!;
     expect(instruction).toContain(`Checks are green on PR #42 at ${'a'.repeat(40)}`);
     expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
+    expect(instruction).toContain('assigned brief revision 2');
+    expect(instruction).toContain('briefRevision=2');
     expect(instruction).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
     expect(instruction).toContain('Never merge yourself');
     expect(instruction).toContain('Never say you are holding or waiting for checks');
@@ -245,7 +248,7 @@ describe('corner merge instructions', () => {
       supervisorRoot: root,
       transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
       agentBinary: '/fake-agent',
-      agentKind: 'codex',
+      agentKind: 'goose',
       agentCommand: '/fake-agent',
       agentArgs: [],
       mcpBinary: '/fake-dev-mcp',
@@ -325,13 +328,14 @@ describe('corner merge instructions', () => {
       runtime,
       config: {
         agentBinary: '/fake-agent',
-        agentKind: 'codex',
+        agentKind: 'goose',
         agentCommand: '/fake-agent',
         agentArgs: [],
         mcpBinary: '/fake-dev-mcp',
         readonlyMcpCommand: '/fake-beeline-mcp',
         agentEnv: {},
         workspaceRoot: root,
+        agentHomeRoot: join(root, 'agent-home'),
         autoApprovePermissions: true,
         codegraphCommand: '/usr/bin/false',
       },
@@ -389,6 +393,9 @@ describe('corner merge instructions', () => {
     const firstInstruction = await activeInstruction();
     expect(firstInstruction).toContain(`Checks are green on PR #7 at ${firstHead}`);
     expect(firstInstruction).toContain(`call the approve_merge tool for ${firstHead}`);
+    const reviewSkill = join(root, 'agent-home', 'codex', 'skills', 'beeline-review', 'SKILL.md');
+    expect(firstInstruction).toContain(reviewSkill);
+    expect(await readFile(reviewSkill, 'utf8')).toContain('Read the server-assigned brief');
     await writeFile(join(root, 'reviewed.txt'), 'latest head\n');
     await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'latest head']);
@@ -2421,6 +2428,53 @@ describe('thin monolith corner turn', () => {
           cursor: 'latest',
         };
       }
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-id',
+          objective: 'Implement the widget',
+          closeRequested: false,
+          brief: {
+            id: 'corner-id',
+            revision: 2,
+            legacy: false,
+            authorId: runtime.agent.publicKey,
+            sourceRoomId: 'room-id',
+            sourceMessageId: 'correction-message',
+            attachments: [],
+            content: 'Preserve the requested widget size and deliberate amber label.',
+            intentVerbatim: [
+              {
+                sourceMessageId: 'intent-message',
+                snapshot: 'Build the requested widget at the agreed size.',
+              },
+              {
+                sourceMessageId: 'correction-message',
+                snapshot: 'Correction: keep the label amber, not blue.',
+              },
+            ],
+            buildSpec: 'Preserve the requested widget size and deliberate amber label.',
+            criteria: [
+              { id: 'AC-1', text: 'The widget keeps the requested size.' },
+              { id: 'AC-2', text: 'The label remains amber.' },
+            ],
+            nonGoals: ['Changing the label to the conventional blue.'],
+            references: [
+              {
+                label: 'Approved widget mock',
+                authority: 'approved-reference',
+                description: 'The corrected amber visual.',
+              },
+            ],
+            approvalBasis: {
+              kind: 'explicit-human-answer',
+              sourceMessageId: 'correction-message',
+              snapshot: 'Correction: keep the label amber, not blue.',
+              approvedBy: 'human-pubkey',
+              briefHash: 'a'.repeat(64),
+            },
+            revisionHash: 'a'.repeat(64),
+          },
+        };
       if (name === 'getInstitutionalContext') {
         institutionalReads += 1;
         const text = `Corner institutional snapshot ${institutionalReads}`;
@@ -2523,8 +2577,12 @@ describe('thin monolith corner turn', () => {
     // on every prompt.
     expect(secondPrompt).toContain('New in the corner since your last turn');
     expect(secondPrompt).not.toContain('corner row 1\n');
-    expect(firstPrompt).toContain('Corner objective:\nImplement the widget');
-    expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
+    expect(firstPrompt).toContain(
+      'Corner navigation summary (not product authority):\nImplement the widget',
+    );
+    expect(secondPrompt).toContain(
+      'Corner navigation summary (not product authority):\nImplement the widget',
+    );
     expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
     expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -2626,6 +2684,14 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
+      expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
+      expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
+      expect(call[1]).toContain(
+        '[message correction-message] Correction: keep the label amber, not blue.',
+      );
+      expect(call[1]).toContain('AC-2: The label remains amber.');
+      expect(call[1]).toContain('Approval basis bound to this revision:');
+      expect(call[1]).toContain('explicit-human-answer by human-pubkey');
       expect(call[1]).toContain('Your Beeline identity is Bee.');
       expect(call[1]).toContain(
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',

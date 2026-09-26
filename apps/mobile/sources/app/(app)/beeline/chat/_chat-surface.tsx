@@ -325,6 +325,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { AgentOfflineHint } from '@/components/buzz/AgentOfflineHint';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
+import { CornerBriefDisclosure } from '@/components/buzz/CornerBriefDisclosure';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -5384,6 +5385,11 @@ export function BuzzChatSurface({
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
           {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
+          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
+            void openExternalUrl(url).catch(() => {
+              Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
+            });
+          }} />}
 
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}

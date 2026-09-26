@@ -264,6 +264,100 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).rejects.toThrow(/live institutional memory is disabled/);
   });
 
+  it('uses an explicit rollout stage to narrow global enablement', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
+       VALUES($1,'off')`,
+      [WORKSPACE],
+    );
+    await expect(enqueue()).resolves.toBeUndefined();
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET stage='shadow' WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await database.transaction((db) =>
+      enqueueInstitutionalMemoryTurnReview(db, {
+        roomId: ROOM,
+        sourceMessageId: MESSAGE,
+        requestId: 'rollout-shadow',
+        config: liveConfig,
+      }),
+    );
+    expect(
+      (
+        await database.query<{ mode: string }>(
+          `SELECT mode FROM institutional_memory_jobs WHERE source_request_id='rollout-shadow'`,
+        )
+      ).rows[0]?.mode,
+    ).toBe('shadow');
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET stage='paused' WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await expect(claimInstitutionalMemoryJob(database, AGENT, liveConfig)).resolves.toBeUndefined();
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET stage='shadow' WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    const claimed = (await claimInstitutionalMemoryJob(database, AGENT, liveConfig))!;
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET stage='paused' WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await expect(
+      completeInstitutionalMemoryJob(
+        database,
+        AGENT,
+        {
+          agentId: AGENT,
+          jobId: claimed.id,
+          leaseToken: claimed.leaseToken,
+          proposal: null,
+          usage,
+        },
+        liveConfig,
+      ),
+    ).rejects.toThrow(/paused/);
+  });
+
+  it('enforces a Workspace rollout token budget when claiming host work', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage,daily_token_budget)
+       VALUES($1,'live',1000)`,
+      [WORKSPACE],
+    );
+    await database.transaction((db) =>
+      enqueueInstitutionalMemoryTurnReview(db, {
+        roomId: ROOM,
+        sourceMessageId: MESSAGE,
+        requestId: 'budget-first',
+        config: liveConfig,
+      }),
+    );
+    const first = (await claimInstitutionalMemoryJob(database, AGENT, liveConfig))!;
+    await completeInstitutionalMemoryJob(
+      database,
+      AGENT,
+      {
+        agentId: AGENT,
+        jobId: first.id,
+        leaseToken: first.leaseToken,
+        proposal: workspaceProposal(ROOM, MESSAGE),
+        usage: { ...usage, inputTokens: 600, outputTokens: 400 },
+      },
+      liveConfig,
+    );
+    await database.transaction((db) =>
+      enqueueInstitutionalMemoryTurnReview(db, {
+        roomId: ROOM,
+        sourceMessageId: MESSAGE,
+        requestId: 'budget-second',
+        config: liveConfig,
+      }),
+    );
+    await expect(claimInstitutionalMemoryJob(database, AGENT, liveConfig)).resolves.toBeUndefined();
+  });
+
   it('requires both a reported host and current source-Room membership', async () => {
     await enqueue();
     await database.query(`UPDATE agents SET machine_id=NULL WHERE agent_id=$1`, [AGENT]);

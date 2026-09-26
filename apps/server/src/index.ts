@@ -31,6 +31,7 @@ import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
+import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -278,6 +279,11 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
+        try {
+          await runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now));
+        } catch (error) {
+          console.error('[server] institutional curator cycle failed:', error);
+        }
         if (githubJobs) {
           try {
             await githubJobs.refreshUnknownMergeability();

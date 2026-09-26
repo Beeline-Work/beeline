@@ -19,6 +19,7 @@ export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
 export const INSTITUTIONAL_REVIEW_FINDING_MAX = 20;
+export const INSTITUTIONAL_CURATOR_ACTION_MAX = 50;
 
 export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
@@ -274,8 +275,26 @@ export interface InstitutionalMergeReviewProposal {
   readonly findings: readonly InstitutionalReviewFindingProposal[];
 }
 
+export interface InstitutionalCuratorAction {
+  readonly action: 'retain' | 'stale' | 'archive' | 'consolidate';
+  readonly targetType: 'memory_item' | 'workspace_skill';
+  readonly targetId: string;
+  readonly baseVersion: number;
+  readonly duplicateIds: readonly string[];
+  readonly body?: string;
+  readonly description?: string;
+  readonly markdown?: string;
+  readonly rationale: string;
+}
+
+export interface InstitutionalCuratorProposal {
+  readonly proposalVersion: 1;
+  readonly partition: string;
+  readonly actions: readonly InstitutionalCuratorAction[];
+}
+
 export type InstitutionalMemoryJobProposal =
-  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal;
+  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
 
 export interface LoadWorkspaceSkillInput {
   readonly agentId: string;
@@ -577,4 +596,116 @@ export function parseInstitutionalMergeReviewProposal(
     };
   });
   return { proposalVersion: 1, skill, findings };
+}
+
+export function parseInstitutionalCuratorProposal(value: unknown): InstitutionalCuratorProposal {
+  const proposal = record(value, 'institutional curator proposal');
+  exactKeys(
+    proposal,
+    ['proposalVersion', 'partition', 'actions'],
+    'institutional curator proposal',
+  );
+  if (proposal.proposalVersion !== 1) {
+    throw new Error('institutional curator proposal version is unsupported');
+  }
+  const partition = boundedText(proposal.partition, 'institutional curator partition', 300);
+  if (
+    !Array.isArray(proposal.actions) ||
+    proposal.actions.length > INSTITUTIONAL_CURATOR_ACTION_MAX
+  ) {
+    throw new Error('institutional curator actions are invalid');
+  }
+  const actions = proposal.actions.map<InstitutionalCuratorAction>((value) => {
+    const action = record(value, 'institutional curator action');
+    exactKeys(
+      action,
+      [
+        'action',
+        'targetType',
+        'targetId',
+        'baseVersion',
+        'duplicateIds',
+        'body',
+        'description',
+        'markdown',
+        'rationale',
+      ],
+      'institutional curator action',
+    );
+    if (
+      action.action !== 'retain' &&
+      action.action !== 'stale' &&
+      action.action !== 'archive' &&
+      action.action !== 'consolidate'
+    ) {
+      throw new Error('institutional curator action kind is invalid');
+    }
+    if (action.targetType !== 'memory_item' && action.targetType !== 'workspace_skill') {
+      throw new Error('institutional curator target type is invalid');
+    }
+    if (!Number.isSafeInteger(action.baseVersion) || (action.baseVersion as number) <= 0) {
+      throw new Error('institutional curator base version is invalid');
+    }
+    if (
+      !Array.isArray(action.duplicateIds) ||
+      action.duplicateIds.length > 20 ||
+      action.duplicateIds.some((id) => typeof id !== 'string' || !id || id.length > 100)
+    ) {
+      throw new Error('institutional curator duplicate ids are invalid');
+    }
+    if (action.action === 'consolidate' && action.duplicateIds.length === 0) {
+      throw new Error('institutional curator consolidation needs duplicates');
+    }
+    if (action.action !== 'consolidate' && action.duplicateIds.length !== 0) {
+      throw new Error('institutional curator lifecycle action cannot carry duplicates');
+    }
+    const body =
+      action.body === undefined
+        ? undefined
+        : boundedText(
+            action.body,
+            'institutional curator body',
+            INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+            true,
+          );
+    const description =
+      action.description === undefined
+        ? undefined
+        : boundedText(
+            action.description,
+            'institutional curator skill description',
+            WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
+          );
+    const markdown =
+      action.markdown === undefined
+        ? undefined
+        : boundedText(
+            action.markdown,
+            'institutional curator skill markdown',
+            WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+            true,
+          );
+    if (
+      action.action === 'consolidate' &&
+      ((action.targetType === 'memory_item' && (!body || description || markdown)) ||
+        (action.targetType === 'workspace_skill' && (!description || !markdown || body)))
+    ) {
+      throw new Error('institutional curator consolidation content is invalid');
+    }
+    if (action.action !== 'consolidate' && (body || description || markdown)) {
+      throw new Error('institutional curator lifecycle action cannot replace content');
+    }
+    return {
+      action: action.action,
+      targetType: action.targetType,
+      targetId: boundedText(action.targetId, 'institutional curator target id', 100),
+      baseVersion: action.baseVersion as number,
+      duplicateIds: [...new Set(action.duplicateIds as string[])],
+      ...(body ? { body } : {}),
+      ...(description ? { description } : {}),
+      ...(markdown ? { markdown } : {}),
+      rationale: boundedText(action.rationale, 'institutional curator rationale', 500),
+    };
+  });
+  return { proposalVersion: 1, partition, actions };
 }

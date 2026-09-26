@@ -8,6 +8,7 @@ import {
   INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH,
+  parseInstitutionalCuratorProposal,
   parseInstitutionalMemoryProposal,
   type CompleteInstitutionalMemoryJobInput,
   type FailInstitutionalMemoryJobInput,
@@ -26,18 +27,27 @@ import {
   parseAndValidateMergeReviewProposal,
   type WorkspaceSkillIndexCandidate,
 } from './institutional-skills.js';
+import { applyInstitutionalCuratorProposal } from './institutional-curator.js';
+import {
+  institutionalWorkspaceRolloutStage,
+  rolloutAllowsJobs,
+  rolloutAllowsLive,
+} from './institutional-rollout.js';
 
 export const INSTITUTIONAL_MEMORY_SHADOW_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED';
 export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
 export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT = 50;
+export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT = 100_000;
 export const DEFAULT_INSTITUTIONAL_MEMORY_LEASE_MS = 5 * 60_000;
 export const INSTITUTIONAL_MEMORY_CONTEXT_MESSAGE_LIMIT = 16;
 export const INSTITUTIONAL_MEMORY_CONTEXT_BYTE_LIMIT = 24_000;
+export const INSTITUTIONAL_MEMORY_EXISTING_ITEM_BYTE_LIMIT = 24_000;
 
 export interface InstitutionalMemoryShadowConfig {
   readonly enabled: boolean;
   readonly live?: boolean;
   readonly dailyJobLimit?: number;
+  readonly dailyTokenLimit?: number;
   readonly leaseMs?: number;
 }
 
@@ -49,6 +59,10 @@ export function institutionalMemoryShadowConfigFromEnv(
       DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
   );
   const live = env[INSTITUTIONAL_MEMORY_LIVE_FLAG] === 'true';
+  const parsedTokenLimit = Number(
+    env.BEELINE_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT ??
+      DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
+  );
   return {
     enabled: live || env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] === 'true',
     live,
@@ -56,6 +70,12 @@ export function institutionalMemoryShadowConfigFromEnv(
       Number.isSafeInteger(parsedLimit) && parsedLimit > 0 && parsedLimit <= 1_000
         ? parsedLimit
         : DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
+    dailyTokenLimit:
+      Number.isSafeInteger(parsedTokenLimit) &&
+      parsedTokenLimit >= 1_000 &&
+      parsedTokenLimit <= 10_000_000
+        ? parsedTokenLimit
+        : DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
   };
 }
 
@@ -117,6 +137,8 @@ export async function enqueueInstitutionalMemoryTurnReview(
     )
   ).rows[0];
   if (!source || !eligibleTurnSource(source)) return undefined;
+  const rolloutStage = await institutionalWorkspaceRolloutStage(database, source.workspace_id);
+  if (!rolloutAllowsJobs(rolloutStage)) return undefined;
 
   // The daily cap is a cost boundary, so serialize its count with enqueue for
   // this Workspace rather than accepting an unbounded concurrent overshoot.
@@ -154,7 +176,7 @@ export async function enqueueInstitutionalMemoryTurnReview(
       source.requester_identity_id,
       Array.isArray(source.direct_participants) ? 'human_private' : 'workspace_candidate',
       key,
-      input.config.live ? 'live' : 'shadow',
+      input.config.live && rolloutStage !== 'shadow' ? 'live' : 'shadow',
     ],
   );
   return inserted.rows[0]?.id;
@@ -201,6 +223,8 @@ export async function enqueueInstitutionalMemoryMergeReview(
     )
   ).rows[0];
   if (!source) return undefined;
+  const rolloutStage = await institutionalWorkspaceRolloutStage(database, source.workspace_id);
+  if (!rolloutAllowsJobs(rolloutStage)) return undefined;
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     `institutional-memory:${source.workspace_id}`,
   ]);
@@ -217,6 +241,34 @@ export async function enqueueInstitutionalMemoryMergeReview(
   ) {
     return undefined;
   }
+  const priorSkill = (
+    await database.query<{
+      slug: string;
+      description: string;
+      current_version: number;
+      markdown: string;
+      repository: string;
+      target_commit: string;
+      path: string | null;
+      code_content_hash: string | null;
+      source_message_ids: string[];
+    }>(
+      `SELECT skill.slug,skill.description,skill.current_version,version.markdown,
+              skill.repository,skill.target_commit,skill.path,skill.code_content_hash,
+              version.source_message_ids
+       FROM workspace_skills skill
+       JOIN workspace_skill_versions version
+         ON version.skill_id=skill.id AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.repository=$2 AND skill.state='active'
+         AND version.source_deleted_at IS NULL
+       ORDER BY (
+         to_tsvector('simple',skill.slug||' '||skill.description) @@
+         plainto_tsquery('simple',$3)
+       ) DESC,skill.updated_at DESC,skill.id
+       LIMIT 1`,
+      [source.workspace_id, input.repository, input.objective],
+    )
+  ).rows[0];
   const id = randomUUID();
   const key = `merge_review:${input.cornerId}:${input.targetCommit}`;
   const context = {
@@ -227,6 +279,25 @@ export async function enqueueInstitutionalMemoryMergeReview(
     pullRequestTitle: input.pullRequestTitle,
     commits: input.commits,
     files: input.files,
+    ...(priorSkill
+      ? {
+          priorSkill: {
+            slug: priorSkill.slug,
+            description: priorSkill.description,
+            baseVersion: priorSkill.current_version,
+            markdown: priorSkill.markdown,
+            sourceMessageIds: priorSkill.source_message_ids,
+            anchor: {
+              repository: priorSkill.repository,
+              targetCommit: priorSkill.target_commit,
+              ...(priorSkill.path ? { path: priorSkill.path } : {}),
+              ...(priorSkill.code_content_hash
+                ? { contentHash: priorSkill.code_content_hash }
+                : {}),
+            },
+          },
+        }
+      : {}),
   };
   return (
     await database.query<{ id: string }>(
@@ -243,7 +314,7 @@ export async function enqueueInstitutionalMemoryMergeReview(
         source.requester_identity_id,
         key,
         JSON.stringify(context),
-        input.config.live ? 'live' : 'shadow',
+        input.config.live && rolloutStage !== 'shadow' ? 'live' : 'shadow',
       ],
     )
   ).rows[0]?.id;
@@ -291,6 +362,35 @@ function boundedMessages(
   }));
 }
 
+function boundedExistingItems(
+  rows: readonly {
+    id: string;
+    kind: InstitutionalMemoryItem['kind'];
+    subject_identity_id: string | null;
+    canonical_key: string;
+    body: string;
+    version: number;
+  }[],
+): InstitutionalMemoryShadowJob['existingItems'] {
+  const selected: InstitutionalMemoryShadowJob['existingItems'][number][] = [];
+  let bytes = 0;
+  for (const item of rows) {
+    const projected = {
+      id: item.id,
+      kind: item.kind,
+      ...(item.subject_identity_id ? { subjectIdentityId: item.subject_identity_id } : {}),
+      canonicalKey: item.canonical_key,
+      body: item.body,
+      version: item.version,
+    };
+    const itemBytes = Buffer.byteLength(JSON.stringify(projected), 'utf8') + 1;
+    if (bytes + itemBytes > INSTITUTIONAL_MEMORY_EXISTING_ITEM_BYTE_LIMIT) break;
+    selected.push(projected);
+    bytes += itemBytes;
+  }
+  return selected;
+}
+
 /** Claim at most one job per physical host with a short database transaction. */
 export async function claimInstitutionalMemoryJob(
   database: SqlDatabase,
@@ -336,6 +436,8 @@ export async function claimInstitutionalMemoryJob(
            FROM institutional_memory_jobs job
            JOIN rooms room ON room.id=job.source_room_id
            JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
+           LEFT JOIN institutional_memory_workspace_rollouts rollout
+             ON rollout.workspace_id=job.workspace_id
            JOIN memberships worker ON worker.room_id=job.source_room_id
              AND worker.identity_id=$1 AND worker.removed_at IS NULL
            JOIN memberships requester ON requester.room_id=job.source_room_id
@@ -345,6 +447,16 @@ export async function claimInstitutionalMemoryJob(
                (job.status='claimed' AND job.lease_expires_at<=now())
              )
              AND (job.mode='shadow' OR $5::boolean)
+             AND (
+               rollout.stage IS NULL OR rollout.stage IN ('pilot','live') OR
+               (rollout.stage='shadow' AND job.mode='shadow')
+             )
+             AND COALESCE((
+               SELECT sum(COALESCE(spent.input_tokens,0)+COALESCE(spent.output_tokens,0))
+               FROM institutional_memory_jobs spent
+               WHERE spent.workspace_id=job.workspace_id
+                 AND spent.completed_at>=date_trunc('day',now())
+             ),0)<COALESCE(rollout.daily_token_budget,$6)
              AND job.attempts<job.max_attempts
            ORDER BY job.created_at,job.id
            FOR UPDATE OF job SKIP LOCKED
@@ -359,7 +471,14 @@ export async function claimInstitutionalMemoryJob(
          RETURNING job.id,job.lease_token,job.lease_expires_at,job.workspace_id,
                    job.source_room_id,job.source_message_id,job.requester_identity_id,
                    room.direct_participants,job.mode,job.trigger_kind,job.context,job.created_at`,
-        [authenticatedAgentId, hostKey, leaseToken, leaseMs, config.live === true],
+        [
+          authenticatedAgentId,
+          hostKey,
+          leaseToken,
+          leaseMs,
+          config.live === true,
+          config.dailyTokenLimit ?? DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
+        ],
       )
     ).rows[0];
     if (!claimed) return undefined;
@@ -400,6 +519,17 @@ export async function claimInstitutionalMemoryJob(
         Array.isArray(claimed.direct_participants),
       ],
     );
+    const boundedSourceMessages =
+      claimed.trigger_kind === 'curator' ? [] : boundedMessages(messages.rows);
+    let context = claimed.context;
+    if (claimed.trigger_kind === 'merge_review') {
+      const evidenceMessageIds = boundedSourceMessages.map((message) => message.id);
+      context = { ...(context ?? {}), evidenceMessageIds };
+      await db.query(
+        `UPDATE institutional_memory_jobs SET context=$2::jsonb,updated_at=now() WHERE id=$1`,
+        [claimed.id, JSON.stringify(context)],
+      );
+    }
     return {
       id: claimed.id,
       leaseToken: claimed.lease_token,
@@ -411,16 +541,10 @@ export async function claimInstitutionalMemoryJob(
       directMessage: Array.isArray(claimed.direct_participants),
       mode: claimed.mode,
       triggerKind: claimed.trigger_kind,
-      ...(claimed.context ? { context: claimed.context } : {}),
-      messages: boundedMessages(messages.rows),
-      existingItems: existingItems.rows.map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        ...(item.subject_identity_id ? { subjectIdentityId: item.subject_identity_id } : {}),
-        canonicalKey: item.canonical_key,
-        body: item.body,
-        version: item.version,
-      })),
+      ...(context ? { context } : {}),
+      messages: boundedSourceMessages,
+      existingItems:
+        claimed.trigger_kind === 'turn_review' ? boundedExistingItems(existingItems.rows) : [],
     };
   });
 }
@@ -650,11 +774,12 @@ export async function completeInstitutionalMemoryJob(
       input.proposal === null || job.trigger_kind !== 'merge_review'
         ? null
         : parseAndValidateMergeReviewProposal(input.proposal);
-    if (job.trigger_kind === 'curator') {
-      throw new Error('institutional curator proposals are not supported by this release');
-    }
+    const curatorProposal =
+      input.proposal === null || job.trigger_kind !== 'curator'
+        ? null
+        : parseInstitutionalCuratorProposal(input.proposal);
     if (memoryProposal) assertNoProhibitedSecret(memoryProposal);
-    const proposal = memoryProposal ?? mergeProposal;
+    const proposal = memoryProposal ?? mergeProposal ?? curatorProposal;
     const proposalJson = proposal === null ? 'null' : JSON.stringify(proposal);
     const proposalHash = createHash('sha256').update(proposalJson).digest('hex');
     if (job.status === 'completed') {
@@ -672,6 +797,13 @@ export async function completeInstitutionalMemoryJob(
     }
     if (job.mode === 'live' && !config.live) {
       throw new Error('live institutional memory is disabled');
+    }
+    const rolloutStage = await institutionalWorkspaceRolloutStage(db, job.workspace_id);
+    if (
+      !rolloutAllowsJobs(rolloutStage) ||
+      (job.mode === 'live' && !rolloutAllowsLive(rolloutStage))
+    ) {
+      throw new Error('institutional memory is paused for this Workspace');
     }
 
     if (memoryProposal) {
@@ -757,10 +889,24 @@ export async function completeInstitutionalMemoryJob(
         throw new Error('workspace skill code anchor conflicts with the merged source');
       }
       if (job.mode === 'live' && mergeProposal.skill) {
+        const evidenceMessageIds = Array.isArray(context.evidenceMessageIds)
+          ? context.evidenceMessageIds.filter(
+              (messageId): messageId is string => typeof messageId === 'string',
+            )
+          : [];
+        const skillSourceMessageIds = [...new Set([job.source_message_id, ...evidenceMessageIds])];
+        const liveSkillSources = await db.query(
+          `SELECT id FROM messages
+           WHERE room_id=$1 AND id=ANY($2::text[]) AND deleted_at IS NULL`,
+          [job.source_room_id, skillSourceMessageIds],
+        );
+        if (liveSkillSources.rowCount !== skillSourceMessageIds.length) {
+          throw new Error('workspace skill evidence was deleted before completion');
+        }
         await applyWorkspaceSkillProposal(db, {
           workspaceId: job.workspace_id,
           sourceRoomId: job.source_room_id,
-          sourceMessageIds: [job.source_message_id],
+          sourceMessageIds: skillSourceMessageIds,
           sourceJobId: job.id,
           usage,
           proposal: mergeProposal.skill,
@@ -788,6 +934,16 @@ export async function completeInstitutionalMemoryJob(
           );
         }
       }
+    }
+    if (curatorProposal && job.mode === 'live') {
+      await applyInstitutionalCuratorProposal(db, {
+        workspaceId: job.workspace_id,
+        jobId: job.id,
+        sourceMessageId: job.source_message_id,
+        context: job.context,
+        proposal: curatorProposal,
+        usage,
+      });
     }
 
     await db.query(
@@ -880,15 +1036,18 @@ export async function completeInstitutionalMemoryJob(
         job.source_request_id,
         job.mode === 'shadow'
           ? 'shadow_extracted'
-          : job.trigger_kind === 'merge_review'
-            ? 'procedure_extracted'
-            : 'memory_extracted',
+          : job.trigger_kind === 'curator'
+            ? 'curator_completed'
+            : job.trigger_kind === 'merge_review'
+              ? 'procedure_extracted'
+              : 'memory_extracted',
         true,
         JSON.stringify({
           triggerKind: job.trigger_kind,
           candidateType: memoryProposal?.candidateType ?? null,
           skill: mergeProposal?.skill?.slug ?? null,
           findingCount: mergeProposal?.findings.length ?? 0,
+          curatorActionCount: curatorProposal?.actions.length ?? 0,
         }),
       ],
     );
@@ -1066,6 +1225,10 @@ export async function getInstitutionalContext(
       )
     ).rows[0];
     if (!authority) throw new Error('institutional memory requester authority is unavailable');
+    const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
+    if (!rolloutAllowsLive(rolloutStage)) {
+      return { snapshotRevision: 0, text: '', itemIds: [], totalBytes: 0, omitted: {} };
+    }
     const candidates = (
       await db.query<ContextItemRow>(
         `SELECT item.id,item.kind,item.canonical_key,item.body,item.confidence,item.version,
@@ -1113,7 +1276,6 @@ export async function getInstitutionalContext(
       workspaceId: authority.workspace_id,
       requesterIdentityId: authority.requester_identity_id,
       agentId: command.agent_id,
-      outputRoomId: command.room_id,
     });
     const skills = selectSkillIndex(
       [...skillCandidates].sort((left, right) => {
@@ -1229,6 +1391,10 @@ export async function proposeInstitutionalMemory(
       )
     ).rows[0];
     if (!authority) throw new Error('institutional memory requester authority is unavailable');
+    const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
+    if (!rolloutAllowsLive(rolloutStage)) {
+      throw new Error('institutional memory is not enabled for this Workspace');
+    }
     if (authority.root_room_id !== command.room_id) {
       throw new Error('institutional memory proposal must stay in its root source partition');
     }
@@ -1297,12 +1463,16 @@ export async function tombstoneInstitutionalMemoryForMessage(
 ): Promise<void> {
   const affectedJobs = await database.query<{ id: string }>(
     `UPDATE institutional_memory_jobs
-     SET proposal=NULL,proposal_hash=NULL,source_deleted_at=COALESCE(source_deleted_at,now()),
+     SET proposal=NULL,proposal_hash=NULL,context=NULL,
+         source_deleted_at=COALESCE(source_deleted_at,now()),
          status=CASE WHEN status='completed' THEN status ELSE 'dead' END,
          lease_owner_agent_id=NULL,lease_owner_machine_id=NULL,lease_token=NULL,
          lease_expires_at=NULL,
          updated_at=now()
      WHERE source_message_id=$1 OR proposal->'source'->'messageIds' ? $1
+       OR context->'evidenceMessageIds' ? $1
+       OR context->'priorSkill'->'sourceMessageIds' ? $1
+       OR context->'candidates' @> jsonb_build_array(jsonb_build_object('sourceMessageId',$1))
      RETURNING id`,
     [messageId],
   );
@@ -1312,6 +1482,21 @@ export async function tombstoneInstitutionalMemoryForMessage(
      WHERE EXISTS (
        SELECT 1 FROM institutional_memory_item_sources source
        WHERE source.item_id=item.id AND source.message_id=$1
+     )`,
+    [messageId],
+  );
+  await database.query(
+    `WITH affected_versions AS (
+       UPDATE workspace_skill_versions
+       SET markdown='',source_deleted_at=COALESCE(source_deleted_at,now())
+       WHERE source_message_ids @> ARRAY[$1]::text[]
+       RETURNING skill_id,version
+     )
+     UPDATE workspace_skills skill
+     SET state='archived',updated_at=now()
+     WHERE EXISTS (
+       SELECT 1 FROM affected_versions affected
+       WHERE affected.skill_id=skill.id AND affected.version=skill.current_version
      )`,
     [messageId],
   );
@@ -1325,6 +1510,9 @@ export async function tombstoneInstitutionalMemoryForMessage(
       `DELETE FROM institutional_memory_fact_events WHERE job_id=ANY($1::uuid[])`,
       [jobIds],
     );
+    await database.query(`DELETE FROM institutional_review_findings WHERE job_id=ANY($1::uuid[])`, [
+      jobIds,
+    ]);
   }
 }
 

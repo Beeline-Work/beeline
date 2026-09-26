@@ -8,6 +8,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
+import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 
 type SearchRow = {
   message_id: string;
@@ -87,6 +88,9 @@ export async function searchInstitutionalHistory(
       )
     ).rows[0];
     if (!authority) throw new Error('institutional history requester authority is unavailable');
+    if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
+      throw new Error('institutional history is not enabled for this Workspace');
+    }
 
     const rows = await db.query<SearchRow>(
       `WITH search_query AS (

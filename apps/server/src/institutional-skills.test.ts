@@ -6,6 +6,7 @@ import {
   completeInstitutionalMemoryJob,
   enqueueInstitutionalMemoryMergeReview,
   getInstitutionalContext,
+  tombstoneInstitutionalMemoryForMessage,
 } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
@@ -180,10 +181,54 @@ describe('merge-derived restricted Workspace procedures', () => {
     expect((await database.query(`SELECT 1 FROM workspace_skill_uses`)).rowCount).toBe(1);
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(1);
 
+    await database.transaction((db) =>
+      enqueueInstitutionalMemoryMergeReview(db, {
+        cornerId: CORNER,
+        sourceMessageId: MERGE_MESSAGE,
+        repository: 'Beeline-Work/beeline',
+        targetCommit: 'f'.repeat(40),
+        pullRequestUrl: 'https://github.com/Beeline-Work/beeline/pull/2',
+        pullRequestTitle: 'Another release migration',
+        objective: 'Make another release migration safe',
+        commits: 1,
+        files: 1,
+        config: liveConfig,
+      }),
+    );
+    expect(
+      (
+        await database.query<{ context: Record<string, unknown> }>(
+          `SELECT context FROM institutional_memory_jobs
+           WHERE trigger_kind='merge_review' AND status='pending'`,
+        )
+      ).rows[0]?.context,
+    ).toMatchObject({
+      priorSkill: {
+        slug: 'safe-release-migrations',
+        baseVersion: 1,
+        markdown: expect.stringContaining('Create concurrent indexes'),
+      },
+    });
+
     await database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [CORNER, OTHER_HUMAN],
     );
+    expect((await getInstitutionalContext(database, command)).text).toContain(
+      'safe-release-migrations',
+    );
+    await expect(
+      loadWorkspaceSkill(database, command, {
+        agentId: OTHER_AGENT,
+        roomId: ROOM,
+        slug: 'safe-release-migrations',
+      }),
+    ).resolves.toMatchObject({ slug: 'safe-release-migrations' });
+
+    await database.transaction(async (db) => {
+      await db.query(`UPDATE messages SET deleted_at=now(),text='' WHERE id='review-finding'`);
+      await tombstoneInstitutionalMemoryForMessage(db, 'review-finding');
+    });
     expect((await getInstitutionalContext(database, command)).text).not.toContain(
       'safe-release-migrations',
     );
@@ -194,6 +239,15 @@ describe('merge-derived restricted Workspace procedures', () => {
         slug: 'safe-release-migrations',
       }),
     ).rejects.toThrow(/unavailable/);
+    expect(
+      (
+        await database.query<{ markdown: string; source_deleted_at: Date | null }>(
+          `SELECT markdown,source_deleted_at FROM workspace_skill_versions
+           WHERE skill_id=(SELECT id FROM workspace_skills WHERE slug='safe-release-migrations')`,
+        )
+      ).rows[0],
+    ).toMatchObject({ markdown: '', source_deleted_at: expect.any(Date) });
+    expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(0);
   });
 
   it('rejects prompt-boundary injection and exact merge-anchor forgery', async () => {

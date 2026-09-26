@@ -122,7 +122,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 4;
+export const REQUIRED_SCHEMA_VERSION = 5;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -780,6 +780,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
 ALTER TABLE institutional_memory_items ALTER COLUMN created_by_job_id DROP NOT NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_body_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_body_check CHECK (
   (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
@@ -852,7 +853,7 @@ ALTER TABLE institutional_memory_outcomes
 ALTER TABLE institutional_memory_outcomes
   ADD CONSTRAINT institutional_memory_outcomes_kind_check CHECK (kind IN (
     'shadow_extracted','memory_extracted','turn_completed','ci_green','merged',
-    'procedure_extracted','repeat_correction','repeat_review_finding'
+    'procedure_extracted','curator_completed','repeat_correction','repeat_review_finding'
   ));
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
@@ -923,15 +924,17 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   last_served_at timestamptz,
+  curated_at timestamptz,
   UNIQUE(workspace_id,slug)
 );
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
 
 CREATE TABLE IF NOT EXISTS workspace_skill_versions (
   skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
   version integer NOT NULL CHECK (version > 0),
-  markdown text NOT NULL CHECK (octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768),
+  markdown text NOT NULL,
   content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
   source_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
   source_message_ids text[] NOT NULL CHECK (cardinality(source_message_ids)>0),
@@ -942,8 +945,21 @@ CREATE TABLE IF NOT EXISTS workspace_skill_versions (
   extractor_version text NOT NULL,
   model text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(skill_id,version)
+  source_deleted_at timestamptz,
+  PRIMARY KEY(skill_id,version),
+  CONSTRAINT workspace_skill_versions_markdown_check CHECK (
+    (source_deleted_at IS NULL AND octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768) OR
+    (source_deleted_at IS NOT NULL AND markdown='')
+  )
 );
+ALTER TABLE workspace_skill_versions ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
+ALTER TABLE workspace_skill_versions
+  DROP CONSTRAINT IF EXISTS workspace_skill_versions_markdown_check;
+ALTER TABLE workspace_skill_versions
+  ADD CONSTRAINT workspace_skill_versions_markdown_check CHECK (
+    (source_deleted_at IS NULL AND octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768) OR
+    (source_deleted_at IS NOT NULL AND markdown='')
+  );
 
 CREATE TABLE IF NOT EXISTS institutional_review_findings (
   id uuid PRIMARY KEY,
@@ -976,6 +992,37 @@ CREATE TABLE IF NOT EXISTS workspace_skill_uses (
 );
 CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
   ON workspace_skill_uses(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
+  workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
+  auto_advance boolean NOT NULL DEFAULT false,
+  curator_enabled boolean NOT NULL DEFAULT false,
+  cohort integer NOT NULL DEFAULT 0 CHECK (cohort BETWEEN 0 AND 99),
+  stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
+  archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
+  retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
+  daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (archive_after_days > stale_after_days),
+  CHECK (retention_days >= archive_after_days)
+);
+
+CREATE TABLE IF NOT EXISTS institutional_curator_cycles (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  cycle_key text NOT NULL,
+  queued_jobs integer NOT NULL DEFAULT 0 CHECK (queued_jobs >= 0),
+  stale_items integer NOT NULL DEFAULT 0 CHECK (stale_items >= 0),
+  archived_items integer NOT NULL DEFAULT 0 CHECK (archived_items >= 0),
+  stale_skills integer NOT NULL DEFAULT 0 CHECK (stale_skills >= 0),
+  archived_skills integer NOT NULL DEFAULT 0 CHECK (archived_skills >= 0),
+  consolidated_items integer NOT NULL DEFAULT 0 CHECK (consolidated_items >= 0),
+  consolidated_skills integer NOT NULL DEFAULT 0 CHECK (consolidated_skills >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  UNIQUE(workspace_id,cycle_key)
+);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+  parseInstitutionalCuratorProposal,
   parseInstitutionalMergeReviewProposal,
   parseInstitutionalMemoryProposal,
 } from './institutional-memory.js';
@@ -126,5 +127,75 @@ describe('institutional merge review contract', () => {
         skill: { ...proposal.skill, description: 'x'.repeat(61) },
       }),
     ).toThrow(/description/);
+  });
+});
+
+describe('institutional curator contract', () => {
+  it('accepts bounded in-partition lifecycle and consolidation actions', () => {
+    expect(
+      parseInstitutionalCuratorProposal({
+        proposalVersion: 1,
+        partition: 'workspace-facts',
+        actions: [
+          {
+            action: 'consolidate',
+            targetType: 'memory_item',
+            targetId: 'item-1',
+            baseVersion: 2,
+            duplicateIds: ['item-2'],
+            body: 'Release migrations write their schema marker last.',
+            rationale: 'Both facts describe the same invariant.',
+          },
+          {
+            action: 'retain',
+            targetType: 'memory_item',
+            targetId: 'item-3',
+            baseVersion: 1,
+            duplicateIds: [],
+            rationale: 'It is recent and distinct.',
+          },
+        ],
+      }),
+    ).toMatchObject({
+      partition: 'workspace-facts',
+      actions: expect.arrayContaining([expect.objectContaining({ action: 'consolidate' })]),
+    });
+  });
+
+  it('rejects consolidation without duplicates and lifecycle actions with replacement text', () => {
+    expect(() =>
+      parseInstitutionalCuratorProposal({
+        proposalVersion: 1,
+        partition: 'workspace-facts',
+        actions: [
+          {
+            action: 'consolidate',
+            targetType: 'memory_item',
+            targetId: 'item-1',
+            baseVersion: 1,
+            duplicateIds: [],
+            body: 'Body',
+            rationale: 'No duplicate.',
+          },
+        ],
+      }),
+    ).toThrow(/needs duplicates/);
+    expect(() =>
+      parseInstitutionalCuratorProposal({
+        proposalVersion: 1,
+        partition: 'workspace-facts',
+        actions: [
+          {
+            action: 'stale',
+            targetType: 'memory_item',
+            targetId: 'item-1',
+            baseVersion: 1,
+            duplicateIds: [],
+            body: 'Replacement',
+            rationale: 'Invalid replacement.',
+          },
+        ],
+      }),
+    ).toThrow(/cannot replace content/);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
+import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
 export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
@@ -63,28 +64,16 @@ const AUTHORIZED_SKILLS_SQL = `
   FROM workspace_skills skill
   JOIN workspace_skill_versions version
     ON version.skill_id=skill.id AND version.version=skill.current_version
-  WHERE skill.workspace_id=$1 AND skill.state='active'
+  WHERE skill.workspace_id=$1 AND skill.state='active' AND version.source_deleted_at IS NULL
     AND EXISTS (
-      SELECT 1 FROM memberships source_agent
-      WHERE source_agent.room_id=skill.source_room_id AND source_agent.identity_id=$3
-        AND source_agent.removed_at IS NULL
+      SELECT 1 FROM memberships workspace_agent
+      WHERE workspace_agent.workspace_id=$1 AND workspace_agent.room_id IS NULL
+        AND workspace_agent.identity_id=$3 AND workspace_agent.removed_at IS NULL
     )
     AND EXISTS (
-      SELECT 1 FROM memberships source_requester
-      WHERE source_requester.room_id=skill.source_room_id AND source_requester.identity_id=$2
-        AND source_requester.removed_at IS NULL
-    )
-    AND NOT EXISTS (
-      SELECT 1
-      FROM memberships output_member
-      JOIN identities human ON human.id=output_member.identity_id AND human.kind='human'
-      WHERE output_member.room_id=$4 AND output_member.removed_at IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM memberships source_member
-          WHERE source_member.room_id=skill.source_room_id
-            AND source_member.identity_id=output_member.identity_id
-            AND source_member.removed_at IS NULL
-        )
+      SELECT 1 FROM memberships workspace_requester
+      WHERE workspace_requester.workspace_id=$1 AND workspace_requester.room_id IS NULL
+        AND workspace_requester.identity_id=$2 AND workspace_requester.removed_at IS NULL
     )`;
 
 export async function authorizedWorkspaceSkillCandidates(
@@ -93,7 +82,6 @@ export async function authorizedWorkspaceSkillCandidates(
     workspaceId: string;
     requesterIdentityId: string;
     agentId: string;
-    outputRoomId: string;
   },
 ): Promise<WorkspaceSkillIndexCandidate[]> {
   return (
@@ -103,7 +91,7 @@ export async function authorizedWorkspaceSkillCandidates(
        ${AUTHORIZED_SKILLS_SQL}
        ORDER BY skill.updated_at DESC,skill.id
        LIMIT 200`,
-      [input.workspaceId, input.requesterIdentityId, input.agentId, input.outputRoomId],
+      [input.workspaceId, input.requesterIdentityId, input.agentId],
     )
   ).rows;
 }
@@ -128,8 +116,13 @@ export async function applyWorkspaceSkillProposal(
     `workspace-skill:${input.workspaceId}:${input.proposal.slug}`,
   ]);
   const current = (
-    await database.query<{ id: string; current_version: number; current_bytes: number }>(
-      `SELECT skill.id,skill.current_version,
+    await database.query<{
+      id: string;
+      current_version: number;
+      current_bytes: number;
+      source_deleted_at: Date | null;
+    }>(
+      `SELECT skill.id,skill.current_version,version.source_deleted_at,
               octet_length(convert_to(version.markdown,'UTF8')) current_bytes
        FROM workspace_skills skill
        JOIN workspace_skill_versions version
@@ -139,7 +132,9 @@ export async function applyWorkspaceSkillProposal(
     )
   ).rows[0];
   if (
-    (current && input.proposal.baseVersion !== current.current_version) ||
+    (current &&
+      input.proposal.baseVersion !== current.current_version &&
+      !(current.source_deleted_at && input.proposal.baseVersion === null)) ||
     (!current && input.proposal.baseVersion !== null)
   ) {
     throw new Error('workspace skill proposal CAS conflict');
@@ -151,7 +146,8 @@ export async function applyWorkspaceSkillProposal(
        FROM workspace_skills skill
        JOIN workspace_skill_versions version
          ON version.skill_id=skill.id AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.state='active'`,
+       WHERE skill.workspace_id=$1 AND skill.state='active'
+         AND version.source_deleted_at IS NULL`,
       [input.workspaceId],
     )
   ).rows[0];
@@ -224,6 +220,20 @@ export async function applyWorkspaceSkillProposal(
       input.usage.model,
     ],
   );
+  if (input.proposal.anchor.path && input.proposal.anchor.contentHash) {
+    await database.query(
+      `UPDATE workspace_skills SET state='stale',updated_at=now()
+       WHERE workspace_id=$1 AND id<>$2 AND state='active' AND repository=$3 AND path=$4
+         AND code_content_hash IS NOT NULL AND code_content_hash<>$5`,
+      [
+        input.workspaceId,
+        skillId,
+        input.proposal.anchor.repository,
+        input.proposal.anchor.path,
+        input.proposal.anchor.contentHash,
+      ],
+    );
+  }
   return { skillId, version };
 }
 
@@ -248,19 +258,16 @@ export async function loadWorkspaceSkill(
       )
     ).rows[0];
     if (!authority) throw new Error('workspace skill requester authority is unavailable');
+    if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
+      throw new Error('workspace skill is not enabled for this Workspace');
+    }
     const skill = (
       await db.query<SkillRow>(
         `SELECT skill.id,skill.slug,skill.description,skill.current_version,
                 skill.source_room_id,skill.repository,skill.target_commit,skill.path,
                 skill.code_content_hash,version.markdown,skill.updated_at
-         ${AUTHORIZED_SKILLS_SQL} AND skill.slug=$5`,
-        [
-          authority.workspace_id,
-          authority.requester_identity_id,
-          command.agent_id,
-          command.room_id,
-          slug,
-        ],
+         ${AUTHORIZED_SKILLS_SQL} AND skill.slug=$4`,
+        [authority.workspace_id, authority.requester_identity_id, command.agent_id, slug],
       )
     ).rows[0];
     if (!skill) throw new Error('workspace skill is unavailable');

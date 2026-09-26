@@ -249,6 +249,87 @@ export async function resolvePendingCornerBriefAttachments(
     }));
 }
 
+const UPGRADE_INTENT_ENTRIES = 50;
+const UPGRADE_SNAPSHOT_LENGTH = 16_000;
+const UPGRADE_BUILD_SPEC_LENGTH = 65_536;
+const UPGRADE_CRITERION_LENGTH = 2_000;
+
+function upgradeCriterion(request: string): string {
+  const text = `Deliver the code change this corner was asked for: ${request.replace(/\s+/g, ' ').trim()}`;
+  return text.length <= UPGRADE_CRITERION_LENGTH
+    ? text
+    : `${text.slice(0, UPGRADE_CRITERION_LENGTH - 1)}…`;
+}
+
+function upgradeBuildSpec(
+  discussion: readonly { name: string; text: string }[],
+  request: string,
+): string {
+  const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade\n`;
+  const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
+  const kept: string[] = [];
+  let remaining = UPGRADE_BUILD_SPEC_LENGTH - head.length - 128;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.length > remaining) break;
+    remaining -= entry.length;
+    kept.unshift(entry);
+  }
+  const omitted = entries.length - kept.length;
+  const note = omitted ? `\n- _${omitted} earlier message(s) omitted for length._` : '';
+  return `${head}${note}${kept.join('')}\n`;
+}
+
+/**
+ * The brief a no-code corner gets the moment a person asks for code in it.
+ *
+ * Every other repository corner opens from a brief its agent typed before the
+ * corner existed. This one is already a conversation, so the conversation IS
+ * the assignment: the server composes it here, in the upgrade's own
+ * transaction, rather than leaving the one repository corner that `createCorner`
+ * would have refused — a code corner with no brief at all.
+ */
+export async function composeCornerUpgradeBrief(
+  db: SqlDatabase,
+  cornerId: string,
+  approval: { sourceMessageId: string; snapshot: string },
+): Promise<CornerBriefStructuredDraft> {
+  const discussion = (
+    await db.query<{ id: string; text: string; name: string; kind: string }>(
+      `SELECT message.id,message.text,identity.name,identity.kind
+       FROM messages message JOIN identities identity ON identity.id=message.author_id
+       WHERE message.room_id=$1 AND message.presentation='message'
+         AND message.deleted_at IS NULL AND btrim(message.text)<>''
+       ORDER BY message.created_at,message.id`,
+      [cornerId],
+    )
+  ).rows;
+  const intentVerbatim = discussion
+    .filter(
+      (row) =>
+        row.kind === 'human' &&
+        row.id !== approval.sourceMessageId &&
+        row.text.length <= UPGRADE_SNAPSHOT_LENGTH,
+    )
+    .slice(-(UPGRADE_INTENT_ENTRIES - 1))
+    .map((row) => ({ sourceMessageId: row.id, snapshot: row.text }));
+  intentVerbatim.push({
+    sourceMessageId: approval.sourceMessageId,
+    snapshot: approval.snapshot,
+  });
+  return {
+    intentVerbatim,
+    buildSpec: upgradeBuildSpec(discussion, approval.snapshot),
+    criteria: [{ id: 'AC-1', text: upgradeCriterion(approval.snapshot) }],
+    references: [],
+    approvalBasis: {
+      kind: 'initiating-command',
+      sourceMessageId: approval.sourceMessageId,
+      snapshot: approval.snapshot,
+    },
+  };
+}
+
 export function cornerBriefRevisionHash(
   draft: CornerBriefStructuredDraft,
   attachments: readonly CornerBriefAttachment[],

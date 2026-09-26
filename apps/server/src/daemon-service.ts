@@ -21,6 +21,7 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
   isStructuredCornerBrief,
@@ -72,6 +73,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
   type CommittedMessageLiveRow,
@@ -83,6 +85,7 @@ import {
   directMessageRoomId,
   restateSystemLine,
   ensureSystemDirectMessageRoom,
+  ensureSystemIdentity,
   systemIdentityMention,
   systemLine,
   type SystemPhrase,
@@ -5668,8 +5671,8 @@ export class DaemonService {
     if (!this.commandTransaction || !command)
       throw new Error('corner lane upgrade requires an active human request');
     const requester = (
-      await this.database.query<{ kind: string }>(
-        `SELECT identity.kind
+      await this.database.query<{ kind: string; text: string }>(
+        `SELECT identity.kind,message.text
          FROM messages message JOIN identities identity ON identity.id=message.author_id
          WHERE message.id=$1 AND message.room_id=$2`,
         [command.source_message_id, cornerId],
@@ -5710,6 +5713,47 @@ export class DaemonService {
        WHERE corner_id=$1 AND lane='no_code'`,
       [cornerId, agentId],
     );
+    // A repository corner works from a brief. This one already existed as
+    // chat, so its discussion so far is what the brief has to carry, written
+    // by the server rather than the agent whose work it authorizes. A corner
+    // that already holds revisions keeps them: they are already its authority.
+    const briefed = await this.database.query(
+      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`,
+      [cornerId],
+    );
+    if (!briefed.rowCount) {
+      await ensureSystemIdentity(this.database);
+      const draft = await composeCornerUpgradeBrief(this.database, cornerId, {
+        sourceMessageId: command.source_message_id,
+        snapshot: requester.text,
+      });
+      const authority = await resolveCornerBriefApproval(
+        this.database,
+        [cornerId],
+        draft,
+        [],
+        command.source_message_id,
+      );
+      await this.database.query(
+        `INSERT INTO corner_brief_revisions(
+           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+           brief_references,approval_basis,revision_hash,author_id,
+           source_room_id,source_message_id,attachments
+         ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+        [
+          cornerId,
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.intentVerbatim),
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.criteria),
+          JSON.stringify(authority.approvalBasis),
+          authority.revisionHash,
+          SYSTEM_IDENTITY_ID,
+          authority.sourceRoomId,
+          command.source_message_id,
+        ],
+      );
+    }
     const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
     const resumed = await createAgentCommand(this.database, {
       roomId: cornerId,

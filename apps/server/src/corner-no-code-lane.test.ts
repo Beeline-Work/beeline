@@ -90,6 +90,17 @@ async function commissioned(roomId: string, agentId = AGENT): Promise<AgentComma
   return command!;
 }
 
+function brief(sourceMessageId: string, buildSpec: string) {
+  const intent = { sourceMessageId, snapshot: '@hoots please do this' };
+  return {
+    buildSpec,
+    intentVerbatim: [intent],
+    criteria: [{ id: 'AC-1', text: 'Publish the result' }],
+    references: [],
+    approvalBasis: { kind: 'initiating-command' as const, ...intent },
+  };
+}
+
 async function open(
   roomId: string,
   lane?: 'code' | 'no_code' | 'research',
@@ -106,6 +117,11 @@ async function open(
       objective: 'Survey the five nearest competitors and write it up',
       ...(lane ? { lane } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
+      // Repository and research corners open from a typed brief; the no-code
+      // lane is the one that may open without one.
+      ...(lane !== 'no_code' && (lane === 'research' || roomId === CODE_ROOM)
+        ? { brief: brief(command.sourceMessageId, 'Survey the competitors') }
+        : {}),
     },
     AGENT,
   );
@@ -366,4 +382,86 @@ it('leaves an agent-opened corner with its original opener when another agent up
     ).rows[0],
   ).toMatchObject({ owner_agent_id: AGENT, lane: 'code' });
   expect(await pending(cornerId, AGENT2)).toMatchObject([{ reason: 'corner_lane_upgrade' }]);
+});
+
+it('carries the corner discussion into a first brief the human ask approves', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  await phone.execute(
+    'sendRoomMessage',
+    {
+      roomId: cornerId,
+      messageId: randomBytes(32).toString('hex'),
+      text: 'The widget renderer drops the trailing label',
+    },
+    HUMAN,
+  );
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'I can see it in the renderer')`,
+    [randomBytes(32).toString('hex'), cornerId, AGENT],
+  );
+  const command = await commissioned(cornerId);
+
+  await daemon.execute(
+    'upgradeCornerLane',
+    { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+    AGENT,
+  );
+
+  const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  // The upgraded corner is a repository corner, so it must read like one: a
+  // current structured brief, not the legacy "no assigned brief" fallback.
+  expect(brief).toMatchObject({
+    revision: 1,
+    legacy: false,
+    sourceMessageId: command.sourceMessageId,
+  });
+  expect(brief?.approvalBasis).toMatchObject({
+    kind: 'initiating-command',
+    sourceMessageId: command.sourceMessageId,
+    snapshot: '@hoots please do this',
+    approvedBy: HUMAN,
+  });
+  // Verbatim intent is the human side of the discussion, approval last; the
+  // agent's own words are discussion, never authority.
+  expect(brief?.intentVerbatim.map((item) => item.snapshot)).toEqual([
+    'The widget renderer drops the trailing label',
+    '@hoots please do this',
+  ]);
+  expect(brief?.buildSpec).toContain('The widget renderer drops the trailing label');
+  expect(brief?.buildSpec).toContain('I can see it in the renderer');
+  expect(brief?.criteria).toEqual([
+    { id: 'AC-1', text: expect.stringContaining('@hoots please do this') },
+  ]);
+  // The one brief a later revision builds on.
+  expect(
+    (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
+  ).toHaveLength(1);
+});
+
+it('keeps the brief a no-code corner already had when it upgrades', async () => {
+  const command = await commissioned(CODE_ROOM);
+  const { cornerId } = await daemon.execute(
+    'createCorner',
+    {
+      roomId: CODE_ROOM,
+      requestId: command.turnRequestId,
+      generationId: 'g1',
+      name: 'Market scan',
+      objective: 'Survey the five nearest competitors and write it up',
+      lane: 'no_code',
+      repository: 'owner/widgets',
+      targetBranch: 'main',
+      brief: brief(command.sourceMessageId, 'Scan the market and write it up'),
+    },
+    AGENT,
+  );
+
+  await upgrade(cornerId);
+
+  const restored = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  expect(restored.brief).toMatchObject({
+    revision: 1,
+    buildSpec: 'Scan the market and write it up',
+  });
+  expect(await lane(cornerId)).toBe('code');
 });

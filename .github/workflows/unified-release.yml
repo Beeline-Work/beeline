@@ -266,19 +266,23 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Find a reusable daemon artifact for this exact release SHA
-        # The ONE reuse decision. A retry of an already-attempted release
-        # identity still has the earlier attempt's complete, merged
+        # The ONE reuse decision, and the one place the run holding this
+        # identity's merged bytes is named. A retry of an already-attempted
+        # release identity still has the earlier attempt's complete, merged
         # three-platform daemon artifact, so helper_macos (which only exists to
         # feed that merge) is skipped and the helper leg runs on the reused
         # bytes; daemon-leg consumes this run id rather than asking again, so
-        # there is one notion of "already built". A fresh identity has no
-        # artifact under this name, so the Mac bundles build exactly as before.
-        # Every failure — a list error, rate limit, a blip — degrades to that
-        # same fresh path: this lookup must never be what loses a release,
-        # because every other job needs this one.
+        # there is one notion of "already built". `built` is the ordinary retry
+        # state for that — the artifact upload and the built checkpoint land
+        # together, and a later leg (promote, the CLI package, Pages) is what
+        # failed — while `pending` covers an attempt lost between the two. A
+        # fresh identity has no artifact under this name, so the Mac bundles
+        # build exactly as before. Every failure — a list error, rate limit, a
+        # blip — degrades to that same fresh path: this lookup must never be
+        # what loses a release, because every other job needs this one.
         if: >-
           inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
-          steps.plan.outputs.stage_helper == 'pending'
+          contains(fromJSON('["pending","built"]'), steps.plan.outputs.stage_helper)
         id: helper_reuse
         uses: actions/github-script@v7
         with:
@@ -552,6 +556,7 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: actions/setup-node@v4
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
@@ -1207,6 +1212,7 @@ jobs:
           SERVER_RESULT: ${{ needs.server.result }}
           HELPER_RESULT: ${{ needs.helper.result }}
           HELPER_MACOS_RESULT: ${{ needs.helper_macos.result }}
+          HELPER_REUSE_RUN_ID: ${{ needs.initialize.outputs.helper_reuse_run_id }}
           MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
           RELEASE_PROOF_RESULT: ${{ needs.release_proof.result }}
           MOBILE_NATIVE_ANDROID_RESULT: ${{ needs.mobile_native_android.result }}
@@ -1248,8 +1254,12 @@ jobs:
           if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
             native_build_ran=true
           fi
+          # A helper leg riding a reused artifact skips that Mac entirely, so it
+          # earns the same widening on its own success — the whole point of the
+          # reuse path is that it delivers, and delivering must never be recorded
+          # as a budget failure just because the Mac never had to run.
           helper_macos_build_ran=false
-          if [ "$HELPER_MACOS_RESULT" = success ]; then
+          if [ "$HELPER_MACOS_RESULT" = success ] || { [ "$HELPER_RESULT" = success ] && [ -n "$HELPER_REUSE_RUN_ID" ]; }; then
             helper_macos_build_ran=true
           fi
           node scripts/unified-release.mjs classify-attempt \

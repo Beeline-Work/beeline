@@ -25,9 +25,11 @@ inputs:
   reuse_run_id:
     description: >-
       Workflow run holding a complete merged daemon artifact for this exact
-      release identity, decided once by unified-release's initialize job. Set
-      means reuse those bytes and skip the merge; empty means build every
-      platform. This leg never re-asks.
+      release identity, decided once by unified-release's initialize job. On
+      build, set means reuse those bytes and skip the merge while empty means
+      build every platform; on promote, it is the run the artifact is read back
+      from, because a retry that already recorded `built` never re-uploads it
+      into the current run. This leg never re-asks.
     default: ''
 
 runs:
@@ -88,6 +90,8 @@ runs:
       with:
         name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: bundle/all-platforms
+        run-id: ${{ inputs.reuse_run_id || github.run_id }}
+        github-token: ${{ github.token }}
     - name: Publish the daemon artifact to durable Pages hosting
       if: inputs.phase == 'promote'
       uses: ./.github/actions/pages-leg

@@ -27,18 +27,14 @@ export type AppTransport = (typeof APP_TRANSPORTS)[number];
 export const APP_ROUTES = ['workbench', ...APP_TRANSPORTS] as const;
 export type AppRoute = (typeof APP_ROUTES)[number];
 
-export function isAppTransport(value: unknown): value is AppTransport {
-  return typeof value === 'string' && (APP_TRANSPORTS as readonly string[]).includes(value);
-}
-
 /** The one derived state a Workbench app row shows. */
 export type AppConnectionStatus = 'connecting' | 'connected' | 'error';
 
-export const APP_KEY_MAX_LENGTH = 63;
+const APP_KEY_MAX_LENGTH = 63;
 export const APP_INPUT_MAX_LENGTH = 200;
 
 /** The single grant target every route of one app is authorized against. */
-export const APP_RESOURCE_TARGET_PREFIX = 'app:';
+const APP_RESOURCE_TARGET_PREFIX = 'app:';
 
 export function appResourceTarget(key: string): string {
   return `${APP_RESOURCE_TARGET_PREFIX}${key}`;

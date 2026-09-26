@@ -345,6 +345,12 @@ describe('Workbench settings screen', () => {
       .findAll((node: any) => typeof node.props?.children === 'string')
       .map((node: any) => node.props.children);
     expect(prose).toContain('Trusty Squire · API key · on squire-box · used 2 times');
+    // Its folded key stays reachable from the app's own row.
+    act(() => renderer.root.findByProps({ testID: 'workbench-app-vercel-key' }).props.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/connection',
+      params: { ref: 'cred_vercel' },
+    });
     const linear = renderer.root.findByProps({ testID: 'workbench-app-linear-head' });
     expect(linear.props.value).toBe('error');
     expect(linear.props.valueTone).toBe('danger');

@@ -676,7 +676,7 @@ export function appInstrument(status: WorkbenchApp['status']): {
 }
 
 /** What serves the app, in the words the row states it. */
-export function appRouteLabel(transport: WorkbenchApp['transport']): string {
+function appRouteLabel(transport: WorkbenchApp['transport']): string {
   switch (transport) {
     case 'registry-mcp':
       return 'Official MCP server';

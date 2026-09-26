@@ -345,6 +345,22 @@ export default function WorkbenchScreen() {
                 detailText={appDetailLine(app)}
                 errorText={app.status === 'error' ? app.errorMessage : undefined}
                 extraActions={[
+                  // The key a Squire route holds lives on this row, so its
+                  // detail (grants, ledger, revoke) is reached from here.
+                  ...(app.connectionReference
+                    ? [
+                        {
+                          label: 'Key details',
+                          testID: `workbench-app-${app.key}-key`,
+                          tone: 'action' as const,
+                          onPress: () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/connection',
+                              params: { workspaceId, viewerId, ref: app.connectionReference },
+                            } as unknown as Href),
+                        },
+                      ]
+                    : []),
                   ...(app.status === 'error' && app.helperId
                     ? [
                         {

@@ -40,7 +40,7 @@ type ExistingApp = {
   readonly hasCredential: boolean;
 };
 
-export type WorkbenchBacking =
+type WorkbenchBacking =
   | {
       readonly transport: 'registry-mcp';
       readonly connectorId: string;
@@ -49,12 +49,12 @@ export type WorkbenchBacking =
     }
   | { readonly transport: 'squire-api'; readonly reference: string };
 
-export type RegistryPick =
+type RegistryPick =
   | { readonly status: 'official'; readonly manifest: RegistryMcpManifest }
   | { readonly status: 'none' }
   | { readonly status: 'unavailable' };
 
-export type AppRouteDecision =
+type AppRouteDecision =
   | { readonly kind: 'keep'; readonly transport: AppTransport; readonly note?: string }
   | {
       readonly kind: 'route';
@@ -140,7 +140,7 @@ export async function resolveAppRoute(
 
 // --- Registry connector row (shared by connect_mcp_server and connect_app) ----
 
-export type RegistryConnectorRow = {
+type RegistryConnectorRow = {
   id: string;
   status: 'installing' | 'connected' | 'error' | 'disconnected';
   registry_version: string;
@@ -297,7 +297,7 @@ async function appConnections(
 }
 
 /** The apps one vault key belongs to: its service and the hosts it may reach. */
-export function connectionAppKeys(connection: {
+function connectionAppKeys(connection: {
   readonly service: string | null;
   readonly hosts: readonly string[];
 }): readonly string[] {
@@ -457,7 +457,7 @@ function domainOf(url: string | undefined): string | undefined {
   }
 }
 
-export type ConnectAppParams = {
+type ConnectAppParams = {
   readonly workspaceId: string;
   readonly ownerId: string;
   readonly machineId: string;
@@ -473,7 +473,7 @@ export type ConnectAppParams = {
   readonly installCommandId?: string | null;
 };
 
-export type ConnectAppOutcome = {
+type ConnectAppOutcome = {
   readonly status: ConnectAppStatus;
   readonly app: string;
   readonly appKey?: string;
@@ -805,7 +805,7 @@ export async function disconnectApp(
   });
 }
 
-export type AppGate =
+type AppGate =
   | { readonly kind: 'resource'; readonly target: string }
   | { readonly kind: 'app'; readonly target: string; readonly appId: string; readonly transport: AppTransport }
   | { readonly kind: 'refuse' };

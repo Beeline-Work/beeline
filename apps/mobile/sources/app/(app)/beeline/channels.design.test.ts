@@ -18,6 +18,10 @@ describe('Approved Room list layout', () => {
     expect(source).toMatch(/<RoomDeckComposeMenu\s+header/);
     expect(source).not.toContain('composeOverlay');
     expect(toolbar).toContain('<BookmarksGlyph');
+    expect(toolbar).toContain('{actions}');
+    expect(toolbar).toContain('{searchOpen && search}');
+    expect(toolbar).not.toContain('!desktop && actions');
+    expect(toolbar).not.toContain('desktopSearchWrap');
     expect(toolbar).toContain('width: 44');
     expect(toolbar).toContain('height: 44');
   });
@@ -57,6 +61,8 @@ describe('Approved Room list layout', () => {
   it('uses visible conversation counts for the phone toolbar and initial pin filter', () => {
     expect(source).toContain('roomListCounts(chatList?.chats ?? [], pinned)');
     expect(source).toContain('counts={counts}');
-    expect(source).toContain('!item.closed && !item.directMessage && pinned.includes(item.room.id)');
+    expect(source).toContain(
+      '!item.closed && !item.directMessage && pinned.includes(item.room.id)',
+    );
   });
 });

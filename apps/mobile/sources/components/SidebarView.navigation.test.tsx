@@ -339,6 +339,9 @@ describe('desktop Workspace navigation', () => {
   it('opens and closes the overlay rail without replacing the Room list', () => {
     const rail = tree.root.findByType('DesktopWorkspaceRail');
     expect(rail.props.open).toBe(false);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-search' })).toHaveLength(0);
+
+    act(() => control('room-search-toggle').props.onPress());
     expect(control('desktop-room-search')).toBeDefined();
 
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
@@ -347,6 +350,25 @@ describe('desktop Workspace navigation', () => {
 
     act(() => tree.root.findByType('DesktopWorkspaceRail').props.onClose());
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
+  });
+
+  it('opens desktop search from Command-or-Control K', () => {
+    const preventDefault = vi.fn();
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-search' })).toHaveLength(0);
+
+    act(() =>
+      windowListeners.get('keydown')?.({
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        key: 'k',
+        target: null,
+        preventDefault,
+      }),
+    );
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(control('desktop-room-search')).toBeDefined();
   });
 
   it("keeps profile settings reachable from the persistent desktop navigation as the viewer's own face", () => {
@@ -369,6 +391,7 @@ describe('desktop Workspace navigation', () => {
   });
 
   it('gives search a visible focus state', () => {
+    act(() => control('room-search-toggle').props.onPress());
     const search = control('desktop-room-search');
     expect(search.props.accessibilityLabel).toBe('Search Rooms and direct messages');
     act(() => search.props.onFocus());

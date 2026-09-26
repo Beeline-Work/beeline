@@ -12,6 +12,8 @@ export function RoomListToolbar({
   onQuery,
   onBookmarks,
   searchRef,
+  searchOpen: controlledSearchOpen,
+  onSearchOpenChange,
   desktop = false,
   bookmarksSelected = false,
   counts,
@@ -22,33 +24,38 @@ export function RoomListToolbar({
   onQuery: (query: string) => void;
   onBookmarks?: () => void;
   searchRef?: React.RefObject<TextInput | null>;
+  searchOpen?: boolean;
+  onSearchOpenChange?: (open: boolean) => void;
   desktop?: boolean;
   bookmarksSelected?: boolean;
   counts?: { all: number; unread: number; pinned: number };
 }) {
   const localSearchRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [localSearchOpen, setLocalSearchOpen] = useState(false);
+  const searchOpen = controlledSearchOpen ?? localSearchOpen;
+  const setSearchOpen = (open: boolean) => {
+    onSearchOpenChange?.(open);
+    if (controlledSearchOpen === undefined) setLocalSearchOpen(open);
+  };
   useEffect(() => {
-    if (mobileSearchOpen && !desktop) (searchRef ?? localSearchRef).current?.focus();
-  }, [desktop, mobileSearchOpen, searchRef]);
+    if (searchOpen) (searchRef ?? localSearchRef).current?.focus();
+  }, [searchOpen, searchRef]);
   const toggleSearch = () => {
-    if (desktop) {
-      (searchRef ?? localSearchRef).current?.focus();
-    } else if (mobileSearchOpen) {
+    if (searchOpen) {
       (searchRef ?? localSearchRef).current?.blur();
       onQuery('');
-      setMobileSearchOpen(false);
+      setSearchOpen(false);
     } else {
-      setMobileSearchOpen(true);
+      setSearchOpen(true);
     }
   };
   const actions = (
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={mobileSearchOpen && !desktop ? 'Close search' : 'Search conversations'}
-        accessibilityState={!desktop ? { expanded: mobileSearchOpen } : undefined}
+        accessibilityLabel={searchOpen ? 'Close search' : 'Search conversations'}
+        accessibilityState={{ expanded: searchOpen }}
         onPress={toggleSearch}
         style={styles.action}
         testID="room-search-toggle"
@@ -95,7 +102,7 @@ export function RoomListToolbar({
     </ScrollView>
   );
   const search = (
-    <View style={desktop && styles.desktopSearchWrap}>
+    <View>
       <TextInput
         ref={searchRef ?? localSearchRef}
         value={query}
@@ -105,21 +112,20 @@ export function RoomListToolbar({
         placeholderTextColor={styles.label.color}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        style={[styles.search, desktop && styles.desktopSearch, focused && styles.searchFocused]}
+        style={[styles.search, focused && styles.searchFocused]}
         testID={desktop ? 'desktop-room-search' : 'room-search'}
       />
     </View>
   );
   return (
     <View>
-      {desktop && search}
       <View
         style={[styles.toolbar, !desktop && styles.mobileToolbar, desktop && styles.desktopToolbar]}
       >
         {filters}
-        {!desktop && actions}
+        {actions}
       </View>
-      {!desktop && mobileSearchOpen && search}
+      {searchOpen && search}
     </View>
   );
 }
@@ -133,12 +139,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileToolbar: { paddingLeft: theme.buzz.space.md },
   filters: { flexDirection: 'row', gap: theme.buzz.space.sm, alignItems: 'center' },
-  desktopToolbar: { paddingHorizontal: theme.buzz.space.md, borderBottomWidth: 0 },
+  desktopToolbar: { paddingLeft: theme.buzz.space.md },
   desktopFilters: {
     flex: 1,
     gap: 20,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
   },
   filter: { minHeight: 44, minWidth: 32, alignItems: 'center', justifyContent: 'center' },
   desktopFilter: { minHeight: 30, position: 'relative' },
@@ -164,13 +168,5 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
     minHeight: 44,
-  },
-  desktopSearchWrap: { paddingHorizontal: theme.buzz.space.md, paddingTop: 12, paddingBottom: 8 },
-  desktopSearch: {
-    minHeight: 36,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: theme.buzz.radius,
   },
 }));

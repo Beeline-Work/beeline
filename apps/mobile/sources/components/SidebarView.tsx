@@ -189,6 +189,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
   const [query, setQuery] = React.useState('');
+  const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
@@ -377,7 +378,7 @@ export const SidebarView = React.memo(function SidebarView() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        searchRef.current?.focus();
+        setDesktopSearchOpen(true);
         return;
       }
       if (!editing && event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
@@ -554,6 +555,8 @@ export const SidebarView = React.memo(function SidebarView() {
           <RoomListToolbar
             desktop
             searchRef={searchRef}
+            searchOpen={desktopSearchOpen}
+            onSearchOpenChange={setDesktopSearchOpen}
             filter={filter}
             onFilter={setFilter}
             query={query}

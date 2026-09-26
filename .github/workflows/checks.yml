@@ -1,7 +1,8 @@
 # The consolidated PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and must stay stable: TYPECHECK, SHARED PACKAGE
-# TESTS, BODY SUITE, MAC HELPER ACCEPTANCE, DEAD CODE,
+# TESTS, BODY SUITE, SERVER SUITE, SERVER INTEGRATION,
+# MAC HELPER ACCEPTANCE, DEAD CODE,
 # PUSH-GATEWAY SUITE, MOBILE SUITE,
 # MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
 # STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, APP LINK ASSOCIATIONS,
@@ -12,7 +13,7 @@
 # suites prune by MODULE, not by guessing which tests import the file:
 #   apps/body            → BODY SUITE
 #   apps/push-gateway    → PUSH-GATEWAY SUITE
-#   apps/server          → PRODUCTION-CORPUS REPLAY
+#   apps/server          → SERVER SUITE + SERVER INTEGRATION + PRODUCTION-CORPUS REPLAY
 #   apps/mobile          → MOBILE SUITE + MOBILE-EXPORT REACHABILITY
 #   packages/**          → every path-filtered job (imported by every app)
 #   any path in no module → every path-filtered job (fail closed)
@@ -30,7 +31,8 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables.
+# the tiny suite tables. SERVER INTEGRATION isolates the large PGlite-backed
+# integration file on a memory-capable runner; SERVER SUITE runs the rest.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -51,6 +53,8 @@ on:
           - shared-package-tests
           - dead-code
           - body-suite
+          - server-suite
+          - server-integration
           - mac-helper-acceptance
           - push-gateway-suite
           - mobile-suite
@@ -76,6 +80,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       body: ${{ steps.decide.outputs.body }}
+      serverSuite: ${{ steps.decide.outputs.serverSuite }}
+      serverIntegration: ${{ steps.decide.outputs.serverIntegration }}
       macHelper: ${{ steps.decide.outputs.macHelper }}
       pushGateway: ${{ steps.decide.outputs.pushGateway }}
       mobileSuite: ${{ steps.decide.outputs.mobileSuite }}
@@ -272,6 +278,8 @@ jobs:
             fi
           }
           set_out body "$BODY_MODULE"
+          set_out serverSuite "$SERVER_MODULE"
+          set_out serverIntegration "$SERVER_MODULE"
           echo "macHelper=$MAC_HELPER" >> "$GITHUB_OUTPUT"
           set_out pushGateway "$PUSH_GATEWAY_MODULE"
           set_out mobileSuite "$MOBILE_MODULE"
@@ -497,6 +505,53 @@ jobs:
       - name: Run the push-gateway suite
         working-directory: apps/push-gateway
         run: npx vitest run
+
+  server-suite:
+    name: SERVER SUITE
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Server tests import these workspaces from dist. The production corpus
+      # test has its own scaled-data gate below; Vitest discovers every other
+      # server test except the large integration file, which runs below.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Run the server suite
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --maxWorkers=2 --minWorkers=2
+
+  server-integration:
+    name: SERVER INTEGRATION
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
+      )
+    # The 169-test PGlite file reached more than 15 GiB RSS in a local run;
+    # the standard hosted runner cannot hold it. The suite above stays hosted.
+    runs-on: [self-hosted, Linux, X64, beeline-prod-host]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Run the server integration contract
+        run: npm test -w @beeline/server -- --run src/integration.test.ts --maxWorkers=1 --minWorkers=1
 
   mobile-suite:
     name: MOBILE SUITE

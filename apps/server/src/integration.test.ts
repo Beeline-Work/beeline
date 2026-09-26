@@ -28,8 +28,6 @@ import {
   isRoomView,
   isRoomViewMessage,
   readRoomView,
-  DEFAULT_WORKSPACE_ID,
-  WELCOME_ROOM_ID,
   ROOM_VIEW_MESSAGE_LIMIT,
   type RoomHistoryView,
   type RoomView,
@@ -631,12 +629,12 @@ describe('monolith integration', () => {
     const roomId = 'b1111111-1111-4111-8111-111111111111';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Push test')`,
-      [roomId, DEFAULT_WORKSPACE_ID, otherId],
+      [roomId, WORKSPACE, otherId],
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
         ($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [DEFAULT_WORKSPACE_ID, roomId, HUMAN, otherId],
+      [WORKSPACE, roomId, HUMAN, otherId],
     );
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -676,12 +674,20 @@ describe('monolith integration', () => {
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
+    const createdWorkspace = (await (
+      await operation('createWorkspace', { workspaceId, name: 'Audit' })
+    ).json()) as { id: string; roomId: string };
+    expect(createdWorkspace).toEqual({ id: workspaceId, roomId: expect.any(String) });
+    // A retry is idempotent and returns the same first Room.
     expect(
       await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
-    ).toEqual({ id: workspaceId });
-    expect(
-      await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
-    ).toEqual({ id: workspaceId });
+    ).toEqual(createdWorkspace);
+    const general = (await (
+      await request(`/v1/phone/rooms/${createdWorkspace.roomId}`)
+    ).json()) as {
+      room: { name: string; visibility: string; workspaceId: string };
+    };
+    expect(general.room).toMatchObject({ name: 'general', visibility: 'public', workspaceId });
     expect(
       (
         await operation('updateWorkspace', {
@@ -1191,26 +1197,22 @@ describe('monolith integration', () => {
     ).toBe(204);
   });
 
-  it('serves Welcome and makes person invites reusable, retry-safe, and Room-complete', async () => {
+  it('lands new people nowhere and makes person invites reusable, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const bobId = createHash('sha256').update('github:bob').digest('hex');
-    const migratedOwnerWorkspaces = (await (await request('/v1/phone/workspaces')).json()) as {
-      workspaces: Array<{ name: string }>;
-    };
-    expect(migratedOwnerWorkspaces.workspaces).toContainEqual(
-      expect.objectContaining({ name: 'Beeline Welcome' }),
-    );
+    // No shared Welcome Workspace: a new person has no Workspace until they
+    // create one or redeem an invite.
     const aliceWorkspaces = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
     ).json()) as { workspaces: Array<{ name: string }> };
-    expect(aliceWorkspaces.workspaces).toContainEqual(
-      expect.objectContaining({ name: 'Beeline Welcome' }),
-    );
+    expect(aliceWorkspaces.workspaces).toEqual([]);
 
     const workspaceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-    await operation('createWorkspace', { workspaceId, name: 'Invites' });
+    const created = (await (
+      await operation('createWorkspace', { workspaceId, name: 'Invites' })
+    ).json()) as { roomId: string };
     const room = (await (
       await operation('createRoom', { workspaceId, name: 'existing-room' })
     ).json()) as { id: string };
@@ -1219,21 +1221,29 @@ describe('monolith integration', () => {
       expiresAt: number;
     };
     expect(invite.expiresAt).toBeLessThan(10_000_000_000);
+    // The preview names the Workspace, who is inviting, and its size.
     expect(
       await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual(expect.objectContaining({ name: 'Invites' }));
+    ).toEqual({
+      name: 'Invites',
+      expiresAt: invite.expiresAt,
+      inviter: { name: 'Owner', handle: 'owner', role: 'owner' },
+      memberCount: 1,
+      agentCount: 0,
+    });
+    // Redeeming hands back the first Room to open: the Workspace's #general.
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual({ joined: true, workspaceId });
+    ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
     expect(
       await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual(expect.objectContaining({ name: 'Invites', joinedWorkspaceId: workspaceId }));
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual({ joined: false, workspaceId });
+    ).toEqual({ joined: false, workspaceId, roomId: created.roomId });
     expect(
       await (await operation('redeemInvite', { token: invite.token }, bobToken)).json(),
-    ).toEqual({ joined: true, workspaceId });
+    ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
 
     const aliceChats = (await (
       await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, aliceToken)
@@ -4171,7 +4181,7 @@ describe('monolith integration', () => {
       recipient.accessToken,
     );
     expect(redeemed.status).toBe(200);
-    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE });
+    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE, roomId: ROOM });
     const membership = await database.query<{ role: string; invited_by: string | null }>(
       `SELECT role,invited_by FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
       [WORKSPACE, recipient.identityId],
@@ -11036,7 +11046,7 @@ describe('monolith integration', () => {
     const workspaces = await request('/v1/phone/workspaces', 'GET', undefined, session.accessToken);
     expect(workspaces.status).toBe(200);
     const view = (await workspaces.json()) as { workspaces: { name: string }[] };
-    expect(view.workspaces.map((workspace) => workspace.name)).toContain('Beeline Welcome');
+    expect(view.workspaces.map((workspace) => workspace.name)).toEqual(['Beeline Review']);
 
     // A wrong secret is an ordinary 404 carrying nothing a guesser can use, and
     // it is the same answer for a malformed one and for a missing field.
@@ -11136,21 +11146,32 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('wakes a subscribed Room agent exactly once for a Workspace-scoped arrival', async () => {
+  it('wakes a subscribed Room agent exactly once when an invite brings someone in', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
-    // The greeter subscribed to `joined` in #welcome. System events are
-    // subscribable per Room, so the Workspace arrival's public-Room projection
-    // emits its `joined` event exactly where someone subscribed — no
-    // workspace special case — and the subscriber wakes exactly once.
+    // A greeter subscribed to `joined` in one public Room. System events are
+    // subscribable per Room, so the invite arrival's public-Room projection
+    // emits its `joined` event exactly where someone subscribed and the
+    // subscriber wakes exactly once.
+    const greeterRoom = 'dddddddd-dddd-4ddd-8ddd-dddddddddd02';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,'lobby','public')`,
+      [greeterRoom, WORKSPACE, HUMAN],
+    );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
        VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
-      [DEFAULT_WORKSPACE_ID, WELCOME_AGENT, WELCOME_ROOM_ID],
+      [WORKSPACE, WELCOME_AGENT, greeterRoom],
     );
+    const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
+      token: string;
+    };
+    const newcomer = await auth.exchangeGitHubOidc('greeted-newcomer');
+    expect(
+      (await operation('redeemInvite', { token: invite.token }, newcomer.accessToken)).status,
+    ).toBe(200);
 
-    await redeemReview(REVIEW_SECRET);
     const joined = await database.query<{
       tagged_ids: string[];
       text: string;
@@ -11163,12 +11184,12 @@ describe('monolith integration', () => {
                     WHERE source_message_id=messages.id ORDER BY agent_id) woke
        FROM messages
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
-      [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
+      [greeterRoom, newcomer.identityId],
     );
     expect(joined.rows).toEqual([
       expect.objectContaining({
         tagged_ids: [],
-        text: '@play-review joined',
+        text: '@greeted-newcomer joined · invited by @owner',
         system_event: expect.objectContaining({ kind: 'joined' }),
         event_woken: 1,
         woke: [WELCOME_AGENT],
@@ -11177,45 +11198,40 @@ describe('monolith integration', () => {
 
     const workspaceDms = await database.query<{
       text: string;
-      tagged_ids: string[];
       system_event: { kind?: string };
-      event_woken: number | null;
       woke: string[];
     }>(
-      `SELECT message.text,${taggedIdentityIdsSql('message')} tagged_ids,
-              message.system_event,message.event_woken,
+      `SELECT message.text,message.system_event,
               ARRAY(SELECT agent_id FROM agent_commands
                     WHERE source_message_id=message.id ORDER BY agent_id) woke
        FROM messages message
        JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
          AND message.card_type='workspace-member-joined'`,
-      [DEFAULT_WORKSPACE_ID],
+      [WORKSPACE],
     );
     expect(workspaceDms.rows).toEqual([
       expect.objectContaining({
-        text: '@play-review joined',
-        tagged_ids: [],
         system_event: expect.not.objectContaining({ kind: expect.anything() }),
-        event_woken: null,
         woke: [],
       }),
     ]);
 
-    const otherRoom = await database.query<{ tagged_ids: string[] }>(
-      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids
-       FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
-      [ROOM],
-    );
     // No agent subscribed to `joined` in the ordinary Room, so the projection
     // is silent there: the join event is emitted only where someone listens.
-    expect(otherRoom.rows).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
+          [ROOM, newcomer.identityId],
+        )
+      ).rowCount,
+    ).toBe(0);
   });
 
   it('wakes an ordinary Workspace Room subscriber for a Workspace-scoped arrival', async () => {
-    // The same mechanism in a Workspace that is not the Beeline Welcome
-    // workspace: subscription, not workspace identity, is what surfaces a
-    // join event.
+    // The same mechanism for a manager-added member: subscription, not how
+    // the person arrived, is what surfaces a join event.
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Finch')`, [
       WELCOME_AGENT,
     ]);

@@ -888,6 +888,18 @@ export type InviteView = {
   readonly expiresAt: number;
   /** Present when the authenticated viewer has already accepted this invite. */
   readonly joinedWorkspaceId?: string;
+  /** The current Workspace member who minted this invite: who is asking. */
+  readonly inviter?: InviteInviterView;
+  /** Active people / agents in the Workspace, so the preview names its size. */
+  readonly memberCount?: number;
+  readonly agentCount?: number;
+};
+
+export type InviteInviterView = {
+  readonly name: string;
+  readonly handle?: string;
+  readonly face?: string;
+  readonly role?: 'owner' | 'admin' | 'member' | 'spectator';
 };
 
 /** Result of the server-authorized Workspace pairing bootstrap. */

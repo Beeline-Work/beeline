@@ -1,12 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
-import {
-  DEFAULT_WORKSPACE_ID as WELCOME_WORKSPACE_ID,
-  DEFAULT_WORKSPACE_NAME as WELCOME_WORKSPACE_NAME,
-} from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { joinRooms } from './membership-join.js';
-import { ensureReviewProofFixture } from './review-proof-fixture.js';
+import { ensureReviewWorkspace } from './review-proof-fixture.js';
 import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
@@ -55,37 +50,6 @@ function sameHash(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/**
- * Land an identity where every person lands: the shared welcome Workspace and
- * its live top-level Rooms. One path, so a GitHub sign-in and the Play review
- * sign-in cannot drift apart.
- */
-async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promise<void> {
-  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, [
-    WELCOME_WORKSPACE_ID,
-    WELCOME_WORKSPACE_NAME,
-  ]);
-  const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
-  const identity = (
-    await database.query<{ handle: string | null }>(`SELECT handle FROM identities WHERE id=$1`, [
-      id,
-    ])
-  ).rows[0];
-  if (!identity) throw new Error('identity not found');
-  await reassignCollidingAgentHandles(database, id, identity.handle, workspaceIds);
-  const membership = await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-    [WELCOME_WORKSPACE_ID, id],
-  );
-  await joinRooms(database, {
-    workspaceId: WELCOME_WORKSPACE_ID,
-    identityId: id,
-    rooms: { type: 'all-live-top-level' },
-    workspaceJoined: membership.rowCount > 0,
-  });
-}
-
 export interface PhoneTokens {
   accessToken: string;
   accessExpiresAt: number;
@@ -119,7 +83,7 @@ export class TokenAuth {
        ON CONFLICT (id) DO NOTHING`,
         [id, github.name, github.avatar ?? null, github.subject, this.now()],
       );
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, id);
       await reassignCollidingAgentHandles(database, id, github.login, workspaceIds);
       await database.query(
         `UPDATE identities SET name=$2,
@@ -138,7 +102,8 @@ export class TokenAuth {
         [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
       );
       await this.persistGitHubCredential(database, github);
-      await landInWelcomeWorkspace(database, id);
+      // No landing: a person with no Workspace is sent to the phone's
+      // create-or-join choice, and an invite link carries them to its own.
     });
     return this.issuePhoneTokens(id, randomUUID());
   }
@@ -175,11 +140,12 @@ export class TokenAuth {
   }
 
   /**
-   * Sign in the one fixed Google Play review identity. Deliberately the same
-   * landing as a GitHub sign-in — the reviewer must see the ordinary product —
-   * and deliberately without a `github_subject` or an external link, so the
-   * identity holds no GitHub token and can never install the App or link a
-   * repository. The secret itself is checked by `ReviewAccess`, never here.
+   * Sign in the one fixed Google Play review identity. The reviewer must see
+   * the ordinary product, so it lands the way a new Workspace creator does:
+   * owner of its own fixed Workspace with a public `#general`, plus the
+   * release proof's corner fixture (`ensureReviewWorkspace`). It holds no
+   * `github_subject` or external link, so it can never install the App or
+   * link a repository. The secret itself is checked by `ReviewAccess`.
    */
   async exchangeReviewIdentity(): Promise<PhoneTokens> {
     await this.database.transaction(async (database) => {
@@ -189,11 +155,7 @@ export class TokenAuth {
          ON CONFLICT (id) DO NOTHING`,
         [REVIEW_IDENTITY_ID, REVIEW_IDENTITY_NAME, REVIEW_IDENTITY_HANDLE, this.now()],
       );
-      await landInWelcomeWorkspace(database, REVIEW_IDENTITY_ID);
-      // The release proof's corner-opens flow needs one live corner on this
-      // identity's deck; borrowing a production corner left the proof at the
-      // mercy of when that corner's work merged. Seed the reviewer's own.
-      await ensureReviewProofFixture(database, REVIEW_IDENTITY_ID, WELCOME_WORKSPACE_ID);
+      await ensureReviewWorkspace(database, REVIEW_IDENTITY_ID);
     });
     return this.issuePhoneTokens(REVIEW_IDENTITY_ID, randomUUID());
   }

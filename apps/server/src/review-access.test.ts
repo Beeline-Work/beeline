@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
+import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { TokenAuth, type PhoneTokens } from './auth.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -13,6 +13,7 @@ import {
   REVIEW_PROOF_CORNER_ID,
   REVIEW_PROOF_OBJECTIVE,
   REVIEW_PROOF_ROOM_ID,
+  REVIEW_WORKSPACE_ID,
   ensureReviewProofFixture,
 } from './review-proof-fixture.js';
 import { PhoneService } from './phone-service.js';
@@ -117,27 +118,60 @@ describe('the review identity', () => {
   });
   afterEach(() => database.close());
 
-  it('lands in the same welcome Workspace and Room every person lands in', async () => {
+  it('lands as owner of its own Workspace with #general and the proof fixture, never Welcome', async () => {
     const issued = await auth.exchangeReviewIdentity();
     expect(issued.identityId).toBe(REVIEW_IDENTITY_ID);
     expect(await auth.authenticatePhone(issued.accessToken)).toBe(REVIEW_IDENTITY_ID);
-    const memberships = await database.query<{ workspace_id: string; room_id: string | null }>(
-      `SELECT workspace_id,room_id FROM memberships WHERE identity_id=$1 AND removed_at IS NULL
-       ORDER BY room_id NULLS FIRST`,
+    const memberships = await database.query<{
+      workspace_id: string;
+      room: string | null;
+      role: string;
+    }>(
+      `SELECT m.workspace_id,r.name room,m.role FROM memberships m LEFT JOIN rooms r ON r.id=m.room_id
+       WHERE m.identity_id=$1 AND m.removed_at IS NULL
+       ORDER BY m.room_id IS NOT NULL,r.name`,
       [REVIEW_IDENTITY_ID],
     );
     expect(memberships.rows).toEqual([
-      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: null },
-      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: WELCOME_ROOM_ID },
-      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: REVIEW_PROOF_ROOM_ID },
-      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: REVIEW_PROOF_CORNER_ID },
+      { workspace_id: REVIEW_WORKSPACE_ID, room: null, role: 'owner' },
+      { workspace_id: REVIEW_WORKSPACE_ID, room: 'general', role: 'owner' },
+      { workspace_id: REVIEW_WORKSPACE_ID, room: 'proof', role: 'member' },
+      { workspace_id: REVIEW_WORKSPACE_ID, room: 'release proof', role: 'member' },
+    ]);
+    expect(
+      (await database.query(`SELECT 1 FROM workspaces WHERE id=$1`, [DEFAULT_WORKSPACE_ID]))
+        .rowCount,
+    ).toBe(0);
+  });
+
+  it('keeps a proof fixture seeded in the retired Welcome Workspace where it lives', async () => {
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
+      DEFAULT_WORKSPACE_ID,
+    ]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human',$2)`,
+      [REVIEW_IDENTITY_ID, REVIEW_IDENTITY_NAME],
+    );
+    await database.transaction((tx) =>
+      ensureReviewProofFixture(tx, REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID),
+    );
+    await auth.exchangeReviewIdentity();
+    const fixture = await database.query<{ room_id: string; workspace_id: string }>(
+      `SELECT m.room_id,m.workspace_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+       WHERE m.identity_id=$1 AND m.room_id IN ($2,$3) AND r.workspace_id=m.workspace_id
+       ORDER BY m.room_id`,
+      [REVIEW_IDENTITY_ID, REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
+    );
+    expect(fixture.rows.map((row) => row.workspace_id)).toEqual([
+      DEFAULT_WORKSPACE_ID,
+      DEFAULT_WORKSPACE_ID,
     ]);
   });
 
   it('seeds the release-proof fixture: one invite-only room with one live corner on the deck', async () => {
     await auth.exchangeReviewIdentity();
     const phone = new PhoneService(database, 'http://placeholder');
-    const deck = await phone.readChats(DEFAULT_WORKSPACE_ID, REVIEW_IDENTITY_ID);
+    const deck = await phone.readChats(REVIEW_WORKSPACE_ID, REVIEW_IDENTITY_ID);
     expect(deck).not.toBeNull();
     const proofRoom = deck!.chats.find((chat) => chat.room.id === REVIEW_PROOF_ROOM_ID);
     expect(proofRoom?.cornerCount).toBe(1);
@@ -151,7 +185,8 @@ describe('the review identity', () => {
 
   it('the proof fixture is visible to no one else', async () => {
     await auth.exchangeReviewIdentity();
-    // Another person lands the ordinary way: #welcome, never the proof room.
+    // Another person joins the reviewer's Workspace the ordinary way: every
+    // public Room, never the invite-only proof room.
     const other = createHash('sha256').update('other-human').digest('hex');
     await database.transaction(async (tx) => {
       await tx.query(
@@ -162,10 +197,10 @@ describe('the review identity', () => {
       await tx.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-        [DEFAULT_WORKSPACE_ID, other],
+        [REVIEW_WORKSPACE_ID, other],
       );
       await joinRooms(tx, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: REVIEW_WORKSPACE_ID,
         identityId: other,
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: true,
@@ -183,7 +218,7 @@ describe('the review identity', () => {
     await auth.exchangeReviewIdentity();
     await auth.exchangeReviewIdentity();
     await database.transaction(async (tx) => {
-      await ensureReviewProofFixture(tx, REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID);
+      await ensureReviewProofFixture(tx, REVIEW_IDENTITY_ID, REVIEW_WORKSPACE_ID);
     });
     const rooms = await database.query<{ id: string }>(
       `SELECT id FROM rooms WHERE id IN ($1,$2)`,

@@ -809,10 +809,13 @@ describe('the agent handle migration', () => {
     await expect(backfillAgentHandles(database)).resolves.toBe(0);
   });
 
-  it('allocates after the welcome membership backfill', async () => {
+  it('allocates across every Workspace the agent belongs to', async () => {
     const human = 'e'.repeat(64);
     const agent = 'f'.repeat(64);
     const otherWorkspace = '22222222-2222-4222-8222-222222222222';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
+      DEFAULT_WORKSPACE_ID,
+    ]);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES
        ($1,'human','Lumen','lumen'),($2,'agent','Lumen','nora')`,
@@ -823,7 +826,7 @@ describe('the agent handle migration', () => {
     ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'member'),($3,NULL,$4,'member')`,
+       ($1,NULL,$2,'member'),($3,NULL,$4,'member'),($1,NULL,$4,'member')`,
       [DEFAULT_WORKSPACE_ID, agent, otherWorkspace, human],
     );
 
@@ -1058,6 +1061,13 @@ describe('the agent_grants kind vocabulary migration', () => {
       [owner, agent],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
+      DEFAULT_WORKSPACE_ID,
+    ]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'welcome')`, [
+      WELCOME_ROOM_ID,
+      DEFAULT_WORKSPACE_ID,
+    ]);
     const storeRoute = (kind: string) =>
       database.query(
         `INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,reason,requested_by,status)

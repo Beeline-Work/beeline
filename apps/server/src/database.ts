@@ -7,7 +7,6 @@ import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
-import { seedDefaultWorkspace } from './default-workspace.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import {
   backfillInheritedCornerMemberships,
@@ -1531,6 +1530,15 @@ CREATE TABLE IF NOT EXISTS push_delivery_floors (
   started_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Release-owned, one-shot data steps (welcome-retirement.ts): one row per
+-- step, written last inside that step's own transaction, so a retry sees the
+-- marker and completes quietly.
+CREATE TABLE IF NOT EXISTS beeline_release_steps (
+  name text PRIMARY KEY,
+  completed_at timestamptz NOT NULL DEFAULT now(),
+  detail jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
 -- Owner-initiated workspace deletion is a real DELETE FROM workspaces, whose
 -- ON DELETE CASCADE already empties rooms/memberships/messages/invites/etc
 -- (every one of those tables carries workspace_id or a room_id that chains to
@@ -1993,7 +2001,8 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      WHERE id=$1 AND avatar IS DISTINCT FROM '/v1/connectors/logo/system.svg'`,
     [SYSTEM_IDENTITY_ID],
   );
-  await seedDefaultWorkspace(database);
+  // The shared Welcome Workspace is no longer reseeded at boot; a release-
+  // owned step retires it (welcome-retirement.ts, run from index.ts).
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);

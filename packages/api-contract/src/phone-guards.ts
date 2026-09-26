@@ -1710,6 +1710,25 @@ export function readInviteView(value: unknown): InviteView | null {
       'joinedWorkspaceId',
       typeof item.joinedWorkspaceId === 'string' ? item.joinedWorkspaceId : undefined,
     ),
+    ...field('inviter', readInviteInviter(item.inviter)),
+    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
+    ...field('agentCount', integer(item.agentCount) ? item.agentCount : undefined),
+  };
+}
+
+function readInviteInviter(value: unknown): InviteView['inviter'] {
+  const item = record(value);
+  if (!item || typeof item.name !== 'string') return undefined;
+  const role = item.role;
+  const roleValue: NonNullable<InviteView['inviter']>['role'] =
+    role === 'owner' || role === 'admin' || role === 'member' || role === 'spectator'
+      ? role
+      : undefined;
+  return {
+    name: item.name,
+    ...field('handle', typeof item.handle === 'string' ? item.handle : undefined),
+    ...field('face', typeof item.face === 'string' ? item.face : undefined),
+    ...field('role', roleValue),
   };
 }
 

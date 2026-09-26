@@ -832,11 +832,53 @@ export class DaemonService {
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'noteEmptyRoomRepository': {
+        const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
+        const repository = await this.repository(roomId, authenticatedAgentId);
+        if (repository.resolution !== 'repository')
+          throw new Error('Room is not repository-backed');
+        await ensureSystemIdentity(this.database);
+        const line = await systemLine(this.database, {
+          id: createHash('sha256').update(`room-empty-repository:v1:${roomId}`).digest('hex'),
+          roomId,
+          authorId: SYSTEM_IDENTITY_ID,
+          subject: { kind: 'system', name: 'This repository' },
+          verb: "has no commits yet - push a first commit and I'll pick it up.",
+        });
+        return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
+      }
       case 'getRoomGitHubToken': {
         if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
-        return (await this.roomGitHubToken(
-          (input as Input<'getRoomGitHubToken'>).roomId,
-        )) as Output<Name>;
+        const roomId = (input as Input<'getRoomGitHubToken'>).roomId;
+        await this.access(roomId, authenticatedAgentId);
+        try {
+          return (await this.roomGitHubToken(roomId)) as Output<Name>;
+        } catch (error) {
+          // A removed installation or a repository outside its grant is a
+          // Room configuration fact. State it once, in server-owned words;
+          // retries must neither spam the Room nor expose GitHub's 404 text.
+          if (
+            (error instanceof Error &&
+              error.message === 'GitHub repository installation not found') ||
+            (typeof error === 'object' &&
+              error !== null &&
+              'status' in error &&
+              error.status === 404)
+          ) {
+            await ensureSystemIdentity(this.database);
+            await systemLine(this.database, {
+              id: createHash('sha256')
+                .update(`room-github-installation-unavailable:v1:${roomId}`)
+                .digest('hex'),
+              roomId,
+              authorId: SYSTEM_IDENTITY_ID,
+              subject: { kind: 'system', name: 'Install or grant the Beeline GitHub App' },
+              verb: 'to access this repository.',
+            });
+            throw new Error('Room repository access needs the Beeline GitHub App');
+          }
+          throw error;
+        }
       }
       case 'getRoomTargetBranch':
         return (await this.targetBranch(
@@ -6662,6 +6704,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   waitForCornerWake: true,
   listUntrackedCorners: true,
   getRoomRepositoryState: true,
+  noteEmptyRoomRepository: true,
   getRoomGitHubToken: true,
   getRoomTargetBranch: true,
   getIdentitySuccession: true,

@@ -220,6 +220,7 @@ export type DaemonOperationMap = {
   waitForCornerWake: Operation<CornerInput, CornerWakeResult>;
   listUntrackedCorners: Operation<RoomInput, CornerListResult>;
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
+  noteEmptyRoomRepository: Operation<RoomInput, WriteResult>;
   getRoomGitHubToken: Operation<RoomInput, RoomGitHubTokenResult>;
   getRoomTargetBranch: Operation<RoomInput, RoomTargetBranchResult>;
   getIdentitySuccession: Operation<IdentityInput, IdentitySuccessionResult>;

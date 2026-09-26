@@ -26,6 +26,29 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
+/**
+ * Read the routing contract out of an Expo-service envelope.
+ *
+ * The patched Android bridge retains independent FCM fields when it parses a
+ * JSON-shaped body. Older Expo-service envelopes can still place the routing
+ * contract under `data`; use that only when no top-level route is present.
+ */
+function unwrapNotificationEnvelope(data: unknown): unknown {
+  // The independent FCM fields win over text parsed from a JSON-looking
+  // message body. A real Expo-service envelope has no route at this level.
+  if (
+    nonEmptyString(getObjectValue(data, 'type')) &&
+    (nonEmptyString(getObjectValue(data, 'channelId')) ||
+      nonEmptyString(getObjectValue(data, 'workspaceId')))
+  ) return data;
+  const nested = getObjectValue(data, 'data');
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return data;
+  const carriesRouting = ['type', 'channelId', 'roomId', 'workspaceId', 'target'].some(
+    (key) => nonEmptyString(getObjectValue(nested, key)) !== undefined,
+  );
+  return carriesRouting ? nested : data;
+}
+
 type BuzzNotificationTargetBase = {
   type: string;
   eventId?: string;
@@ -64,7 +87,7 @@ export type BuzzNotificationResolver = {
 
 /** Parse the FCM string-only data contract without trusting arbitrary route input. */
 export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificationTarget | null {
-  const normalizedData = normalizeNotificationData(data);
+  const normalizedData = unwrapNotificationEnvelope(normalizeNotificationData(data));
   if (!normalizedData || typeof normalizedData !== 'object' || Array.isArray(normalizedData)) {
     return null;
   }

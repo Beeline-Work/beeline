@@ -94,36 +94,32 @@ export async function computeNativeFingerprints(projectDir) {
   for (const platform of PLATFORMS) {
     // `withoutIosPushCapabilities` only changed iOS native output. Normalize it
     // out of Android's inputs so removing that plugin to enable APNs does not
-    // falsely require a new Android runtime and binary.
+    // falsely require a new Android runtime and binary. `withAndroidPushRouting`
+    // is the inverse: it only writes Android manifest/Kotlin output, so it must
+    // not force an unrelated iOS runtime bump.
     const config = require(join(projectDir, 'fingerprint.config.js'));
-    const androidOnly =
-      platform === 'android'
-        ? {
-            ignorePaths: [
-              ...(config.ignorePaths ?? []),
-              'plugins/withoutIosPushCapabilities.js',
-            ],
-            fileHookTransform(source, chunk, ...rest) {
-              const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
-              if (
-                source.type !== 'contents' ||
-                source.id !== 'expoConfig' ||
-                typeof transformed !== 'string'
-              )
-                return transformed;
-              const value = JSON.parse(transformed);
-              value.plugins = value.plugins?.filter(
-                (plugin) =>
-                  (Array.isArray(plugin) ? plugin[0] : plugin) !==
-                  'withoutIosPushCapabilities',
-              );
-              return JSON.stringify(value);
-            },
-          }
-        : {};
+    const ignoredPlugin =
+      platform === 'android' ? 'withoutIosPushCapabilities' : 'withAndroidPushRouting';
+    const platformSpecific = {
+      ignorePaths: [...(config.ignorePaths ?? []), `plugins/${ignoredPlugin}.js`],
+      fileHookTransform(source, chunk, ...rest) {
+        const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
+        if (
+          source.type !== 'contents' ||
+          source.id !== 'expoConfig' ||
+          typeof transformed !== 'string'
+        )
+          return transformed;
+        const value = JSON.parse(transformed);
+        value.plugins = value.plugins?.filter(
+          (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== ignoredPlugin,
+        );
+        return JSON.stringify(value);
+      },
+    };
     const { hash } = await createFingerprintAsync(projectDir, {
       platforms: [platform],
-      ...androidOnly,
+      ...platformSpecific,
     });
     computed[platform] = hash;
   }

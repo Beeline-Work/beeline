@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Metro resolves the published build/, so exercise that exact mapper.
+import { mapNotificationContent } from '../../node_modules/expo-notifications/build/utils/mapNotificationResponse';
 import {
   isInitialLandingNavigationSuppressed,
   resetInitialLandingForTests,
@@ -14,8 +16,35 @@ import {
   type NotificationResponseRouting,
   type TappedNotificationResponse,
 } from './notification-response';
+import { getBuzzNotificationTargetFromData } from '../utils/notificationRouting';
 
 const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT';
+
+it('keeps FCM routing fields when Expo parses a JSON-shaped notification body', () => {
+  const content = mapNotificationContent({
+    dataString: '{"note":"Hoots @captain corner cold exact message 6"}',
+    data: {
+      type: 'channel-activity',
+      target: 'message',
+      workspaceId: 'workspace-other',
+      roomId: 'room-parent',
+      channelId: 'corner-child',
+      cornerId: 'corner-child',
+      messageId: 'exact-message-6',
+    },
+  } as Parameters<typeof mapNotificationContent>[0]);
+
+  expect(content.data).toMatchObject({ note: 'Hoots @captain corner cold exact message 6' });
+  expect(getBuzzNotificationTargetFromData(content.data)).toEqual({
+    type: 'channel-activity',
+    target: 'message',
+    workspaceId: 'workspace-other',
+    roomId: 'room-parent',
+    channelId: 'corner-child',
+    cornerId: 'corner-child',
+    messageId: 'exact-message-6',
+  });
+});
 
 beforeEach(() => {
   resetInitialLandingForTests();
@@ -259,6 +288,97 @@ describe('routeBuzzNotificationResponse', () => {
 });
 
 describe('notification response wiring', () => {
+  // A killed process can be relaunched from its retained task, whose recorded
+  // intent is an OLDER notification tap; Android then delivers the fresh tap as
+  // onNewIntent. Both reach the native queue before the JS bundle registers a
+  // listener. The installed expo-notifications build must therefore keep the
+  // NEWEST extras, or the tap the person actually made is silently dropped and
+  // they land back on the Room list (patch-package: apps/mobile/patches).
+  it('keeps the newest cold-start extras in the installed android notification queue', () => {
+    const notificationManager = readFileSync(
+      new URL(
+        '../../node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    expect(notificationManager).toContain('pendingNotificationResponsesFromExtras.clear()');
+    expect(notificationManager).toContain('pendingNotificationResponsesFromExtras.add(extras)');
+    expect(notificationManager).not.toContain('pendingNotificationResponsesFromExtras.isEmpty()');
+  });
+
+  it.each(
+    (['channel', 'personal'] as const).flatMap((tagKind) =>
+      (['room', 'corner'] as const).flatMap((surface) =>
+        (['cold', 'background'] as const).map((entry) => ({ tagKind, surface, entry })),
+      ),
+    ),
+  )(
+    'opens the exact other-Workspace message for a $tagKind tag in a $surface from $entry',
+    async ({ tagKind, surface, entry }) => {
+      const responseId = `${tagKind}-${surface}-${entry}`;
+      const roomId = 'room-in-other-workspace';
+      const channelId = surface === 'corner' ? 'corner-in-other-workspace' : roomId;
+      const messageId = `${tagKind}-${surface}-message`;
+      // Channel and personal tags intentionally carry the same routing contract;
+      // only the notification copy differs before the server serializes it.
+      const response: TappedNotificationResponse = {
+        actionIdentifier: DEFAULT_ACTION,
+        notification: {
+          request: {
+            identifier: responseId,
+            content: {
+              data: {
+                type: 'channel-activity',
+                target: 'message',
+                workspaceId: 'other-workspace',
+                roomId,
+                channelId,
+                ...(surface === 'corner' ? { cornerId: channelId } : {}),
+                messageId,
+              },
+            },
+          },
+        },
+      };
+      const { navigate, routing: deps } = routing({
+        resolveTarget: async (target) => {
+          expect(target.workspaceId).toBe('other-workspace');
+          return target;
+        },
+      });
+      let listener: ((next: TappedNotificationResponse) => void) | undefined;
+      const route = (next: TappedNotificationResponse) =>
+        routeBuzzNotificationResponse(next, deps);
+      startNotificationResponseEntries({
+        addResponseListener: (next) => {
+          listener = next;
+          return { remove() {} };
+        },
+        getLastResponse: async () => (entry === 'cold' ? response : null),
+        getAppState: () => 'background',
+        route,
+      });
+      if (entry === 'background') listener?.(response);
+
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      expect(navigate).toHaveBeenCalledWith(
+        {
+          pathname: '/beeline/chat/[channelId]',
+          params: {
+            channelId,
+            communityId: 'other-workspace',
+            notificationResponseId: responseId,
+            ...(surface === 'corner' ? { parent: roomId } : {}),
+            notificationMessageId: messageId,
+            notificationTarget: 'message',
+          },
+        },
+        { dangerouslySingular: true },
+      );
+    },
+  );
+
   it.each([
     ['foreground', 'active'],
     ['background', 'background'],

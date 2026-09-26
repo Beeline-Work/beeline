@@ -1950,34 +1950,44 @@ export function BuzzChatSurface({
       )?.identity,
     [roomSurface?.members],
   );
+  // The one way anything but typing puts words in the composer: a starter
+  // prompt and a catch-up request both go through here, so neither can
+  // overwrite a draft the person has already started (there is no undo).
   const fillComposer = useCallback(
-    (text: string) => {
-      if (firstRoomAgent?.handle && text.startsWith(`@${firstRoomAgent.handle}`)) {
-        selectedAgentMentionsRef.current.set(firstRoomAgent.handle, firstRoomAgent.pubkey);
-        selectedMentionsRef.current.set(firstRoomAgent.handle, firstRoomAgent.pubkey);
+    (text: string, mention?: { handle: string; pubkey: string }) => {
+      if (inputTextRef.current.trim()) return false;
+      if (mention) {
+        const handle = mention.handle.replace(/^@/, '');
+        selectedAgentMentionsRef.current.set(handle, mention.pubkey);
+        selectedMentionsRef.current.set(handle, mention.pubkey);
       }
       inputTextRef.current = text;
       setInputText(text);
       setInputSelection({ start: text.length, end: text.length });
       scheduleAnimationFrame(() => composerRef.current?.focus());
+      return true;
     },
-    [firstRoomAgent],
+    [],
   );
   const starterPrompts = useMemo(() => {
     if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
       return undefined;
     const tag = firstRoomAgent?.handle ? `@${firstRoomAgent.handle} ` : '';
+    const mention =
+      firstRoomAgent?.handle && firstRoomAgent.pubkey
+        ? { handle: firstRoomAgent.handle, pubkey: firstRoomAgent.pubkey }
+        : undefined;
     return [
       {
         lead: 'Ask an agent',
         detail: 'to turn an idea into a plan',
-        onPress: () => fillComposer(`${tag}Help me turn this idea into a plan: `),
+        onPress: () => fillComposer(`${tag}Help me turn this idea into a plan: `, mention),
         testID: 'starter-ask-agent',
       },
       {
         lead: 'Open a corner',
         detail: 'for focused work with its own branch',
-        onPress: () => fillComposer(`${tag}Open a corner to `),
+        onPress: () => fillComposer(`${tag}Open a corner to `, mention),
         testID: 'starter-open-corner',
       },
       {
@@ -1995,7 +2005,7 @@ export function BuzzChatSurface({
     activeCommunityId,
     emptyLedgerVariant,
     fillComposer,
-    firstRoomAgent?.handle,
+    firstRoomAgent,
     roomSurface?.viewer.permissions.send,
     viewerIsAgent,
   ]);
@@ -2184,20 +2194,13 @@ export function BuzzChatSurface({
     if (
       isCorner ||
       !catchUpBoundaryId ||
-      inputTextRef.current.trim() ||
       pendingAttachments.length > 0 ||
       !roomSurface?.viewer.permissions.send
     ) return;
     const handle = agent.handle.replace(/^@/, '');
     const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-    selectedAgentMentionsRef.current.set(handle, agent.pubkey);
-    selectedMentionsRef.current.set(handle, agent.pubkey);
-    inputTextRef.current = prompt;
-    setInputText(prompt);
-    setInputSelection({ start: prompt.length, end: prompt.length });
-    setCatchUpSheetVisible(false);
-    scheduleAnimationFrame(() => composerRef.current?.focus());
-  }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
+    if (fillComposer(prompt, { handle, pubkey: agent.pubkey })) setCatchUpSheetVisible(false);
+  }, [catchUpBoundaryId, fillComposer, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
   const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
   const slashVerbs = useMemo(

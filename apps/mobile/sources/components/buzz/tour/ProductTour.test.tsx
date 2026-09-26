@@ -243,6 +243,35 @@ describe('the product tour', () => {
     expect((await loadProductTour('person-1')).seenTips).toEqual([]);
   });
 
+  it('keeps a tip while any of its targets is still mounted', async () => {
+    await offerProductTour('person-1');
+    await finishProductTourOverview('person-1', 'completed');
+    function Screens({ second }: { second: boolean }) {
+      return React.createElement(
+        'Host',
+        null,
+        React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('Sidebar') }),
+        second
+          ? React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('List') })
+          : null,
+      );
+    }
+    const renderer = await render(React.createElement(Screens, { second: true }));
+    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(1);
+    await act(async () => {
+      renderer.update(
+        React.createElement(
+          ProductTourProvider,
+          null,
+          React.createElement(Screens, { second: false }),
+        ),
+      );
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(1);
+    expect((await loadProductTour('person-1')).seenTips).toEqual([]);
+  });
+
   it('lets Skip tips retire every remaining spotlight', async () => {
     await offerProductTour('person-1');
     await finishProductTourOverview('person-1', 'completed');

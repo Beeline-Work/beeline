@@ -5550,7 +5550,7 @@ export class PhoneService {
       );
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
-      await this.settleGrantCard(database, {
+      await settleGrantCard(database, {
         roomId: cardRoomId,
         grantId: input.grantId,
         status,
@@ -5641,19 +5641,6 @@ export class PhoneService {
     return this.database.transaction((database) =>
       skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
     );
-  }
-  /**
-   * Settle one grant's line inside the card the Room already shows. The card
-   * is what the phone renders its ALWAYS/ONCE/NO buttons from, so a rule that
-   * has been decided — or revoked out from under a retired agent — must stop
-   * offering a choice that can no longer be taken. Lines the card has already
-   * settled are left exactly as they are.
-   */
-  private async settleGrantCard(
-    database: SqlDatabase,
-    input: Parameters<typeof settleGrantCard>[1],
-  ) {
-    await settleGrantCard(database, input);
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');

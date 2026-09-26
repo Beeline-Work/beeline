@@ -7,7 +7,11 @@ const unix = (date: Date) => Math.floor(date.getTime() / 1_000);
 
 /**
  * Settles one grant's entry on the latest `grant-request` card in place, so
- * the Room shows the answer where the question was asked.
+ * the Room shows the answer where the question was asked. The card is what the
+ * phone renders its ALWAYS/ONCE/NO buttons from, so a rule that has been
+ * decided — or revoked out from under a retired agent — must stop offering a
+ * choice that can no longer be taken. Lines the card has already settled are
+ * left exactly as they are.
  */
 export async function settleGrantCard(
   database: SqlDatabase,

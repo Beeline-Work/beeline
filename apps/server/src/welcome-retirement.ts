@@ -21,8 +21,7 @@ import { ensureSystemIdentity } from './system-line.js';
  *   2. a missing Welcome Workspace means it is already gone: record and return;
  *   3. resolve the EXACT configured Greeter id — an agent identity with an
  *      agents row and a Welcome membership — never by name; anything else
- *      refuses and changes nothing. `none` is accepted only when no agent was
- *      ever a member of the Workspace;
+ *      refuses and changes nothing;
  *   4. retire the Greeter with the same effects as `removeAgent`
  *      (`retireAgentFromWorkspace`), keeping its identity/agent rows,
  *      messages, turns and corners;
@@ -36,14 +35,13 @@ import { ensureSystemIdentity } from './system-line.js';
  * A failure anywhere rolls the whole transaction back.
  */
 export const WELCOME_RETIREMENT_STEP = 'welcome-workspace-retirement-v1';
-export const WELCOME_RETIREMENT_NO_GREETER = 'none';
 
 export type WelcomeRetirementResult =
   | { readonly status: 'already-complete'; readonly detail: Record<string, unknown> }
   | { readonly status: 'absent' }
   | {
       readonly status: 'retired';
-      readonly greeterAgentId: string | null;
+      readonly greeterAgentId: string;
       readonly members: number;
       readonly welcomeOnlyPeople: number;
     };
@@ -82,9 +80,7 @@ export async function retireWelcomeWorkspace(
 ): Promise<WelcomeRetirementResult> {
   const greeterInput = input.greeterAgentId.trim();
   if (!greeterInput)
-    throw new WelcomeRetirementRefusedError(
-      'the exact Greeter agent id is required (or "none" when no agent was ever a member)',
-    );
+    throw new WelcomeRetirementRefusedError('the exact Greeter agent id is required');
   return database.transaction(async (database) => {
     await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [WELCOME_RETIREMENT_STEP]);
     const marker = (
@@ -105,31 +101,18 @@ export async function retireWelcomeWorkspace(
       return { status: 'absent' };
     }
 
-    let greeterAgentId: string | null = null;
-    if (greeterInput === WELCOME_RETIREMENT_NO_GREETER) {
-      const agents = await database.query(
-        `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id
-         WHERE m.workspace_id=$1 AND i.kind='agent' LIMIT 1`,
-        [DEFAULT_WORKSPACE_ID],
+    const greeter = await database.query(
+      `SELECT 1 FROM identities i
+       JOIN agents a ON a.agent_id=i.id
+       JOIN memberships m ON m.identity_id=i.id AND m.workspace_id=$2 AND m.room_id IS NULL
+       WHERE i.id=$1 AND i.kind='agent'`,
+      [greeterInput, DEFAULT_WORKSPACE_ID],
+    );
+    if (!greeter.rowCount)
+      throw new WelcomeRetirementRefusedError(
+        `${greeterInput} is not an agent member of the Welcome Workspace`,
       );
-      if (agents.rowCount)
-        throw new WelcomeRetirementRefusedError(
-          'an agent is a member of the Welcome Workspace; name the exact Greeter agent id',
-        );
-    } else {
-      const greeter = await database.query(
-        `SELECT 1 FROM identities i
-         JOIN agents a ON a.agent_id=i.id
-         JOIN memberships m ON m.identity_id=i.id AND m.workspace_id=$2 AND m.room_id IS NULL
-         WHERE i.id=$1 AND i.kind='agent'`,
-        [greeterInput, DEFAULT_WORKSPACE_ID],
-      );
-      if (!greeter.rowCount)
-        throw new WelcomeRetirementRefusedError(
-          `${greeterInput} is not an agent member of the Welcome Workspace`,
-        );
-      greeterAgentId = greeterInput;
-    }
+    const greeterAgentId = greeterInput;
 
     const members = await database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
       `SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -149,13 +132,12 @@ export async function retireWelcomeWorkspace(
     ).rows[0]!.count;
 
     await ensureSystemIdentity(database);
-    if (greeterAgentId)
-      await retireAgentFromWorkspace(database, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        agentId: greeterAgentId,
-        remover: await readIdentity(database, SYSTEM_IDENTITY_ID),
-        removed: await readIdentity(database, greeterAgentId),
-      });
+    await retireAgentFromWorkspace(database, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      agentId: greeterAgentId,
+      remover: await readIdentity(database, SYSTEM_IDENTITY_ID),
+      removed: await readIdentity(database, greeterAgentId),
+    });
 
     const otherAgents = members.rows
       .filter((member) => member.kind === 'agent' && member.identity_id !== greeterAgentId)

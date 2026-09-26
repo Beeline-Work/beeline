@@ -831,9 +831,11 @@ export default function BuzzChannels() {
     [activeCommunityId, canManageWorkspace],
   );
 
-  if (workspaceList?.workspaces.length === 0) {
+  if (noWorkspace) {
     // No Workspace: the create-or-join choice is the landing (the effect
-    // above replaces this screen once a live read confirms it).
+    // above replaces this screen). Only a LIVE read decides this — a cached
+    // empty list falls through, so an unreachable server reports itself
+    // below instead of spinning here forever.
     return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
   if (!chatList && !error) {

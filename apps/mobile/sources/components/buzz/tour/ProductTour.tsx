@@ -96,7 +96,11 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
   const [state, setState] = useState<ProductTourState | null>(null);
   const [roomSeen, setRoomSeen] = useState(false);
   const [layoutTick, setLayoutTick] = useState(0);
-  const targets = useRef(new Map<TourTipId, TargetEntry>());
+  // A stack per tip, not one entry: two layouts can both mark the same tip
+  // (the phone Room list and the persistent desktop sidebar can be mounted
+  // together in the native shell), and the one that leaves must not take the
+  // still-mounted one's registration with it.
+  const targets = useRef(new Map<TourTipId, TargetEntry[]>());
   const [targetIds, setTargetIds] = useState<readonly TourTipId[]>([]);
 
   // The viewer is re-read whenever a surface asks for the tour, so a sign-in
@@ -123,11 +127,13 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
 
   const registerTarget = useCallback(
     (tip: TourTipId, entry: TargetEntry) => {
-      targets.current.set(tip, entry);
+      targets.current.set(tip, [...(targets.current.get(tip) ?? []), entry]);
       setTargetIds([...targets.current.keys()]);
       refreshViewer();
       return () => {
-        if (targets.current.get(tip) === entry) targets.current.delete(tip);
+        const held = (targets.current.get(tip) ?? []).filter((other) => other !== entry);
+        if (held.length) targets.current.set(tip, held);
+        else targets.current.delete(tip);
         setTargetIds([...targets.current.keys()]);
       };
     },
@@ -165,7 +171,7 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
           <TourSpotlight
             key={activeTip}
             layoutTick={layoutTick}
-            measure={() => targets.current.get(activeTip)?.measure() ?? Promise.resolve(null)}
+            measure={() => targets.current.get(activeTip)?.at(-1)?.measure() ?? Promise.resolve(null)}
             onDone={() => void markTourTipSeen(viewer, activeTip)}
             onSkipAll={() => void skipTourTips(viewer)}
             tip={activeTip}

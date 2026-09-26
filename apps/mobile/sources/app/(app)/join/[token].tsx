@@ -18,16 +18,23 @@ import { Typography } from '@/constants/Typography';
 import { BrassButton } from '@/components/buzz/MonoHull';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /**
  * A verified invite link skips the create-or-join choice entirely: it names
  * the Workspace and who invited you, one confirmation joins it, and the
  * first Room you can open opens. Opened before sign-in, the link is kept on
- * the device and comes back here after sign-in. A link that no longer works
- * shows its own repair state, with a way to the choice screen.
+ * the device and comes back here after sign-in, and it is spent only once the
+ * server has given a verdict: a resolved invite, or a definitive refusal.
+ * A link the server says is gone shows its own repair state; a request that
+ * never reached the server says so and offers a retry, because the invite is
+ * probably still good.
  */
+/** The server answers 404 for an invite that is missing, expired or used up. */
+const inviteIsGone = (reason: unknown) =>
+  reason instanceof RoomViewHttpError && reason.status === 404;
+
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
@@ -38,6 +45,8 @@ export default function CommunityInviteJoin() {
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<'gone' | 'unreachable' | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const joinInFlight = useRef(false);
 
   useEffect(() => {
@@ -45,7 +54,7 @@ export default function CommunityInviteJoin() {
     void (async () => {
       if (!token) {
         await clearPendingInvite();
-        setError('This invite link is malformed.');
+        setFailure('gone');
         setLoading(false);
         return;
       }
@@ -61,11 +70,11 @@ export default function CommunityInviteJoin() {
           router.replace('/beeline/onboarding');
           return;
         }
-        // Resolving the invite spends the parked copy: this screen now owns it.
-        await clearPendingInvite();
         const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
         const view = new RoomViewClient({ baseUrl: url, identity: currentIdentity });
         const invite = await view.invite(token);
+        // The server has answered: the parked copy has done its job.
+        await clearPendingInvite();
         if (invite.joinedWorkspaceId) {
           await saveActiveCommunityId(currentIdentity.publicKey, invite.joinedWorkspaceId);
           if (!cancelled) enterWorkspaceRoom(invite.joinedWorkspaceId, null);
@@ -76,7 +85,13 @@ export default function CommunityInviteJoin() {
           setPreview(invite);
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        // Only a definitive refusal spends the parked invite; a request that
+        // never got an answer leaves it for the next try.
+        if (inviteIsGone(err)) await clearPendingInvite();
+        if (!cancelled) {
+          setError(String(err));
+          setFailure(inviteIsGone(err) ? 'gone' : 'unreachable');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -84,7 +99,7 @@ export default function CommunityInviteJoin() {
     return () => {
       cancelled = true;
     };
-  }, [incomingUrl, token]);
+  }, [attempt, incomingUrl, token]);
 
   const handleJoin = useCallback(async () => {
     if (!token || !preview || !identity || joinInFlight.current) return;
@@ -105,6 +120,12 @@ export default function CommunityInviteJoin() {
   }, [identity, preview, token]);
 
   const otherWay = () => router.replace('/beeline/community');
+  const retry = () => {
+    setError(null);
+    setFailure(null);
+    setLoading(true);
+    setAttempt((value) => value + 1);
+  };
 
   return (
     <ScrollView
@@ -181,6 +202,31 @@ export default function CommunityInviteJoin() {
               </Text>
             ) : null}
           </>
+        ) : failure === 'unreachable' ? (
+          <View style={styles.failureBlock} testID="invite-unreachable">
+            <Text accessibilityRole="header" style={styles.title}>
+              Couldn’t reach Beeline
+            </Text>
+            <Text style={styles.body}>
+              Your invite may still be fine — we could not ask the server about it. Check your
+              connection and try again.
+            </Text>
+            {error ? <Text style={styles.meta}>{error}</Text> : null}
+            <BrassButton
+              label="Retry"
+              onPress={retry}
+              style={styles.primary}
+              testID="invite-retry"
+            />
+            <Pressable
+              accessibilityRole="button"
+              onPress={otherWay}
+              style={styles.quiet}
+              testID="invite-other-way"
+            >
+              <Text style={styles.quietText}>Choose another way in</Text>
+            </Pressable>
+          </View>
         ) : (
           <View style={styles.failureBlock} testID="invite-unavailable">
             <Text accessibilityRole="header" style={styles.title}>

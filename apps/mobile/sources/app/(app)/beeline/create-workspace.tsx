@@ -65,6 +65,7 @@ export default function CreateWorkspace() {
   const [savedProfile, setSavedProfile] = useState<{ name: string; face: string | null } | null>(
     null,
   );
+  const [createdName, setCreatedName] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
@@ -121,6 +122,12 @@ export default function CreateWorkspace() {
     setNotice(null);
     try {
       const created = await monolithPhoneOperation('createWorkspace', { workspaceId, name });
+      // Step 1 stays editable behind the back control, and the create is
+      // idempotent on this id: a confirmed rename has to be written, or the
+      // Workspace would silently keep the name the person just corrected.
+      if (createdName !== null && createdName !== name)
+        await monolithPhoneOperation('updateWorkspace', { workspaceId, name });
+      setCreatedName(name);
       await saveActiveCommunityId(identity.publicKey, created.id);
       setRoomId(created.roomId ?? null);
       if (picture) {
@@ -137,7 +144,7 @@ export default function CreateWorkspace() {
     } finally {
       setWorking(null);
     }
-  }, [identity, picture, workspaceId, workspaceName, working]);
+  }, [createdName, identity, picture, workspaceId, workspaceName, working]);
 
   const saveProfile = useCallback(async () => {
     const name = personName.trim();

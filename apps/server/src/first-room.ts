@@ -10,8 +10,8 @@ import { joinWorkspaceMembersToPublicRoom } from './membership-join.js';
  * top-level `general`) and returns it rather than writing a second one.
  *
  * Runs inside the caller's transaction, after the creator's owner row exists:
- * the creator joins with their Workspace role, and every other active
- * Workspace member is projected in exactly as for any public Room.
+ * every active Workspace member, the creator included, is projected in with
+ * their Workspace role exactly as for any public Room.
  */
 export async function ensureFirstRoom(
   database: SqlDatabase,
@@ -32,12 +32,6 @@ export async function ensureFirstRoom(
     `INSERT INTO rooms(id,workspace_id,created_by,name,about,visibility,repository_resolution)
      VALUES($1,$2,$3,$4,$5,'public','none')`,
     [id, workspaceId, creatorId, FIRST_ROOM_NAME, FIRST_ROOM_ABOUT],
-  );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT $1,$2,$3,role FROM memberships
-     WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
-    [workspaceId, id, creatorId],
   );
   await joinWorkspaceMembersToPublicRoom(database, workspaceId, id);
   return id;

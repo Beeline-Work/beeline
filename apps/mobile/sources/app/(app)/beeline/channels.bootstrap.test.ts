@@ -31,13 +31,15 @@ describe('Room deck bootstrap', () => {
 
   it('sends a person with zero Workspaces to the create-or-join choice, only on a live read', () => {
     const emptyState = source.slice(
-      source.indexOf('if (workspaceList?.workspaces.length === 0)'),
+      source.indexOf('if (noWorkspace) {'),
       source.indexOf('if (!chatList && !error)'),
     );
     // Never a dead end: the deck shows its loader while the choice replaces it.
     expect(emptyState).toContain('<RoomDeckLoadingView');
     expect(emptyState).not.toContain('No Rooms yet');
-    // A cached empty list cannot route anyone; only the server read can.
+    // A cached empty list neither routes anyone nor holds the loader: only the
+    // server read can, so an unreachable server reaches the error/retry path.
+    expect(source).not.toContain('if (workspaceList?.workspaces.length === 0)');
     expect(source).toContain('setWorkspacesConfirmed(true)');
     expect(source).toContain(
       'const noWorkspace = workspacesConfirmed && workspaceList?.workspaces.length === 0;',

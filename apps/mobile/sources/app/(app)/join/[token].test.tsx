@@ -6,6 +6,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const TOKEN = 'bzi_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const IDENTITY = { publicKey: 'person-1', secretKey: new Uint8Array(32) };
 
+const HttpError = vi.hoisted(
+  () =>
+    class RoomViewHttpError extends Error {
+      readonly status: number;
+      readonly code: string;
+      constructor(status: number, code: string) {
+        super(`Room view request failed (${status} ${code})`);
+        this.name = 'RoomViewHttpError';
+        this.status = status;
+        this.code = code;
+      }
+    },
+);
 const controls = vi.hoisted(() => ({
   invite: vi.fn(),
   workspaces: vi.fn(),
@@ -79,6 +92,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     invite = controls.invite;
     workspaces = controls.workspaces;
   },
+  RoomViewHttpError: HttpError,
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
   monolithPhoneOperation: controls.redeemInvite,
@@ -198,14 +212,34 @@ describe('CommunityInviteJoin', () => {
   });
 
   it('shows its own repair state for a dead invite, with a way to the choice', async () => {
-    controls.invite.mockRejectedValue(new Error('invite not found'));
+    controls.invite.mockRejectedValue(new HttpError(404, 'invite not found'));
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: 'invite-unavailable' }).length).toBeGreaterThan(
       0,
     );
+    expect(text(renderer)).toContain('This invite doesn’t work anymore');
     expect(controls.clearPendingInvite).toHaveBeenCalled();
     renderer.root.findByProps({ testID: 'invite-other-way' }).props.onPress();
     expect(controls.replace).toHaveBeenCalledWith('/beeline/community');
+  });
+
+  it('keeps a parked invite when the server could not be reached, and retries it', async () => {
+    controls.invite.mockRejectedValueOnce(new HttpError(0, 'timeout'));
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'invite-unreachable' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(text(renderer)).toContain('Couldn’t reach Beeline');
+    expect(renderer.root.findAllByProps({ testID: 'invite-unavailable' })).toHaveLength(0);
+    expect(controls.clearPendingInvite).not.toHaveBeenCalled();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'invite-retry' }).props.onPress();
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(controls.invite).toHaveBeenCalledTimes(2);
+    expect(text(renderer)).toContain('Join Builders');
+    expect(controls.clearPendingInvite).toHaveBeenCalled();
   });
 
   it('sends "This isn’t my invite" to the choice screen without joining', async () => {

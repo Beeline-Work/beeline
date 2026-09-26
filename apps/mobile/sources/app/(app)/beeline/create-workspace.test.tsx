@@ -212,6 +212,33 @@ describe('creating a Workspace', () => {
     expect(find(renderer, 'create-step-profile')).toHaveLength(1);
   });
 
+  it('writes a name corrected after step 1 was already confirmed', async () => {
+    const renderer = await render();
+    await type(renderer, 'create-workspace-name', 'Northsatr Lab');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
+    await press(renderer, 'create-back');
+    await type(renderer, 'create-workspace-name', 'Northstar Lab');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() =>
+      expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
+        workspaceId: WORKSPACE,
+        name: 'Northstar Lab',
+      }),
+    );
+    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
+  });
+
+  it('leaves the name alone when step 1 is confirmed again unchanged', async () => {
+    const renderer = await render();
+    await type(renderer, 'create-workspace-name', 'Crew');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
+    await press(renderer, 'create-back');
+    await press(renderer, 'create-continue');
+    expect(controls.operation).not.toHaveBeenCalledWith('updateWorkspace', expect.anything());
+  });
+
   it('never blocks setup on a picture that fails to save', async () => {
     controls.pick.mockResolvedValue('https://server.example/v1/media/pic');
     controls.operation.mockImplementation(async (name: string) => {

@@ -43,7 +43,7 @@ so no client is left on a dead route.
    `bee11e00-0000-4000-8000-000000000103`. The canary's review sign-in re-creates that Room in
    the review Workspace, so the canary does not start failing once Welcome is gone.
 4. **Arm the retirement.** Set the repository variable `BEELINE_RETIRE_WELCOME_GREETER_ID` to the
-   Greeter's exact agent id. Use `none` only if no agent was ever a Welcome member. The next
+   Greeter's exact agent id. Leave it unset to skip the step entirely. The next
    unified release's migration step runs `retireWelcomeWorkspace`
    (`apps/server/src/welcome-retirement.ts`) in one transaction:
    - it refuses and changes nothing unless the id is an agent member of Welcome;

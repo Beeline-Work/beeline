@@ -196,7 +196,6 @@ describe('Welcome Workspace retirement', () => {
     ['an empty id', ''],
     ['a person', OWNER],
     ['an agent that was never in Welcome', 'f'.repeat(63) + '0'],
-    ['"none" while agents are members', 'none'],
   ])('refuses %s and changes nothing', async (_label, greeterAgentId) => {
     await expect(retireWelcomeWorkspace(database, { greeterAgentId })).rejects.toThrow(
       WelcomeRetirementRefusedError,
@@ -206,17 +205,6 @@ describe('Welcome Workspace retirement', () => {
     expect(
       await count(database, `SELECT 1 FROM identities WHERE id=$1 AND hidden_from_roster`, [GREETER]),
     ).toBe(0);
-  });
-
-  it('accepts "none" only when no agent was ever a member', async () => {
-    await database.query(
-      `DELETE FROM memberships WHERE workspace_id=$1 AND identity_id=ANY($2)`,
-      [DEFAULT_WORKSPACE_ID, [GREETER, STRAY_AGENT, HOMED_AGENT]],
-    );
-    expect(await retireWelcomeWorkspace(database, { greeterAgentId: 'none' })).toMatchObject({
-      status: 'retired',
-      greeterAgentId: null,
-    });
   });
 
   it('rolls everything back when the delete fails part-way', async () => {

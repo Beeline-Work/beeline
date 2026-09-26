@@ -75,6 +75,87 @@ function recoveryResponse(issuedAt = Math.floor(Date.now() / 1_000)): Response {
   );
 }
 
+/** The auth server answers its reachability probe; every other request reaches `fetchImpl`. */
+function reachable(
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => unknown,
+): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith('/healthz')
+      ? new Response(null, { status: 200 })
+      : fetchImpl(input, init)) as typeof fetch;
+}
+
+const MONOLITH_RUNTIME = {
+  relayUrl: 'https://usebeeline.app',
+  pushGatewayUrl: 'https://usebeeline.app/push',
+  monolithUrl: 'https://server.usebeeline.app',
+  monolithEnabled: true,
+};
+
+describe('GitHub sign-in without a network', () => {
+  beforeEach(() => storage.clear());
+
+  it('reports offline without opening a browser when the auth server is unreachable', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Network request failed');
+    });
+    const openAuthSession = vi.fn(async () => ({ type: 'dismiss' }));
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        runtime: MONOLITH_RUNTIME,
+        openAuthSession,
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: 'offline', status: undefined });
+    expect(openAuthSession).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.usebeeline.app/healthz');
+    expect(storage.has('buzzy.github-sign-in-session.v2')).toBe(false);
+  });
+
+  it('stops polling and reports offline once completion reads keep failing to reach the server', async () => {
+    const completion = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/completion')) throw new TypeError('Network request failed');
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        runtime: MONOLITH_RUNTIME,
+        openAuthSession: async () => ({ type: 'dismiss' }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: reachable(completion),
+        callbackGraceMs: 0,
+        recoveryWaitMs: 120_000,
+        recoveryPollMs: 0,
+        offlineGiveUpMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'offline', status: undefined });
+    expect(completion.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://server.usebeeline.app/auth/github/completion',
+      'https://server.usebeeline.app/auth/github/completion/cancel',
+    ]);
+  });
+
+  it('keeps a stale recovery token and reports offline when its revocation cannot reach the server', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    const unreachable = vi.fn(async () => {
+      throw new TypeError('Network request failed');
+    });
+
+    await expect(
+      cancelPendingGitHubSignIn(MONOLITH_RUNTIME, unreachable as unknown as typeof fetch),
+    ).rejects.toMatchObject({ code: 'offline', status: undefined });
+    expect(storage.get('buzzy.github-sign-in-recovery.v1')).toBe(RECOVERY_TOKEN);
+  });
+});
+
 describe('GitHub auth session redirects', () => {
   beforeEach(() => {
     createURL.mockClear();
@@ -129,7 +210,7 @@ describe('GitHub auth session redirects', () => {
       },
       openAuthSession: async () => ({ type: 'dismiss' }),
       subscribeToUrls: () => ({ remove: () => undefined }),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: reachable(fetchImpl),
       callbackGraceMs: 0,
       recoveryWaitMs: 0,
     });
@@ -154,7 +235,7 @@ describe('GitHub auth session redirects', () => {
       },
       openAuthSession: async () => ({ type: 'success', url: bindCallback() }),
       subscribeToUrls: () => ({ remove: () => undefined }),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: reachable(fetchImpl),
     });
 
     expect(challenge.ticket).toBe('t'.repeat(43));
@@ -177,7 +258,7 @@ describe('GitHub auth session redirects', () => {
         url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
       }),
       subscribeToUrls: () => ({ remove: () => undefined }),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: reachable(fetchImpl),
     });
 
     expect(challenge.ticket).toBe(RECOVERY_TOKEN);
@@ -213,7 +294,7 @@ describe('GitHub auth session redirects', () => {
           url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
         recoveryWaitMs: 120_000,
         recoveryPollMs: 200,
       });
@@ -247,7 +328,7 @@ describe('GitHub auth session redirects', () => {
           url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
         recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
@@ -279,7 +360,7 @@ describe('GitHub auth session redirects', () => {
           url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
         recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
@@ -301,7 +382,7 @@ describe('GitHub auth session redirects', () => {
           url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
       }),
     ).rejects.toMatchObject({ code: 'ticket_expired' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -325,7 +406,7 @@ describe('GitHub auth session redirects', () => {
           url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
       }),
     ).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -357,7 +438,7 @@ describe('GitHub auth session redirects', () => {
         },
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: reachable(fetchImpl),
         callbackGraceMs: 0,
         recoveryWaitMs: 0,
       }),

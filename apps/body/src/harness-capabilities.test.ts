@@ -15,6 +15,7 @@ import {
   roomShellCapability,
   usesTextTargetBranchFallback,
 } from './harness-capabilities.js';
+import { CURSOR_ACP_BRIDGE_LABEL, harnessIdentityLabel } from './cursor-acp-bridge.js';
 
 describe('harness session retention', () => {
   it('keeps only Grok warm beyond the ordinary scheduler idle window', () => {
@@ -95,10 +96,17 @@ describe('Room shell capability', () => {
 
   it('runs a harness that never asks, sandbox or not', () => {
     // pi executes reads/writes/bash before the daemon sees them, and the cursor
-    // bridge drives cursor-agent with --force.
+    // bridge drives cursor-agent with --force. A cursor agent's own command is
+    // the node/beeline binary, so the identity the Room loop supplies is the
+    // bridge label — classify that, not a spelling production never produces.
     for (const osSandbox of [true, false]) {
       expect(roomShellCapability('pi-acp', { osSandbox })).toBe('runs');
-      expect(roomShellCapability('cursor-agent-acp', { osSandbox })).toBe('runs');
+      expect(roomShellCapability(CURSOR_ACP_BRIDGE_LABEL, { osSandbox })).toBe('runs');
+      expect(
+        roomShellCapability(harnessIdentityLabel({ kind: 'cursor', command: process.execPath }), {
+          osSandbox,
+        }),
+      ).toBe('runs');
     }
   });
 

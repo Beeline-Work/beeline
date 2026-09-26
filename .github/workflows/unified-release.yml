@@ -1192,19 +1192,18 @@ jobs:
           # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
           # every component yet was classified "budget" and never published its
           # release record. When a native build ran, allow 60 minutes instead. The
-          # macOS helper bundles are the same shape: a cold `cargo build --release`
-          # of buzz-agent/buzz-dev-mcp on a hosted Mac runner, serial ahead of the
-          # helper leg, so a helper release that delivered everything must not be
-          # classified "budget" either. The iOS leg and the darwin-x64 helper leg
-          # request the SAME one self-hosted Intel Mac, so a release carrying both
-          # runs them one after the other: 90 + 35 minutes of caps plus the
-          # downstream helper and OTA legs is 150 minutes, and a delivered release
-          # must not be classified "budget" for waiting on that queue.
+          # A macOS helper release pays the same shape twice over: a cold
+          # `cargo build --release` of buzz-agent/buzz-dev-mcp, serial ahead of the
+          # helper leg, on the ONE self-hosted Intel Mac that the iOS leg (90-minute
+          # cap) and the Mac PR gate (35) also hold. Queue time on that single runner
+          # is the cost, present whether or not iOS built in this attempt, so a
+          # helper release that delivered every component must not be classified
+          # "budget" for waiting in it: 150 minutes covers the worst serialized case.
           budget_seconds=1200
-          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ] || [ "$HELPER_MACOS_RESULT" = success ]; then
+          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
             budget_seconds=3600
           fi
-          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] && [ "$HELPER_MACOS_RESULT" = success ]; then
+          if [ "$HELPER_MACOS_RESULT" = success ]; then
             budget_seconds=9000
           fi
           # Termination rules for the retry loop: a cancelled attempt (including

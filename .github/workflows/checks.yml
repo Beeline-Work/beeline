@@ -17,10 +17,9 @@
 #   packages/**          → every path-filtered job (imported by every app)
 #   any path in no module → every path-filtered job (fail closed)
 # MAC HELPER ACCEPTANCE is the exception: it holds the repository's one
-# self-hosted Intel Mac, so it follows its own `macHelper` filter alone and is
-# never widened by run-everything. The Apple-silicon bundle is proven by the
-# release's own `helper_macos` leg; MAC ARM BUNDLE (on demand) is a dispatch
-# lane, not a PR context.
+# self-hosted Intel Mac, so it follows its own `macHelper` filter alone — the
+# macOS-specific sources, never run-everything. The Apple-silicon bundle is
+# proven by the release's own `helper_macos` leg, not by a PR gate.
 # A skipped required job uses a job-level `if:` so GitHub reports the check
 # as skipped-and-satisfied. Never put a required check behind a workflow-level
 # `on.pull_request.paths` filter: that omits the check entirely and the PR
@@ -53,7 +52,6 @@ on:
           - dead-code
           - body-suite
           - mac-helper-acceptance
-          - mac-arm-bundle
           - push-gateway-suite
           - mobile-suite
           - mobile-export-reachability
@@ -113,15 +111,24 @@ jobs:
               - '!apps/mobile/**'
             bodyModule:
               - 'apps/body/**'
+            # Deliberately the macOS-specific sources only: this gate holds the
+            # repository's one Intel Mac, which the iOS store leg and the release's
+            # own darwin-x64 helper leg also need, so an ordinary apps/body or
+            # shared-package PR must not queue behind it.
             macHelper:
-              - 'apps/body/**'
-              - 'packages/usebeeline/**'
-              - 'relay-stack/web/install.sh'
+              - 'apps/body/src/launchd*'
+              - 'apps/body/src/squire-host.ts'
+              - 'apps/body/src/connector-squire.ts'
+              - 'apps/body/src/device-pairing.ts'
+              - 'apps/body/src/start-command.ts'
+              - 'apps/body/src/cli.ts'
+              - 'apps/body/src/self-update.ts'
+              - 'apps/body/src/managed-update.ts'
               - 'scripts/build-beeline-bundle.mjs'
               - 'scripts/verify-beeline-install.mjs'
               - 'scripts/merge-beeline-bundles.mjs'
+              - 'relay-stack/web/install.sh'
               - '.github/actions/daemon-leg/**'
-              - '.github/workflows/unified-release.yml'
               - '.github/workflows/checks.yml'
             pushGatewayModule:
               - 'apps/push-gateway/**'
@@ -462,24 +469,6 @@ jobs:
         env:
           BEELINE_LAUNCHD_USER: '0'
         run: npx vitest run src/fresh-room-discovery.integration.test.ts
-
-  mac-arm-bundle-on-demand:
-    name: MAC ARM BUNDLE (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-arm-bundle')
-    runs-on: macos-15
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20.19'
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
-      - name: Require the Apple-silicon runner
-        run: test "$(uname -m)" = arm64
-      - name: Fresh-install the native Apple-silicon bundle
-        run: npm run bundle:beeline -- --platform darwin-arm64
 
   push-gateway-suite:
     name: PUSH-GATEWAY SUITE

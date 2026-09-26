@@ -75,8 +75,9 @@ logout/login), verifies the terminal exit-status contract, pairs against the
 in-process monolith, observes a Room answer, and exercises `open_corner` with
 the deterministic ACP fixture. The native Apple-silicon release build runs its
 same installer/ACP/CodeGraph bundle proof on GitHub's hosted arm64 Mac runner,
-which is where the Apple-silicon bundle is proven; `MAC ARM BUNDLE (on demand)`
-is a dispatch lane for reproducing it, not a pull-request gate.
+which is where the Apple-silicon bundle is proven — no pull-request gate rebuilds
+it. The gate's path filter is the macOS-specific sources alone, so an ordinary
+`apps/body` or shared-package change never queues behind that one Mac.
 
 macOS has no bubblewrap namespaces. The helper therefore uses the existing
 `bwrap`-unavailable fallback: it logs `harness OS sandbox UNAVAILABLE`, runs ACP

@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -15,10 +14,17 @@ import {
 const run = promisify(execFile);
 const enabled = process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_ACCEPTANCE === '1';
 
+/**
+ * A fixed label, not one derived from this run's tmpdir: a cancelled run (the
+ * job has its own timeout) leaves a real bootstrapped job behind whose files are
+ * gone, and only a stable label lets the next run's `bootoutIfLoaded` reclaim it.
+ * The temp HOME keeps the plist away from any paired agent.
+ */
+const publicKey = 'ac'.repeat(32);
+
 describe.runIf(enabled)('isolated launchd supervision acceptance', () => {
   let root = '';
   let home = '';
-  let publicKey = '';
   let target = '';
   let stateRoot = '';
   let env: NodeJS.ProcessEnv;
@@ -27,7 +33,6 @@ describe.runIf(enabled)('isolated launchd supervision acceptance', () => {
     root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-acceptance-'));
     home = resolve(root, 'home');
     stateRoot = resolve(root, 'state');
-    publicKey = createHash('sha256').update(root).digest('hex');
     target = `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`;
     const bin = resolve(home, '.local', 'bin');
     const lib = resolve(home, '.local', 'lib', 'beeline');

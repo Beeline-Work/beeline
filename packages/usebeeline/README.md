@@ -65,7 +65,7 @@ Codex, Claude Code, Grok, and OpenCode use the sign-in they already have on that
 
 You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXXXX` — and the package also installs a `beeline` bin alias.
 
-**Requirements:** Node 20.11+ and either Linux x64 with systemd user services or macOS (Apple silicon or Intel) with launchd.
+**Requirements:** Node 20.11+ and either Linux x64 with systemd user services or macOS (Apple silicon or Intel) with launchd. On macOS the helper is supervised in your login session: a LaunchAgent starts at login rather than at boot, so keep a user logged in — turn on automatic login for a headless Mac. Pairing over SSH with nobody logged in cannot start the daemon.
 
 ## What happens
 

@@ -65,13 +65,14 @@ async function seedServe(input: {
   const id = randomUUID();
   await database.query(
     `INSERT INTO institutional_context_serves
-     (id,workspace_id,room_id,request_id,requester_identity_id,mode,served,total_bytes,
+     (id,workspace_id,room_id,agent_id,request_id,requester_identity_id,mode,served,total_bytes,
       estimated_tokens,actual_input_tokens,prompt_bytes)
-     VALUES($1,$2,$3,$4,$5,'live',$6,$7,$8,$9,$10)`,
+     VALUES($1,$2,$3,$4,$5,$6,'live',$7,$8,$9,$10,$11)`,
     [
       id,
       WORKSPACE,
       input.roomId,
+      AGENT,
       input.requestId,
       HUMAN,
       input.served,
@@ -143,6 +144,7 @@ describe('institutional objective dashboard: real token budget and cohorts', () 
     await recordInstitutionalServeUsage(database, {
       roomId: SERVICE_CORNER,
       requestId: 'usage-turn',
+      agentId: AGENT,
       inputTokens: 12_000,
       promptBytes: 24_000,
     });

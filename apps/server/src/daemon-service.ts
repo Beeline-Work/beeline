@@ -3533,6 +3533,7 @@ export class DaemonService {
         await recordInstitutionalServeUsage(database, {
           roomId: input.roomId,
           requestId: input.requestId,
+          agentId,
           ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
           ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
         });

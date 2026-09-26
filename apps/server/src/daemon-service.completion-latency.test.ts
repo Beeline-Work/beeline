@@ -429,22 +429,26 @@ describe('agent reply completion latency', () => {
     await claimAgentCommand(database, ROOM, AGENT, command!.id, GENERATION);
     await database.query(
       `INSERT INTO institutional_context_serves
-       (id,workspace_id,room_id,request_id,requester_identity_id,mode,served,total_bytes,
+       (id,workspace_id,room_id,agent_id,request_id,requester_identity_id,mode,served,total_bytes,
         estimated_tokens)
-       VALUES($1,$2,$3,$4,$5,'live',true,4000,1000)`,
-      [randomUUID(), WORKSPACE, ROOM, request, HUMAN],
+       VALUES($1,$2,$3,$4,$5,$6,'live',true,4000,1000)`,
+      [randomUUID(), WORKSPACE, ROOM, AGENT, request, HUMAN],
     );
     const daemon = new DaemonService(database, new LiveHub());
-    await daemon.execute('postAgentTurnReceipt', {
-      agentId: AGENT,
-      roomId: ROOM,
-      requestId: request,
-      status: 'complete',
-      generationId: GENERATION,
-      inputTokens: 30_000,
-      promptBytes: 60_000,
-      toolCalls: 7,
-    }, AGENT);
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: request,
+        status: 'complete',
+        generationId: GENERATION,
+        inputTokens: 30_000,
+        promptBytes: 60_000,
+        toolCalls: 7,
+      },
+      AGENT,
+    );
     // The serve the turn answered now carries the harness's own numbers, and
     // 30,000 of 60,000 real prompt bytes are the 4,000-byte institutional block.
     expect(

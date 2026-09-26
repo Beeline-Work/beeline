@@ -123,7 +123,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 7;
+export const REQUIRED_SCHEMA_VERSION = 8;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -862,6 +862,10 @@ CREATE TABLE IF NOT EXISTS institutional_context_serves (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  -- The agent whose turn this snapshot was fetched for. One message addressing
+  -- two agents runs two turns under ONE request id (C107), so (room, request)
+  -- alone cannot say whose prompt the real token count belongs to.
+  agent_id text REFERENCES identities(id) ON DELETE CASCADE,
   request_id text,
   requester_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
   snapshot_revision bigint NOT NULL DEFAULT 0 CHECK (snapshot_revision >= 0),
@@ -887,6 +891,17 @@ CREATE TABLE IF NOT EXISTS institutional_context_serves (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (mode<>'shadow' OR (served=false AND total_bytes=0 AND cardinality(item_ids)=0))
 );
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS prompt_bytes integer;
+ALTER TABLE institutional_context_serves
+  DROP CONSTRAINT IF EXISTS institutional_context_serves_prompt_bytes_check;
+ALTER TABLE institutional_context_serves
+  ADD CONSTRAINT institutional_context_serves_prompt_bytes_check
+  CHECK (prompt_bytes IS NULL OR prompt_bytes > 0);
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS agent_id text REFERENCES identities(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS institutional_context_serves_turn_idx
+  ON institutional_context_serves(room_id,request_id,agent_id) WHERE mode='live';
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
   ON institutional_context_serves(shadow_job_id) WHERE shadow_job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS institutional_context_serves_workspace_created_idx

@@ -1415,6 +1415,12 @@ export class MonolithCornerTurnLoop {
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
+              // A turn starts with no measured cost. Without this reset a turn
+              // that throws before its own prompt settles — the context fetch,
+              // `buildPrompt`, a rejected delivery — would report the PREVIOUS
+              // turn's token count and prompt size on its failure receipt, and
+              // the budget gate would read somebody else's prompt.
+              this.turnMetrics = {};
               await this.syncBranch();
               const [
                 conversation,

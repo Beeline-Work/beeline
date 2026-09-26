@@ -1322,15 +1322,16 @@ export async function getInstitutionalContext(
     const serveId = randomUUID();
     await db.query(
       `INSERT INTO institutional_context_serves
-       (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,mode,served,
-        item_ids,skill_candidates,workspace_fact_bytes,profile_bytes,skill_index_bytes,
+       (id,workspace_id,room_id,agent_id,request_id,requester_identity_id,snapshot_revision,mode,
+        served,item_ids,skill_candidates,workspace_fact_bytes,profile_bytes,skill_index_bytes,
         wrapper_bytes,total_bytes,estimated_tokens,
         candidate_count,dropped_counts)
-       VALUES($1,$2,$3,$4,$5,$6,'live',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,
+       VALUES($1,$2,$3,$4,$5,$6,$7,'live',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`,
       [
         serveId,
         authority.workspace_id,
         command.room_id,
+        command.agent_id,
         command.turn_request_id,
         authority.requester_identity_id,
         snapshotRevision,
@@ -1555,6 +1556,7 @@ export async function recordInstitutionalServeUsage(
   input: {
     roomId: string;
     requestId: string;
+    agentId: string;
     inputTokens?: number;
     promptBytes?: number;
   },
@@ -1568,12 +1570,16 @@ export async function recordInstitutionalServeUsage(
       ? input.promptBytes!
       : null;
   if (inputTokens === null && promptBytes === null) return;
+  // The serving agent is part of the match, not decoration: one message that
+  // addresses two agents runs two turns under ONE request id (C107), and each
+  // of those turns wrote its own serve row. Matching on (room, request) alone
+  // stamped the first agent's prompt cost on both.
   await database.query(
     `UPDATE institutional_context_serves
-     SET actual_input_tokens=COALESCE(actual_input_tokens,$3),
-         prompt_bytes=COALESCE(prompt_bytes,$4)
-     WHERE room_id=$1 AND request_id=$2 AND mode='live'`,
-    [input.roomId, input.requestId, inputTokens, promptBytes],
+     SET actual_input_tokens=COALESCE(actual_input_tokens,$4),
+         prompt_bytes=COALESCE(prompt_bytes,$5)
+     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND mode='live'`,
+    [input.roomId, input.requestId, input.agentId, inputTokens, promptBytes],
   );
 }
 

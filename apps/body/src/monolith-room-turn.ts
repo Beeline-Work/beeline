@@ -1069,6 +1069,12 @@ export class MonolithRoomTurnLoop {
     // Admission is busy before the first awaited receipt write. The updater
     // cannot observe an accepted/queued turn as idle in this window.
     this.busy = true;
+    // A turn starts with no measured cost. Without this reset a turn that throws
+    // before its own prompt settles — the context fetch, `buildPrompt`, a
+    // rejected delivery — would report the PREVIOUS turn's token count and
+    // prompt size on its failure receipt, and the budget gate would read a
+    // number belonging to somebody else's prompt.
+    this.turnMetrics = {};
     const trace = this.beginTurnTrace(item.id);
     // The draft lane, held where the catch below can reach it: a turn that
     // throws never reaches its settle, and only this reference can dissolve

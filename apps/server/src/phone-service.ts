@@ -7079,18 +7079,9 @@ export class PhoneService {
     input: Input<'disconnectWorkbenchApp'>,
     viewerId: string,
   ): Promise<void> {
-    const workspaceId = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM workspace_apps WHERE id=$1::uuid AND owner_identity_id=$2`,
-        [input.appId, viewerId],
-      )
-    ).rows[0]?.workspace_id;
-    if (!workspaceId) throw new Error('app not found (access denied)');
-    const result = await disconnectApp(this.database, {
-      workspaceId,
-      ownerId: viewerId,
-      appId: input.appId,
-    });
+    // `workspaceId` is accepted for wire compatibility; an app is the
+    // viewer's own across Workspaces, so ownership is the whole check.
+    const result = await disconnectApp(this.database, { ownerId: viewerId, appId: input.appId });
     if (result.helperAgentId) await notifyConnectorAssignment(this.database, result.helperAgentId);
   }
 

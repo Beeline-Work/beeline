@@ -2703,7 +2703,11 @@ export class DaemonService {
           }>(
             `SELECT connector.id,connector.registry_server_name,connector.display_name
              FROM workspace_connectors connector
-             JOIN rooms room ON room.workspace_id=connector.workspace_id AND room.id=$2
+             -- A connected app is the PERSON's (their Workbench spans
+             -- Workspaces), so its server mounts wherever that owner's agent
+             -- runs on the machine that holds it; every call is still
+             -- authorized per Room and requester as app:<key>.
+             JOIN rooms room ON room.id=$2
              JOIN agents actor ON actor.agent_id=$1
                AND actor.owner_id=connector.owner_identity_id
                AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(connector.machine_id,connector.helper_agent_id)
@@ -5195,7 +5199,7 @@ export class DaemonService {
         state: row.state,
       })),
       registryServers,
-      apps: (await readOwnerApps(this.database, context.owner.pubkey, context.workspaceId)).map(
+      apps: (await readOwnerApps(this.database, context.owner.pubkey)).map(
         (app) => ({
           appKey: app.appKey,
           name: app.name,

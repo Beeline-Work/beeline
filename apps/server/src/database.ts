@@ -1907,7 +1907,7 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
--- owner, whatever serves it: an official hosted MCP server (its Registry
+-- person, whatever serves it: an official hosted MCP server (its Registry
 -- connector row), or Trusty Squire through an API key or the browser. The
 -- route decisions and every authorized use are ledgers of their own.
 CREATE TABLE IF NOT EXISTS workspace_apps (
@@ -1926,7 +1926,9 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
   state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','disconnected')),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (workspace_id, owner_identity_id, app_key)
+  -- The Workbench is the person's across Workspaces: one app, one row, one
+  -- permission decision. workspace_id is where its route was last chosen.
+  UNIQUE (owner_identity_id, app_key)
 );
 CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
 CREATE TABLE IF NOT EXISTS workspace_app_routes (

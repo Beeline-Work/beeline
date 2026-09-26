@@ -275,10 +275,12 @@ type ConnectionFact = {
   state: 'active' | 'error';
 };
 
-/** Every vault key of this owner in this Workspace that belongs to the app. */
+/**
+ * Every vault key of this owner that belongs to the app. The Workbench is the
+ * PERSON's, across Workspaces, and so is the Squire vault behind it.
+ */
 async function appConnections(
   database: SqlDatabase,
-  workspaceId: string,
   ownerId: string,
   appKey: string,
 ): Promise<ConnectionFact[]> {
@@ -287,10 +289,10 @@ async function appConnections(
       `SELECT c.reference,c.service,c.hosts,c.state
        FROM workspace_connections c
        JOIN workspace_connectors k ON k.id=c.connector_id
-       WHERE c.owner_identity_id=$1 AND k.workspace_id=$2
+       WHERE c.owner_identity_id=$1
          AND k.connector_type='trusty-squire' AND k.status<>'disconnected'
        ORDER BY c.state, c.created_at, c.reference`,
-      [ownerId, workspaceId],
+      [ownerId],
     )
   ).rows;
   return rows.filter((row) => connectionAppKeys(row).includes(appKey));
@@ -311,18 +313,14 @@ function connectionAppKeys(connection: {
   return [...keys];
 }
 
-async function squireConnected(
-  database: SqlDatabase,
-  workspaceId: string,
-  ownerId: string,
-): Promise<boolean> {
+async function squireConnected(database: SqlDatabase, ownerId: string): Promise<boolean> {
   return Boolean(
     (
       await database.query(
         `SELECT 1 FROM workspace_connectors
-         WHERE workspace_id=$1 AND owner_identity_id=$2
+         WHERE owner_identity_id=$1
            AND connector_type='trusty-squire' AND status='connected' LIMIT 1`,
-        [workspaceId, ownerId],
+        [ownerId],
       )
     ).rows[0],
   );
@@ -357,7 +355,7 @@ async function deriveStatus(database: SqlDatabase, row: AppRow): Promise<Derived
     if (connector.status === 'error')
       return { status: 'error', errorMessage: connector.status_error ?? 'Connection failed' };
     const needsSquire = connector.sign_in?.url
-      ? !(await squireConnected(database, row.workspace_id, row.owner_identity_id))
+      ? !(await squireConnected(database, row.owner_identity_id))
       : false;
     return {
       status: 'connecting',
@@ -365,14 +363,9 @@ async function deriveStatus(database: SqlDatabase, row: AppRow): Promise<Derived
       ...(needsSquire ? { needsSquire } : {}),
     };
   }
-  const connections = await appConnections(
-    database,
-    row.workspace_id,
-    row.owner_identity_id,
-    row.app_key,
-  );
+  const connections = await appConnections(database, row.owner_identity_id, row.app_key);
   const active = connections.find((connection) => connection.state === 'active');
-  if (!(await squireConnected(database, row.workspace_id, row.owner_identity_id)))
+  if (!(await squireConnected(database, row.owner_identity_id)))
     return {
       status: 'error',
       needsSquire: true,
@@ -392,11 +385,13 @@ async function deriveStatus(database: SqlDatabase, row: AppRow): Promise<Derived
 const APP_COLUMNS = `a.id,a.workspace_id,a.owner_identity_id,a.app_key,a.display_name,a.domain,
   a.transport,a.route,a.connector_id,a.machine_id,a.state,a.created_at`;
 
-/** The viewer's apps, one row each, for Workbench and `workbench_status`. */
+/**
+ * The person's apps — ONE row per app, across every Workspace, because the
+ * Workbench is personal — for Workbench and `workbench_status`.
+ */
 export async function readOwnerApps(
   database: SqlDatabase,
   ownerId: string,
-  workspaceId?: string,
 ): Promise<WorkbenchAppView[]> {
   const rows = (
     await database.query<
@@ -411,9 +406,8 @@ export async function readOwnerApps(
               (SELECT MAX(u.created_at) FROM workspace_app_usage u WHERE u.app_id=a.id) last_used_at
        FROM workspace_apps a
        WHERE a.owner_identity_id=$1 AND a.state='active'
-         AND ($2::uuid IS NULL OR a.workspace_id=$2::uuid)
        ORDER BY a.created_at, a.app_key`,
-      [ownerId, workspaceId ?? null],
+      [ownerId],
     )
   ).rows;
   const views: WorkbenchAppView[] = [];
@@ -535,13 +529,13 @@ export async function connectApp(
       next: 'Name the app by its product name or website, e.g. "Linear" or "linear.app".',
     };
   const key = identity.key;
-  const lockKey = `app:${params.workspaceId}:${params.ownerId}:${key}`;
+  const lockKey = `app:${params.ownerId}:${key}`;
   const readExisting = async (db: SqlDatabase) =>
     (
       await db.query<AppRow>(
         `SELECT ${APP_COLUMNS} FROM workspace_apps a
-         WHERE a.workspace_id=$1 AND a.owner_identity_id=$2 AND a.app_key=$3`,
-        [params.workspaceId, params.ownerId, key],
+         WHERE a.owner_identity_id=$1 AND a.app_key=$2`,
+        [params.ownerId, key],
       )
     ).rows[0];
 
@@ -581,10 +575,9 @@ export async function connectApp(
     const registry = (
       await db.query<{ id: string; registry_server_name: string; machine_id: string | null }>(
         `SELECT id,registry_server_name,machine_id FROM workspace_connectors
-         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type='registry-mcp'
-           AND status='connected'
-         ORDER BY (machine_id=$3) DESC, updated_at DESC`,
-        [params.workspaceId, params.ownerId, params.machineId],
+         WHERE owner_identity_id=$1 AND connector_type='registry-mcp' AND status='connected'
+         ORDER BY (workspace_id=$2 AND machine_id=$3) DESC, (machine_id=$3) DESC, updated_at DESC`,
+        [params.ownerId, params.workspaceId, params.machineId],
       )
     ).rows.find((row) => registryServerAppKey(row.registry_server_name) === key);
     if (registry)
@@ -594,7 +587,7 @@ export async function connectApp(
         serverName: registry.registry_server_name,
         machineId: registry.machine_id,
       };
-    const vaulted = (await appConnections(db, params.workspaceId, params.ownerId, key)).find(
+    const vaulted = (await appConnections(db, params.ownerId, key)).find(
       (connection) => connection.state === 'active',
     );
     return vaulted ? { transport: 'squire-api', reference: vaulted.reference } : undefined;
@@ -604,7 +597,7 @@ export async function connectApp(
       ? {
           transport: row.transport,
           state: row.state,
-          hasCredential: (await appConnections(db, params.workspaceId, params.ownerId, key)).some(
+          hasCredential: (await appConnections(db, params.ownerId, key)).some(
             (connection) => connection.state === 'active',
           ),
         }
@@ -666,8 +659,8 @@ export async function connectApp(
            id,workspace_id,owner_identity_id,app_key,display_name,domain,transport,route,
            connector_id,machine_id,state
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active')
-         ON CONFLICT (workspace_id,owner_identity_id,app_key) DO UPDATE
-         SET display_name=EXCLUDED.display_name,
+         ON CONFLICT (owner_identity_id,app_key) DO UPDATE
+         SET workspace_id=EXCLUDED.workspace_id,display_name=EXCLUDED.display_name,
              domain=COALESCE(EXCLUDED.domain,workspace_apps.domain),
              transport=EXCLUDED.transport,route=EXCLUDED.route,
              connector_id=EXCLUDED.connector_id,machine_id=EXCLUDED.machine_id,
@@ -766,14 +759,14 @@ export async function connectApp(
  */
 export async function disconnectApp(
   database: SqlDatabase,
-  input: { readonly workspaceId: string; readonly ownerId: string; readonly appId: string },
+  input: { readonly ownerId: string; readonly appId: string },
 ): Promise<{ helperAgentId?: string }> {
   return database.transaction(async (db) => {
     const row = (
       await db.query<AppRow>(
         `SELECT ${APP_COLUMNS} FROM workspace_apps a
-         WHERE a.id=$1::uuid AND a.workspace_id=$2 AND a.owner_identity_id=$3 FOR UPDATE`,
-        [input.appId, input.workspaceId, input.ownerId],
+         WHERE a.id=$1::uuid AND a.owner_identity_id=$2 FOR UPDATE`,
+        [input.appId, input.ownerId],
       )
     ).rows[0];
     if (!row) throw new Error('app not found (access denied)');
@@ -782,11 +775,11 @@ export async function disconnectApp(
       [row.id],
     );
     await db.query(
-      `UPDATE agent_grants g SET status='revoked',decided_by=$3,decided_at=now()
-       FROM agents a, rooms r
-       WHERE a.agent_id=g.agent_id AND a.owner_id=$3 AND r.id=g.room_id AND r.workspace_id=$1
-         AND g.kind='mcp' AND g.target=$2 AND g.status IN ('approved','once')`,
-      [row.workspace_id, appResourceTarget(row.app_key), input.ownerId],
+      `UPDATE agent_grants g SET status='revoked',decided_by=$2,decided_at=now()
+       FROM agents a
+       WHERE a.agent_id=g.agent_id AND a.owner_id=$2
+         AND g.kind='mcp' AND g.target=$1 AND g.status IN ('approved','once')`,
+      [appResourceTarget(row.app_key), input.ownerId],
     );
     if (row.transport !== 'registry-mcp' || !row.connector_id) return {};
     await db.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
@@ -831,9 +824,16 @@ export async function appGateFor(
     : undefined;
   const keys =
     registryName !== undefined
-      ? []
+      ? [
+          registryServerAppKey(registryName) ??
+            appIdentity(registryName.split('/').pop() ?? '')?.key,
+        ].filter((key): key is string => Boolean(key))
       : input.target === 'squire'
-        ? (input.appKeys ?? []).filter((key) => typeof key === 'string' && key.length > 0)
+        ? [
+            ...new Set(
+              (input.appKeys ?? []).filter((key) => typeof key === 'string' && key.length > 0),
+            ),
+          ]
         : [];
   if (registryName === undefined && !keys.length) return { kind: 'resource', target: input.target };
   const rows = (
@@ -844,21 +844,26 @@ export async function appGateFor(
       state: 'active' | 'disconnected';
     }>(
       `SELECT app.id,app.app_key,app.transport,app.state
-       FROM rooms r
-       JOIN agents owner_agent ON owner_agent.agent_id=$2
-       JOIN workspace_apps app ON app.workspace_id=r.workspace_id
-         AND app.owner_identity_id=owner_agent.owner_id
+       FROM agents owner_agent
+       JOIN workspace_apps app ON app.owner_identity_id=owner_agent.owner_id
        LEFT JOIN workspace_connectors k ON k.id=app.connector_id
-       WHERE r.id=$1
-         AND (($3::text IS NOT NULL AND app.transport='registry-mcp' AND k.registry_server_name=$3)
-           OR app.app_key=ANY($4::text[]))
-       ORDER BY app.state, app.app_key`,
-      [input.roomId, input.agentId, registryName ?? null, keys],
+       WHERE owner_agent.agent_id=$1
+         AND (($2::text IS NOT NULL AND app.transport='registry-mcp' AND k.registry_server_name=$2)
+           OR app.app_key=ANY($3::text[]))
+       ORDER BY app.app_key`,
+      [input.agentId, registryName ?? null, keys],
     )
   ).rows;
-  const row = rows[0];
-  if (!row) return { kind: 'resource', target: input.target };
-  if (row.state !== 'active') return { kind: 'refuse' };
+  if (!rows.length) return { kind: 'resource', target: input.target };
+  // A call that names a disconnected app is refused, whatever else it names:
+  // an active sibling's approval never covers it.
+  if (rows.some((row) => row.state !== 'active')) return { kind: 'refuse' };
+  // One call, one app: a call naming two connected apps has no single
+  // decision or ledger to answer to, so it is refused rather than charged to
+  // whichever sorts first.
+  const apps = new Map(rows.map((row) => [row.id, row]));
+  if (apps.size !== 1) return { kind: 'refuse' };
+  const row = rows[0]!;
   return {
     kind: 'app',
     target: appResourceTarget(row.app_key),
@@ -937,7 +942,7 @@ export async function backfillRegistryApps(
          id,workspace_id,owner_identity_id,app_key,display_name,domain,transport,route,
          connector_id,machine_id,state
        ) VALUES ($1,$2,$3,$4,$5,$6,'registry-mcp','registry-mcp',$7,$8,'active')
-       ON CONFLICT (workspace_id,owner_identity_id,app_key) DO NOTHING`,
+       ON CONFLICT (owner_identity_id,app_key) DO NOTHING`,
       [
         randomUUID(),
         row.workspace_id,

@@ -347,6 +347,33 @@ describe('top-level Room native permission policy', () => {
     ).toBe('allow');
   });
 
+  it("allows grok's native shell request on the same declared-kind path", () => {
+    // grok sends its own `session/request_permission` with `kind: 'execute'`
+    // for a native shell command; the gate reads that kind, not the harness, so
+    // a grok Room gets the same shell as a Claude Room under the same sandbox.
+    expect(
+      roomPermissionDecision(
+        {
+          toolCall: {
+            kind: 'execute',
+            title: 'run_terminal_command',
+            rawInput: { command: 'tailscale status' },
+          },
+        },
+        { shellSandboxed: true },
+      ),
+    ).toBe('allow');
+    expect(
+      roomPermissionDecision({
+        toolCall: {
+          kind: 'execute',
+          title: 'run_terminal_command',
+          rawInput: { command: 'tailscale status' },
+        },
+      }),
+    ).toBe('reject');
+  });
+
   /**
    * The sandbox IS the Room's read-only filesystem: unwrapped, an approved
    * command writes anywhere the daemon account can and no credential path is

@@ -90,11 +90,17 @@ describe('Room shell capability', () => {
     expect(roomShellCapability('codex-acp')).toBe('runs');
   });
 
-  it('gives a Claude Room a shell only while the OS sandbox wraps it', () => {
+  it('gives a Claude or grok Room a shell only while the OS sandbox wraps it', () => {
     expect(roomShellCapability('claude-agent-acp', { osSandbox: true })).toBe('runs');
     expect(roomShellCapability('/usr/local/bin/claude-code-acp', { osSandbox: true })).toBe('runs');
     expect(roomShellCapability('claude-agent-acp', { osSandbox: false })).toBe('refused');
     expect(roomShellCapability('claude-agent-acp')).toBe('refused');
+    // grok stamps the same `kind: 'execute'` on its native shell request, so it
+    // rides the Room gate exactly like Claude: a shell only while bwrap wraps
+    // the session, refused otherwise (see the profile note at the top of
+    // `harness-capabilities.ts`).
+    expect(roomShellCapability('/home/op/.grok/bin/grok', { osSandbox: true })).toBe('runs');
+    expect(roomShellCapability('/home/op/.grok/bin/grok', { osSandbox: false })).toBe('refused');
   });
 
   it('runs a harness that never asks, sandbox or not', () => {
@@ -114,10 +120,9 @@ describe('Room shell capability', () => {
   });
 
   it('claims nothing for a harness whose shell frames were never measured', () => {
-    // grok asks, but its captured permission frames arrive titled `use_tool`
-    // with no ACP kind, so the gate's `execute` test cannot be promised.
+    // buzz-agent asks, but no native shell frame of its own has been captured,
+    // so the gate's `execute` test cannot be promised for it.
     for (const osSandbox of [true, false]) {
-      expect(roomShellCapability('/home/op/.grok/bin/grok', { osSandbox })).toBe('unknown');
       expect(roomShellCapability('buzz-agent', { osSandbox })).toBe('unknown');
       expect(roomShellCapability('some-custom-acp', { osSandbox })).toBe('unknown');
       expect(roomShellCapability(undefined, { osSandbox })).toBe('unknown');

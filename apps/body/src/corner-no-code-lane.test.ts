@@ -240,7 +240,10 @@ it('retires a running no-code session and restarts the same corner with a real b
   }
 });
 
-it('tells a no-code corner to deliver artifacts and tag the requester, never to open a pull request', async () => {
+/** One no-code corner turn, returning the ACP session it opened. */
+async function noCodeCornerSession(
+  extra: Partial<ConstructorParameters<typeof MonolithCornerTurnLoop>[0]> = {},
+): Promise<Parameters<AcpClient['sessionNew']>[0] | undefined> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-no-code-prompt-'));
   roots.push(root);
   const workspace = join(root, 'rooms', 'corner-id', 'scratch');
@@ -327,8 +330,14 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
     onFailure: vi.fn(),
     onCloseRequested: vi.fn(async () => undefined),
     createAcpClient: () => acp,
+    ...extra,
   }).run();
   await scheduler.dispose();
+  return sessionInput;
+}
+
+it('tells a no-code corner to deliver artifacts and tag the requester, never to open a pull request', async () => {
+  const sessionInput = await noCodeCornerSession();
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
@@ -354,6 +363,33 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   expect(prompt).not.toContain('Open the pull request with gh');
   expect(prompt).not.toContain('gh pr merge');
   expect(prompt).not.toContain(CORNER_AUTHOR_CONTRACT);
+  expect(prompt).not.toContain('upgrade_corner_to_code');
+});
+
+it('offers the one-way code upgrade to the session that actually mounts the tool', async () => {
+  const sessionInput = await noCodeCornerSession({ agentMayUpgradeCorner: true });
+
+  const prompt = String(sessionInput?.systemPrompt);
+  expect(prompt).toContain('upgrade_corner_to_code');
+  expect(prompt).toContain('explicitly asks for code edits in this same corner');
+  expect(prompt).toContain('Never call it from an implied request');
+  const agentEnvironment = new Map(
+    sessionInput?.mcpServers
+      .find((server) => server.name === 'beeline-agent')
+      ?.env.map(({ name, value }) => [name, value]),
+  );
+  expect(
+    agentToolsFor(
+      agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+      agentEnvironment.get('BEELINE_AGENT_DM') === '1',
+      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+      agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+      false,
+      agentEnvironment.get('BEELINE_CORNER_CAN_UPGRADE') === '1',
+    ).map((tool) => tool.name),
+  ).toContain('upgrade_corner_to_code');
 });
 
 it('retires a no-code session on the timed restore read when the server already moved it to code', async () => {

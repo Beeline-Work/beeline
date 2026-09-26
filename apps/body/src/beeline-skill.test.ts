@@ -40,9 +40,7 @@ describe('using-beeline Room guidance', () => {
       'Before opening a corner, consult beeline-triage and beeline-spec',
     );
     expect(markdown).not.toContain('close_corner');
-    expect(markdown).toContain('upgrade_corner_to_code');
-    expect(markdown).toContain('human message you are currently answering explicitly asks');
-    expect(markdown).toContain('Never call it from an implied request');
+    expect(markdown).not.toContain('upgrade_corner_to_code');
     expect(markdown).not.toContain('no action or corner tools');
   });
 

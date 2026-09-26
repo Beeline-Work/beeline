@@ -1122,7 +1122,9 @@ export class MonolithCornerTurnLoop {
           : [
               'This is a no-code corner with no repository checkout and no GitHub workflow.',
               "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
-              'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
+              this.options.agentMayUpgradeCorner
+                ? 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks. The one exception is beeline-agent upgrade_corner_to_code: call it only when the human message you are currently answering explicitly asks for code edits in this same corner. That one-way upgrade restarts this same corner with a feature branch and writable checkout, keeps its discussion, and re-delivers that same request in the code session, so end this turn immediately once it succeeds and do not edit this workspace. Never call it from an implied request, an earlier message, or your own initiative.'
+                : 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
               // This lane has no pull request URL and no merge card, so its
               // attached final reply reports delivery to the requester. The
               // corner remains open until a human explicitly closes it.

@@ -232,11 +232,9 @@ it('upgrades one repository-backed human corner on its explicit human code reque
         lane: string;
         owner_agent_id: string;
         commissioned_by: string;
-        lane_upgraded_by: string;
-        lane_upgrade_message_id: string;
         feature_branch: string | null;
       }>(
-        `SELECT lane,owner_agent_id,commissioned_by,lane_upgraded_by,lane_upgrade_message_id,feature_branch
+        `SELECT lane,owner_agent_id,commissioned_by,feature_branch
          FROM corner_facts WHERE corner_id=$1`,
         [cornerId],
       )
@@ -245,7 +243,6 @@ it('upgrades one repository-backed human corner on its explicit human code reque
     lane: 'code',
     owner_agent_id: AGENT,
     commissioned_by: HUMAN,
-    lane_upgraded_by: HUMAN,
     feature_branch: null,
   });
   const afterMessages = await db.query<{ id: string; text: string }>(
@@ -362,11 +359,11 @@ it('leaves an agent-opened corner with its original opener when another agent up
 
   expect(
     (
-      await db.query<{ owner_agent_id: string; lane: string; lane_upgraded_by: string }>(
-        `SELECT owner_agent_id,lane,lane_upgraded_by FROM corner_facts WHERE corner_id=$1`,
+      await db.query<{ owner_agent_id: string; lane: string }>(
+        `SELECT owner_agent_id,lane FROM corner_facts WHERE corner_id=$1`,
         [cornerId],
       )
     ).rows[0],
-  ).toMatchObject({ owner_agent_id: AGENT, lane: 'code', lane_upgraded_by: HUMAN });
+  ).toMatchObject({ owner_agent_id: AGENT, lane: 'code' });
   expect(await pending(cornerId, AGENT2)).toMatchObject([{ reason: 'corner_lane_upgrade' }]);
 });

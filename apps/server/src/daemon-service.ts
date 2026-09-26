@@ -5668,8 +5668,8 @@ export class DaemonService {
     if (!this.commandTransaction || !command)
       throw new Error('corner lane upgrade requires an active human request');
     const requester = (
-      await this.database.query<{ id: string; kind: string }>(
-        `SELECT identity.id,identity.kind
+      await this.database.query<{ kind: string }>(
+        `SELECT identity.kind
          FROM messages message JOIN identities identity ON identity.id=message.author_id
          WHERE message.id=$1 AND message.room_id=$2`,
         [command.source_message_id, cornerId],
@@ -5706,10 +5706,9 @@ export class DaemonService {
 
     await this.database.query(
       `UPDATE corner_facts
-       SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),lane_upgraded_by=$3,
-           lane_upgrade_message_id=$4,lane_upgraded_at=now(),updated_at=now()
+       SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
        WHERE corner_id=$1 AND lane='no_code'`,
-      [cornerId, agentId, requester.id, command.source_message_id],
+      [cornerId, agentId],
     );
     const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
     const resumed = await createAgentCommand(this.database, {

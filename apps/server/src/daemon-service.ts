@@ -291,6 +291,8 @@ export class DaemonService {
       'requestAgentGrant',
       'authorizeSquireCall',
       'authorizeResourceCall',
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
       'getWalletToolState',
       'getWalletToolBalance',
       'getWalletToolChains',
@@ -1142,6 +1144,11 @@ export class DaemonService {
           input as Input<'authorizeResourceCall'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'authorizeRepositoryCall':
+      case 'authorizeHostCall':
+        // Old helpers still ask before admitting a corner turn. Turn authority
+        // is checked above; corner entry itself needs no grant or card.
+        return { allowed: true } as Output<Name>;
       case 'authorizeSquireCall':
         return (await this.authorizeSquireCall(
           input as Input<'authorizeSquireCall'>,
@@ -6373,6 +6380,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   consumeAgentGrant: true,
   authorizeSquireCall: true,
   authorizeResourceCall: true,
+  authorizeRepositoryCall: true,
+  authorizeHostCall: true,
   listTurnAgentGrants: true,
   readAgentWorkbench: true,
   searchMcpRegistry: true,

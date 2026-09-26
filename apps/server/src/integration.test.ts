@@ -292,6 +292,8 @@ describe('monolith integration', () => {
       'requestAgentGrant',
       'authorizeSquireCall',
       'authorizeResourceCall',
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
       'listTurnAgentGrants',
       'offerConnector',
       'askRoomChoice',
@@ -9439,6 +9441,51 @@ describe('monolith integration', () => {
     ).toEqual([]);
     expect(
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-request'`, [ROOM])).rows,
+    ).toEqual([]);
+  });
+
+  it('lets an older helper pass both corner authorization calls without a grant card', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const requesterLogin = 'legacy-corner-requester';
+    const requesterToken = await phoneToken(requesterLogin);
+    const requesterId = createHash('sha256').update(`github:${requesterLogin}`).digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: requesterId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
+    const opened = await operation(
+      'createHumanCorner',
+      { roomId: ROOM, title: 'Older helper corner' },
+      requesterToken,
+    );
+    expect(opened.status).toBe(200);
+    const { id: cornerId } = (await opened.json()) as { id: string };
+    const source = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: cornerId, text: '@bee answer here', mentions: [AGENT] },
+        requesterToken,
+      )
+    ).json()) as { messageId: string };
+    for (const name of ['authorizeRepositoryCall', 'authorizeHostCall']) {
+      const response = await daemonOperation(name, {
+        roomId: cornerId,
+        requestId: source.messageId,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ allowed: true });
+      const withoutTurn = await request(`/v1/daemon/operations/${name}`, 'POST', {
+        roomId: cornerId,
+      }, daemonToken);
+      expect(withoutTurn.status).toBe(403);
+    }
+    expect(
+      (await database.query(`SELECT 1 FROM agent_grants WHERE room_id=$1`, [cornerId])).rows,
+    ).toEqual([]);
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`, [cornerId])).rows,
     ).toEqual([]);
   });
 

@@ -14,7 +14,7 @@ The isolated checkout and shell of a corner belong to that corner. Host paths ou
 
 All imported MCP routes, including declarations formerly marked local, and the built-in YouTube tool use a transport facade that authorizes every message, including discovery and harnesses that omit permission callbacks. Unauthorized discovery starts no personal-resource process and reaches no HTTP upstream. Discovery does not consume a Once grant; the server consumes it atomically at the first authorized resource call, and only that call's correlated response can reach the agent. An app connected through `connect_app` answers to one `app:<key>` target on every route — its Registry MCP server and any Trusty Squire call that names it — and wallet tools use the same original-requester resource gate before discovery, execution, wallet reads, or spending. Wallet signing delegation and sufficient funds remain required.
 
-Opening a Room or corner, starting or closing a corner turn, and using Beeline's own Room and corner tools require no grant. `MonolithCornerTurnLoop` admits a corner turn without the retired repository and host pre-turn checks. A personal-resource call still meets its own scoped gate when made. Approval does not replace the exact-head reviewer/CI/human-hold merge gate. Top-level Rooms retain their read-only filesystem boundary.
+Opening a Room or corner, starting or closing a corner turn, and using Beeline's own Room and corner tools require no grant. `MonolithCornerTurnLoop` admits a corner turn without repository or host pre-turn checks. Older helpers still call `authorizeRepositoryCall` and `authorizeHostCall`; the server keeps them as allow-only routes under active turn authority, without creating grants or cards. A personal-resource call still meets its own scoped gate when made. Approval does not replace the exact-head reviewer/CI/human-hold merge gate. Top-level Rooms retain their read-only filesystem boundary.
 
 Coverage: server `integration.test.ts` (matrix, private decisions, target scope, delegation/resume, revoked and Once grants, command reuse), `wallet.integration.test.ts`; body `grant-runner.test.ts`, `host-mcp-route.test.ts`, `monolith-corner-turn.test.ts`, Room/corner permission tests; mobile `RoomMessageVariants.test.tsx`.
 
@@ -22,7 +22,7 @@ Upgrade: existing shared personal-resource request cards and automatic receipts 
 
 Resource ownership is the helper owner's host/tool inventory; wallet and Squire retain their existing owner-bound account resolution. The agent owner's approval is not permission to route another person's Workbench connection through that helper. Generic imported tools must be provisioned for that helper owner. Filesystem confinement is still the documented hygiene boundary, not a new security sandbox; personal-resource calls still require their own approval where applicable. Credential-file and unread-script hard stops remain enforced by the granted-command runner, and payment delegation, funds, and merge/review rules remain independent.
 
-Release helpers before removing the retired daemon authorization operations from the server, because older helpers still call them. No claim of spending caps is made.
+The allow-only compatibility routes let old and new helpers run through either deploy order. No claim of spending caps is made.
 
 ## Post-merge evidence
 

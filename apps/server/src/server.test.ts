@@ -50,7 +50,7 @@ describe('server readiness', () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
     const response = await get('/readyz', { query, transaction: vi.fn() });
 
-    expect(response.status).toBe(201); // Deliberately wrong: prove the required server gate fails.
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(query).toHaveBeenCalledWith('SELECT 1');
   });

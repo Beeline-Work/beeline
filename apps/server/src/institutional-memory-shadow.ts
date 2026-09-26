@@ -37,6 +37,7 @@ import {
 export const INSTITUTIONAL_MEMORY_SHADOW_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED';
 export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
 export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT = 50;
+export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_BUDGET = 100_000;
 export const DEFAULT_INSTITUTIONAL_MEMORY_LEASE_MS = 5 * 60_000;
 export const INSTITUTIONAL_MEMORY_CONTEXT_MESSAGE_LIMIT = 16;
 export const INSTITUTIONAL_MEMORY_CONTEXT_BYTE_LIMIT = 24_000;
@@ -49,6 +50,12 @@ export interface InstitutionalMemoryShadowConfig {
   readonly leaseMs?: number;
 }
 
+/**
+ * Institutional memory is ON by default. Each flag is an OFF switch, so only an
+ * explicit `false` disables it; setting both to `false` is the full opt-out.
+ * `live` governs serving and writing live memory, and the shadow flag remains
+ * the measurement-only fallback when live is switched off.
+ */
 export function institutionalMemoryShadowConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): InstitutionalMemoryShadowConfig {
@@ -56,9 +63,10 @@ export function institutionalMemoryShadowConfigFromEnv(
     env.BEELINE_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT ??
       DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
   );
-  const live = env[INSTITUTIONAL_MEMORY_LIVE_FLAG] === 'true';
+  const live = env[INSTITUTIONAL_MEMORY_LIVE_FLAG] !== 'false';
+  const shadow = env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] !== 'false';
   return {
-    enabled: live || env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] === 'true',
+    enabled: live || shadow,
     live,
     dailyJobLimit:
       Number.isSafeInteger(parsedLimit) && parsedLimit > 0 && parsedLimit <= 1_000
@@ -446,7 +454,7 @@ export async function claimInstitutionalMemoryJob(
            FROM institutional_memory_jobs job
            JOIN rooms room ON room.id=job.source_room_id
            JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
-           JOIN institutional_memory_workspace_rollouts rollout
+           LEFT JOIN institutional_memory_workspace_rollouts rollout
              ON rollout.workspace_id=job.workspace_id
            JOIN memberships worker ON worker.room_id=job.source_room_id
              AND worker.identity_id=$1 AND worker.removed_at IS NULL
@@ -458,15 +466,15 @@ export async function claimInstitutionalMemoryJob(
              )
              AND (job.mode='shadow' OR $5::boolean)
              AND (
-               rollout.stage IN ('pilot','live') OR
-               (rollout.stage='shadow' AND job.mode='shadow')
+               COALESCE(rollout.stage,'live') IN ('pilot','live') OR
+               (COALESCE(rollout.stage,'live')='shadow' AND job.mode='shadow')
              )
              AND COALESCE((
                SELECT sum(COALESCE(spent.input_tokens,0)+COALESCE(spent.output_tokens,0))
                FROM institutional_memory_jobs spent
                WHERE spent.workspace_id=job.workspace_id
                  AND spent.completed_at>=date_trunc('day',now())
-             ),0)<rollout.daily_token_budget
+             ),0)<COALESCE(rollout.daily_token_budget,$6)
              AND job.attempts<job.max_attempts
            ORDER BY job.created_at,job.id
            FOR UPDATE OF job SKIP LOCKED
@@ -481,7 +489,14 @@ export async function claimInstitutionalMemoryJob(
          RETURNING job.id,job.lease_token,job.lease_expires_at,job.workspace_id,
                    job.source_room_id,job.source_message_id,job.requester_identity_id,
                    room.direct_participants,job.mode,job.trigger_kind,job.context,job.created_at`,
-        [authenticatedAgentId, hostKey, leaseToken, leaseMs, config.live === true],
+        [
+          authenticatedAgentId,
+          hostKey,
+          leaseToken,
+          leaseMs,
+          config.live === true,
+          DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_BUDGET,
+        ],
       )
     ).rows[0];
     if (!claimed) return undefined;

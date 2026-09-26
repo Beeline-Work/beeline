@@ -1388,7 +1388,7 @@ export function agentToolsFor(
   reviewer = false,
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
-  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
@@ -1433,7 +1433,7 @@ const TOOLS = youtubeSurface
       process.env.BEELINE_CORNER_REVIEWER === '1',
       Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
       process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
-      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
       process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
     );
 

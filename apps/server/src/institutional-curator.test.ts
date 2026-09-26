@@ -1283,8 +1283,14 @@ describe('weekly institutional curator', () => {
     await expect(
       runInstitutionalCuratorCycle(database, { ...liveConfig, dailyJobLimit: 3 }, NOW),
     ).resolves.toBe(0);
-    // No cycle row, so the week is still available to a later tick.
-    expect((await database.query(`SELECT 1 FROM institutional_curator_cycles`)).rowCount).toBe(0);
+    // No cycle row for this Workspace, so the week is still available to a later tick.
+    expect(
+      (
+        await database.query(`SELECT 1 FROM institutional_curator_cycles WHERE workspace_id=$1`, [
+          WORKSPACE,
+        ])
+      ).rowCount,
+    ).toBe(0);
 
     // A later tick with budget does the week's work.
     await expect(

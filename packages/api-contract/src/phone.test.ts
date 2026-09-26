@@ -59,12 +59,13 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
-    expect(readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages).toEqual([
-      { ...message, presentation: 'card', relay },
-    ]);
+    expect(
+      readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages,
+    ).toEqual([{ ...message, presentation: 'card', relay }]);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
     expect(
-      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]?.bookmarked,
+      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]
+        ?.bookmarked,
     ).toBeUndefined();
     const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
     expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
@@ -100,9 +101,9 @@ describe('phone contract', () => {
       readRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } })
         ?.viewer.identity.face,
     ).toBeUndefined();
-    expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
-      [],
-    );
+    expect(
+      readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns,
+    ).toEqual([]);
 
     const agent = { pubkey: 'c'.repeat(64), kind: 'agent' as const, name: 'Bee' };
     const choice = {
@@ -139,11 +140,14 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [{ ...message, choice }] })).toBe(true);
     const humanPoll = { ...choice, status: 'open', agent: identity };
-    expect(readRoomView({ ...room, messages: [{ ...message, choice: humanPoll }] })?.messages[0]?.choice)
-      .toEqual(humanPoll);
     expect(
-      readRoomView({ ...room, messages: [{ ...message, choice: { ...humanPoll, mode: 'question' } }] })
-        ?.messages[0]?.choice,
+      readRoomView({ ...room, messages: [{ ...message, choice: humanPoll }] })?.messages[0]?.choice,
+    ).toEqual(humanPoll);
+    expect(
+      readRoomView({
+        ...room,
+        messages: [{ ...message, choice: { ...humanPoll, mode: 'question' } }],
+      })?.messages[0]?.choice,
     ).toBeUndefined();
     expect(
       readRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] })
@@ -176,14 +180,28 @@ describe('phone contract', () => {
     expect(isWorkspaceView(workspace)).toBe(true);
     expect(isWorkspaceView({ ...workspace, peopleTotal: undefined })).toBe(true);
     expect(isWorkspaceView({ ...workspace, agentTotal: undefined })).toBe(true);
-    expect(
-      isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined }),
-    ).toBe(true);
+    expect(isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined })).toBe(
+      true,
+    );
     expect(readWorkspaceView({ ...workspace, peopleTotal: '21' })?.peopleTotal).toBeUndefined();
     expect(
       isWorkspaceMemberListView({
         members: [],
         agents: [],
+        grants: [
+          {
+            grantId: 'grant-1',
+            kind: 'repository',
+            target: 'beeline-work/beeline',
+            reason: 'ship the profile pass',
+            status: 'approved',
+            requestedBy: identity,
+            roomId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+            createdAt: 1,
+            auto: false,
+            agent: { pubkey: 'c'.repeat(64), kind: 'agent', name: 'Bee' },
+          },
+        ],
         peopleTotal: 21,
         agentTotal: 0,
         membersTruncated: true,

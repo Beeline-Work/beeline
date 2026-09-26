@@ -43,6 +43,7 @@ import type {
   SystemEvent,
   WorkspaceListView,
   WorkspaceAgentView,
+  WorkspaceMemberGrantView,
   WorkspaceMemberListQuery,
   WorkspaceMemberListView,
   WorkspaceView,
@@ -598,7 +599,10 @@ function projectedMessage(
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
-      return { ...base, squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']> };
+      return {
+        ...base,
+        squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']>,
+      };
     case 'connector-offer':
       return {
         ...base,
@@ -1031,10 +1035,14 @@ export class PhoneService {
     );
     if (!access.rowCount) return null;
     if (query.memberId) {
-      const members = await this.members(workspaceId, null, query.memberId);
+      const [members, grants] = await Promise.all([
+        this.members(workspaceId, null, query.memberId),
+        this.memberGrants(workspaceId, query.memberId, viewerId),
+      ]);
       return {
         members: members.filter((m) => m.identity.kind === 'human'),
         agents: [],
+        grants,
         membersTruncated: false,
         agentsTruncated: false,
       };
@@ -2273,6 +2281,58 @@ export class PhoneService {
       auto: row.auto,
       // C94: the profile shows what the interpreter approval was bound to.
       ...(isCommandGrantScript(row.script) ? { script: row.script } : {}),
+    }));
+  }
+
+  /** Settled grants for every agent owned by one member, with the profile privacy boundary applied. */
+  private async memberGrants(
+    workspaceId: string,
+    memberId: string,
+    viewerId: string,
+  ): Promise<WorkspaceMemberGrantView[]> {
+    const rows = await this.database.query<{
+      id: string;
+      kind: AgentGrantView['kind'];
+      target: string;
+      reason: string;
+      status: AgentGrantStatus;
+      room_id: string;
+      auto: boolean;
+      created_at: Date;
+      decided_at: Date | null;
+      expires_at: Date | null;
+      agent: IdentityRow;
+      requester: IdentityRow;
+      decider: IdentityRow | null;
+      script: unknown;
+    }>(
+      `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
+              g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
+       FROM agent_grants g
+       JOIN agents a ON a.agent_id=g.agent_id AND a.owner_id=$2
+       JOIN identities agent_identity ON agent_identity.id=g.agent_id
+       JOIN identities requester ON requester.id=g.requested_by
+       LEFT JOIN identities decider ON decider.id=g.decided_by
+       WHERE g.workspace_id=$1 AND g.status<>'pending'
+         AND (g.kind='repository' OR a.owner_id=$3)
+       ORDER BY g.created_at DESC,g.id`,
+      [workspaceId, memberId, viewerId],
+    );
+    return rows.rows.map((row) => ({
+      grantId: row.id,
+      kind: row.kind,
+      target: row.target,
+      reason: row.reason,
+      status: row.status,
+      requestedBy: identity(row.requester, this.publicOrigin),
+      ...(row.decider ? { decidedBy: identity(row.decider, this.publicOrigin) } : {}),
+      roomId: row.room_id,
+      createdAt: unix(row.created_at),
+      ...(row.decided_at ? { decidedAt: unix(row.decided_at) } : {}),
+      ...(row.expires_at ? { expiresAt: unix(row.expires_at) } : {}),
+      auto: row.auto,
+      ...(isCommandGrantScript(row.script) ? { script: row.script } : {}),
+      agent: identity(row.agent, this.publicOrigin),
     }));
   }
 

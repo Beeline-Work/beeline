@@ -198,12 +198,13 @@ const cases: Case[] = [
     base: {
       members: [],
       agents: [],
+      grants: [{ ...grant, agent }],
       peopleTotal: 21,
       agentTotal: 0,
       membersTruncated: true,
       agentsTruncated: false,
     },
-    optionals: ['peopleTotal', 'agentTotal', 'membersTruncated', 'agentsTruncated'],
+    optionals: ['peopleTotal', 'agentTotal', 'grants', 'membersTruncated', 'agentsTruncated'],
     loadBearingMissing: { agents: [], membersTruncated: true, agentsTruncated: false },
   },
   {

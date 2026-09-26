@@ -782,6 +782,48 @@ describe('monolith integration', () => {
     expect(await currentRole()).toBe('owner');
   });
 
+  it('projects a member grant ledger while keeping personal grants owner-private', async () => {
+    const adminToken = await phoneToken('member-grants-admin');
+    const adminId = createHash('sha256').update('github:member-grants-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    const repositoryGrant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const secretGrant = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await database.query(
+      `INSERT INTO agent_grants(
+         id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at
+       ) VALUES
+         ($1,$3,$4,'repository','beeline-work/beeline','ship it',$5,$6,'approved',$5,now()),
+         ($2,$3,$4,'secret','FLY_API_TOKEN','deploy it',$5,$6,'approved',$5,now())`,
+      [repositoryGrant, secretGrant, AGENT, WORKSPACE, HUMAN, ROOM],
+    );
+
+    const profile = async (token: string) =>
+      (await (
+        await request(
+          `/v1/phone/workspaces/${WORKSPACE}/members?memberId=${HUMAN}`,
+          'GET',
+          undefined,
+          token,
+        )
+      ).json()) as {
+        grants: Array<{ grantId: string; agent: { pubkey: string } }>;
+      };
+
+    expect((await profile(adminToken)).grants).toEqual([
+      expect.objectContaining({
+        grantId: repositoryGrant,
+        agent: expect.objectContaining({ pubkey: AGENT }),
+      }),
+    ]);
+    expect((await profile(accessToken)).grants.map((grant) => grant.grantId).sort()).toEqual(
+      [repositoryGrant, secretGrant].sort(),
+    );
+  });
+
   it('restores a tombstoned Workspace member when an invite-only Room becomes public', async () => {
     const memberToken = await phoneToken('publicize-tombstoned-member');
     const memberId = createHash('sha256')
@@ -8435,17 +8477,28 @@ describe('monolith integration', () => {
       'foreign-approval',
       'retired-budget',
     ]) {
-      grants.push(await (await daemonOperation('requestAgentGrant', {
-        roomId: ROOM, kind: 'host', target, reason: 'use the host',
-      })).json());
+      grants.push(
+        await (
+          await daemonOperation('requestAgentGrant', {
+            roomId: ROOM,
+            kind: 'host',
+            target,
+            reason: 'use the host',
+          })
+        ).json(),
+      );
     }
-    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [grants[1]!.grantId]);
+    await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [
+      grants[1]!.grantId,
+    ]);
     await database.query(`UPDATE agent_grants SET requested_by=$2 WHERE id=$1`, [
       grants[2]!.grantId,
       AGENT,
     ]);
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`,
-      [grants[3]!.grantId, AGENT]);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [
+      grants[3]!.grantId,
+      AGENT,
+    ]);
     await database.query(`UPDATE agent_grants SET kind='budget' WHERE id=$1`, [grants[4]!.grantId]);
     // Production already ran the old migration. These rows retain only the
     // shapes from which the corrective ledger can recover without guessing.
@@ -8486,10 +8539,15 @@ describe('monolith integration', () => {
         .rows,
     ).toEqual([{ status: 'approved' }]);
     const rows = await database.query<{ id: string; status: string }>(
-      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
-    expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
-      [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
-      [grants[3]!.grantId]: 'revoked', [grants[4]!.grantId]: 'revoked',
+      `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`,
+      [grants.map((g) => g.grantId)],
+    );
+    expect(Object.fromEntries(rows.rows.map((r) => [r.id, r.status]))).toEqual({
+      [grants[0]!.grantId]: 'pending',
+      [grants[1]!.grantId]: 'revoked',
+      [grants[2]!.grantId]: 'revoked',
+      [grants[3]!.grantId]: 'revoked',
+      [grants[4]!.grantId]: 'revoked',
     });
     const card = (
       await database.query<{
@@ -8499,8 +8557,12 @@ describe('monolith integration', () => {
     ).rows[0]!;
     expect(card.room_id).not.toBe(ROOM);
     expect(card.card.sourceRoomId).toBe(ROOM);
-    expect(card.card.grants.map(g => g.status)).toEqual([
-      'pending', 'revoked', 'revoked', 'revoked', 'revoked',
+    expect(card.card.grants.map((g) => g.status)).toEqual([
+      'pending',
+      'revoked',
+      'revoked',
+      'revoked',
+      'revoked',
     ]);
     const ledger = await database.query<{
       grant_id: string;
@@ -8529,17 +8591,26 @@ describe('monolith integration', () => {
         turn_disposition: 'resumed',
       },
     ]);
-    expect((await database.query(
-      `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands resume JOIN agent_grants g ON g.command_id=resume.parent_command_id
        WHERE g.id=$1 AND resume.action='resume' AND resume.root_source_message_id=(
          SELECT root_source_message_id FROM agent_commands WHERE id=g.command_id
-       )`, [grants[4]!.grantId],
-    )).rowCount).toBe(1);
-    expect((await database.query<{ state: string }>(
-      `SELECT command.state FROM agent_commands command
+       )`,
+          [grants[4]!.grantId],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT command.state FROM agent_commands command
        JOIN agent_grants g ON g.command_id=command.id WHERE g.id=$1`,
-      [grants[2]!.grantId],
-    )).rows).toEqual([{ state: 'cancelled' }]);
+          [grants[2]!.grantId],
+        )
+      ).rows,
+    ).toEqual([{ state: 'cancelled' }]);
     const ownerNotices = await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL
        AND text LIKE '%had a legacy grant revoked%' ORDER BY text`,
@@ -8550,8 +8621,14 @@ describe('monolith integration', () => {
       expect.stringContaining('mismatched-root'),
       expect.stringContaining('missing-provenance'),
     ]);
-    expect((await operation('decideAgentGrant', {grantId: grants[1]!.grantId, decision:'always'})).status).toBe(409);
-    expect((await operation('decideAgentGrant', {grantId: grants[0]!.grantId, decision:'always'})).status).toBe(200);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[1]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await operation('decideAgentGrant', { grantId: grants[0]!.grantId, decision: 'always' }))
+        .status,
+    ).toBe(200);
   });
 
   it('forces both bypasses off in a public Workspace and rejects calls without live command authority', async () => {
@@ -9786,22 +9863,33 @@ describe('monolith integration', () => {
       target: 'facade-resource',
     };
     expect(
-      (await (await daemonOperation('authorizeResourceCall', {
-        ...discoveryContext, consume: false,
-      })).json()).allowed,
+      (
+        await (
+          await daemonOperation('authorizeResourceCall', {
+            ...discoveryContext,
+            consume: false,
+          })
+        ).json()
+      ).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ status: string; expires_at: Date | null }>(
-        `SELECT status,expires_at FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ status: string; expires_at: Date | null }>(
+          `SELECT status,expires_at FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ status: 'once', expires_at: null });
     expect(
       (await (await daemonOperation('authorizeResourceCall', discoveryContext)).json()).allowed,
     ).toBe(true);
     expect(
-      (await database.query<{ expired: boolean }>(
-        `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`, [discovery.grantId],
-      )).rows[0],
+      (
+        await database.query<{ expired: boolean }>(
+          `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`,
+          [discovery.grantId],
+        )
+      ).rows[0],
     ).toEqual({ expired: true });
     expect(
       (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,

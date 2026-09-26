@@ -471,6 +471,22 @@ beforeEach(() => {
   roomView.workspaceMembers.mockImplementation(async () => ({
     members: state.workspace.members,
     agents: state.workspace.agents,
+    grants: [
+      {
+        grantId: 'member-grant',
+        kind: 'repository',
+        target: 'beeline-work/beeline',
+        reason: 'ship the profile pass',
+        status: 'approved',
+        requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
+        decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
+        roomId: '22222222-2222-4222-8222-222222222222',
+        createdAt: 1,
+        decidedAt: 2,
+        auto: false,
+        agent: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
+      },
+    ],
     peopleTotal: state.workspace.peopleTotal,
     agentTotal: state.workspace.agentTotal,
     membersTruncated: state.workspace.membersTruncated,
@@ -716,6 +732,14 @@ describe('Members workspace management', () => {
       role: 'admin',
     });
     expect(renderer.root.findAllByProps({ testID: 'person-role-editor' })).toHaveLength(0);
+  });
+
+  it('shows the profiled member grants as a read-only Settings list', async () => {
+    const renderer = await personProfile();
+    const grant = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
+    expect(grant.props.title).toBe('beeline-work/beeline');
+    expect(grant.props.description).toBe('@clara · repository · approved');
+    expect(grant.props.onPress).toBeUndefined();
   });
 
   it('keeps peers and owners outside admin role and ban authority', async () => {

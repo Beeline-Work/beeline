@@ -4,7 +4,11 @@ import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { RoomViewMember, WorkspaceView } from '@beeline/api-contract/phone';
+import type {
+  RoomViewMember,
+  WorkspaceMemberGrantView,
+  WorkspaceView,
+} from '@beeline/api-contract/phone';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -35,6 +39,7 @@ export function HumanProfile({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [connectedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
+  const [grants, setGrants] = useState<readonly WorkspaceMemberGrantView[]>([]);
   const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState<RoomViewMember['role']>('member');
@@ -66,6 +71,7 @@ export function HumanProfile({
         }
         setWorkspace(surface);
         setConnectedAgents(owned.agents);
+        setGrants(page.grants ?? []);
         setAgentsHasMore(owned.agentsTruncated);
         setMember(person);
         setRole(person.role);
@@ -327,6 +333,21 @@ export function HumanProfile({
                   })
                 }
               />
+            )}
+            <Text style={styles.section}>Grants</Text>
+            {grants.length ? (
+              grants.map((grant) => (
+                <SettingsRow
+                  key={grant.grantId}
+                  title={grant.target}
+                  description={`${grant.agent.handle ? `@${grant.agent.handle}` : grant.agent.name} · ${grant.kind} · ${grant.status}`}
+                  testID={`member-grant-${grant.grantId}`}
+                />
+              ))
+            ) : (
+              <Text style={styles.copy} testID="member-grants-empty">
+                No grants to show.
+              </Text>
             )}
           </>
         )}

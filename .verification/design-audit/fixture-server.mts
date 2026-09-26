@@ -245,6 +245,13 @@ for (const [workspace, room, identity, role] of members) {
   );
 }
 
+await database.query(
+  `INSERT INTO agent_grants(
+     id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at
+   ) VALUES($1,$2,$3,'repository','lunchboxfortwo/beeline','ship the profile audit',$4,$5,'approved',$6,now())`,
+  [uuid(), AGENT_NIGLET, WORKSPACE, PEER, ROOM, VIEWER],
+);
+
 // ---- transcript -----------------------------------------------------------
 type Row = {
   room: string;

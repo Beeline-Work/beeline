@@ -597,6 +597,87 @@ describe('weekly institutional curator', () => {
     ).toEqual([successor]);
   });
 
+  it('does not restart the archive clock when stale re-affirms a stale row', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','restale-proof')`,
+      [CURATOR_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    // STALE was already staled long enough ago to be archived this cycle.
+    const before = (
+      await database.query<{ updated_at: Date; state: string }>(
+        `SELECT updated_at,state FROM institutional_memory_items WHERE id=$1`,
+        [STALE],
+      )
+    ).rows[0];
+    expect(before?.state).toBe('stale');
+
+    await database.transaction((db) =>
+      applyInstitutionalCuratorProposal(db, {
+        workspaceId: WORKSPACE,
+        jobId: CURATOR_JOB,
+        sourceMessageId: MESSAGE,
+        context: {
+          partition: 'workspace-facts',
+          candidates: [
+            {
+              id: STALE,
+              targetType: 'memory_item',
+              version: 1,
+              state: 'stale',
+              key: 'old-active',
+              text: 'An old unused fact.',
+              sourceRoomId: ROOM,
+              sourceMessageId: MESSAGE,
+              requesterIdentityId: HUMAN,
+            },
+          ],
+        },
+        proposal: {
+          proposalVersion: 1,
+          partition: 'workspace-facts',
+          actions: [
+            {
+              action: 'stale',
+              targetType: 'memory_item',
+              targetId: STALE,
+              baseVersion: 1,
+              duplicateIds: [],
+              rationale: 'Still out of date, still worth keeping for now.',
+            },
+          ],
+        },
+        usage: { inputBytes: 10, outputBytes: 10, model: 'test', extractorVersion: 'test' },
+      }),
+    );
+
+    expect(
+      (
+        await database.query<{ updated_at: Date; curated_at: Date | null; state: string }>(
+          `SELECT updated_at,curated_at,state FROM institutional_memory_items WHERE id=$1`,
+          [STALE],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      updated_at: before?.updated_at,
+      curated_at: expect.any(Date),
+      state: 'stale',
+    });
+
+    // The archive countdown never restarted, so this cycle still archives it.
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT state FROM institutional_memory_items WHERE id=$1`,
+          [STALE],
+        )
+      ).rows[0]?.state,
+    ).toBe('archived');
+  });
+
   it('records a curator retain without restarting the staleness clock', async () => {
     await database.query(
       `INSERT INTO institutional_memory_jobs

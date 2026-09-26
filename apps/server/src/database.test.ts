@@ -6,6 +6,7 @@ import {
   assertSchemaCurrent,
   backfillAgentHandles,
   backfillMessageSearchDocuments,
+  MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
@@ -209,6 +210,69 @@ describe('message search vectors', () => {
 
     await database.query(`UPDATE messages SET text='unrelated wording' WHERE id='search-001'`);
     expect(await searchable()).toBe(24);
+    database.close();
+  });
+
+  it('writes an empty vector rather than failing on an oversized or non-chat row', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';
+    const room = 'ffffffff-ffff-4fff-ffff-ffffffffffff';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
+      'a'.repeat(64),
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Search')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      room,
+      workspace,
+    ]);
+
+    // Distinct short tokens are the worst case: to_tsvector's output runs about
+    // 3x its input, so an unbounded call raises past Postgres's hard
+    // 1,048,575-byte vector limit and the INSERT itself fails.
+    const tokens: string[] = [];
+    for (let index = 0, bytes = 0; bytes < 1_200_000; index += 1) {
+      const token = `marker${index.toString(36)}`;
+      tokens.push(token);
+      bytes += token.length + 1;
+    }
+    const oversized = tokens.join(' ');
+    expect(Buffer.byteLength(oversized, 'utf8')).toBeGreaterThan(MESSAGE_SEARCH_DOCUMENT_MAX_BYTES);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('oversized',$1,$2,$3)`,
+      [room, 'a'.repeat(64), oversized],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation)
+       VALUES('a-system-line',$1,$2,'release marker system note','system')`,
+      [room, 'a'.repeat(64)],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('ordinary',$1,$2,'release marker')`,
+      [room, 'a'.repeat(64)],
+    );
+
+    const vectors = new Map(
+      (
+        await database.query<{ id: string; document: string }>(
+          `SELECT id,search_document::text document FROM messages ORDER BY id`,
+        )
+      ).rows.map((row) => [row.id, row.document]),
+    );
+    expect(vectors.get('oversized')).toBe('');
+    expect(vectors.get('a-system-line')).toBe('');
+    expect(vectors.get('ordinary')).not.toBe('');
+
+    // Empty is not NULL, so the drained backfill still converges over them.
+    expect(await backfillMessageSearchDocuments(database, 10)).toBe(0);
+    expect(
+      (
+        await database.query<{ id: string }>(
+          `SELECT id FROM messages
+           WHERE search_document @@ websearch_to_tsquery('simple','release marker')`,
+        )
+      ).rows.map((row) => row.id),
+    ).toEqual(['ordinary']);
     database.close();
   });
 });

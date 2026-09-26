@@ -637,6 +637,15 @@ function contextCandidates(context: Record<string, unknown> | null): Map<string,
   );
 }
 
+function lifecycleTargetState(
+  action: 'retain' | 'stale' | 'archive' | 'consolidate',
+  currentState: 'active' | 'stale',
+): 'active' | 'stale' | 'archived' {
+  if (action === 'stale') return 'stale';
+  if (action === 'archive') return 'archived';
+  return currentState;
+}
+
 export async function applyInstitutionalCuratorProposal(
   database: SqlDatabase,
   input: {
@@ -789,16 +798,23 @@ export async function applyInstitutionalCuratorProposal(
           [nextId, allIds],
         );
         consolidatedItems += 1;
-      } else if (action.action === 'retain') {
-        await database.query(`UPDATE institutional_memory_items SET curated_at=now() WHERE id=$1`, [
-          current.id,
-        ]);
       } else {
-        await database.query(
-          `UPDATE institutional_memory_items SET state=$2,curated_at=now(),updated_at=now()
-           WHERE id=$1`,
-          [current.id, action.action === 'stale' ? 'stale' : 'archived'],
-        );
+        // Only a real transition may move the aging anchor. Re-affirming the
+        // state a row already holds records curation and nothing else, so a
+        // weekly `stale` on an already-stale row cannot postpone archival.
+        const nextState = lifecycleTargetState(action.action, current.state);
+        if (nextState === current.state) {
+          await database.query(
+            `UPDATE institutional_memory_items SET curated_at=now() WHERE id=$1`,
+            [current.id],
+          );
+        } else {
+          await database.query(
+            `UPDATE institutional_memory_items SET state=$2,curated_at=now(),updated_at=now()
+             WHERE id=$1`,
+            [current.id, nextState],
+          );
+        }
       }
     } else {
       const rows = await database.query<{
@@ -878,15 +894,18 @@ export async function applyInstitutionalCuratorProposal(
           current.id,
         ]);
         consolidatedSkills += 1;
-      } else if (action.action === 'retain') {
-        await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
-          current.id,
-        ]);
       } else {
-        await database.query(
-          `UPDATE workspace_skills SET state=$2,curated_at=now(),updated_at=now() WHERE id=$1`,
-          [current.id, action.action === 'stale' ? 'stale' : 'archived'],
-        );
+        const nextState = lifecycleTargetState(action.action, current.state);
+        if (nextState === current.state) {
+          await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
+            current.id,
+          ]);
+        } else {
+          await database.query(
+            `UPDATE workspace_skills SET state=$2,curated_at=now(),updated_at=now() WHERE id=$1`,
+            [current.id, nextState],
+          );
+        }
       }
     }
   }

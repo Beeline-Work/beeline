@@ -128,6 +128,43 @@ async function runSupervisor(
   return { status, signal, log: await readFile(log, 'utf8').catch(() => '') };
 }
 
+/**
+ * A launchd whose job is mid-teardown: `bootout` answers `36: Operation now in
+ * progress`, the label stays in the domain for two more reads, and a `bootstrap`
+ * while it is still there is refused the way launchd refuses it.
+ */
+function terminatingJob(): (args: string[]) => Promise<{ stdout: string }> {
+  let loaded = true;
+  let reaped = false;
+  let readsBeforeGone = 2;
+  let pid = 111;
+  return async (args) => {
+    if (args[0] === 'print') {
+      if (!loaded) throw new Error('Could not find service');
+      if (!reaped) {
+        if (readsBeforeGone > 0) readsBeforeGone -= 1;
+        else {
+          reaped = true;
+          loaded = false;
+          throw new Error('Could not find service');
+        }
+      }
+      return { stdout: `state = running\npid = ${pid}\n` };
+    }
+    if (args[0] === 'bootout') {
+      throw Object.assign(new Error('Command failed: launchctl bootout'), {
+        stderr: 'Boot-out failed: 36: Operation now in progress\n',
+      });
+    }
+    if (args[0] === 'bootstrap') {
+      if (loaded) throw new Error('Bootstrap failed: 37: Operation already in progress');
+      loaded = true;
+      pid = 222;
+    }
+    return { stdout: '' };
+  };
+}
+
 /** A launchd that reports a fresh pid each time, so an install sees a replacement. */
 function installRun(): (args: string[]) => Promise<{ stdout: string }> {
   let pid = 100;
@@ -284,18 +321,14 @@ describe('launchd supervision contract', () => {
     ]);
   });
 
-  it('lets a bootout outlast the daemon drain and accepts removal in progress', async () => {
+  it('lets a bootout outlast the daemon drain and waits out removal in progress', async () => {
     const { env, invocationPath } = await canonicalEnv();
     const publicKey = 'c'.repeat(64);
     const timeouts: (number | undefined)[] = [];
+    const launchd = terminatingJob();
     const run = vi.fn(async (args: string[], options?: { timeoutMs?: number }) => {
-      if (args[0] === 'bootout') {
-        timeouts.push(options?.timeoutMs);
-        throw Object.assign(new Error('Command failed: launchctl bootout'), {
-          stderr: 'Boot-out failed: 36: Operation now in progress\n',
-        });
-      }
-      return { stdout: args[0] === 'print' ? 'state = running\npid = 777\n' : '' };
+      if (args[0] === 'bootout') timeouts.push(options?.timeoutMs);
+      return launchd(args);
     });
     await installLaunchdAgentService(publicKey, {
       env,
@@ -306,12 +339,58 @@ describe('launchd supervision contract', () => {
 
     await expect(disableLaunchdAgentService(publicKey, { env, run })).resolves.toBeUndefined();
 
-    // The plist is gone even though launchd was still tearing the job down.
+    // The plist is gone, and only once launchd finished tearing the job down.
     await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({
       code: 'ENOENT',
     });
     expect(timeouts).toEqual([LAUNCHD_STOP_TIMEOUT_MS]);
     expect(LAUNCHD_STOP_TIMEOUT_MS).toBeGreaterThan(LAUNCHD_EXIT_TIMEOUT_SECONDS * 1_000);
+  });
+
+  it('bootstraps an agent job only after a removal in progress has finished', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const publicKey = '1'.repeat(64);
+    const target = `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`;
+    const launchd = terminatingJob();
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return launchd(args);
+    });
+
+    await expect(
+      installLaunchdAgentService(publicKey, { env, invocationPath, run, waitTimeoutMs: 5_000 }),
+    ).resolves.toBe(222);
+    expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([
+      ['bootstrap', launchdUserDomain(), launchdAgentPlistPath(publicKey, env)],
+    ]);
+    expect(calls.at(-1)).toEqual(['print', target]);
+  });
+
+  it('bootstraps the broker after a removal in progress instead of kickstarting a dying job', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const target = `${launchdUserDomain()}/${LAUNCHD_BROKER_LABEL}`;
+    await installLaunchdTrustySquireBrokerService({
+      env,
+      invocationPath,
+      run: async (args) => {
+        if (args[0] === 'print') throw new Error('not loaded');
+        return { stdout: '' };
+      },
+    });
+    const launchd = terminatingJob();
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return launchd(args);
+    });
+
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, restart: true });
+
+    expect(calls.some((args) => args[0] === 'kickstart')).toBe(false);
+    expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([
+      ['bootstrap', launchdUserDomain(), launchdBrokerPlistPath(env)],
+    ]);
   });
 
   it('still reports a bootout that failed for any other reason', async () => {

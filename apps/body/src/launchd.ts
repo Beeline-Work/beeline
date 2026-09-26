@@ -121,6 +121,22 @@ esac
 `;
 }
 
+/**
+ * What a Beeline launchd job may resolve binaries from. `nodeBinDirectory()`
+ * comes first so an fnm/nvm-installed node and the harness bins beside it are
+ * reachable from a LaunchAgent, whose PATH is otherwise the bare default.
+ */
+function launchdJobPath(home: string): string {
+  return [
+    nodeBinDirectory(),
+    resolve(home, '.local', 'bin'),
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    '/usr/bin',
+    '/bin',
+  ].join(':');
+}
+
 function environmentXml(environment: Readonly<Record<string, string>>): string {
   return Object.entries(environment)
     .map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`)
@@ -134,14 +150,7 @@ export function launchdAgentPlist(
   const home = launchdHome(env);
   const label = launchdAgentLabel(publicKey);
   const logDir = resolve(home, 'Library', 'Logs', 'Beeline');
-  const path = [
-    nodeBinDirectory(),
-    resolve(home, '.local', 'bin'),
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-    '/usr/bin',
-    '/bin',
-  ].join(':');
+  const path = launchdJobPath(home);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -186,14 +195,7 @@ export function launchdBrokerPlist(env: NodeJS.ProcessEnv = process.env): string
   const home = launchdHome(env);
   const host = squireHostRewriteEnv(home);
   const log = resolve(home, 'Library', 'Logs', 'Beeline', 'trusty-squire-broker.log');
-  const path = [
-    nodeBinDirectory(),
-    resolve(home, '.local', 'bin'),
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-    '/usr/bin',
-    '/bin',
-  ].join(':');
+  const path = launchdJobPath(home);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -292,15 +294,24 @@ async function launchdStatus(
  * forwards launchd's SIGTERM and waits: the generic 15-second command deadline
  * would kill the operator's `beeline stop` on exactly the busy agent the drain
  * exists for. launchd also answers `36: Operation now in progress` while the
- * job is still terminating, which is removal accepted, not a failure.
+ * job is still terminating, which is removal accepted, not a failure — but the
+ * label is still in the domain until that teardown finishes, and launchd refuses
+ * to bootstrap it meanwhile, so this waits the removal out before returning.
  */
 async function bootoutIfLoaded(run: LaunchdRunner, target: string): Promise<void> {
   if ((await launchdStatus(run, target)).state === 'unloaded') return;
   try {
     await run(['bootout', target], { timeoutMs: LAUNCHD_STOP_TIMEOUT_MS });
+    return;
   } catch (error) {
     if (!bootoutRemovalInProgress(error)) throw error;
   }
+  const deadline = Date.now() + LAUNCHD_STOP_TIMEOUT_MS;
+  do {
+    if ((await launchdStatus(run, target)).state === 'unloaded') return;
+    await sleep(100);
+  } while (Date.now() < deadline);
+  throw new Error(`launchd did not finish removing ${target} before the stop deadline`);
 }
 
 function bootoutRemovalInProgress(error: unknown): boolean {

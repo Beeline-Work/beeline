@@ -2013,7 +2013,11 @@ export function BuzzChatSurface({
   const starterPrompts = useMemo(() => {
     if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
       return undefined;
-    return roomStarterPrompts(firstRoomAgent).map((prompt) => ({
+    return roomStarterPrompts({
+      roomAgent: firstRoomAgent,
+      workspaceAgentCount: workspaceRoster ? workspaceRoster.agents.length : null,
+      canAddRoomMembers: canManageWorkspace,
+    }).map((prompt) => ({
       lead: prompt.lead,
       detail: prompt.detail,
       testID: prompt.testID,
@@ -2023,7 +2027,11 @@ export function BuzzChatSurface({
             mention: prompt.action.mention,
             focusOnRefusal: true,
           });
-        else if (prompt.action.kind === 'connect-agent') void connectAgent();
+        else if (prompt.action.kind === 'add-room-agent') {
+          setMembershipError(null);
+          setParticipantPickerKind('agent');
+          setParticipantPickerVisible(true);
+        } else if (prompt.action.kind === 'connect-agent') void connectAgent();
         else
           router.push({
             pathname: '/beeline/members',
@@ -2036,12 +2044,14 @@ export function BuzzChatSurface({
     }));
   }, [
     activeCommunityId,
+    canManageWorkspace,
     connectAgent,
     emptyLedgerVariant,
     fillComposer,
     firstRoomAgent,
     roomSurface?.viewer.permissions.send,
     viewerIsAgent,
+    workspaceRoster,
   ]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept

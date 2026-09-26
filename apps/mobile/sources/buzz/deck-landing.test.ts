@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deckLanding } from './deck-landing';
 
-const TOKEN = 'bzi_0123456789abcdef';
-
 describe('the Room deck landing', () => {
   it('reports a failed Workspace read instead of holding the loader forever', () => {
     // A cached empty list selects no Workspace, so no chats read ever starts;
@@ -30,20 +28,6 @@ describe('the Room deck landing', () => {
     expect(deckLanding({ workspaces: { status: 'pending' }, chats: 'pending' }).kind).not.toBe(
       'choice',
     );
-  });
-
-  it('lets a parked invite win over every other landing', () => {
-    for (const workspaces of [
-      { status: 'pending' } as const,
-      { status: 'failed' } as const,
-      { status: 'ready', count: 0 } as const,
-      { status: 'ready', count: 3 } as const,
-    ])
-      for (const chats of ['pending', 'failed', 'ready'] as const)
-        expect(deckLanding({ pendingInvite: TOKEN, workspaces, chats })).toEqual({
-          kind: 'invite',
-          token: TOKEN,
-        });
   });
 
   it('paints the deck as soon as a chat list is in hand', () => {

@@ -13,6 +13,7 @@ vi.mock('react-native', async () => {
     Switch: host('Switch'),
     TouchableOpacity: host('TouchableOpacity'),
     Keyboard: { dismiss: () => undefined },
+    Platform: { OS: 'web' },
   };
 });
 vi.mock('@/constants/Typography', () => ({
@@ -38,6 +39,7 @@ vi.mock('./HullActionSheet', async () => {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { NewRoomDialog } from './NewRoomDialog';
+import { beelineThemes } from '@/buzz/groknight';
 
 const repo = {
   key: 'repo',
@@ -119,6 +121,8 @@ describe('New Room sheet', () => {
     expect(host('create-room-name')?.props.accessibilityLabel).toBe('Room name');
     expect(host('create-room-repo-row')).toBeDefined();
     expect(host('create-room-public')?.props.value).toBe(true);
+    expect(host('create-room-public')?.props.thumbColor).toBe(beelineThemes.obsidian.bgBase);
+    expect(host('create-room-public')?.props.activeThumbColor).toBe(beelineThemes.obsidian.bgBase);
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     act(() => host('create-room-name')?.props.onChangeText('planning'));
     act(() => host('create-room-submit')?.props.onPress());

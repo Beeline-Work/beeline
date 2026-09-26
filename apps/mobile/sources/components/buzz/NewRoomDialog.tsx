@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Keyboard, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -212,7 +212,8 @@ export function NewRoomDialog({
               disabled={creatingRoom}
               onValueChange={(value) => setInviteOnly(!value)}
               testID="create-room-public"
-              thumbColor={theme.buzz.textPrimary}
+              thumbColor={theme.buzz.bgBase}
+              {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
               trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
               value={!inviteOnly}
             />

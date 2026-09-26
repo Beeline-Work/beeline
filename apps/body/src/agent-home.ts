@@ -652,18 +652,13 @@ async function applyGrantedHostRoutes(
   try {
     if (grantedSquireHostRoute(granted, hostImportedMcpDeclarations({ operatorHome, agentKind })))
       ensureSquireHostDir(operatorHome);
-    // Beeline-owned routes are merged AFTER the rewrite: they are already
-    // complete launches and carry their own per-call gate, so wrapping them
-    // in the resource façade would gate one call twice.
-    const routesFor = (kind: AgentKind) => ({
-      ...rewriteGrantedHostRoutes(
-        hostImportedMcpDeclarations({ operatorHome, agentKind: kind }),
+    const routesFor = (kind: AgentKind) =>
+      rewriteGrantedHostRoutes(
+        { ...hostImportedMcpDeclarations({ operatorHome, agentKind: kind }), ...extraHostRoutes },
         granted,
         operatorHome,
         resourceAuthFile,
-      ),
-      ...extraHostRoutes,
-    });
+      );
     for (const config of HARNESS_MCP_CONFIGS) {
       if (!appliesToHarness(agentKind, config.dir)) continue;
       const routes = routesFor(config.dir);

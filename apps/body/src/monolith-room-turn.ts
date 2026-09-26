@@ -57,11 +57,7 @@ import {
   prepareCodegraphIndex,
 } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
-import {
-  registryMcpHostBindPaths,
-  registryMcpHostDeclarations,
-  registryMcpHostWires,
-} from './registry-mcp.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
@@ -859,10 +855,12 @@ export class MonolithRoomTurnLoop {
       operatorHome,
       agentKind: this.options.config.agentKind,
     });
-    const grantedRouteServers = [
-      ...grantedHostRouteWires(grantedHostRoutes, operatorHome, hostDeclarations, resourceAuthFile),
-      ...registryMcpHostWires(registryHostDeclarations),
-    ];
+    const grantedRouteServers = grantedHostRouteWires(
+      mountedHostRoutes,
+      operatorHome,
+      { ...hostDeclarations, ...registryHostDeclarations },
+      resourceAuthFile,
+    );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
     // (`pi-mcp-bridge.ts`). Granted host routes also ride that bridge:

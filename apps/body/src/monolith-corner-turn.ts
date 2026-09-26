@@ -45,11 +45,7 @@ import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
-import {
-  registryMcpHostBindPaths,
-  registryMcpHostDeclarations,
-  registryMcpHostWires,
-} from './registry-mcp.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
@@ -1087,10 +1083,12 @@ export class MonolithCornerTurnLoop {
       resourceAuthFile,
     );
     if (youtube) servers.push(youtube);
-    const grantedRouteServers = [
-      ...grantedHostRouteWires(grantedHostRoutes, operatorHome, hostDeclarations, resourceAuthFile),
-      ...registryMcpHostWires(registryHostDeclarations),
-    ];
+    const grantedRouteServers = grantedHostRouteWires(
+      mountedHostRoutes,
+      operatorHome,
+      { ...hostDeclarations, ...registryHostDeclarations },
+      resourceAuthFile,
+    );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and
     // no `post_artifact` either. Granted host routes also ride this

@@ -12,7 +12,13 @@ import type {
   ConnectorStep,
   RegistryMcpRoute,
 } from '@beeline/api-contract/daemon';
-import { NON_CONSUMING } from './resource-mcp-facade.js';
+import {
+  MCP_RESOURCE_GATE_KEY,
+  MCP_RESOURCE_GATE_TRANSPORT,
+  MCP_RESOURCE_TARGET_KEY,
+  NON_CONSUMING,
+} from './resource-mcp-facade.js';
+import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 
 export const REGISTRY_MCP_BROKER_FLAG = '--registry-mcp-broker';
 
@@ -136,9 +142,21 @@ async function assertNotOwnMachine(
   return url;
 }
 
+/**
+ * Where provider grants live. `bwrap-sandbox.ts` masks this path by name, but
+ * `--ro-bind / /` is a LIVE view: a store that does not exist when a session
+ * is planned gets no mask, and the first connect then writes access and
+ * refresh tokens into a directory the running harness can read. The daemon
+ * therefore creates it before any turn can start ({@link
+ * RegistryMcpHostBroker.start}), so the mask is always in force.
+ */
+export function registryMcpStateRoot(home = homedir()): string {
+  return join(home, '.beeline', 'registry-mcp');
+}
+
 export function registryMcpStatePath(connectorId: string, home = homedir()): string {
   if (!/^[0-9a-f-]{20,}$/i.test(connectorId)) throw new Error('Registry connector id is invalid');
-  return join(home, '.beeline', 'registry-mcp', `${connectorId}.json`);
+  return join(registryMcpStateRoot(home), `${connectorId}.json`);
 }
 
 function readState(path: string): RegistryState | undefined {
@@ -170,24 +188,21 @@ async function jsonResponse(response: Response): Promise<Record<string, unknown>
   return result;
 }
 
-function steps(active: string, failed?: string): ConnectorStep[] {
-  return [
-    {
-      label: 'Discover remote authentication',
-      status: failed ? 'failed' : active === 'discover' ? 'running' : 'done',
-      ...(failed ? { reason: failed } : {}),
-    },
-    {
-      label: 'Connect provider account',
-      status: failed
-        ? 'pending'
-        : active === 'connect'
-          ? 'running'
-          : active === 'done'
-            ? 'done'
-            : 'pending',
-    },
-  ];
+const CONNECTOR_STEPS = [
+  { key: 'discover', label: 'Discover remote authentication' },
+  { key: 'connect', label: 'Connect provider account' },
+] as const;
+
+/** `failed` marks the step named by `active`; whatever ran before it is done. */
+function steps(active: 'discover' | 'connect' | 'done', failed?: string): ConnectorStep[] {
+  const activeIndex = CONNECTOR_STEPS.findIndex((step) => step.key === active);
+  return CONNECTOR_STEPS.map((step, index) => {
+    if (activeIndex < 0 || index < activeIndex) return { label: step.label, status: 'done' };
+    if (index > activeIndex) return { label: step.label, status: 'pending' };
+    return failed
+      ? { label: step.label, status: 'failed', reason: failed }
+      : { label: step.label, status: 'running' };
+  });
 }
 
 export type RegistryInstallResult =
@@ -469,11 +484,13 @@ export function registryMcpBrokerLaunch(
 }
 
 /**
- * A Registry route is NOT wrapped in the resource façade: the daemon-owned
- * broker holds the only provider grant and authorizes every call itself
- * ({@link RegistryMcpHostBroker.request}), including the one a sandbox can
- * make straight at the socket. A second façade gate would spend a Once grant
- * twice and refuse the very call the owner just approved.
+ * A Registry route is mounted behind the resource façade under its stable
+ * `registry-mcp:<serverName>` target, exactly like every other host route.
+ * `MCP_RESOURCE_GATE_TRANSPORT` says the TRANSPORT spends the grant: the
+ * daemon-owned broker holds the only provider grant and is the one place a
+ * call can actually reach the provider — including the call a sandbox makes
+ * straight at the socket — so it makes the consuming decision, and the façade
+ * asks the same gate without spending. One call, one Once grant.
  */
 export function registryMcpHostDeclarations(
   routes: readonly RegistryMcpRoute[] | undefined,
@@ -483,33 +500,19 @@ export function registryMcpHostDeclarations(
   return Object.fromEntries(
     (routes ?? []).map((route) => {
       const launch = registryMcpBrokerLaunch(route.connectorId, turnContextPath, brokerSocket);
-      return [route.routeName, { command: launch.command, args: launch.args, env: launch.env }];
+      return [
+        route.routeName,
+        {
+          command: launch.command,
+          args: launch.args,
+          env: launch.env,
+          [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST,
+          [MCP_RESOURCE_TARGET_KEY]: route.target,
+          [MCP_RESOURCE_GATE_KEY]: MCP_RESOURCE_GATE_TRANSPORT,
+        },
+      ];
     }),
   );
-}
-
-/** The same declarations as session MCP wires, for harnesses mounted over ACP. */
-export function registryMcpHostWires(declarations: Record<string, Record<string, unknown>>): Array<{
-  name: string;
-  command: string;
-  args: string[];
-  env?: Array<{ name: string; value: string }>;
-}> {
-  return Object.entries(declarations).flatMap(([name, declaration]) => {
-    const command = typeof declaration.command === 'string' ? declaration.command : '';
-    if (!command) return [];
-    const env = Object.entries(
-      (declaration.env as Record<string, string> | undefined) ?? {},
-    ).flatMap(([key, value]) => (typeof value === 'string' ? [{ name: key, value }] : []));
-    return [
-      {
-        name,
-        command,
-        args: Array.isArray(declaration.args) ? (declaration.args as string[]) : [],
-        ...(env.length ? { env } : {}),
-      },
-    ];
-  });
 }
 
 /** The broker socket is the only host path a Registry route needs inside a sandbox. */
@@ -586,6 +589,17 @@ function readTurnContext(value: unknown): RegistryMcpTurnContext | undefined {
     : undefined;
 }
 
+function jsonRpcMethod(line: string): string {
+  let method: unknown;
+  try {
+    method = (JSON.parse(line) as { method?: unknown }).method;
+  } catch {
+    throw new RegistryMcpRefusal();
+  }
+  if (typeof method !== 'string') throw new RegistryMcpRefusal();
+  return method;
+}
+
 function brokerSocketPath(home = homedir()): string {
   return join(home, '.beeline', 'registry-mcp-broker', `${process.pid}.sock`);
 }
@@ -620,26 +634,33 @@ export class RegistryMcpHostBroker {
     const path = registryMcpStatePath(connectorId, this.home);
     let state = readState(path);
     if (state?.status !== 'connected') throw new Error('Registry MCP connection is unavailable');
-    await this.authorizeCall(state, line, turn);
+    const method = jsonRpcMethod(line);
+    await this.authorizeCall(state, method, turn);
     const refreshed = await refresh(state, this.transport);
     if (refreshed !== state) {
       state = refreshed;
       writeState(path, state);
     }
+    // An `initialize` opens a NEW provider session, and a remote answers a
+    // terminated session id with a refusal — so a cached id is never sent on
+    // initialize and never survives a refusal, or one expiry would wedge this
+    // connector for the life of the daemon.
+    const cached = method === 'initialize' ? undefined : this.sessions.get(connectorId);
     const response = await this.transport(state.remoteUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
         ...(state.accessToken ? { authorization: `Bearer ${state.accessToken}` } : {}),
-        ...(this.sessions.get(connectorId)
-          ? { 'mcp-session-id': this.sessions.get(connectorId)! }
-          : {}),
+        ...(cached ? { 'mcp-session-id': cached } : {}),
       },
       body: line,
       signal: AbortSignal.timeout(120_000),
     });
-    if (!response.ok) throw new Error('remote refused call');
+    if (!response.ok) {
+      this.sessions.delete(connectorId);
+      throw new Error('remote refused call');
+    }
     const session = response.headers.get('mcp-session-id');
     if (session) this.sessions.set(connectorId, session);
     if (response.status === 202 || response.status === 204) return [];
@@ -654,18 +675,11 @@ export class RegistryMcpHostBroker {
   /** Reuses the server's own owner/yolo/grant matrix; it adds no rule of its own. */
   private async authorizeCall(
     state: ConnectedState,
-    line: string,
+    method: string,
     turn: RegistryMcpTurnContext | undefined,
   ): Promise<void> {
     const context = readTurnContext(turn);
     if (!this.authorize || !context) throw new RegistryMcpRefusal();
-    let method: unknown;
-    try {
-      method = (JSON.parse(line) as { method?: unknown }).method;
-    } catch {
-      throw new RegistryMcpRefusal();
-    }
-    if (typeof method !== 'string') throw new RegistryMcpRefusal();
     const allowed = await this.authorize({
       ...context,
       target: `registry-mcp:${state.serverName}`,
@@ -676,6 +690,7 @@ export class RegistryMcpHostBroker {
 
   async start(): Promise<void> {
     if (this.server) return;
+    mkdirSync(registryMcpStateRoot(this.home), { recursive: true, mode: 0o700 });
     mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
     rmSync(this.socketPath, { force: true });
     this.server = createServer({ allowHalfOpen: true }, (socket) => {

@@ -259,6 +259,78 @@ describe('routeBuzzNotificationResponse', () => {
 });
 
 describe('notification response wiring', () => {
+  it.each(
+    (['channel', 'personal'] as const).flatMap((tagKind) =>
+      (['room', 'corner'] as const).flatMap((surface) =>
+        (['cold', 'background'] as const).map((entry) => ({ tagKind, surface, entry })),
+      ),
+    ),
+  )(
+    'opens the exact other-Workspace message for a $tagKind tag in a $surface from $entry',
+    async ({ tagKind, surface, entry }) => {
+      const responseId = `${tagKind}-${surface}-${entry}`;
+      const roomId = 'room-in-other-workspace';
+      const channelId = surface === 'corner' ? 'corner-in-other-workspace' : roomId;
+      const messageId = `${tagKind}-${surface}-message`;
+      // Channel and personal tags intentionally carry the same routing contract;
+      // only the notification copy differs before the server serializes it.
+      const response: TappedNotificationResponse = {
+        actionIdentifier: DEFAULT_ACTION,
+        notification: {
+          request: {
+            identifier: responseId,
+            content: {
+              data: {
+                type: 'channel-activity',
+                target: 'message',
+                workspaceId: 'other-workspace',
+                roomId,
+                channelId,
+                ...(surface === 'corner' ? { cornerId: channelId } : {}),
+                messageId,
+              },
+            },
+          },
+        },
+      };
+      const { navigate, routing: deps } = routing({
+        resolveTarget: async (target) => {
+          expect(target.workspaceId).toBe('other-workspace');
+          return target;
+        },
+      });
+      let listener: ((next: TappedNotificationResponse) => void) | undefined;
+      const route = (next: TappedNotificationResponse) =>
+        routeBuzzNotificationResponse(next, deps);
+      startNotificationResponseEntries({
+        addResponseListener: (next) => {
+          listener = next;
+          return { remove() {} };
+        },
+        getLastResponse: async () => (entry === 'cold' ? response : null),
+        getAppState: () => 'background',
+        route,
+      });
+      if (entry === 'background') listener?.(response);
+
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      expect(navigate).toHaveBeenCalledWith(
+        {
+          pathname: '/beeline/chat/[channelId]',
+          params: {
+            channelId,
+            communityId: 'other-workspace',
+            notificationResponseId: responseId,
+            ...(surface === 'corner' ? { parent: roomId } : {}),
+            notificationMessageId: messageId,
+            notificationTarget: 'message',
+          },
+        },
+        { dangerouslySingular: true },
+      );
+    },
+  );
+
   it.each([
     ['foreground', 'active'],
     ['background', 'background'],

@@ -54,6 +54,7 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '25' },
   { platform: 'android', runtimeVersion: '26' },
   { platform: 'android', runtimeVersion: '28' },
+  { platform: 'android', runtimeVersion: '29' },
   { platform: 'ios', runtimeVersion: '23' },
   { platform: 'ios', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '25' },
@@ -97,6 +98,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     runtimeVersion: '28',
     evidence:
       'store binaries shipped on the android@28 pin and served as the android@28 production target by successful unified release run 35605942517 (v0.0.120, head d6db385f)',
+  },
+  {
+    platform: 'android',
+    runtimeVersion: '29',
+    evidence:
+      'store binaries shipped on the android@29 pin introduced by #1540 (fa8b3b9e4) before the runtime-30 notification-routing binary',
   },
   {
     platform: 'ios',

@@ -101,7 +101,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "29",
+            runtimeVersion: runtimeVersionOverride || "30",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -172,6 +172,7 @@ export default {
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidBuildTooling.js"),
+            require("./plugins/withAndroidPushRouting.js"),
             [
                 "expo-router",
                 {

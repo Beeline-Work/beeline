@@ -1,18 +1,15 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Credential, ServiceAccount } from 'firebase-admin/app';
 import {
-  ANDROID_PUSH_CLICK_ACTION,
   firebaseAppOptions,
   firebasePushMessage,
   requirePushDeliveryCredentials,
 } from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
-const androidPushRoutingPlugin = readFileSync(
-  new URL('../../mobile/plugins/withAndroidPushRouting.js', import.meta.url),
-  'utf8',
-);
+// The tap trampoline the mobile manifest declares for this exact action is
+// covered by apps/mobile's `androidPushRouting.test.ts`.
+const ANDROID_PUSH_CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
 
 describe('Firebase push credentials', () => {
   it('uses an inline service account with cert and its project id', () => {
@@ -92,11 +89,6 @@ describe('Firebase push credentials', () => {
 });
 
 describe('Firebase push routing payload', () => {
-  it('targets the Android Activity that replaces a retained notification task', () => {
-    expect(androidPushRoutingPlugin).toContain(`'${ANDROID_PUSH_CLICK_ACTION}'`);
-    expect(androidPushRoutingPlugin).toContain('Intent.FLAG_ACTIVITY_CLEAR_TASK');
-  });
-
   it.each([
     ['Room mention', 'room-1', 'room-1', undefined, 'message'],
     ['corner mention', 'parent-1', 'corner-1', 'corner-1', 'message'],

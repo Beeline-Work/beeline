@@ -81,9 +81,6 @@ describe('native fingerprint gate', () => {
     // versions, the baked update channel) is behaviourally pinned by
     // appBranding.test.ts; only this skip exists for the gate's sake.
     expect(fingerprintConfig).toContain('ExpoConfigRuntimeVersionIfString');
-    expect(
-      readFileSync(join(mobileRoot, 'scripts/native-fingerprint.mjs'), 'utf8'),
-    ).toContain("platform === 'android' ? 'withoutIosPushCapabilities' : 'withAndroidPushRouting'");
   });
 
   it('runs as a named PR gate over exactly the inputs that can move the stamp', () => {
@@ -269,6 +266,26 @@ module.exports = withoutIosPushCapabilities;\n`,
       writeFileSync(projectConfig, configWithoutStripper);
       unlinkSync(stripper);
 
+      // The mirror case, and the one this tree actually runs: the Android-only
+      // push-routing plugin must leave iOS's normalized input alone, so
+      // dropping it moves Android and nothing else.
+      writeFileSync(
+        projectConfig,
+        configWithoutStripper.replace(
+          '            require("./plugins/withAndroidPushRouting.js"),\n',
+          '',
+        ),
+      );
+      const withoutPushRouting = await runGate(fixture);
+      expect(withoutPushRouting.status).toBe(1);
+      expect(withoutPushRouting.stderr).toContain(
+        'Native inputs changed but android.runtimeVersion is still "30"',
+      );
+      expect(withoutPushRouting.stderr).toContain(
+        `ios: ${before.fingerprints.ios} -> ${before.fingerprints.ios} (unchanged)`,
+      );
+      writeFileSync(projectConfig, configWithoutStripper);
+
       appendFileSync(join(project, 'plugins/withEinkCompatibility.js'), '\n// native change\n');
       const dirty = await runGate(fixture);
 
@@ -288,11 +305,11 @@ module.exports = withoutIosPushCapabilities;\n`,
       expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "30"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
-    // Five real fingerprint runs, each hashing the whole mobile tree plus
+    // Six real fingerprint runs, each hashing the whole mobile tree plus
     // node_modules. A quiet runner does one in tens of seconds, but under the
     // suite's competing workers each run slows several-fold and five of them
     // outgrew 240s — the same head's NATIVE FINGERPRINT job (one run) passed.
-    // 600s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
-    600_000,
+    // 720s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
+    720_000,
   );
 });

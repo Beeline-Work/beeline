@@ -10,6 +10,8 @@ describe('preview agent-command autocomplete wiring', () => {
     expect(source).toContain('[scope]: detail.commands ?? []');
     expect(source).toContain('commands={mentionAgentCommands}');
     expect(source).toContain('onSelectCommand={selectAgentCommand}');
+    // Beeline's Room verbs narrow with the same typed `@agent /query`.
+    expect(source).toContain("currentSlashQuery ?? mentionSlash?.query ?? ''");
   });
 
   it('offers the owner Fast mode from the same agent read and toggles it through the profile operation', () => {

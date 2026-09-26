@@ -2211,11 +2211,12 @@ export function BuzzChatSurface({
             !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
           ),
         },
-        currentSlashQuery ?? '',
+        currentSlashQuery ?? mentionSlash?.query ?? '',
       ),
     [
       catchUpOfferVisible,
       currentSlashQuery,
+      mentionSlash?.query,
       canManageWorkspace,
       isCorner,
       isDirectMessage,

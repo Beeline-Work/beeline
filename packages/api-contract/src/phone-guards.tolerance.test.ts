@@ -629,6 +629,35 @@ describe('phone surface readers', () => {
     expect(view?.messages[0]?.presentation).toBe('message');
     expect(view?.messages[0]?.githubEvent?.type).toBe('release');
   });
+
+  it('reads a person-opened corner card by its name and keeps its source message', () => {
+    const cornerId = 'cccccccc-3333-4333-8333-cccccccccccc';
+    const read = (daemonFact: Record<string, unknown>) =>
+      readRoomViewMessage({ ...message, presentation: 'card', daemonFact })?.daemonFact;
+    expect(
+      read({
+        type: 'corner-open',
+        cornerId,
+        name: 'quiet amber corner',
+        objective: '',
+        sourceMessageId: 'd'.repeat(64),
+      }),
+    ).toEqual({
+      type: 'corner-open',
+      cornerId,
+      name: 'quiet amber corner',
+      objective: '',
+      sourceMessageId: 'd'.repeat(64),
+    });
+    // With neither an objective nor a name there is nothing to title it by.
+    expect(read({ type: 'corner-open', cornerId, objective: '' })).toBeUndefined();
+    // An agent card from before the marker still reads without a source.
+    expect(read({ type: 'corner-open', cornerId, objective: 'Fix the auth test' })).toEqual({
+      type: 'corner-open',
+      cornerId,
+      objective: 'Fix the auth test',
+    });
+  });
 });
 
 describe('Room payload compatibility in both directions', () => {

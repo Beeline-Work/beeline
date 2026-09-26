@@ -5400,6 +5400,75 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
+  it('marks the message a human corner was opened from, and follows its rename', async () => {
+    const sourceId = '7'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: ROOM,
+          messageId: sourceId,
+          text: 'Worth its own corner',
+        })
+      ).status,
+    ).toBe(200);
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'quiet amber corner',
+      sourceMessageId: sourceId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    const markerFor = async (viewer: string) =>
+      (await phone.readRoom(ROOM, viewer))?.messages.find(
+        (message) => message.daemonFact?.cornerId === cornerId,
+      );
+    const marker = await markerFor(HUMAN);
+    expect(marker).toMatchObject({
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-open',
+        cornerId,
+        name: 'quiet amber corner',
+        objective: '',
+        sourceMessageId: sourceId,
+      },
+    });
+    // Everyone in the Room reads the same marker, not just its opener.
+    expect((await markerFor(AGENT))?.daemonFact?.sourceMessageId).toBe(sourceId);
+    // A person opening a scratch corner wakes nobody.
+    expect(
+      (
+        await database.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1`, [
+          marker!.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+
+    expect(
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright river corner' })).status,
+    ).toBe(204);
+    expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
+      name: 'bright river corner',
+      sourceMessageId: sourceId,
+    });
+
+    // A source that is not a message in this Room opens the corner unmarked.
+    const unmarked = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'stray corner',
+      sourceMessageId: '8'.repeat(64),
+    });
+    expect(unmarked.status).toBe(200);
+    const { id: unmarkedId } = (await unmarked.json()) as { id: string };
+    expect(await markerFor(HUMAN)).toBeDefined();
+    expect(
+      (await phone.readRoom(ROOM, HUMAN))?.messages.some(
+        (message) => message.daemonFact?.cornerId === unmarkedId,
+      ),
+    ).toBe(false);
+  });
+
   it('renames a human corner through a name-only updateRoom', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,

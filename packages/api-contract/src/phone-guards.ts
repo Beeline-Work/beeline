@@ -869,7 +869,9 @@ function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact
       item.type !== 'corner-open') ||
     !uuid(item.cornerId) ||
     typeof item.objective !== 'string' ||
-    !item.objective.trim()
+    // The objective titles a legacy card; a person-opened corner has none and
+    // is titled by its name instead. A card must carry one of the two.
+    (!item.objective.trim() && !(typeof item.name === 'string' && item.name.trim()))
   ) {
     return null;
   }
@@ -903,6 +905,12 @@ function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact
     cornerId: item.cornerId,
     objective: item.objective,
     ...field('name', typeof item.name === 'string' ? item.name : undefined),
+    ...field(
+      'sourceMessageId',
+      typeof item.sourceMessageId === 'string' && item.sourceMessageId
+        ? item.sourceMessageId
+        : undefined,
+    ),
     ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
     ...field('pullRequest', projectedPull),
     ...field(
@@ -1156,6 +1164,10 @@ function readChat(value: unknown): ChatListItem | null {
   return {
     room,
     unread: item.unread === true,
+    ...field(
+      'leaveDeletesRoom',
+      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
+    ),
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
     ...field(
@@ -1438,6 +1450,10 @@ export function readRoomView(value: unknown): RoomView | null {
   return {
     room,
     messages,
+    ...field(
+      'leaveDeletesRoom',
+      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
+    ),
     members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
     latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
     viewer,
@@ -1677,6 +1693,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
     ...field('selected', readModelSelection(item.selected)),
     ...field('modelUnavailable', oneOf(item.modelUnavailable, ['model', 'effort', 'selection'])),
+    ...field('fastMode', typeof item.fastMode === 'boolean' ? item.fastMode : undefined),
     ...field('yolo', readAgentYolo(item.yolo)),
     ...field('access', readAgentAccess(item.access)),
     ...field('grants', readList(item.grants, readAgentGrantView)),
@@ -1702,6 +1719,25 @@ export function readInviteView(value: unknown): InviteView | null {
       'joinedWorkspaceId',
       typeof item.joinedWorkspaceId === 'string' ? item.joinedWorkspaceId : undefined,
     ),
+    ...field('inviter', readInviteInviter(item.inviter)),
+    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
+    ...field('agentCount', integer(item.agentCount) ? item.agentCount : undefined),
+  };
+}
+
+function readInviteInviter(value: unknown): InviteView['inviter'] {
+  const item = record(value);
+  if (!item || typeof item.name !== 'string') return undefined;
+  const role = item.role;
+  const roleValue: NonNullable<InviteView['inviter']>['role'] =
+    role === 'owner' || role === 'admin' || role === 'member' || role === 'spectator'
+      ? role
+      : undefined;
+  return {
+    name: item.name,
+    ...field('handle', typeof item.handle === 'string' ? item.handle : undefined),
+    ...field('face', typeof item.face === 'string' ? item.face : undefined),
+    ...field('role', roleValue),
   };
 }
 

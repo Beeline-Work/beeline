@@ -5,6 +5,7 @@ import type {
   WorkbenchConnector,
   WorkbenchConnectorId,
   WorkbenchHelper,
+  WorkbenchRowId,
   WorkbenchView,
 } from './workbench';
 import {
@@ -62,20 +63,24 @@ type ConnectorViewDto = WorkbenchDto['connectors'][number];
 type ConnectionViewDto = WorkbenchDto['connections'][number];
 
 function toConnector(entry: {
+  id?: string;
   connectorType: string;
   name: string;
+  description?: string;
   available: boolean;
   approvedTools?: readonly string[];
   row?: ConnectorViewDto;
 }): WorkbenchConnector {
-  const id = entry.connectorType as WorkbenchConnectorId;
+  const id: WorkbenchRowId = entry.id ?? entry.connectorType;
+  const fixedDescription =
+    CONNECTOR_DESCRIPTIONS[entry.connectorType as WorkbenchConnectorId] ?? '';
   const approvedTools = entry.row?.approvedTools ?? entry.approvedTools;
   return {
     id,
     name: entry.name,
     description: approvedTools?.length
-      ? `${CONNECTOR_DESCRIPTIONS[id] ?? ''} Approved tools: ${approvedTools.join(', ')}.`
-      : CONNECTOR_DESCRIPTIONS[id] ?? '',
+      ? `${entry.description ?? fixedDescription} Approved tools: ${approvedTools.join(', ')}.`
+      : (entry.description ?? fixedDescription),
     available: entry.available,
     ...(entry.row
       ? {
@@ -156,27 +161,45 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         name: helper.name,
         online: helper.online,
       })),
-      connectors: dto.catalog.map((entry) => {
-        // Wallet creation is a direct human operation, not a helper
-        // connector install. The server catalog's helper availability does
-        // not govern whether this row can act.
-        if (entry.connectorType === 'wallet') {
-          return {
-            id: 'wallet' as const,
+      connectors: [
+        ...dto.catalog.map((entry) => {
+          // Wallet creation is a direct human operation, not a helper
+          // connector install. The server catalog's helper availability does
+          // not govern whether this row can act.
+          if (entry.connectorType === 'wallet') {
+            return {
+              id: 'wallet' as const,
+              name: entry.name,
+              description: CONNECTOR_DESCRIPTIONS.wallet,
+              available: true,
+              status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
+            };
+          }
+          return toConnector({
+            connectorType: entry.connectorType,
             name: entry.name,
-            description: CONNECTOR_DESCRIPTIONS.wallet,
-            available: true,
-            status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
-          };
-        }
-        return toConnector({
-          connectorType: entry.connectorType,
-          name: entry.name,
-          available: entry.available,
-          approvedTools: entry.approvedTools,
-          row: dto.connectors.find((candidate) => candidate.connectorType === entry.connectorType),
-        });
-      }),
+            available: entry.available,
+            approvedTools: entry.approvedTools,
+            row: dto.connectors.find(
+              (candidate) => candidate.connectorType === entry.connectorType,
+            ),
+          });
+        }),
+        ...dto.connectors
+          .filter((row) => row.connectorType === 'registry-mcp' && row.registryServerName)
+          .map((row) =>
+            toConnector({
+              id: row.connectorId,
+              connectorType: row.connectorType,
+              name: row.displayName ?? row.registryServerName ?? 'MCP server',
+              description: row.websiteUrl
+                ? `${row.registryServerName}@${row.registryVersion ?? 'pinned'} · ${row.websiteUrl}`
+                : `${row.registryServerName}@${row.registryVersion ?? 'pinned'}`,
+              available: true,
+              row,
+            }),
+          ),
+      ],
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }

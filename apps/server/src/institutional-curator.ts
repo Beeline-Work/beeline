@@ -1,0 +1,1329 @@
+import { randomUUID } from 'node:crypto';
+import {
+  parseInstitutionalCuratorProposal,
+  type InstitutionalCuratorProposal,
+  type InstitutionalMemoryJobUsage,
+} from '@beeline/api-contract/daemon';
+import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
+import type { SqlDatabase } from './database.js';
+import {
+  DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
+import {
+  applyWorkspaceSkillProposal,
+  assertRestrictedWorkspaceSkillSafe,
+} from './institutional-skills.js';
+import {
+  refreshWorkspaceSkillAnchors,
+  type InstitutionalSkillAnchorSource,
+} from './institutional-skill-anchors.js';
+
+export const DEFAULT_CURATOR_WEEKLY_JOB_LIMIT = 20;
+export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
+export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
+/** Exactly one weekly budget's worth of per-partition candidates, never more. */
+export const CURATOR_CANDIDATE_WINDOW =
+  DEFAULT_CURATOR_WEEKLY_JOB_LIMIT * INSTITUTIONAL_CURATOR_CANDIDATE_MAX;
+/** How much time one repeat-evidence measurement covers, and its comparison. */
+export const INSTITUTIONAL_REPEAT_WINDOW_DAYS = 28;
+/** The per-turn institutional context budget the rollout gate holds p95 to. */
+export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
+/**
+ * A sample covers at most this much time. The curator samples on the server's
+ * reconciliation cadence, so a longer span means nothing watched the host and
+ * the span must not be credited as available.
+ */
+export const AVAILABILITY_OBSERVATION_MAX_MS = 10 * 60_000;
+
+/**
+ * An authorized helper host that could serve this Workspace right now: a
+ * current Workspace-member agent on a known machine whose authenticated
+ * presence evidence is still fresh.
+ */
+const WORKSPACE_HOST_AVAILABLE_SQL = `EXISTS (
+    SELECT 1
+    FROM memberships member
+    JOIN agents agent ON agent.agent_id=member.identity_id AND agent.machine_id IS NOT NULL
+    JOIN live_outputs presence
+      ON presence.agent_id=member.identity_id AND presence.kind='presence'
+    WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+      AND presence.body->>'status'='online'
+      AND presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds'
+  )`;
+
+/** Seconds since `anchor` in which no authorized helper host was available. */
+function unavailableSecondsSql(anchor: string): string {
+  return `(SELECT COALESCE(sum(extract(epoch FROM (
+              LEAST(gap.ended_at,$2::timestamptz)-GREATEST(gap.started_at,${anchor})))),0)
+           FROM institutional_host_availability_gaps gap
+           WHERE gap.workspace_id=$1 AND gap.ended_at>${anchor}
+             AND gap.started_at<$2::timestamptz)`;
+}
+
+/** True once `anchor` is older than `$<days>` days of MEASURED availability. */
+function agedBeyondSql(anchor: string, days: string): string {
+  return `extract(epoch FROM ($2::timestamptz-${anchor}))
+            -${unavailableSecondsSql(anchor)}>=${days}*86400`;
+}
+
+const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
+const SKILL_AGE_ANCHOR = `GREATEST(skill.updated_at,COALESCE(skill.last_served_at,skill.updated_at))`;
+
+/**
+ * Sample whether an authorized helper host can serve this Workspace and record
+ * every span that cannot be credited as available: an unavailable host, the
+ * unobserved history before the first sample, and any span longer than the
+ * sampling cadence. One contiguous span stays one row.
+ */
+export async function recordWorkspaceHostAvailability(
+  database: SqlDatabase,
+  workspaceId: string,
+  now: Date,
+): Promise<boolean> {
+  // The gap write and the cursor advance are one transaction: a crash between
+  // them would leave ended_at no longer equal to the next `since`, so the
+  // extend would miss and a second overlapping gap would double-count.
+  return database.transaction(async (db) => {
+    const state = (
+      await db.query<{ available: boolean; observed_at: Date | null; created_at: Date }>(
+        `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,
+                rollout.availability_observed_at observed_at,workspace.created_at
+         FROM institutional_memory_workspace_rollouts rollout
+         JOIN workspaces workspace ON workspace.id=rollout.workspace_id
+         WHERE rollout.workspace_id=$1
+         FOR UPDATE OF rollout`,
+        [workspaceId, now],
+      )
+    ).rows[0];
+    if (!state) return true;
+    const since = state.observed_at ?? state.created_at;
+    const credited =
+      state.available &&
+      state.observed_at !== null &&
+      now.getTime() - since.getTime() <= AVAILABILITY_OBSERVATION_MAX_MS;
+    if (!credited && since.getTime() < now.getTime()) {
+      const extended = await db.query(
+        `UPDATE institutional_host_availability_gaps SET ended_at=$3
+         WHERE id=(SELECT id FROM institutional_host_availability_gaps
+                   WHERE workspace_id=$1 AND ended_at=$2 ORDER BY started_at DESC LIMIT 1)`,
+        [workspaceId, since, now],
+      );
+      if (!extended.rowCount) {
+        await db.query(
+          `INSERT INTO institutional_host_availability_gaps(id,workspace_id,started_at,ended_at)
+           VALUES($1,$2,$3,$4)`,
+          [randomUUID(), workspaceId, since, now],
+        );
+      }
+    }
+    await db.query(
+      `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=$2
+       WHERE workspace_id=$1`,
+      [workspaceId, now],
+    );
+    return state.available;
+  });
+}
+
+const PROHIBITED_CURATOR_SECRET_PATTERNS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/,
+  /\b(?:password|token|secret|api[_ -]?key)\s*[:=]\s*\S{8,}/i,
+] as const;
+
+type CuratorCandidate = {
+  id: string;
+  targetType: 'memory_item' | 'workspace_skill';
+  version: number;
+  state: 'active' | 'stale';
+  key: string;
+  text: string;
+  repository?: string;
+  path?: string;
+  sourceRoomId: string;
+  sourceMessageId: string;
+  requesterIdentityId: string;
+};
+
+type CuratorPartition = {
+  workspaceId: string;
+  key: string;
+  audience: 'workspace_candidate' | 'human_private';
+  /** Most recent curation of any candidate; null = no candidate ever curated. */
+  curatedAt: number | null;
+  candidates: CuratorCandidate[];
+};
+
+function boundedCuratorCandidates(candidates: readonly CuratorCandidate[]): CuratorCandidate[] {
+  const bounded: CuratorCandidate[] = [];
+  let bytes = 0;
+  for (const candidate of candidates.slice(0, INSTITUTIONAL_CURATOR_CANDIDATE_MAX)) {
+    const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8') + 1;
+    // Reserve one KiB for the partition/cycle wrapper surrounding the array.
+    if (bytes + candidateBytes > INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES - 1_024) break;
+    bounded.push(candidate);
+    bytes += candidateBytes;
+  }
+  return bounded;
+}
+
+/**
+ * Repeat evidence for one ledger and one window: events whose own lesson the
+ * ledger ALREADY carried within the preceding window. Counting each event
+ * against its own predecessor rather than grouping strictly inside the window is
+ * what keeps a pair straddling the boundary from vanishing out of both
+ * measurements; where the boundary falls must not move the measure.
+ *
+ * A repeat is counted at the scope the fact is served at: a workspace_fact is
+ * shared, so two DIFFERENT people correcting one canonical key is the repeat the
+ * system exists to reduce, while a human_profile_fact only repeats for its own
+ * subject. Params: $1 Workspace, $2 window days.
+ */
+const CORRECTION_REPEAT = {
+  table: 'institutional_memory_correction_events',
+  eligible: 'true',
+  sameLesson: `prior.memory_kind=event.memory_kind
+             AND prior.canonical_key=event.canonical_key
+             AND (event.memory_kind='workspace_fact'
+                  OR prior.requester_identity_id=event.requester_identity_id)`,
+} as const;
+
+const REVIEW_FINDING_REPEAT = {
+  table: 'institutional_review_findings',
+  eligible: 'event.path IS NOT NULL',
+  sameLesson: `prior.taxonomy=event.taxonomy AND prior.path=event.path`,
+} as const;
+
+function repeatedEventsSql(
+  ledger: typeof CORRECTION_REPEAT | typeof REVIEW_FINDING_REPEAT,
+  window: 'current' | 'prior',
+): string {
+  const range =
+    window === 'current'
+      ? `event.created_at>=now()-$2*interval '1 day'`
+      : `event.created_at<now()-$2*interval '1 day'
+             AND event.created_at>=now()-2*$2*interval '1 day'`;
+  return `(SELECT count(*) FROM ${ledger.table} event
+          WHERE event.workspace_id=$1 AND ${ledger.eligible} AND ${range}
+            AND EXISTS (
+              SELECT 1 FROM ${ledger.table} prior
+              WHERE prior.workspace_id=event.workspace_id
+                AND ${ledger.sameLesson}
+                AND (prior.created_at,prior.id)<(event.created_at,event.id)
+                AND prior.created_at>=event.created_at-$2*interval '1 day'))`;
+}
+
+export interface InstitutionalObjectiveDashboard {
+  readonly workspaceId: string;
+  readonly contextServes: number;
+  readonly completedJobs: number;
+  readonly completedTurns: number;
+  readonly successfulTurns: number;
+  readonly p95ContextBytes: number;
+  /**
+   * The institutional block's own prompt-token cost, measured from the
+   * harness's REAL per-turn input tokens rather than the byte estimate that
+   * could never cross the cap. A serve whose harness reported no usage still
+   * falls back to `estimated_tokens`, so the sample never silently shrinks.
+   */
+  readonly p95ContextTokens: number;
+  /** p95 of the turns' whole real prompt, the denominator of `tokenShare`. */
+  readonly p95TurnInputTokens: number;
+  /** Institutional tokens as a share of real input tokens, over sampled serves. */
+  readonly tokenShare: number;
+  /** Serves whose p95 token figure came from the harness rather than the estimate. */
+  readonly tokenSampledServes: number;
+  readonly skillCandidatesServed: number;
+  readonly skillsLoaded: number;
+  readonly searches: number;
+  readonly deadJobs: number;
+  /**
+   * Served items still on record, and how many of those were ALREADY not
+   * current at the moment they were served. Normal aging after a serve is not a
+   * stale serve.
+   */
+  readonly servedItems: number;
+  readonly staleServedItems: number;
+  readonly staleServeRate: number;
+  /**
+   * Repeats beyond the first over the correction and review-finding ledgers,
+   * within `repeatWindowDays` and within the equal window before it. The pair is
+   * what makes a reduction readable; neither side is evidence of a cause.
+   */
+  readonly repeatWindowDays: number;
+  readonly repeatedCorrections: number;
+  readonly priorRepeatedCorrections: number;
+  readonly repeatedReviewFindings: number;
+  readonly priorRepeatedReviewFindings: number;
+  /**
+   * Recurring work is a repository's corners. Cycle time is corner created ->
+   * merged, reported per cohort (was memory eligible for THIS corner) with its
+   * sample size, and per repository only where both cohorts exist — a cluster
+   * with one side empty is not a comparison.
+   */
+  readonly cycleTimeWindowDays: number;
+  readonly cornerCycleTime: readonly InstitutionalCycleTimeCohort[];
+  readonly comparableClusters: readonly InstitutionalClusterCycleTime[];
+  /** Compounding yield: what each cohort's turns achieved and cost. */
+  readonly yieldByCohort: readonly InstitutionalCohortYield[];
+  readonly shadowReady: boolean;
+  readonly rolloutReady: boolean;
+}
+
+export type InstitutionalMemoryCohort = 'served' | 'unserved';
+
+export interface InstitutionalCycleTimeCohort {
+  readonly cohort: InstitutionalMemoryCohort;
+  readonly mergedCorners: number;
+  readonly p50Minutes: number;
+  readonly p90Minutes: number;
+}
+
+export interface InstitutionalClusterCycleTime {
+  readonly repository: string;
+  readonly served: InstitutionalCycleTimeCohort;
+  readonly unserved: InstitutionalCycleTimeCohort;
+}
+
+export interface InstitutionalCohortYield {
+  readonly cohort: InstitutionalMemoryCohort;
+  /** Corners in this cohort, and the turns they actually ran. */
+  readonly corners: number;
+  readonly completedTurns: number;
+  readonly successfulTurns: number;
+  readonly successRate: number;
+  /** Turns that reported a tool count, so the average states its own sample. */
+  readonly measuredTurns: number;
+  readonly toolCallsPerSuccessfulTurn: number;
+  /** Turns that reported a duration, and the median minutes over those. */
+  readonly timedTurns: number;
+  readonly turnMinutesP50: number;
+}
+
+/**
+ * How far back the recurring-work measures look. Long enough for a repository's
+ * corners to recur, short enough that a stale rollout does not dilute today's
+ * reading with work nobody can act on.
+ */
+export const INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS = 90;
+
+/**
+ * The two dimensions the objective functions name, measured over the SAME
+ * cohorts so they can be read together.
+ *
+ * A cohort is a corner: "served" means a live institutional snapshot with
+ * content actually reached that corner, "unserved" means one did not — the
+ * plan's eligible-but-unserved comparison. Corners are the unit because the
+ * question is whether the work went faster, and a corner is the unit of work.
+ *
+ * Cycle time is corner created -> merged, over corners whose merge landed inside
+ * the window, and it is only published per repository when BOTH cohorts are
+ * present: a cluster with an empty side is a total, not a comparison.
+ *
+ * Yield reads turn rows rather than serve rows on purpose. The serve ledger only
+ * holds turns memory reached, which is exactly the half that would bias the
+ * comparison; every corner's turns are there whether or not memory was involved.
+ * Each average carries its own sample size, so a cohort that reported few
+ * durations says so instead of implying it measured them all.
+ */
+async function institutionalCohortMeasures(
+  database: SqlDatabase,
+  workspaceId: string,
+): Promise<{
+  cycleTime: InstitutionalCycleTimeCohort[];
+  clusters: InstitutionalClusterCycleTime[];
+  yield: InstitutionalCohortYield[];
+}> {
+  const cornerScope = `
+    WITH corner_scope AS (
+      SELECT corner.id corner_id,corner.created_at created_at,
+             COALESCE(NULLIF(corner.repository_key,''),NULLIF(parent.repository_key,''),'') repository,
+             EXISTS (SELECT 1 FROM institutional_context_serves serve
+                     WHERE serve.room_id=corner.id AND serve.mode='live' AND serve.served) served
+      FROM rooms corner
+      LEFT JOIN rooms parent ON parent.id=corner.parent_id
+      WHERE corner.workspace_id=$1 AND corner.parent_id IS NOT NULL
+    ),
+    merged AS (
+      SELECT scope.served,scope.repository,
+             extract(epoch FROM (min(outcome.created_at)-scope.created_at))/60.0 minutes
+      FROM corner_scope scope
+      JOIN institutional_memory_outcomes outcome
+        ON outcome.room_id=scope.corner_id AND outcome.kind='merged'
+      WHERE outcome.created_at>=scope.created_at
+        AND outcome.created_at>=now()-$2*interval '1 day'
+      GROUP BY scope.corner_id,scope.served,scope.repository,scope.created_at
+    )`;
+  const cycle = (
+    await database.query<CycleRow>(
+      `${cornerScope}
+       SELECT CASE WHEN served THEN 'served' ELSE 'unserved' END cohort,
+              repository,count(*)::text merged_corners,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY minutes)::text p50_minutes,
+              percentile_disc(0.9) WITHIN GROUP (ORDER BY minutes)::text p90_minutes
+       FROM merged GROUP BY served,repository`,
+      [workspaceId, INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS],
+    )
+  ).rows;
+  const cycleTime: InstitutionalCycleTimeCohort[] = [];
+  const byRepository = new Map<string, { served?: CycleRow; unserved?: CycleRow }>();
+  for (const row of cycle) {
+    if (!row.repository) {
+      cycleTime.push(cycleCohort(row.cohort, row));
+      continue;
+    }
+    const entry = byRepository.get(row.repository) ?? {};
+    if (row.cohort === 'served') entry.served = row;
+    else entry.unserved = row;
+    byRepository.set(row.repository, entry);
+    cycleTime.push(cycleCohort(row.cohort, row));
+  }
+  const clusters: InstitutionalClusterCycleTime[] = [...byRepository.entries()]
+    .filter(([, entry]) => entry.served && entry.unserved)
+    .map(([repository, entry]) => ({
+      repository,
+      served: cycleCohort('served', entry.served!),
+      unserved: cycleCohort('unserved', entry.unserved!),
+    }))
+    .sort(
+      (left, right) =>
+        right.served.mergedCorners +
+          right.unserved.mergedCorners -
+          (left.served.mergedCorners + left.unserved.mergedCorners) ||
+        left.repository.localeCompare(right.repository),
+    );
+
+  const yieldRows = (
+    await database.query<YieldRow>(
+      `${cornerScope},
+       turn_scope AS (
+         SELECT scope.served,scope.corner_id,turn.status,turn.tool_calls,
+                GREATEST(0,extract(epoch FROM (turn.created_at-turn.started_at))) seconds
+         FROM corner_scope scope
+         JOIN agent_turns turn ON turn.room_id=scope.corner_id
+         WHERE turn.status IN ('complete','failed')
+       )
+       SELECT CASE WHEN served THEN 'served' ELSE 'unserved' END cohort,
+              count(DISTINCT corner_id)::text corners,
+              count(*)::text completed_turns,
+              count(*) FILTER (WHERE status='complete')::text successful_turns,
+              count(*) FILTER (WHERE status='complete' AND tool_calls IS NOT NULL)::text measured_turns,
+              COALESCE(sum(tool_calls) FILTER (WHERE status='complete' AND tool_calls IS NOT NULL),0)::text tool_calls,
+              count(*) FILTER (WHERE seconds IS NOT NULL)::text timed_turns,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY seconds)::text p50_seconds
+       FROM turn_scope GROUP BY served`,
+      [workspaceId, INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS],
+    )
+  ).rows;
+  return { cycleTime, clusters, yield: yieldRows.map(yieldCohort) };
+}
+
+interface CycleRow {
+  cohort: 'served' | 'unserved';
+  repository: string;
+  merged_corners: string;
+  p50_minutes: string | null;
+  p90_minutes: string | null;
+}
+
+function cycleCohort(cohort: 'served' | 'unserved', row: CycleRow): InstitutionalCycleTimeCohort {
+  return {
+    cohort,
+    mergedCorners: Number(row.merged_corners ?? 0),
+    p50Minutes: Number(row.p50_minutes ?? 0),
+    p90Minutes: Number(row.p90_minutes ?? 0),
+  };
+}
+
+interface YieldRow {
+  cohort: 'served' | 'unserved';
+  corners: string;
+  completed_turns: string;
+  successful_turns: string;
+  measured_turns: string;
+  tool_calls: string;
+  timed_turns: string;
+  p50_seconds: string | null;
+}
+
+function yieldCohort(row: YieldRow): InstitutionalCohortYield {
+  const completedTurns = Number(row.completed_turns ?? 0);
+  const successfulTurns = Number(row.successful_turns ?? 0);
+  const measuredTurns = Number(row.measured_turns ?? 0);
+  return {
+    cohort: row.cohort,
+    corners: Number(row.corners ?? 0),
+    completedTurns,
+    successfulTurns,
+    successRate: completedTurns ? successfulTurns / completedTurns : 0,
+    measuredTurns,
+    toolCallsPerSuccessfulTurn: measuredTurns ? Number(row.tool_calls ?? 0) / measuredTurns : 0,
+    timedTurns: Number(row.timed_turns ?? 0),
+    turnMinutesP50: Number(row.p50_seconds ?? 0) / 60,
+  };
+}
+
+function utcWeekKey(now: Date): string {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+export async function institutionalObjectiveDashboard(
+  database: SqlDatabase,
+  workspaceId: string,
+): Promise<InstitutionalObjectiveDashboard> {
+  const row = (
+    await database.query<{
+      context_serves: string;
+      completed_jobs: string;
+      completed_turns: string;
+      successful_turns: string;
+      p95_context_bytes: string;
+      p95_context_tokens: string;
+      p95_turn_input_tokens: string;
+      token_share: string;
+      token_sampled_serves: string;
+      skill_candidates_served: string;
+      skills_loaded: string;
+      searches: string;
+      dead_jobs: string;
+      served_items: string;
+      stale_served_items: string;
+      repeated_corrections: string;
+      prior_repeated_corrections: string;
+      repeated_review_findings: string;
+      prior_repeated_review_findings: string;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM institutional_context_serves
+          WHERE workspace_id=$1 AND mode='live' AND served) context_serves,
+         (SELECT count(*) FROM institutional_memory_outcomes
+          WHERE workspace_id=$1 AND kind='turn_completed') completed_turns,
+         (SELECT count(*) FROM institutional_memory_jobs
+          WHERE workspace_id=$1 AND status='completed') completed_jobs,
+         (SELECT count(*) FROM institutional_memory_outcomes
+          WHERE workspace_id=$1 AND kind='turn_completed' AND success) successful_turns,
+         COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY total_bytes)
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_bytes,
+         COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (
+            ORDER BY CASE
+              WHEN actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL
+              THEN LEAST(actual_input_tokens,
+                         ceil(actual_input_tokens::numeric*total_bytes/prompt_bytes)::int)
+              ELSE estimated_tokens END)
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_tokens,
+         -- The denominator of the share, and the same figure in the raw: a
+         -- Workspace whose real prompts are small is not the same finding as
+         -- one whose block is a large part of them.
+         COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY actual_input_tokens)
+          FROM institutional_context_serves
+          WHERE workspace_id=$1 AND mode='live' AND actual_input_tokens IS NOT NULL),0)
+           p95_turn_input_tokens,
+         COALESCE((SELECT sum(CASE
+              WHEN actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL
+              THEN LEAST(actual_input_tokens,
+                         ceil(actual_input_tokens::numeric*total_bytes/prompt_bytes)::int)
+              ELSE 0 END)::numeric / NULLIF(sum(actual_input_tokens),0)
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) token_share,
+         (SELECT count(*) FROM institutional_context_serves
+          WHERE workspace_id=$1 AND mode='live' AND actual_input_tokens IS NOT NULL)
+           token_sampled_serves,
+         COALESCE((SELECT sum(cardinality(skill_candidates))
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) skill_candidates_served,
+         (SELECT count(*) FROM workspace_skill_uses WHERE workspace_id=$1) skills_loaded,
+         (SELECT count(*) FROM institutional_history_searches WHERE workspace_id=$1) searches,
+         (SELECT count(*) FROM institutional_memory_jobs
+          WHERE workspace_id=$1 AND status='dead'
+            AND updated_at>=now()-interval '24 hours') dead_jobs,
+         -- Stale serve rate is "was this item ALREADY not current when we served
+         -- it", never "has it aged since". A state transition is the only thing
+         -- that moves updated_at, so a non-active item whose last transition
+         -- predates the serve was stale at serve time; one that transitioned
+         -- afterwards is the curator working exactly as specified. Both sides
+         -- join the item, so a row later hard-deleted is unmeasurable rather
+         -- than silently counted as current.
+         (SELECT count(*) FROM institutional_context_serves serve
+          CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
+          JOIN institutional_memory_items item ON item.id=served.item_id
+          WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served) served_items,
+         (SELECT count(*) FROM institutional_context_serves serve
+          CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
+          JOIN institutional_memory_items item ON item.id=served.item_id
+          WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served
+            AND (item.state<>'active' OR item.deleted_at IS NOT NULL)
+            AND item.updated_at<=serve.created_at) stale_served_items,
+         -- Repeat evidence the criteria name, over ledgers that already have
+         -- writers. Each counter is WINDOWED, and its immediately preceding
+         -- window of equal length rides alongside it: a lifetime total only ever
+         -- rises, so no single read of one could express the REDUCTION the
+         -- criteria ask for. Two adjacent windows are a difference, not a cause.
+         ${repeatedEventsSql(CORRECTION_REPEAT, 'current')} repeated_corrections,
+         ${repeatedEventsSql(CORRECTION_REPEAT, 'prior')} prior_repeated_corrections,
+         ${repeatedEventsSql(REVIEW_FINDING_REPEAT, 'current')} repeated_review_findings,
+         ${repeatedEventsSql(REVIEW_FINDING_REPEAT, 'prior')} prior_repeated_review_findings`,
+      [workspaceId, INSTITUTIONAL_REPEAT_WINDOW_DAYS],
+    )
+  ).rows[0];
+  const contextServes = Number(row?.context_serves ?? 0);
+  const completedJobs = Number(row?.completed_jobs ?? 0);
+  const completedTurns = Number(row?.completed_turns ?? 0);
+  const successfulTurns = Number(row?.successful_turns ?? 0);
+  const p95ContextBytes = Number(row?.p95_context_bytes ?? 0);
+  const p95ContextTokens = Number(row?.p95_context_tokens ?? 0);
+  const deadJobs = Number(row?.dead_jobs ?? 0);
+  const servedItems = Number(row?.served_items ?? 0);
+  const staleServedItems = Number(row?.stale_served_items ?? 0);
+  const cohorts = await institutionalCohortMeasures(database, workspaceId);
+  return {
+    workspaceId,
+    contextServes,
+    completedJobs,
+    completedTurns,
+    successfulTurns,
+    p95ContextBytes,
+    p95ContextTokens,
+    p95TurnInputTokens: Number(row?.p95_turn_input_tokens ?? 0),
+    tokenShare: Number(row?.token_share ?? 0),
+    tokenSampledServes: Number(row?.token_sampled_serves ?? 0),
+    skillCandidatesServed: Number(row?.skill_candidates_served ?? 0),
+    skillsLoaded: Number(row?.skills_loaded ?? 0),
+    searches: Number(row?.searches ?? 0),
+    deadJobs,
+    servedItems,
+    staleServedItems,
+    staleServeRate: servedItems ? staleServedItems / servedItems : 0,
+    repeatWindowDays: INSTITUTIONAL_REPEAT_WINDOW_DAYS,
+    repeatedCorrections: Number(row?.repeated_corrections ?? 0),
+    priorRepeatedCorrections: Number(row?.prior_repeated_corrections ?? 0),
+    repeatedReviewFindings: Number(row?.repeated_review_findings ?? 0),
+    priorRepeatedReviewFindings: Number(row?.prior_repeated_review_findings ?? 0),
+    cycleTimeWindowDays: INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS,
+    cornerCycleTime: cohorts.cycleTime,
+    comparableClusters: cohorts.clusters,
+    yieldByCohort: cohorts.yield,
+    shadowReady: completedJobs >= 20 && deadJobs === 0,
+    rolloutReady:
+      completedTurns >= 20 &&
+      successfulTurns / Math.max(1, completedTurns) >= 0.9 &&
+      p95ContextTokens <= INSTITUTIONAL_CONTEXT_TOKEN_TARGET &&
+      deadJobs === 0,
+  };
+}
+
+async function deterministicLifecycle(
+  database: SqlDatabase,
+  workspaceId: string,
+  now: Date,
+  staleAfterDays: number,
+  archiveAfterDays: number,
+  retentionDays: number,
+): Promise<{
+  staleItems: number;
+  archivedItems: number;
+  staleSkills: number;
+  archivedSkills: number;
+}> {
+  const staleItems = await database.query(
+    `UPDATE institutional_memory_items item SET state='stale',updated_at=$2
+     WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, staleAfterDays],
+  );
+  const archivedItems = await database.query(
+    `UPDATE institutional_memory_items item SET state='archived',updated_at=$2
+     WHERE item.workspace_id=$1 AND item.state='stale' AND item.deleted_at IS NULL
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, archiveAfterDays],
+  );
+  await database.query(
+    `UPDATE institutional_memory_items item
+     SET body='',deleted_at=$2,updated_at=$2
+     WHERE item.workspace_id=$1 AND item.state='archived' AND item.deleted_at IS NULL
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, retentionDays],
+  );
+
+  const staleSkills = await database.query(
+    `UPDATE workspace_skills skill SET state='stale',updated_at=$2
+     WHERE skill.workspace_id=$1 AND skill.state='active'
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, staleAfterDays],
+  );
+  const archivedSkills = await database.query(
+    `UPDATE workspace_skills skill SET state='archived',updated_at=$2
+     WHERE skill.workspace_id=$1 AND skill.state='stale'
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, archiveAfterDays],
+  );
+  // Retention ends the CONTENT, not the record: the row, its immutable versions
+  // and every recorded load stay, exactly as the memory-item path keeps its own
+  // sources and supersession. Deleting the skill would cascade its use ledger
+  // away and retroactively shrink the discoverability measurements.
+  await database.query(
+    `UPDATE workspace_skill_versions version
+     SET markdown='',source_deleted_at=$2
+     WHERE version.source_deleted_at IS NULL
+       AND version.skill_id IN (
+         SELECT skill.id FROM workspace_skills skill
+         WHERE skill.workspace_id=$1 AND skill.state='archived'
+           AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
+       )`,
+    [workspaceId, now, retentionDays],
+  );
+  return {
+    staleItems: staleItems.rowCount,
+    archivedItems: archivedItems.rowCount,
+    staleSkills: staleSkills.rowCount,
+    archivedSkills: archivedSkills.rowCount,
+  };
+}
+
+async function curatorPartitions(
+  database: SqlDatabase,
+  workspaceId: string,
+): Promise<CuratorPartition[]> {
+  const memory = await database.query<{
+    id: string;
+    kind: 'workspace_fact' | 'human_profile_fact';
+    subject_identity_id: string | null;
+    canonical_key: string;
+    body: string;
+    version: number;
+    state: 'active' | 'stale';
+    source_room_id: string;
+    source_message_id: string;
+    requester_identity_id: string;
+    repository: string | null;
+    path: string | null;
+    curated_at: Date | null;
+  }>(
+    `SELECT * FROM (
+       SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,item.version,
+              item.state,item.source_room_id,item.source_message_id,
+              source.author_id requester_identity_id,item.repository,item.path,item.curated_at,
+              item.updated_at,
+              row_number() OVER (
+                PARTITION BY item.kind,COALESCE(item.subject_identity_id,''),
+                  CASE WHEN item.kind='workspace_fact' THEN NULL ELSE item.source_room_id END
+                ORDER BY item.curated_at ASC NULLS FIRST,item.updated_at DESC,item.id
+              ) partition_rank
+       FROM institutional_memory_items item
+       JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
+       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
+       WHERE item.workspace_id=$1 AND item.state IN ('active','stale') AND item.deleted_at IS NULL
+     ) ranked
+     WHERE partition_rank<=$2
+     ORDER BY curated_at ASC NULLS FIRST,partition_rank,kind,subject_identity_id,
+              source_room_id,updated_at DESC,id
+     LIMIT $3`,
+    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
+  );
+  const skills = await database.query<{
+    id: string;
+    slug: string;
+    description: string;
+    current_version: number;
+    state: 'active' | 'stale';
+    source_room_id: string;
+    source_message_id: string;
+    requester_identity_id: string;
+    repository: string;
+    path: string | null;
+    curated_at: Date | null;
+  }>(
+    `SELECT * FROM (
+       SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.state,
+              skill.source_room_id,job.source_message_id,job.requester_identity_id,
+              skill.repository,skill.path,skill.curated_at,skill.updated_at,
+              row_number() OVER (
+                PARTITION BY skill.source_room_id
+                ORDER BY skill.curated_at ASC NULLS FIRST,skill.updated_at DESC,skill.id
+              ) partition_rank
+       FROM workspace_skills skill
+       JOIN workspace_skill_versions version
+         ON version.skill_id=skill.id AND version.version=skill.current_version
+       JOIN institutional_memory_jobs job ON job.id=version.source_job_id
+       JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
+       WHERE skill.workspace_id=$1 AND skill.state IN ('active','stale')
+         AND version.source_deleted_at IS NULL
+     ) ranked
+     WHERE partition_rank<=$2
+     ORDER BY curated_at ASC NULLS FIRST,partition_rank,source_room_id,updated_at DESC,id
+     LIMIT $3`,
+    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
+  );
+  const groups = new Map<string, CuratorPartition>();
+  const absorb = (partition: CuratorPartition, curatedAt: Date | null): void => {
+    if (!curatedAt) return;
+    partition.curatedAt = Math.max(partition.curatedAt ?? 0, curatedAt.getTime());
+  };
+  for (const item of memory.rows) {
+    const key =
+      item.kind === 'workspace_fact'
+        ? 'workspace-facts'
+        : `human-profile:${item.subject_identity_id}:${item.source_room_id}`;
+    const partition = groups.get(key) ?? {
+      workspaceId,
+      key,
+      audience: item.kind === 'workspace_fact' ? 'workspace_candidate' : 'human_private',
+      curatedAt: null,
+      candidates: [],
+    };
+    absorb(partition, item.curated_at);
+    partition.candidates.push({
+      id: item.id,
+      targetType: 'memory_item',
+      version: item.version,
+      state: item.state,
+      key: item.canonical_key,
+      text: item.body,
+      ...(item.repository ? { repository: item.repository } : {}),
+      ...(item.path ? { path: item.path } : {}),
+      sourceRoomId: item.source_room_id,
+      sourceMessageId: item.source_message_id,
+      requesterIdentityId: item.requester_identity_id,
+    });
+    groups.set(key, partition);
+  }
+  for (const skill of skills.rows) {
+    const key = `workspace-skills:${skill.source_room_id}`;
+    const partition = groups.get(key) ?? {
+      workspaceId,
+      key,
+      audience: 'workspace_candidate',
+      curatedAt: null,
+      candidates: [],
+    };
+    absorb(partition, skill.curated_at);
+    partition.candidates.push({
+      id: skill.id,
+      targetType: 'workspace_skill',
+      version: skill.current_version,
+      state: skill.state,
+      key: skill.slug,
+      text: skill.description,
+      repository: skill.repository,
+      ...(skill.path ? { path: skill.path } : {}),
+      sourceRoomId: skill.source_room_id,
+      sourceMessageId: skill.source_message_id,
+      requesterIdentityId: skill.requester_identity_id,
+    });
+    groups.set(key, partition);
+  }
+  // The weekly job budget is a prefix of this list, so selection must rotate
+  // across partitions the way candidates already rotate within one.
+  return [...groups.values()]
+    .sort(
+      (left, right) =>
+        (left.curatedAt ?? -1) - (right.curatedAt ?? -1) || left.key.localeCompare(right.key),
+    )
+    .map((partition) => ({
+      ...partition,
+      candidates: boundedCuratorCandidates(partition.candidates),
+    }));
+}
+
+/** One idempotent weekly pass: deterministic aging first, then host-side consolidation jobs. */
+export async function runInstitutionalCuratorCycle(
+  database: SqlDatabase,
+  config: InstitutionalMemoryShadowConfig,
+  now = new Date(),
+  options: { readonly anchors?: InstitutionalSkillAnchorSource } = {},
+): Promise<number> {
+  if (!config.enabled) return 0;
+  const rollouts = await database.query<{
+    workspace_id: string;
+    stage: 'shadow' | 'pilot' | 'live';
+    auto_advance: boolean;
+    stale_after_days: number;
+    archive_after_days: number;
+    retention_days: number;
+  }>(
+    `SELECT workspace_id,stage,auto_advance,stale_after_days,archive_after_days,retention_days
+     FROM institutional_memory_workspace_rollouts
+     WHERE stage IN ('shadow','pilot','live')
+     ORDER BY workspace_id`,
+  );
+  const week = utcWeekKey(now);
+  let queued = 0;
+  for (const rollout of rollouts.rows) {
+    const cycleKey = `weekly:${week}`;
+    let workspaceQueued: number;
+    try {
+      // Anchors are checked before the locked transaction, never inside it: the
+      // comparison is network I/O and the lock is the one every settling turn in
+      // this Workspace also takes. Like aging, an anchor contradiction only
+      // matters once the Workspace can actually serve, so the shadow stage is
+      // left alone.
+      if (config.live && rollout.stage !== 'shadow') {
+        try {
+          await refreshWorkspaceSkillAnchors(database, rollout.workspace_id, options.anchors, now);
+        } catch (error) {
+          console.error(
+            `[server] institutional skill anchor pass failed (${rollout.workspace_id}):`,
+            error,
+          );
+        }
+      }
+      await recordWorkspaceHostAvailability(database, rollout.workspace_id, now);
+      workspaceQueued = await database.transaction(async (db) => {
+        await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+          `institutional-memory:${rollout.workspace_id}`,
+        ]);
+        // The week's key is spent only by a cycle that can actually do the work.
+        // Claiming it first let a tick that landed after the day's job cap was
+        // already spent mark the week done and queue nothing, losing that
+        // Workspace's consolidation until the next week. A tick with no budget
+        // now leaves the key for the next one, which gets it after midnight
+        // resets the daily count.
+        const jobsToday = Number(
+          (
+            await db.query<{ count: string }>(
+              `SELECT count(*)::text count FROM institutional_memory_jobs
+             WHERE workspace_id=$1 AND created_at>=date_trunc('day',$2::timestamptz)`,
+              [rollout.workspace_id, now],
+            )
+          ).rows[0]?.count ?? 0,
+        );
+        const remainingDailyJobs = Math.max(
+          0,
+          (config.dailyJobLimit ?? DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT) - jobsToday,
+        );
+        if (remainingDailyJobs === 0) return 0;
+        const inserted = await db.query<{ id: string }>(
+          `INSERT INTO institutional_curator_cycles(id,workspace_id,cycle_key)
+         VALUES($1,$2,$3) ON CONFLICT(workspace_id,cycle_key) DO NOTHING RETURNING id`,
+          [randomUUID(), rollout.workspace_id, cycleKey],
+        );
+        if (!inserted.rowCount) return 0;
+        const lifecycle =
+          !config.live || rollout.stage === 'shadow'
+            ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
+            : await deterministicLifecycle(
+                db,
+                rollout.workspace_id,
+                now,
+                rollout.stale_after_days,
+                rollout.archive_after_days,
+                rollout.retention_days,
+              );
+        const partitions = await curatorPartitions(db, rollout.workspace_id);
+        let cycleQueued = 0;
+        for (const partition of partitions.slice(
+          0,
+          Math.min(DEFAULT_CURATOR_WEEKLY_JOB_LIMIT, remainingDailyJobs),
+        )) {
+          const source = partition.candidates[0];
+          if (!source) continue;
+          const result = await db.query(
+            `INSERT INTO institutional_memory_jobs
+           (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+            requester_identity_id,source_audience_kind,idempotency_key,context)
+           VALUES($1,$2,'curator',$3,$4,$5,$6,$7,$8,$9::jsonb)
+           ON CONFLICT(idempotency_key) DO NOTHING`,
+            [
+              randomUUID(),
+              rollout.workspace_id,
+              rollout.stage === 'shadow' ? 'shadow' : config.live ? 'live' : 'shadow',
+              source.sourceRoomId,
+              source.sourceMessageId,
+              source.requesterIdentityId,
+              partition.audience,
+              `curator:${rollout.workspace_id}:${partition.key}:${week}`,
+              JSON.stringify({
+                partition: partition.key,
+                cycleKey,
+                candidates: partition.candidates,
+              }),
+            ],
+          );
+          if (!result.rowCount) continue;
+          cycleQueued += 1;
+          // The rotation cursor means "the curator considered this", not "the
+          // model acted on it": a null answer or a dead job must still let the
+          // next cycle reach a different partition.
+          const consideredMemory = partition.candidates
+            .filter((candidate) => candidate.targetType === 'memory_item')
+            .map((candidate) => candidate.id);
+          const consideredSkills = partition.candidates
+            .filter((candidate) => candidate.targetType === 'workspace_skill')
+            .map((candidate) => candidate.id);
+          if (consideredMemory.length) {
+            await db.query(
+              `UPDATE institutional_memory_items SET curated_at=$2 WHERE id=ANY($1::uuid[])`,
+              [consideredMemory, now],
+            );
+          }
+          if (consideredSkills.length) {
+            await db.query(`UPDATE workspace_skills SET curated_at=$2 WHERE id=ANY($1::uuid[])`, [
+              consideredSkills,
+              now,
+            ]);
+          }
+        }
+        const dashboard = await institutionalObjectiveDashboard(db, rollout.workspace_id);
+        const advanceShadow = rollout.stage === 'shadow' && dashboard.shadowReady;
+        const advancePilot = rollout.stage === 'pilot' && dashboard.rolloutReady;
+        if (rollout.auto_advance && (advanceShadow || advancePilot)) {
+          await db.query(
+            `UPDATE institutional_memory_workspace_rollouts
+           SET stage=CASE stage WHEN 'shadow' THEN 'pilot' WHEN 'pilot' THEN 'live' ELSE stage END,
+               updated_at=$2
+           WHERE workspace_id=$1`,
+            [rollout.workspace_id, now],
+          );
+        }
+        await db.query(
+          `UPDATE institutional_curator_cycles
+         SET queued_jobs=$3,stale_items=$4,archived_items=$5,stale_skills=$6,
+             archived_skills=$7,completed_at=$2
+         WHERE workspace_id=$1 AND cycle_key=$8`,
+          [
+            rollout.workspace_id,
+            now,
+            cycleQueued,
+            lifecycle.staleItems,
+            lifecycle.archivedItems,
+            lifecycle.staleSkills,
+            lifecycle.archivedSkills,
+            cycleKey,
+          ],
+        );
+        return cycleQueued;
+      });
+    } catch (error) {
+      console.error(
+        `[server] institutional curator Workspace cycle failed (${rollout.workspace_id}):`,
+        error,
+      );
+      continue;
+    }
+    queued += workspaceQueued;
+  }
+  return queued;
+}
+
+function contextCandidates(context: Record<string, unknown> | null): Map<string, CuratorCandidate> {
+  const values = context?.candidates;
+  if (!Array.isArray(values)) throw new Error('institutional curator context is invalid');
+  return new Map(
+    values
+      .filter(
+        (value): value is CuratorCandidate =>
+          Boolean(value) &&
+          typeof value === 'object' &&
+          typeof (value as CuratorCandidate).id === 'string' &&
+          ((value as CuratorCandidate).targetType === 'memory_item' ||
+            (value as CuratorCandidate).targetType === 'workspace_skill'),
+      )
+      .map((value) => [value.id, value]),
+  );
+}
+
+function lifecycleTargetState(
+  action: 'retain' | 'stale' | 'archive' | 'consolidate',
+  currentState: 'active' | 'stale',
+): 'active' | 'stale' | 'archived' {
+  if (action === 'stale') return 'stale';
+  if (action === 'archive') return 'archived';
+  return currentState;
+}
+
+export async function applyInstitutionalCuratorProposal(
+  database: SqlDatabase,
+  input: {
+    workspaceId: string;
+    jobId: string;
+    sourceMessageId: string;
+    context: Record<string, unknown> | null;
+    proposal: InstitutionalCuratorProposal;
+    usage: InstitutionalMemoryJobUsage;
+  },
+): Promise<{ consolidatedItems: number; consolidatedSkills: number }> {
+  const parsed = parseInstitutionalCuratorProposal(input.proposal);
+  if (parsed.partition !== input.context?.partition) {
+    throw new Error('institutional curator partition conflict');
+  }
+  const candidates = contextCandidates(input.context);
+  let consolidatedItems = 0;
+  let consolidatedSkills = 0;
+  for (const action of parsed.actions) {
+    const target = candidates.get(action.targetId);
+    const duplicates = action.duplicateIds.map((id) => candidates.get(id));
+    if (
+      !target ||
+      target.targetType !== action.targetType ||
+      duplicates.some((candidate) => !candidate || candidate.targetType !== action.targetType)
+    ) {
+      throw new Error('institutional curator action escapes its audience partition');
+    }
+    const allIds = [action.targetId, ...action.duplicateIds];
+    if (new Set(allIds).size !== allIds.length) {
+      throw new Error('institutional curator duplicate targets are invalid');
+    }
+    if (action.targetType === 'memory_item') {
+      // The same per-key lock applyMemoryProposal takes, in the same order
+      // relative to the row lock, so neither writer can leave two active rows
+      // under one canonical key.
+      const identity = (
+        await database.query<{
+          kind: string;
+          subject_identity_id: string | null;
+          canonical_key: string;
+          audience_kind: string;
+        }>(
+          `SELECT kind,subject_identity_id,canonical_key,audience_kind
+           FROM institutional_memory_items
+           WHERE workspace_id=$1 AND id=$2 AND deleted_at IS NULL`,
+          [input.workspaceId, action.targetId],
+        )
+      ).rows[0];
+      if (!identity) throw new Error('institutional curator memory target is unavailable');
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        [
+          'institutional-memory-item',
+          input.workspaceId,
+          identity.kind,
+          identity.subject_identity_id ?? '',
+          identity.canonical_key,
+          identity.audience_kind,
+        ].join(':'),
+      ]);
+      const rows = await database.query<{
+        id: string;
+        kind: 'workspace_fact' | 'human_profile_fact';
+        subject_identity_id: string | null;
+        canonical_key: string;
+        version: number;
+        state: 'active' | 'stale';
+        source_room_id: string;
+        source_message_id: string;
+        source_corner_id: string | null;
+        audience_kind: 'workspace' | 'human_profile';
+        confidence: number;
+        repository: string | null;
+        target_commit: string | null;
+        path: string | null;
+        content_hash: string | null;
+      }>(
+        `SELECT id,kind,subject_identity_id,canonical_key,version,state,source_room_id,
+                source_message_id,source_corner_id,audience_kind,confidence,repository,
+                target_commit,path,content_hash
+         FROM institutional_memory_items
+         WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL
+           AND state IN ('active','stale')
+         FOR UPDATE`,
+        [input.workspaceId, allIds],
+      );
+      if (rows.rowCount !== allIds.length) {
+        throw new Error('institutional curator memory target is unavailable');
+      }
+      const current = rows.rows.find((row) => row.id === action.targetId)!;
+      if (current.version !== action.baseVersion) {
+        throw new Error('institutional curator memory CAS conflict');
+      }
+      if (action.action === 'archive' && current.state !== 'stale') {
+        throw new Error('institutional curator memory must become stale before archive');
+      }
+      if (action.action === 'consolidate' && current.state !== 'active') {
+        throw new Error('institutional curator memory consolidation target is superseded');
+      }
+      if (action.action === 'consolidate') {
+        if (PROHIBITED_CURATOR_SECRET_PATTERNS.some((pattern) => pattern.test(action.body!))) {
+          throw new Error('institutional curator memory contains prohibited credential material');
+        }
+        if (
+          rows.rows.some(
+            (row) =>
+              row.kind !== current.kind ||
+              row.subject_identity_id !== current.subject_identity_id ||
+              row.audience_kind !== current.audience_kind,
+          )
+        ) {
+          throw new Error('institutional curator cannot merge audience partitions');
+        }
+        await database.query(
+          `UPDATE institutional_memory_items
+           SET state='stale',curated_at=now(),
+               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
+           WHERE id=ANY($1::uuid[])`,
+          [allIds],
+        );
+        const nextId = randomUUID();
+        await database.query(
+          `INSERT INTO institutional_memory_items
+           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+            source_message_id,source_corner_id,audience_kind,confidence,version,supersedes_id,
+            created_by_job_id,repository,target_commit,path,content_hash,curated_at)
+           VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now())`,
+          [
+            nextId,
+            input.workspaceId,
+            current.kind,
+            current.subject_identity_id,
+            current.canonical_key,
+            action.body,
+            current.source_room_id,
+            current.source_message_id,
+            current.source_corner_id,
+            current.audience_kind,
+            current.confidence,
+            current.version + 1,
+            current.id,
+            input.jobId,
+            current.repository,
+            current.target_commit,
+            current.path,
+            current.content_hash,
+          ],
+        );
+        await database.query(
+          `INSERT INTO institutional_memory_item_sources(item_id,message_id)
+           SELECT $1,message_id FROM institutional_memory_item_sources
+           WHERE item_id=ANY($2::uuid[]) ON CONFLICT DO NOTHING`,
+          [nextId, allIds],
+        );
+        consolidatedItems += 1;
+      } else {
+        // Only a real transition may move the aging anchor. Re-affirming the
+        // state a row already holds records curation and nothing else, so a
+        // weekly `stale` on an already-stale row cannot postpone archival.
+        const nextState = lifecycleTargetState(action.action, current.state);
+        if (nextState === current.state) {
+          await database.query(
+            `UPDATE institutional_memory_items SET curated_at=now() WHERE id=$1`,
+            [current.id],
+          );
+        } else {
+          await database.query(
+            `UPDATE institutional_memory_items SET state=$2,curated_at=now(),updated_at=now()
+             WHERE id=$1`,
+            [current.id, nextState],
+          );
+        }
+      }
+    } else {
+      // applyWorkspaceSkillProposal takes the per-slug advisory lock BEFORE its
+      // own row lock, so this branch must too: locking the row first is an ABBA
+      // inversion against every merge-review writing the same slug.
+      const slug = (
+        await database.query<{ slug: string }>(
+          `SELECT slug FROM workspace_skills WHERE workspace_id=$1 AND id=$2`,
+          [input.workspaceId, action.targetId],
+        )
+      ).rows[0]?.slug;
+      if (!slug) throw new Error('institutional curator skill target is unavailable');
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `workspace-skill:${input.workspaceId}:${slug}`,
+      ]);
+      const rows = await database.query<{
+        id: string;
+        slug: string;
+        description: string;
+        current_version: number;
+        source_room_id: string;
+        repository: string;
+        target_commit: string;
+        path: string | null;
+        state: 'active' | 'stale';
+        source_message_ids: string[];
+      }>(
+        `SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.source_room_id,
+                skill.repository,skill.target_commit,skill.path,skill.state,
+                version.source_message_ids
+         FROM workspace_skills skill
+         JOIN workspace_skill_versions version
+           ON version.skill_id=skill.id AND version.version=skill.current_version
+         WHERE skill.workspace_id=$1 AND skill.id=ANY($2::uuid[])
+           AND skill.state IN ('active','stale') AND version.source_deleted_at IS NULL
+         FOR UPDATE OF skill`,
+        [input.workspaceId, allIds],
+      );
+      if (rows.rowCount !== allIds.length) {
+        throw new Error('institutional curator skill target is unavailable');
+      }
+      const current = rows.rows.find((row) => row.id === action.targetId)!;
+      if (current.current_version !== action.baseVersion) {
+        throw new Error('institutional curator skill CAS conflict');
+      }
+      if (action.action === 'archive' && current.state !== 'stale') {
+        throw new Error('institutional curator skill must become stale before archive');
+      }
+      if (action.action === 'consolidate') {
+        if (rows.rows.some((row) => row.source_room_id !== current.source_room_id)) {
+          throw new Error('institutional curator cannot merge skill audience partitions');
+        }
+        const restricted = {
+          proposalVersion: 1 as const,
+          skill: {
+            slug: current.slug,
+            description: action.description!,
+            markdown: action.markdown!,
+            baseVersion: current.current_version,
+            anchor: {
+              repository: current.repository,
+              targetCommit: current.target_commit,
+              ...(current.path ? { path: current.path } : {}),
+            },
+          },
+          findings: [],
+        };
+        assertRestrictedWorkspaceSkillSafe(restricted);
+        // Retire the duplicates first: the caps applyWorkspaceSkillProposal
+        // checks sum ACTIVE bytes, so counting rows this consolidation is about
+        // to stale would refuse the merge exactly when it would free space.
+        await database.query(
+          `UPDATE workspace_skills
+           SET state='stale',curated_at=now(),
+               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
+           WHERE id=ANY($1::uuid[])`,
+          [action.duplicateIds],
+        );
+        await applyWorkspaceSkillProposal(database, {
+          workspaceId: input.workspaceId,
+          sourceRoomId: current.source_room_id,
+          sourceMessageIds: [
+            ...new Set([
+              input.sourceMessageId,
+              ...rows.rows.flatMap((row) => row.source_message_ids),
+            ]),
+          ],
+          sourceJobId: input.jobId,
+          usage: input.usage,
+          proposal: restricted.skill,
+        });
+        await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
+          current.id,
+        ]);
+        consolidatedSkills += 1;
+      } else {
+        const nextState = lifecycleTargetState(action.action, current.state);
+        if (nextState === current.state) {
+          await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
+            current.id,
+          ]);
+        } else {
+          await database.query(
+            `UPDATE workspace_skills SET state=$2,curated_at=now(),updated_at=now() WHERE id=$1`,
+            [current.id, nextState],
+          );
+        }
+      }
+    }
+  }
+  const cycleKey = input.context?.cycleKey;
+  if (typeof cycleKey === 'string') {
+    await database.query(
+      `UPDATE institutional_curator_cycles
+       SET consolidated_items=consolidated_items+$3,
+           consolidated_skills=consolidated_skills+$4
+       WHERE workspace_id=$1 AND cycle_key=$2`,
+      [input.workspaceId, cycleKey, consolidatedItems, consolidatedSkills],
+    );
+  }
+  return { consolidatedItems, consolidatedSkills };
+}

@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
@@ -16,6 +17,7 @@ import {
   useRoomPins,
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
+import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -23,6 +25,7 @@ import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabular
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
@@ -31,6 +34,7 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import {
@@ -179,7 +183,8 @@ export const SidebarView = React.memo(function SidebarView() {
   // A corner promoted into the main pane still belongs beneath its parent
   // Room in the permanent list. The route's parent hint is presentation-only,
   // but it is enough to keep that already-loaded navigation family expanded.
-  const activeRoomId = firstParam(routeParams.parent) ?? selectedRoomId(pathname);
+  const promotedCornerParentId = firstParam(routeParams.parent);
+  const activeRoomId = promotedCornerParentId ?? selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
@@ -192,6 +197,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
+  const refreshedForWorkspaceIds = React.useRef(new Set<string>());
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
   const [attentionWorkspaceIds, setAttentionWorkspaceIds] = React.useState<ReadonlySet<string>>(
     () => new Set(),
@@ -250,7 +256,14 @@ export const SidebarView = React.memo(function SidebarView() {
   React.useEffect(() => {
     if (!identityPubkey) return;
     return subscribeActiveCommunityId(identityPubkey, (nextWorkspaceId) => {
-      if (!nextWorkspaceId || !workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
+      if (!nextWorkspaceId) return;
+      if (!workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
+        // A Workspace just created or joined: read the list again — once per
+        // id, so a stale stored id (a deleted Workspace) cannot loop.
+        if (!refreshedForWorkspaceIds.current.has(nextWorkspaceId)) {
+          refreshedForWorkspaceIds.current.add(nextWorkspaceId);
+          setRefreshNonce((nonce) => nonce + 1);
+        }
         return;
       }
       if (workspaceIdRef.current === nextWorkspaceId) return;
@@ -322,17 +335,20 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
+  // A corner route expands its parent. Opening a Room itself leaves its corner
+  // list collapsed; the row's corner glyph toggles that list.
   React.useEffect(() => {
+    const parentId = promotedCornerParentId;
     if (
-      !activeRoomId ||
-      !(surface?.chats.find((item) => item.room.id === activeRoomId)?.cornerCount ?? 0)
+      !parentId ||
+      !(surface?.chats.find((item) => item.room.id === parentId)?.cornerCount ?? 0)
     ) {
       return;
     }
     setExpandedRoomIds((current) =>
-      current.has(activeRoomId) ? current : new Set([...current, activeRoomId]),
+      current.has(parentId) ? current : new Set([...current, parentId]),
     );
-  }, [activeRoomId, surface?.chats]);
+  }, [promotedCornerParentId, surface?.chats]);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
   // is the same boolean (`role !== 'member'`). Do not invent a second gate.
@@ -341,7 +357,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
-  const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
+  const traySelected = pathname.startsWith('/beeline/tray');
+  const needsYouCount = useNeedsYouCount(workspaceId, surface);
   const profileSettingsSelected =
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
@@ -354,6 +371,34 @@ export const SidebarView = React.memo(function SidebarView() {
       });
     },
     [router],
+  );
+  const openCornerInRoom = React.useCallback(
+    (roomId: string, cornerId: string) => {
+      selectDesktopWorkCorner({ roomId, cornerId });
+      if (activeRoomId !== roomId) openRoom(roomId);
+    },
+    [activeRoomId, openRoom],
+  );
+  // The sidebar reads through RoomViewClient only, so the one write it makes
+  // builds the monolith transport on demand, as the Room composer does.
+  const openingCornerRef = React.useRef(false);
+  const openNewCorner = React.useCallback(
+    async (roomId: string) => {
+      if (openingCornerRef.current) return;
+      openingCornerRef.current = true;
+      try {
+        const identity = await loadBuzzIdentity();
+        const transport = identity ? new BuzzRigTransport(identity) : null;
+        await openRoomListCorner({
+          roomId,
+          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title) : null,
+          openCorner: (cornerId) => openCornerInRoom(roomId, cornerId),
+        });
+      } finally {
+        openingCornerRef.current = false;
+      }
+    },
+    [openCornerInRoom],
   );
 
   React.useEffect(() => {
@@ -463,11 +508,11 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <WorkspaceActionsMenu
-                    bookmarksSelected={bookmarksSelected}
+                    traySelected={traySelected}
                     canManageWorkspace={canManageWorkspace}
-                    onBookmarks={() =>
+                    onTray={() =>
                       router.push({
-                        pathname: '/beeline/bookmarks',
+                        pathname: '/beeline/tray',
                         params: { communityId: workspaceId },
                       } as Href)
                     }
@@ -561,13 +606,14 @@ export const SidebarView = React.memo(function SidebarView() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            bookmarksSelected={bookmarksSelected}
+            traySelected={traySelected}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               workspaceId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: workspaceId },
                     } as Href)
                 : undefined
@@ -608,33 +654,35 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : (
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
-                  <RoomListSectionHeader
-                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                    count={section.kind === 'rooms' ? section.data.length : undefined}
-                    actionTestID={
-                      section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
-                    }
-                    actionAccessibilityLabel={
-                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
-                    }
-                    onAction={
-                      !workspaceId || viewerIsAgent
-                        ? undefined
-                        : section.kind === 'rooms' && !canCreateRoom
+                  <MaybeTourTarget enabled={section.kind === 'rooms' && !viewerIsAgent} tip="rooms">
+                    <RoomListSectionHeader
+                      title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                      count={section.kind === 'rooms' ? section.data.length : undefined}
+                      actionTestID={
+                        section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                      }
+                      actionAccessibilityLabel={
+                        section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                      }
+                      onAction={
+                        !workspaceId || viewerIsAgent
                           ? undefined
-                          : () =>
-                              router.push({
-                                pathname: '/beeline/channels',
-                                params:
-                                  section.kind === 'rooms'
-                                    ? { communityId: workspaceId, newRoom: String(Date.now()) }
-                                    : {
-                                        communityId: workspaceId,
-                                        newDirectMessage: String(Date.now()),
-                                      },
-                              } as Href)
-                    }
-                  />
+                          : section.kind === 'rooms' && !canCreateRoom
+                            ? undefined
+                            : () =>
+                                router.push({
+                                  pathname: '/beeline/channels',
+                                  params:
+                                    section.kind === 'rooms'
+                                      ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                      : {
+                                          communityId: workspaceId,
+                                          newDirectMessage: String(Date.now()),
+                                        },
+                                } as Href)
+                      }
+                    />
+                  </MaybeTourTarget>
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (
@@ -656,6 +704,9 @@ export const SidebarView = React.memo(function SidebarView() {
                           }
                           pinned={pinned.includes(item.room.id)}
                           onPin={() => void togglePin(item.room.id)}
+                          onLongPressCorners={
+                            viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                          }
                           onPress={() => openRoom(item.room.id)}
                           testID={`desktop-room-${item.room.id}`}
                         />
@@ -665,10 +716,7 @@ export const SidebarView = React.memo(function SidebarView() {
                             <DesktopRoomCorners
                               key={`${workspaceId}/${item.room.id}`}
                               item={item}
-                              onOpen={(cornerId) => {
-                                selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
-                                if (activeRoomId !== item.room.id) openRoom(item.room.id);
-                              }}
+                              onOpen={(cornerId) => openCornerInRoom(item.room.id, cornerId)}
                               renderDrag={(cornerId, children) => (
                                 <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
                                   {children}

@@ -486,7 +486,7 @@ describe('daemon live command push', () => {
     expect(inboxCalls()).toBe(1);
   });
 
-  it('pushes scoped rooms-changed, connector-assignment, and corner-complete', async () => {
+  it('pushes scoped rooms-changed, connector-assignment, and corner lifecycle events', async () => {
     const roomId = 'room-live';
     const agentId = 'agent-live';
     const live = new LiveHub();
@@ -556,6 +556,16 @@ describe('daemon live command push', () => {
       closeRequested: true,
     });
     await expect(closed).resolves.toEqual({ type: 'corner-complete', roomId });
+
+    const restarted = nextSocketMessage(socket, 'corner-restart');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:corner_facts',
+      lane: 'code',
+      laneChanged: true,
+    });
+    await expect(restarted).resolves.toEqual({ type: 'corner-restart', roomId });
     expect(execute.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
   });
 });

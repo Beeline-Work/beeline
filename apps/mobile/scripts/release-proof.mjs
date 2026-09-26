@@ -614,9 +614,9 @@ async function main() {
 
     // Sign in through the review bypass when its secret is available, so the
     // proof no longer depends on a persisted GitHub session that a fresh
-    // install wipes. `/review/<secret>` lands the fixed review identity in the
-    // welcome workspace exactly like a real sign-in (apps/server/src/review-access.ts);
-    // its room and corner carry the room/corner flows. Grant notifications
+    // install wipes. `/review/<secret>` lands the fixed review identity in its
+    // own `Beeline Review` Workspace (apps/server/src/review-proof-fixture.ts);
+    // its proof room and corner carry the room/corner flows. Grant notifications
     // first so the runtime permission prompt cannot cover the deck.
     const reviewSecret = process.env.BEELINE_REVIEW_SECRET?.trim();
     if (reviewSecret) {

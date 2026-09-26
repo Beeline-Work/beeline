@@ -142,6 +142,7 @@ describe('parseAdvertisedConfigOptions', () => {
     expect(filterAllowedModelConfigOptions(parsed).map((option) => option.category)).toEqual([
       'model',
       'thought_level',
+      'model_config',
     ]);
     expect(() =>
       assertModelSelectionAdvertised(parsed, { model: 'gpt-5.6-sol', effort: 'high' }),
@@ -184,6 +185,12 @@ describe('parseAdvertisedConfigOptions', () => {
 });
 
 describe('agentArgsWithModelSelection — Grok launch configuration', () => {
+  it('preserves Grok launch flags when only Fast mode is configured', () => {
+    const args = ['agent', '--model', 'grok-4.5', '--reasoning-effort', 'high', 'stdio'];
+    expect(
+      agentArgsWithModelSelection({ kind: 'grok', command: 'grok', args }, { fastMode: false }),
+    ).toEqual(args);
+  });
   it('injects selected model and effort before Grok stdio', () => {
     expect(
       agentArgsWithModelSelection(
@@ -221,6 +228,18 @@ describe('filterAllowedModelConfigOptions', () => {
   it('drops the mode axis and keeps model/effort', () => {
     const filtered = filterAllowedModelConfigOptions(parseAdvertisedConfigOptions(claudeLikeRaw()));
     expect(filtered.map((option) => option.category)).toEqual(['model', 'effort']);
+  });
+  it('admits only the exact Fast mode axis from model_config', () => {
+    const options = parseAdvertisedConfigOptions(CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS);
+    options.push({ id: 'danger', category: 'model_config', options: [{ id: 'on' }] });
+    expect(filterAllowedModelConfigOptions(options).map((axis) => axis.id)).toEqual([
+      'model',
+      'reasoning_effort',
+      'fast-mode',
+    ]);
+    expect(() => assertModelConfigOptionAllowed('danger', 'on', options)).toThrow(
+      DisallowedModelConfigOptionError,
+    );
   });
 });
 
@@ -289,6 +308,26 @@ describe('assertModelConfigOptionAllowed — the set path security gate', () => 
 });
 
 describe('applyAgentModelSelection — the set path', () => {
+  it('sets Fast mode on and off on live Codex sessions and refuses unsupported sessions', async () => {
+    const options = parseAdvertisedConfigOptions(CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS);
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    await applyAgentModelSelection({ setConfigOption }, 'first', options, { fastMode: true });
+    await applyAgentModelSelection({ setConfigOption }, 'restarted', options, { fastMode: true });
+    await applyAgentModelSelection({ setConfigOption }, 'next', options, { fastMode: false });
+    expect(setConfigOption.mock.calls).toEqual([
+      ['first', 'fast-mode', 'on'],
+      ['restarted', 'fast-mode', 'on'],
+      ['next', 'fast-mode', 'off'],
+    ]);
+    await expect(
+      applyAgentModelSelection(
+        { setConfigOption },
+        'unsupported',
+        options.filter((axis) => axis.id !== 'fast-mode'),
+        { fastMode: true },
+      ),
+    ).rejects.toThrow('Fast mode is unavailable');
+  });
   const raw = parseAdvertisedConfigOptions(claudeLikeRaw());
 
   it('round-trips a persisted model+effort selection onto the live session', async () => {

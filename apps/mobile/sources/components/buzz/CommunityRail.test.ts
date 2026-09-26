@@ -250,9 +250,9 @@ describe('Workspace drawer', () => {
   it('keeps Workspace settings out of the drawer', () => {
     const renderer = renderShell();
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
-    expect(
-      renderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-settings-community-1' })).toHaveLength(
+      0,
+    );
     expect(renderer.root.findByProps({ testID: 'community-rail-add' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'community-rail-settings' })).toBeDefined();
   });

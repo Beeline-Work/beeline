@@ -85,6 +85,9 @@ export type LiveEvent =
       removed?: boolean;
       /** True when the corner_facts row records a requested close. */
       closeRequested?: boolean;
+      /** Durable corner lane and whether this notification changed it. */
+      lane?: string;
+      laneChanged?: boolean;
       trace?: LiveTrace;
       /** Same-process only. PostgreSQL notifications deliberately remain ID-only. */
       committedRow?:

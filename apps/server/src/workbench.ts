@@ -56,6 +56,7 @@ export function connectorCatalog(): readonly ConnectorCatalogEntry[] {
 }
 
 export function connectorDisplayName(type: ConnectorKind): string {
+  if (type === 'registry-mcp') return 'MCP Connector';
   return CONNECTOR_CATALOG.find((entry) => entry.connectorType === type)?.name ?? type;
 }
 

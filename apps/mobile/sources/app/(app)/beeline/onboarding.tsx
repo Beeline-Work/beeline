@@ -729,7 +729,8 @@ export default function BuzzOnboarding() {
   };
 
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
-  const signInLabel = 'Continue with GitHub';
+  // Offline, the one action is the person's own retry; nothing retries for them.
+  const signInLabel = notice?.status === 'offline' ? 'Try again' : 'Continue with GitHub';
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
   const desktopAuthSurface = isTauri();
 

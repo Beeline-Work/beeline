@@ -43,6 +43,11 @@ import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
+  REGISTRY_MCP_BROKER_FLAG,
+  RegistryMcpHostBroker,
+  runRegistryMcpBroker,
+} from './registry-mcp.js';
+import {
   InstitutionalMemoryShadowWorker,
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
@@ -69,7 +74,7 @@ import {
   runConnectFinishCommand,
 } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import { BUBBLEWRAP_INSTALL_BUDGET_MS, ensureBwrapSandbox } from './bwrap-sandbox.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -114,6 +119,11 @@ import {
 } from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 import { runScratchSweep } from './scratch-sweep.js';
+import {
+  disableLaunchdAgentService,
+  installLaunchdTrustySquireBrokerService,
+  reconcileLaunchdAgentServices,
+} from './launchd.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -244,12 +254,23 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
-  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
+  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Settled exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
-  // the boundary before any Room comes online.
-  const sandbox = detectBwrapSandbox({ ...(runtime.sandbox ? { policy: runtime.sandbox } : {}) });
+  // the boundary before any Room comes online. Absent bubblewrap is installed
+  // on this one pass: a Room shell is approved only inside that sandbox, so
+  // without it the helper silently has no shell at all. That install does not
+  // come out of the unit's own start budget — an unreachable apt mirror would
+  // otherwise time the unit out and restart into the same install forever — so
+  // the start deadline is extended first, and only when a package command is
+  // really about to run.
+  const sandbox = await ensureBwrapSandbox({
+    ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
+    stateDir: dirname(configPath),
+    beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
+  });
   if (sandbox.path) config.bwrapPath = sandbox.path;
+  else if (sandbox.shellDetail) config.shellUnavailableDetail = sandbox.shellDetail;
   // Owner-configured credential masks ride the runtime record; the
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
@@ -333,6 +354,18 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           }`,
         );
       });
+    } else if (
+      pendingSuccessor &&
+      process.platform === 'darwin' &&
+      process.env.BEELINE_LAUNCHD_USER !== '0'
+    ) {
+      await installLaunchdTrustySquireBrokerService().catch((error) => {
+        console.error(
+          `[beeline] host Squire broker launchd job not converged: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
     }
   }
 
@@ -354,6 +387,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let registryMcpBroker: RegistryMcpHostBroker | undefined;
   let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   const refreshCatalog = (): Promise<void> => {
@@ -375,6 +409,25 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   };
   let stoppingStatus = 'daemon stopped';
   try {
+    registryMcpBroker = new RegistryMcpHostBroker(
+      config.operatorHome,
+      fetch,
+      // The one per-call gate a Registry route has: the server's existing
+      // requester-aware resource approval, asked here because the broker
+      // socket — not the harness MCP client — is what every caller reaches.
+      async ({ roomId, requestId, generationId, target, consume }) =>
+        (
+          await daemonApi.execute('authorizeResourceCall', {
+            roomId,
+            requestId,
+            generationId,
+            target,
+            consume,
+          })
+        ).allowed === true,
+    );
+    await registryMcpBroker.start();
+    process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
     let lifecycleRestartDrain: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
@@ -382,7 +435,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       onHiccupRestart: (attempt) => {
         const delay = hiccupBackoffMs(attempt);
         console.warn(
-          `[thin-core] hiccup restart attempt ${attempt}; exiting so systemd can start a fresh helper`,
+          `[thin-core] hiccup restart attempt ${attempt}; exiting so the service manager can start a fresh helper`,
         );
         if (delay <= 0) {
           process.exit(0);
@@ -534,6 +587,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,
+          registryHome: config.operatorHome,
           log: (message) => console.log(`[body] connector: ${message}`),
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
@@ -590,6 +644,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   } finally {
     clearInterval(scratchSweepTimer);
     connectorLoop?.stop();
+    delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
+    await registryMcpBroker?.stop();
     institutionalMemoryWorker?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid record while it still names THIS process — a
@@ -609,6 +665,10 @@ async function main(): Promise<void> {
   }
   if (command === RESOURCE_FACADE_FLAG) {
     runResourceFacade();
+    return;
+  }
+  if (command === REGISTRY_MCP_BROKER_FLAG) {
+    runRegistryMcpBroker();
     return;
   }
   if (command === SQUIRE_FACADE_FLAG) {
@@ -706,6 +766,10 @@ async function main(): Promise<void> {
       await reconcileAgentServices({ env: process.env }).catch((error) => {
         console.error('[beeline] failed to enumerate orphan agent units:', error);
       });
+    } else if (agentPubkey && process.platform === 'darwin') {
+      await reconcileLaunchdAgentServices({ env: process.env }).catch((error) => {
+        console.error('[beeline] failed to enumerate orphan agent launchd jobs:', error);
+      });
     }
     if (!configPath && agentPubkey) {
       const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
@@ -713,7 +777,7 @@ async function main(): Promise<void> {
     }
     if (!configPath && agentPubkey) {
       throw new DaemonExitError(
-        `unknown agent ${agentPubkey}: no durable runtime exists; refusing systemd restart loop`,
+        `unknown agent ${agentPubkey}: no durable runtime exists; refusing service restart loop`,
         UNKNOWN_AGENT_EXIT_STATUS,
       );
     }
@@ -749,6 +813,8 @@ async function main(): Promise<void> {
     const runtime = await readRuntimeRecord(configPath);
     if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
       await disableAgentService(runtime.agent.publicKey);
+    } else if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
+      await disableLaunchdAgentService(runtime.agent.publicKey);
     } else {
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }
@@ -762,7 +828,7 @@ async function main(): Promise<void> {
 main().catch(async (err) => {
   // Cover failures before runStoredDaemon reaches its core-level try/catch
   // (runtime migration, safety/config parsing, sandbox detection). A pending
-  // release that cannot reach READY rolls back once; systemd starts the
+  // release that cannot reach READY rolls back once; the service manager starts the
   // restored anchor. Worker/interactive command failures never touch it.
   if (process.argv[2] === 'daemon') {
     const layout = beelineInstallLayout(process.env);

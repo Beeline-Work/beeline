@@ -1,0 +1,33 @@
+{
+  "workspace": {
+    "id": "bee11e00-0000-4000-8000-000000000001",
+    "name": "Beeline Welcome"
+  },
+  "marker": null,
+  "activeMembers": 3,
+  "activePeople": 2,
+  "peopleWithNoOtherWorkspace": 1,
+  "agents": [
+    {
+      "agent_id": "7639006208b84bee614ca685a026961cde5655e16bcdc770d814286f26bf268d",
+      "name": "Greeter",
+      "owner_id": "546c5d506fffe2ad64d1d83925d9e9582f2ebaef026cc1e1b9e91561f7a5da63",
+      "active": true,
+      "other_workspaces": 0,
+      "live_tokens": 1,
+      "live_grants": 0,
+      "schedules": 0,
+      "open_corners": 0
+    }
+  ],
+  "rooms": 1,
+  "welcomeRoomPresent": true,
+  "messages": 1,
+  "cascadingPersonalRows": {
+    "walletBindings": 0,
+    "workbenchConnectors": 0,
+    "googleGrants": 0,
+    "agentGrants": 0,
+    "schedules": 0
+  }
+}

@@ -7,6 +7,12 @@ import type { ObjectStorage } from './object-storage.js';
 
 export class PgliteDatabase implements SqlDatabase {
   constructor(readonly client: PGliteInterface = new PGlite()) {}
+  static fromSnapshot(snapshot: Blob | File): PgliteDatabase {
+    return new PgliteDatabase(new PGlite({ loadDataDir: snapshot }));
+  }
+  snapshot(): Promise<Blob | File> {
+    return this.client.dumpDataDir();
+  }
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],

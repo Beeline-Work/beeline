@@ -31,7 +31,9 @@ describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
     expect(rail).toContain('borderRadius: TILE_RADIUS');
     // The current workspace wears the 2px brass bezel; idle tiles sit at
     // full strength (no opacity fade — the bezel is the whole story).
-    expect(rail).toContain('railButtonCurrent: {\n      borderWidth: 2,\n      borderColor: groknight.selectedBorder,');
+    expect(rail).toContain(
+      'railButtonCurrent: {\n      borderWidth: 2,\n      borderColor: groknight.selectedBorder,',
+    );
     expect(rail).not.toContain('railButtonIdle');
     expect(rail).not.toContain('opacity: 0.5');
   });

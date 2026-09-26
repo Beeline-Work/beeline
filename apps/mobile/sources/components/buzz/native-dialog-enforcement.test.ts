@@ -45,5 +45,4 @@ describe('native dialog enforcement', () => {
 
     expect(owners).toEqual(['components/buzz/HullDialog.tsx']);
   });
-
 });

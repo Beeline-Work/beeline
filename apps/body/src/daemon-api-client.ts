@@ -148,6 +148,7 @@ export class DaemonApiClient {
   private hiccupRestartListener?: (attempt: number) => void;
   private connectorAssignmentListener?: () => void;
   private cornerCompleteListener?: (roomId: string) => void;
+  private cornerRestartListener?: (roomId: string) => void;
 
   constructor(
     readonly baseUrl: string,
@@ -237,6 +238,11 @@ export class DaemonApiClient {
     this.cornerCompleteListener = listener;
   }
 
+  /** A no-code corner entered the code lane and must rebuild its local runtime. */
+  setCornerRestartListener(listener: (roomId: string) => void): void {
+    this.cornerRestartListener = listener;
+  }
+
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
@@ -305,6 +311,10 @@ export class DaemonApiClient {
       }
       if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
         this.cornerCompleteListener?.(event.roomId);
+        return;
+      }
+      if (event.type === 'corner-restart' && typeof event.roomId === 'string') {
+        this.cornerRestartListener?.(event.roomId);
         return;
       }
       if (event.type === 'connector-assignment') {

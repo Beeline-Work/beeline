@@ -21,6 +21,7 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
   isStructuredCornerBrief,
@@ -72,6 +73,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
   type CommittedMessageLiveRow,
@@ -83,6 +85,7 @@ import {
   directMessageRoomId,
   restateSystemLine,
   ensureSystemDirectMessageRoom,
+  ensureSystemIdentity,
   systemIdentityMention,
   systemLine,
   type SystemPhrase,
@@ -92,11 +95,14 @@ import { postRoomChoice } from './room-choice.js';
 import { connectorAdapter } from '@beeline/api-contract/workbench';
 import { composioScopeForOwner, storedComposioScope } from './composio-config.js';
 import { ComposioClient } from './connector-composio.js';
+import { McpRegistryClient } from './mcp-registry.js';
+import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import {
   applyVaultList,
   connectorCatalog,
   connectorDisplayName,
   connectorIdentityId,
+  ensureConnectorIdentity,
   ensureConnectorDirectMessageRoom,
   isMetadataStale,
   receiveConnectionUsage,
@@ -127,7 +133,7 @@ import {
   turnSilenceLockKey,
 } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
-import { notifyConnectorHelper } from './postgres-live.js';
+import { notifyAgentConfigChange, notifyConnectorHelper } from './postgres-live.js';
 import {
   claimInstitutionalMemoryJob,
   completeInstitutionalMemoryJob,
@@ -137,13 +143,35 @@ import {
   heartbeatInstitutionalMemoryJob,
   proposeInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
+  recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
+import { searchInstitutionalHistory } from './institutional-history.js';
+import { loadWorkspaceSkill } from './institutional-skills.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
 export const INBOX_REPLAY_REWIND_MS = 5_000;
+
+/**
+ * A system line's subject is spoken in the Ledger's own voice, so it is the
+ * PINNED registry coordinate, never the publisher's free-text title: a title
+ * of `@dani` would otherwise render as a person. The leading `@` is stripped
+ * so no coordinate can read as a handle either.
+ */
+function registrySubject(serverName: string | null): string {
+  return serverName?.replace(/^@+/, '').trim() || 'MCP server';
+}
+
+function registryMcpRouteName(serverName: string, connectorId: string): string {
+  const slug = serverName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return `registry-${slug || 'mcp'}-${connectorId.slice(0, 8)}`;
+}
 
 /** A durable silence line stays in the transcript; a later answer does not rewrite it. */
 async function settleTurnFailureLine(
@@ -203,6 +231,8 @@ export class DaemonService {
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
     },
+    private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
+    private readonly registryMcpOAuth?: RegistryMcpOAuth,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -251,6 +281,7 @@ export class DaemonService {
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
+      'upgradeCornerLane',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -269,12 +300,15 @@ export class DaemonService {
       'authorizeHostCall',
       'listTurnAgentGrants',
       'offerConnector',
+      'connectMcpServer',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
       'requestCornerAppOpen',
       'getInstitutionalContext',
       'proposeInstitutionalMemory',
+      'searchInstitutionalHistory',
+      'loadWorkspaceSkill',
     ]);
     if (
       !this.commandTransaction &&
@@ -401,6 +435,8 @@ export class DaemonService {
           this.googleOAuth,
           this.composioClient,
           this.institutionalMemoryShadow,
+          this.mcpRegistry,
+          this.registryMcpOAuth,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -614,6 +650,30 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'proposeInstitutionalMemory'>,
+        )) as Output<Name>;
+      case 'searchInstitutionalHistory':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional history search requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await searchInstitutionalHistory(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'searchInstitutionalHistory'>,
+        )) as Output<Name>;
+      case 'loadWorkspaceSkill':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workspace skill load requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await loadWorkspaceSkill(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'loadWorkspaceSkill'>,
         )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
@@ -935,6 +995,22 @@ export class DaemonService {
           credentials ? { status: 'ready', credentials } : { status: 'pending' }
         ) as Output<Name>;
       }
+      case 'beginRegistryMcpOAuth': {
+        if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
+        return (await this.registryMcpOAuth.begin(
+          (input as Input<'beginRegistryMcpOAuth'>).connectorId,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      }
+      case 'claimRegistryMcpOAuthCode': {
+        if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
+        const request = input as Input<'claimRegistryMcpOAuthCode'>;
+        return (await this.registryMcpOAuth.claim(
+          request.connectorId,
+          request.state,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      }
       case 'installConnector':
         return (await this.connectorInstall(
           input as Input<'installConnector'>,
@@ -1077,6 +1153,13 @@ export class DaemonService {
           input as Input<'readAgentWorkbench'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'searchMcpRegistry':
+        return (await this.searchMcpRegistry(input as Input<'searchMcpRegistry'>)) as Output<Name>;
+      case 'connectMcpServer':
+        return (await this.connectMcpServer(
+          input as Input<'connectMcpServer'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'offerConnector':
         return (await this.offerConnector(
           input as Input<'offerConnector'>,
@@ -1085,6 +1168,11 @@ export class DaemonService {
       case 'createCorner':
         return (await this.createCorner(
           input as Input<'createCorner'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'upgradeCornerLane':
+        return (await this.upgradeCornerLane(
+          (input as Input<'upgradeCornerLane'>).cornerId,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'archiveCorner':
@@ -1253,8 +1341,13 @@ export class DaemonService {
         status: string;
         pending_ops: string[];
         pairing_generation: number;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        registry_manifest: import('@beeline/api-contract/daemon').RegistryMcpManifest | null;
       }>(
-        `SELECT id,connector_type,status,pending_ops,pairing_generation FROM workspace_connectors
+        `SELECT id,connector_type,status,pending_ops,pairing_generation,
+                registry_server_name,registry_version,registry_manifest
+         FROM workspace_connectors
          WHERE helper_agent_id=$1 AND status IN ('installing','connected','error','disconnected')
          ORDER BY created_at`,
         [agentId],
@@ -1292,6 +1385,9 @@ export class DaemonService {
             connectorId: row.id,
             connectorType: row.connector_type as never,
             ...generation,
+            ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
+            ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
+            ...(row.registry_manifest ? { registryManifest: row.registry_manifest } : {}),
           });
         if (row.status === 'disconnected')
           assignments.push({
@@ -1545,10 +1641,20 @@ export class DaemonService {
           pairing_generation: number;
           connector_type: string;
           owner_identity_id: string;
+          workspace_id: string;
+          machine_id: string | null;
+          helper_agent_id: string;
           composio_ready: boolean;
           composio_scope: unknown;
+          install_agent_id: string | null;
+          install_room_id: string | null;
+          install_command_id: string | null;
+          registry_server_name: string | null;
         }>(
-          `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
+          `SELECT id,pairing_generation,connector_type,owner_identity_id,workspace_id,machine_id,
+                  helper_agent_id,composio_ready,composio_scope,install_agent_id,install_room_id,
+                  install_command_id,registry_server_name
+           FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
         )
@@ -1593,9 +1699,46 @@ export class DaemonService {
           })),
         );
       }
+      let registryResume: { roomId: string; agentId: string } | undefined;
+      if (
+        row.connector_type === 'registry-mcp' &&
+        row.install_agent_id &&
+        row.install_room_id &&
+        row.install_command_id
+      ) {
+        // A resume-kind line completes its parent command. OAuth can finish
+        // while that command is still writing its own reply, so only resume
+        // an already-ended install turn. Lock the command with the connector
+        // row to serialize this decision against the reply's completion.
+        const command = (
+          await database.query<{ state: string }>(
+            `SELECT state FROM agent_commands
+             WHERE id=$1 AND room_id=$2 AND agent_id=$3 FOR UPDATE`,
+            [row.install_command_id, row.install_room_id, row.install_agent_id],
+          )
+        ).rows[0];
+        if (command?.state === 'complete') {
+          await ensureConnectorIdentity(database, 'registry-mcp');
+          await systemLine(database, {
+            id: createHash('sha256')
+              .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)
+              .digest('hex'),
+            roomId: row.install_room_id,
+            authorId: connectorIdentityId('registry-mcp'),
+            subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+            verb: 'connected',
+            consequence: 'the requesting agent can continue the original task',
+            kind: 'connector-offer-decided',
+            commandId: row.install_command_id,
+            wakes: [row.install_agent_id],
+          });
+          registryResume = { roomId: row.install_room_id, agentId: row.install_agent_id };
+        }
+      }
       return {
         row,
         completedOffers: await completeConnectorOffersForConnector(database, row.id),
+        registryResume,
       };
     });
     for (const offer of result.completedOffers) {
@@ -1605,6 +1748,31 @@ export class DaemonService {
         reason: 'connector-offer',
         agentId: offer.agentId,
       });
+    }
+    if (result.registryResume) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: result.registryResume.roomId,
+        reason: 'connector-ready',
+        agentId: result.registryResume.agentId,
+      });
+    }
+    if (result.row.connector_type === 'registry-mcp') {
+      const agents = await this.database.query<{ agent_id: string }>(
+        `SELECT actor.agent_id FROM agents actor
+         JOIN memberships member ON member.identity_id=actor.agent_id
+           AND member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+         WHERE actor.owner_id=$2
+           AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE($3,$4)`,
+        [
+          result.row.workspace_id,
+          result.row.owner_identity_id,
+          result.row.machine_id,
+          result.row.helper_agent_id,
+        ],
+      );
+      for (const actor of agents.rows)
+        await notifyAgentConfigChange(this.database, actor.agent_id, result.row.workspace_id);
     }
     return { id: result.row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
@@ -1626,7 +1794,11 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
     const row = (
-      await this.database.query<{ id: string }>(
+      await this.database.query<{
+        id: string;
+        connector_type: string;
+        registry_server_name: string | null;
+      }>(
         `UPDATE workspace_connectors
          SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
              status_error=COALESCE($3::text,status_error),
@@ -1639,7 +1811,7 @@ export class DaemonService {
            AND helper_agent_id=$8
            AND status='installing'
            AND pairing_generation=$9
-         RETURNING id`,
+         RETURNING id,connector_type,registry_server_name`,
         [
           input.connectorId,
           JSON.stringify(input.steps),
@@ -1655,7 +1827,73 @@ export class DaemonService {
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
     if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
+    if (row.connector_type === 'registry-mcp' && input.signIn?.url && input.signIn.attemptId)
+      await this.resumeRegistrySignIn(row, input.signIn);
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Registry sign-in page the helper just published is ONE fact: the first
+   * needs_sign_in per attempt posts a resume-kind line into the install Room,
+   * whose command resume wakes the turn that called connect_mcp_server — but
+   * only once that turn has ENDED. A still-claimed install command means the
+   * agent is mid-turn and will read the needs_sign_in result itself, so
+   * writing the line would complete its command out from under it. The
+   * helper's 2s watch re-posts the same attempt after the turn ends, and that
+   * later report is the one that resumes. The same attempt never resumes
+   * twice — the line id is derived from the attempt, so repeat reports
+   * collide and write nothing.
+   */
+  private async resumeRegistrySignIn(
+    row: { id: string; registry_server_name: string | null },
+    signIn: NonNullable<Input<'postConnectorStatus'>['signIn']>,
+  ): Promise<void> {
+    if (signIn.method !== 'oauth') return;
+    const target = (
+      await this.database.query<{
+        install_room_id: string;
+        install_agent_id: string;
+        install_command_id: string;
+        command_state: string | null;
+      }>(
+        `SELECT c.install_room_id,c.install_agent_id,c.install_command_id,command.state command_state
+         FROM workspace_connectors c
+         LEFT JOIN agent_commands command ON command.id=c.install_command_id
+         WHERE c.id=$1::uuid AND c.install_room_id IS NOT NULL
+           AND c.install_agent_id IS NOT NULL AND c.install_command_id IS NOT NULL`,
+        [row.id],
+      )
+    ).rows[0];
+    if (!target) return;
+    if (
+      target.command_state === null ||
+      target.command_state === 'pending' ||
+      target.command_state === 'claimed' ||
+      target.command_state === 'cancelled'
+    )
+      return;
+    await ensureConnectorIdentity(this.database, 'registry-mcp');
+    const wrote = await systemLine(this.database, {
+      id: createHash('sha256')
+        .update(`registry-mcp-signin-resume:${row.id}:${signIn.attemptId}`)
+        .digest('hex'),
+      roomId: target.install_room_id,
+      authorId: connectorIdentityId('registry-mcp'),
+      subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+      verb: 'needs',
+      object: { text: 'provider sign-in', url: signIn.url },
+      consequence: 'the provider sign-in page is ready · connect this tool through Trusty Squire',
+      kind: 'connector-offer-decided',
+      commandId: target.install_command_id,
+      wakes: [target.install_agent_id],
+    });
+    if (wrote.inserted)
+      this.live.publish({
+        type: 'invalidate',
+        roomId: target.install_room_id,
+        reason: 'connector-ready',
+        agentId: target.install_agent_id,
+      });
   }
 
   /**
@@ -2663,11 +2901,12 @@ export class DaemonService {
         soul: { name: string; instructions: string } | null;
         selected_model: string | null;
         selected_effort: string | null;
+        fast_mode: boolean;
         commands: Array<{ name: string; description?: string; inputHint?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
       }>(
-        `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
+        `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NOT NULL
                            AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
@@ -2683,13 +2922,40 @@ export class DaemonService {
         [agentId, roomId],
       )
     ).rows[0];
+    const registryMcpRoutes = roomId
+      ? (
+          await this.database.query<{
+            id: string;
+            registry_server_name: string;
+            display_name: string | null;
+          }>(
+            `SELECT connector.id,connector.registry_server_name,connector.display_name
+             FROM workspace_connectors connector
+             JOIN rooms room ON room.workspace_id=connector.workspace_id AND room.id=$2
+             JOIN agents actor ON actor.agent_id=$1
+               AND actor.owner_id=connector.owner_identity_id
+               AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(connector.machine_id,connector.helper_agent_id)
+             WHERE connector.connector_type='registry-mcp' AND connector.status='connected'
+             ORDER BY connector.created_at,connector.id`,
+            [agentId, roomId],
+          )
+        ).rows.map((route) => ({
+          connectorId: route.id,
+          serverName: route.registry_server_name,
+          displayName: route.display_name ?? route.registry_server_name,
+          routeName: registryMcpRouteName(route.registry_server_name, route.id),
+          target: `registry-mcp:${route.registry_server_name}`,
+        }))
+      : [];
     return {
       ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
       ...(row?.selected_effort ? { effort: row.selected_effort } : {}),
+      fastMode: row?.fast_mode ?? false,
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
+      ...(registryMcpRoutes.length ? { registryMcpRoutes } : {}),
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
@@ -3423,6 +3689,15 @@ export class DaemonService {
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
+    // Wire-supplied counts are only ever stored when they are what they claim:
+    // a negative, fractional, or absurd value is dropped, never clamped into a
+    // measurement.
+    const toolCalls =
+      Number.isSafeInteger(input.toolCalls) &&
+      (input.toolCalls ?? -1) >= 0 &&
+      (input.toolCalls ?? 0) <= 100_000
+        ? input.toolCalls!
+        : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
     let silence: { hiccupRestart: boolean; attempt: number } | undefined;
     await this.database.transaction(async (database) => {
@@ -3452,11 +3727,13 @@ export class DaemonService {
         // over a turn the requester already stopped.
         const written = await database.query<CommittedTurnLiveRow>(
           `WITH written AS (
-             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason)
-             VALUES($1,$2,$3,$4,$5,$6)
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason,
+                                     tool_calls)
+             VALUES($1,$2,$3,$4,$5,$6,$7)
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
-               failure_reason=EXCLUDED.failure_reason,created_at=now()
+               failure_reason=EXCLUDED.failure_reason,created_at=now(),
+               tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls)
              WHERE agent_turns.status<>'cancelled'
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
@@ -3471,10 +3748,23 @@ export class DaemonService {
             input.status,
             input.generationId ?? null,
             reason,
+            toolCalls,
           ],
         );
         if (!written.rowCount) return;
         committedTurn = written.rows[0];
+      }
+      // The turn's real cost belongs to the serve it answered, and it is written
+      // here — the same transaction as the receipt — so a serve row can never
+      // carry a measurement for a turn that was refused or never ended.
+      if (!input.heartbeat && input.status !== 'working') {
+        await recordInstitutionalServeUsage(database, {
+          roomId: input.roomId,
+          requestId: input.requestId,
+          agentId,
+          ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+          ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
+        });
       }
       if (input.status === 'failed') {
         silence = await this.inscribeTurnFailure(
@@ -3653,6 +3943,11 @@ export class DaemonService {
       (!input.approvalId.trim() || input.approvalId.length > 240)
     )
       throw new Error('Squire approval id is invalid');
+    if (
+      input.signInUrl !== undefined &&
+      (!input.signInUrl.trim() || input.signInUrl.length > 2_048)
+    )
+      throw new Error('Squire sign-in URL is invalid');
     let approvalUrl: URL;
     try {
       approvalUrl = new URL(input.approvalUrl);
@@ -3735,6 +4030,20 @@ export class DaemonService {
         ...(sourceMessageId ? { sourceMessageId } : {}),
       },
     });
+    // A Registry OAuth turn whose Squire call produced this approval link has
+    // already delivered the one owner link. Only the row whose OWN sign-in page
+    // Squire was driving is marked, so a second registry row in the same turn —
+    // or an unrelated Squire approval — never suppresses its own owner handoff.
+    if (input.signInUrl) {
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET registry_squire_relayed_attempt=sign_in->>'attemptId',updated_at=now()
+         WHERE connector_type='registry-mcp' AND status='installing'
+           AND install_agent_id=$1 AND install_room_id=$2
+           AND sign_in->>'attemptId' IS NOT NULL AND sign_in->>'url'=$3`,
+        [agentId, input.roomId, input.signInUrl],
+      );
+    }
     if (line.inserted)
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
@@ -3996,10 +4305,7 @@ export class DaemonService {
       [input.roomId, agentId, input.requestId],
     );
     const causeId = active.rows[0]?.request_id;
-    if (!causeId)
-      throw new Error(
-        'an event is emitted from inside a turn; this agent has no turn running here',
-      );
+    if (!causeId) throw new Error('invalid event: this agent has no turn running here');
     const self = await this.database.query<{ name: string }>(
       `SELECT COALESCE(NULLIF(name,''),'An agent') name FROM identities WHERE id=$1`,
       [agentId],
@@ -4159,7 +4465,8 @@ export class DaemonService {
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     await this.database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
-         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,updated_at=now()
+         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
+         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,updated_at=now()
        WHERE agent_id=$1`,
       [
         agentId,
@@ -4167,6 +4474,13 @@ export class DaemonService {
         input.selection?.model ?? null,
         input.selection?.effort ?? null,
         input.unavailable ?? null,
+        input.options.some(
+          (axis) =>
+            axis.id === 'fast-mode' &&
+            axis.category === 'model_config' &&
+            axis.options.some((choice) => choice.id === 'on') &&
+            axis.options.some((choice) => choice.id === 'off'),
+        ),
       ],
     );
     return this.writeResult();
@@ -4740,11 +5054,18 @@ export class DaemonService {
     target = target.trim();
     const requester = await this.grantRequester();
     const context = (
-      await this.database.query<{ owner_id: string; yolo_mode: boolean; owner_present: boolean }>(
-        `SELECT a.owner_id,EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
+      await this.database.query<{
+        owner_id: string;
+        owner_handle: string | null;
+        yolo_mode: boolean;
+        owner_present: boolean;
+      }>(
+        `SELECT a.owner_id,owner.handle owner_handle,
+       EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
-       FROM agents a JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
+       FROM agents a JOIN identities owner ON owner.id=a.owner_id
+       JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
        WHERE a.agent_id=$2`,
         [input.roomId, agentId],
       )
@@ -4789,7 +5110,17 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
+    if (pending) {
+      if (kind !== 'mcp')
+        await this.noteBlockedTurnGate({
+          roomId: input.roomId,
+          agentId,
+          kind,
+          ownerHandle: context.owner_handle,
+          grantId: pending.id,
+        });
+      return { allowed: false, grantId: pending.id, status: 'pending' as const };
+    }
     const asked = await this.requestAgentGrant(
       {
         ...input,
@@ -4804,12 +5135,69 @@ export class DaemonService {
       },
       agentId,
     );
+    if (kind === 'host')
+      await this.noteBlockedTurnGate({
+        roomId: input.roomId,
+        agentId,
+        kind,
+        ownerHandle: context.owner_handle,
+        grantId: asked.grantId,
+      });
     return {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
+  }
+
+  /**
+   * A gate that stopped a corner turn before its harness could start is a fact
+   * the SERVER states, not prose the agent wrote. Inscribing it here, once per
+   * pending grant per TURN (the derived id carries the grant and the turn
+   * request, so a retried authorization inside one turn collides while a later
+   * turn blocked on the same grant still speaks instead of settling silently),
+   * is what keeps it out of `postRoomMessage`: a system line is never an agent
+   * reply, so it never reaches `routeAgentResult`,
+   * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
+   * writes no message and records a plain `complete` receipt, so neither gate
+   * can settle as the calm `had nothing to add` line.
+   *
+   * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
+   * already reaches the agent as its tool error, not a turn that never started.
+   * A repository ask that MINTS its grant this turn is excluded too, because
+   * `requestAgentGrant` puts that grant's actionable card in this same corner
+   * one row earlier; only a host ask, whose card goes to the owner's `@system`
+   * DM, and a later turn blocked on an already-pending grant, which writes no
+   * card at all, leave the corner with nothing else to say.
+   */
+  private async noteBlockedTurnGate(input: {
+    readonly roomId: string;
+    readonly agentId: string;
+    readonly kind: 'repository' | 'host';
+    readonly ownerHandle: string | null;
+    readonly grantId: string;
+  }) {
+    const id = createHash('sha256')
+      .update(
+        `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
+      )
+      .digest('hex');
+    await systemLine(this.database, {
+      id,
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
+      verb: 'asked',
+      object: {
+        text:
+          input.kind === 'host'
+            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
+            : 'a Workspace admin to approve repository access',
+      },
+      ...(this.authorizedCommand?.source_message_id
+        ? { afterMessageId: this.authorizedCommand.source_message_id }
+        : {}),
+    });
   }
 
   // --- R5: connector offers -------------------------------------------------
@@ -4934,14 +5322,20 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     const paired = (
       await this.database.query<{
+        id: string;
         connector_type: string;
         status: 'installing' | 'connected' | 'error' | 'disconnected';
         machine_id: string | null;
         helper_agent_id: string;
         helper_name: string;
         updated_at: Date;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        display_name: string | null;
+        website_url: string | null;
       }>(
-        `SELECT k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+        `SELECT k.id,k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+                k.registry_server_name,k.registry_version,k.display_name,k.website_url,
                 COALESCE(NULLIF(a.machine_name,''),helper.name) helper_name,k.updated_at
          FROM workspace_connectors k
          JOIN identities helper ON helper.id=k.helper_agent_id
@@ -4999,6 +5393,21 @@ export class DaemonService {
         [context.owner.pubkey, context.workspaceId],
       )
     ).rows;
+    const registryServers = paired.flatMap((row) =>
+      row.registry_server_name && row.registry_version
+        ? [
+            {
+              connectorId: row.id,
+              serverName: row.registry_server_name,
+              version: row.registry_version,
+              displayName: row.display_name ?? row.registry_server_name,
+              status: row.status,
+              ...(row.website_url ? { websiteUrl: row.website_url } : {}),
+              onThisMachine: (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
+            },
+          ]
+        : [],
+    );
     return {
       addressee: {
         identityId: context.addressee.pubkey,
@@ -5017,8 +5426,185 @@ export class DaemonService {
         label: row.label ?? row.reference,
         state: row.state,
       })),
+      registryServers,
       machine: context.machine,
     };
+  }
+
+  private async searchMcpRegistry(
+    input: Input<'searchMcpRegistry'>,
+  ): Promise<Output<'searchMcpRegistry'>> {
+    const query = typeof input.query === 'string' ? input.query.trim() : '';
+    if (!query || query.length > 120) throw new Error('Registry search query is invalid');
+    const limit = input.limit === undefined ? 10 : input.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new Error('Registry search limit is invalid');
+    return { servers: await this.mcpRegistry.search(query, Math.min(10, limit)) };
+  }
+
+  /** Exact Registry selection, owner+machine row creation, and optional one-link fallback. */
+  private async connectMcpServer(
+    input: Input<'connectMcpServer'>,
+    agentId: string,
+  ): Promise<Output<'connectMcpServer'>> {
+    const serverName = typeof input.serverName === 'string' ? input.serverName.trim() : '';
+    const version = typeof input.version === 'string' ? input.version.trim() : '';
+    const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
+    if (!serverName || !version || !reason || reason.length > 500)
+      throw new Error('Registry server name, version and reason are required');
+
+    // Integrity boundary: every call re-fetches the pinned record. A cached
+    // search result, model-supplied URL, or package command is never trusted.
+    const manifest = await this.mcpRegistry.exact(serverName, version);
+    if (!manifest)
+      return { status: 'unsupported', reason: 'The exact Registry entry was not found.' };
+    const remote = manifest.remotes.find((entry) => entry.type === 'streamable-http');
+    if (!remote)
+      return {
+        status: 'unsupported',
+        reason: manifest.remotes.length
+          ? 'This server does not publish a streamable-http remote.'
+          : 'This Registry entry publishes packages only; package execution is not supported.',
+      };
+
+    const context = await this.offerContext(input.roomId, agentId);
+    const commandId = this.authorizedCommand?.id ?? null;
+    const row = await this.database.transaction(async (database) => {
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `registry-mcp:${context.workspaceId}:${context.owner.pubkey}:${context.machine.machineId}:${serverName}`,
+      ]);
+      const existing = (
+        await database.query<{
+          id: string;
+          status: 'installing' | 'connected' | 'error' | 'disconnected';
+          registry_version: string;
+          sign_in: ConnectorStatus['signIn'] | null;
+          registry_handoff_attempt: string | null;
+          registry_squire_relayed_attempt: string | null;
+        }>(
+          `SELECT id,status,registry_version,sign_in,registry_handoff_attempt,
+                  registry_squire_relayed_attempt
+           FROM workspace_connectors
+           WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
+             AND connector_type='registry-mcp' AND registry_server_name=$4
+           FOR UPDATE`,
+          [context.workspaceId, context.owner.pubkey, context.machine.machineId, serverName],
+        )
+      ).rows[0];
+      if (existing && existing.registry_version !== version)
+        return { ...existing, versionConflict: true as const, created: false };
+      if (existing) {
+        if (existing.status === 'error' || existing.status === 'disconnected') {
+          await database.query(
+            `UPDATE workspace_connectors SET helper_agent_id=$2,status='installing',
+               status_steps=$3::jsonb,status_error=NULL,sign_in=NULL,
+               registry_manifest=$4::jsonb,display_name=$5,website_url=$6,
+               install_agent_id=$7,install_room_id=$8,install_command_id=$9,
+               registry_handoff_attempt=NULL,registry_squire_relayed_attempt=NULL,
+               pairing_generation=pairing_generation+1,updated_at=now()
+             WHERE id=$1`,
+            [
+              existing.id,
+              agentId,
+              JSON.stringify([
+                { label: 'Discover remote authentication', status: 'pending' },
+                { label: 'Connect provider account', status: 'pending' },
+              ]),
+              JSON.stringify(manifest),
+              manifest.title ?? manifest.name,
+              manifest.websiteUrl ?? null,
+              agentId,
+              input.roomId,
+              commandId,
+            ],
+          );
+          return { ...existing, status: 'installing' as const, sign_in: null, created: true };
+        }
+        return { ...existing, created: false };
+      }
+      const id = randomUUID();
+      await database.query(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+           status,status_steps,registry_server_name,registry_version,registry_manifest,
+           display_name,website_url,install_agent_id,install_room_id,install_command_id
+         ) VALUES($1,$2,$3,'registry-mcp',$4,$5,'installing',$6::jsonb,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)`,
+        [
+          id,
+          context.workspaceId,
+          context.owner.pubkey,
+          agentId,
+          context.machine.machineId,
+          JSON.stringify([
+            { label: 'Discover remote authentication', status: 'pending' },
+            { label: 'Connect provider account', status: 'pending' },
+          ]),
+          serverName,
+          version,
+          JSON.stringify(manifest),
+          manifest.title ?? manifest.name,
+          manifest.websiteUrl ?? null,
+          agentId,
+          input.roomId,
+          commandId,
+        ],
+      );
+      return {
+        id,
+        status: 'installing' as const,
+        registry_version: version,
+        sign_in: null,
+        registry_handoff_attempt: null,
+        registry_squire_relayed_attempt: null,
+        created: true,
+      };
+    });
+
+    if ('versionConflict' in row)
+      return {
+        status: 'unsupported',
+        reason: `This server is already pinned to ${row.registry_version}; automatic upgrades are not supported.`,
+      };
+    if (row.created) await notifyConnectorHelper(this.database, row.id);
+    if (row.status === 'connected') return { status: 'connected', connectorId: row.id };
+
+    const signIn = row.sign_in;
+    if (input.handoffToOwner && signIn?.url && signIn.attemptId) {
+      const shouldPost =
+        row.registry_squire_relayed_attempt !== signIn.attemptId &&
+        row.registry_handoff_attempt !== signIn.attemptId;
+      if (shouldPost) {
+        const won = await this.database.query(
+          `UPDATE workspace_connectors SET registry_handoff_attempt=$2,updated_at=now()
+           WHERE id=$1::uuid AND registry_handoff_attempt IS DISTINCT FROM $2
+             AND registry_squire_relayed_attempt IS DISTINCT FROM $2`,
+          [row.id, signIn.attemptId],
+        );
+        if (won.rowCount) {
+          const dmRoomId = await ensureConnectorDirectMessageRoom(
+            this.database,
+            context.workspaceId,
+            'registry-mcp',
+            context.owner.pubkey,
+          );
+          await systemLine(this.database, {
+            id: createHash('sha256')
+              .update(`registry-mcp-signin:${row.id}:${signIn.attemptId}`)
+              .digest('hex'),
+            roomId: dmRoomId,
+            authorId: connectorIdentityId('registry-mcp'),
+            subject: { kind: 'system', name: registrySubject(serverName) },
+            verb: 'needs',
+            object: { text: 'provider sign-in', url: signIn.url },
+            consequence: 'complete this sign-in to connect the tool',
+          });
+          this.live.publish({ type: 'invalidate', roomId: dmRoomId, reason: 'message', agentId });
+        }
+      }
+    }
+    return signIn?.url
+      ? { status: 'needs_sign_in', connectorId: row.id, authorizationUrl: signIn.url }
+      : { status: 'connecting', connectorId: row.id };
   }
 
   /**
@@ -5652,6 +6238,136 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
   }
+  /**
+   * The sole legal lane mutation: one human-authored command may promote one
+   * repository Room's no-code corner. The command transaction is the proof
+   * that the agent did not decide to acquire a checkout on its own.
+   */
+  private async upgradeCornerLane(cornerId: string, agentId: string) {
+    const command = this.authorizedCommand;
+    if (!this.commandTransaction || !command)
+      throw new Error('corner lane upgrade requires an active human request');
+    const requester = (
+      await this.database.query<{ kind: string; text: string }>(
+        `SELECT identity.kind,message.text
+         FROM messages message JOIN identities identity ON identity.id=message.author_id
+         WHERE message.id=$1 AND message.room_id=$2`,
+        [command.source_message_id, cornerId],
+      )
+    ).rows[0];
+    if (requester?.kind !== 'human')
+      throw new Error('corner lane upgrade requires an explicit human request in this corner');
+
+    const target = (
+      await this.database.query<{
+        lane: string;
+        repository_key: string | null;
+        repository_remote: string | null;
+        repository_resolution: string;
+      }>(
+        `SELECT fact.lane,parent.repository_key,parent.repository_remote,parent.repository_resolution
+         FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+         JOIN rooms parent ON parent.id=corner.parent_id
+         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+         FOR UPDATE OF fact,corner,parent`,
+        [cornerId],
+      )
+    ).rows[0];
+    if (!target) throw new Error('corner not found');
+    if (target.lane !== 'no_code')
+      throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
+    if (
+      target.repository_resolution !== 'repository' ||
+      !target.repository_key ||
+      !target.repository_remote
+    )
+      throw new Error('corner lane upgrade requires a repository-backed parent Room');
+
+    await this.database.query(
+      `UPDATE corner_facts
+       SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
+       WHERE corner_id=$1 AND lane='no_code'`,
+      [cornerId, agentId],
+    );
+    // A repository corner works from a brief. This one already existed as
+    // chat, so its discussion so far is what the brief has to carry, written
+    // by the server rather than the agent whose work it authorizes. A corner
+    // that already holds revisions keeps them: they are already its authority.
+    const briefed = await this.database.query(
+      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`,
+      [cornerId],
+    );
+    if (!briefed.rowCount) {
+      await ensureSystemIdentity(this.database);
+      const draft = await composeCornerUpgradeBrief(this.database, cornerId, {
+        sourceMessageId: command.source_message_id,
+        snapshot: requester.text,
+      });
+      const authority = await resolveCornerBriefApproval(
+        this.database,
+        [cornerId],
+        draft,
+        [],
+        command.source_message_id,
+      );
+      await this.database.query(
+        `INSERT INTO corner_brief_revisions(
+           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+           brief_references,approval_basis,revision_hash,author_id,
+           source_room_id,source_message_id,attachments
+         ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+        [
+          cornerId,
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.intentVerbatim),
+          draft.buildSpec.trim(),
+          JSON.stringify(draft.criteria),
+          JSON.stringify(authority.approvalBasis),
+          authority.revisionHash,
+          SYSTEM_IDENTITY_ID,
+          authority.sourceRoomId,
+          command.source_message_id,
+        ],
+      );
+    }
+    const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
+    const resumed = await createAgentCommand(this.database, {
+      roomId: cornerId,
+      agentId,
+      sourceMessageId: command.source_message_id,
+      turnRequestId: laneRequestId,
+      action: 'resume',
+      reason: 'corner_lane_upgrade',
+      parent: command,
+      retainDepth: true,
+    });
+    if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
+    // `agent_commands` is unique on (room,message,agent,action), so a request
+    // that was ITSELF a resume returns its own already-claimed row here. Then
+    // completing `command.id` below would consume the very re-delivery it just
+    // created and the human's ask would vanish. Re-arm whatever row came back.
+    await this.database.query(
+      `UPDATE agent_commands SET
+         state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
+         completed_at=NULL,turn_request_id=$2,reason='corner_lane_upgrade'
+       WHERE id=$1 AND state<>'pending'`,
+      [resumed.id, laneRequestId],
+    );
+    if (resumed.id !== command.id)
+      await this.database.query(
+        `UPDATE agent_commands SET state='complete',completed_at=now()
+         WHERE id=$1 AND state='claimed'`,
+        [command.id],
+      );
+    await this.database.query(
+      `UPDATE agent_turns SET status='complete',created_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+      [cornerId, agentId, command.turn_request_id],
+    );
+    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
+    return { cornerId, lane: 'code' as const };
+  }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (
       await this.database.query<{ workspace_id: string }>(
@@ -5914,6 +6630,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   failInstitutionalMemoryJob: true,
   getInstitutionalContext: true,
   proposeInstitutionalMemory: true,
+  searchInstitutionalHistory: true,
+  loadWorkspaceSkill: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,
@@ -5978,6 +6696,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getComposioTools: true,
   executeComposioTool: true,
   getGoogleOAuthGrant: true,
+  beginRegistryMcpOAuth: true,
+  claimRegistryMcpOAuthCode: true,
   installConnector: true,
   postConnectorStatus: true,
   postConnectorVault: true,
@@ -6003,8 +6723,11 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   authorizeHostCall: true,
   listTurnAgentGrants: true,
   readAgentWorkbench: true,
+  searchMcpRegistry: true,
+  connectMcpServer: true,
   offerConnector: true,
   createCorner: true,
+  upgradeCornerLane: true,
   archiveCorner: true,
   ensureAgentMembership: true,
   getWalletToolState: true,

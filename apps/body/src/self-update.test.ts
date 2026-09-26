@@ -102,6 +102,21 @@ describe('bundle identity comparison', () => {
 // ---------------------------------------------------------------------------
 
 describe('manifest parsing', () => {
+  it('selects the Intel and Apple-silicon macOS manifest keys', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const arch = Object.getOwnPropertyDescriptor(process, 'arch');
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      Object.defineProperty(process, 'arch', { value: 'x64', configurable: true });
+      expect(hostPlatformKey()).toBe('darwin-x64');
+      Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true });
+      expect(hostPlatformKey()).toBe('darwin-arm64');
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+      if (arch) Object.defineProperty(process, 'arch', arch);
+    }
+  });
+
   it('maps the published shape onto the internal one (top-level or per-bundle identity)', () => {
     const parsed = parseUpdateManifest(
       JSON.stringify({

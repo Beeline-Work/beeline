@@ -183,6 +183,7 @@ describe('Room row attention reason', () => {
   it('prefers an approval and names its actor', () => {
     expect(
       roomRowAttentionReason({
+        unread: false,
         agentState: 'needs-you',
         attentionReason: { kind: 'approval', actor: 'Hoots' },
       }),
@@ -192,14 +193,40 @@ describe('Room row attention reason', () => {
   it('uses only a server-resolved mention fact', () => {
     expect(
       roomRowAttentionReason({
+        unread: true,
         latestMessage: { id: 'message', text: 'hello', createdAt: 1, author, mentionsViewer: true },
       }),
     ).toBe('mention · @chloropine');
     expect(
       roomRowAttentionReason({
+        unread: true,
         latestMessage: { id: 'message', text: '@viewer as prose', createdAt: 1, author },
       }),
     ).toBeNull();
+  });
+
+  it('drops a mention once the viewer has read it', () => {
+    const mention = {
+      id: 'message',
+      text: '@viewer the avatar is saved',
+      createdAt: 1,
+      author,
+      mentionsViewer: true as const,
+    };
+    expect(roomRowAttentionReason({ unread: true, latestMessage: mention })).toBe(
+      'mention · @chloropine',
+    );
+    expect(roomRowAttentionReason({ unread: false, latestMessage: mention })).toBeNull();
+  });
+
+  it('keeps an approval whatever the read state', () => {
+    expect(
+      roomRowAttentionReason({
+        unread: false,
+        agentState: 'needs-you',
+        attentionReason: { kind: 'approval', actor: 'Hoots' },
+      }),
+    ).toBe('approval · Hoots');
   });
 });
 
@@ -994,6 +1021,22 @@ describe('roomRowNeedsAttention — the one brass square', () => {
 
   it('never hides unread behind a working agent', () => {
     expect(roomRowNeedsAttention({ unread: true, agentState: 'working' })).toBe(true);
+  });
+
+  it('lights for an unread mention and goes dark once it is read', () => {
+    const latestMessage = {
+      id: 'message',
+      text: '@viewer the avatar is saved',
+      createdAt: 1,
+      author: { pubkey: 'speedy', kind: 'agent' as const, name: 'Speedy', handle: '@speedy' },
+      mentionsViewer: true as const,
+    };
+    expect(roomRowNeedsAttention({ unread: true, latestMessage })).toBe(true);
+    expect(roomRowNeedsAttention({ unread: false, latestMessage })).toBe(false);
+  });
+
+  it('keeps a corner waiting on a human lit after the Room is read', () => {
+    expect(roomRowNeedsAttention({ unread: false, agentState: 'needs-you' })).toBe(true);
   });
 });
 

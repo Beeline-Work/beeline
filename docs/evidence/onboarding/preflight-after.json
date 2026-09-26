@@ -1,0 +1,12 @@
+{
+  "workspace": null,
+  "marker": {
+    "completed_at": "2026-09-26T03:40:29.909Z",
+    "detail": {
+      "status": "retired",
+      "members": 3,
+      "greeterAgentId": "7639006208b84bee614ca685a026961cde5655e16bcdc770d814286f26bf268d",
+      "welcomeOnlyPeople": 1
+    }
+  }
+}

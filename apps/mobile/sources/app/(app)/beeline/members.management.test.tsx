@@ -55,7 +55,11 @@ const client = vi.hoisted(() => ({
   }),
   waitUntilMemberRole: vi.fn(async () => undefined),
   setAgentModelConfig: vi.fn(async (_workspaceId: string, _pubkey: string, input: any) => {
-    state.agent = { ...state.agent, selected: { ...state.agent.selected, ...input } };
+    state.agent = {
+      ...state.agent,
+      selected: { ...state.agent.selected, ...input },
+      ...(typeof input.fastMode === 'boolean' ? { fastMode: input.fastMode } : {}),
+    };
   }),
   refreshAgentModelCatalog: vi.fn(async () => {
     const model = state.agent.selected?.model ?? 'sonnet';
@@ -329,6 +333,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 import MembersScreen from './members';
 import { router } from 'expo-router';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { AGENT_MODEL_PICKER_VISIBLE_ROWS } from '@/buzz/agent-model-picker';
 
 /**
  * The disclosure mark is a drawn shape, so it is not part of a row's copy any
@@ -481,8 +486,8 @@ beforeEach(() => {
         requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
         decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
         roomId: '22222222-2222-4222-8222-222222222222',
-        createdAt: 1,
-        decidedAt: 2,
+        createdAt: 1_756_900_000,
+        decidedAt: 1_756_900_060,
         auto: false,
         agent: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
       },
@@ -734,12 +739,40 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'person-role-editor' })).toHaveLength(0);
   });
 
-  it('shows the profiled member grants as a read-only Settings list', async () => {
+  it('shows the profiled member grants as a read-only ledger row that discloses its detail', async () => {
+    state.workspace = {
+      ...state.workspace,
+      managerSettings: {
+        visibility: 'invite-only',
+        rooms: [
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            name: 'ship-the-slab',
+            visibility: 'public',
+            createdAt: 1,
+          },
+        ],
+      },
+    };
     const renderer = await personProfile();
-    const grant = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
-    expect(grant.props.title).toBe('beeline-work/beeline');
-    expect(grant.props.description).toBe('@clara · repository · approved');
-    expect(grant.props.onPress).toBeUndefined();
+    const head = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
+    expect(head.props.title).toBe('beeline-work/beeline');
+    // The agent's stated reason sits on its own line, then the provenance line.
+    expect(head.props.description).toBe('ship the profile pass');
+    expect(head.props.descriptionDetail).toContain('approved by Viewer,');
+    expect(head.props.descriptionDetail).toContain('· standing');
+    // A disclosure, never a decision: nothing is written from this row.
+    expect(
+      renderer.root.findAllByProps({ testID: 'member-grant-member-grant-details' }),
+    ).toHaveLength(0);
+    await press(renderer, 'member-grant-member-grant');
+    const detail = renderer.root.findByProps({ testID: 'member-grant-member-grant-details' });
+    const lines = detail
+      .findAllByType('Text' as any)
+      .map((node: any) => String(node.props.children));
+    expect(lines).toContain('Requested by Builder');
+    expect(lines).toContain('Room ship-the-slab');
+    expect(phoneOperation).not.toHaveBeenCalled();
   });
 
   it('keeps peers and owners outside admin role and ban authority', async () => {
@@ -838,6 +871,12 @@ describe('Members workspace management', () => {
     );
 
     await press(renderer, 'model-axis-model');
+    // However long the catalog, the open list scrolls inside five rows.
+    const options = renderer.root.findByProps({ testID: 'model-options-model' });
+    expect(options.props.nestedScrollEnabled).toBe(true);
+    expect(options.props.style).toEqual(
+      expect.objectContaining({ maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 }),
+    );
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
     });
@@ -853,6 +892,30 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
+  });
+
+  it('offers Fast mode only to the owner when the live catalog advertises it', async () => {
+    state.agent.catalog.push({
+      id: 'fast-mode',
+      category: 'model_config',
+      currentValue: 'off',
+      options: [{ id: 'off' }, { id: 'on' }],
+    });
+    state.agent.fastMode = false;
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: 'fast-mode-setting' })).toBeDefined();
+    await press(renderer, 'fast-mode-on');
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: true });
+    await press(renderer, 'fast-mode-off');
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: false });
+    state.agent = {
+      ...state.agent,
+      catalog: state.agent.catalog.filter((axis: any) => axis.id !== 'fast-mode'),
+    };
+    const unsupported = await render();
+    await openAgentManagement(unsupported);
+    expect(unsupported.root.findAllByProps({ testID: 'fast-mode-setting' })).toHaveLength(0);
   });
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {
@@ -1297,7 +1360,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
 
-  it("offers an admin only the ban affordance for another owner's agent", async () => {
+  it("offers an admin only Remove from Workspace for another owner's agent", async () => {
     state.workspace = baseWorkspace('admin');
     state.agent = {
       ...baseAgent(),
@@ -1323,9 +1386,20 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('clara');
-    const ban = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(ban.props.accessibilityLabel).toBe('Ban agent');
-    expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
+    // An agent is never banned: its owner could pair it back as a new agent.
+    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
+    const remove = renderer.root.findByProps({ testID: 'remove-agent' });
+    expect(remove.props.accessibilityLabel).toBe('Remove from Workspace');
+    expect(remove.findAllByType('Text')[0].props.children).toBe('Remove from Workspace');
+
+    await press(renderer, 'remove-agent');
+    expect(modal.confirm).toHaveBeenCalledWith('Remove Clara?', expect.any(String), {
+      cancelText: 'Cancel',
+      confirmText: 'Remove agent',
+      destructive: true,
+    });
+    expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
+    expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
   });
 
   it('lets the owner flip yolo and shows who set it', async () => {
@@ -1451,9 +1525,13 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('viewer');
+    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(control.props.accessibilityLabel).toBe('Remove agent');
-    expect(control.findAllByType('Text')[0].props.children).toBe('Remove');
+    expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
+    const word = control.findAllByType('Text')[0];
+    expect(word.props.children).toBe('Remove from Workspace');
+    // One full-width destructive button, its words centred like a button.
+    expect(word.props.style).toEqual(expect.objectContaining({ textAlign: 'center' }));
 
     await press(renderer, 'remove-agent');
 

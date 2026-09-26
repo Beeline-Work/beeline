@@ -237,6 +237,9 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['setMessageBookmark']['input']>().toHaveProperty('bookmarked');
     expectTypeOf<PhoneOperationMap['deleteRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['listMessageBookmarks']['output']>().toHaveProperty('bookmarks');
+    expectTypeOf<PhoneOperationMap['readNeedsYou']['output']>().toHaveProperty('items');
+    expectTypeOf<PhoneOperationMap['countNeedsYou']['output']>().toHaveProperty('count');
+    expectTypeOf<PhoneOperationMap['clearNeedsYou']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
     expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');
@@ -352,6 +355,31 @@ describe('phone contract', () => {
     expect(
       readInviteView({ ...invite, joinedWorkspaceId: false })?.joinedWorkspaceId,
     ).toBeUndefined();
+  });
+
+  it('reads the inviter and Workspace size on invite previews, dropping unreadable parts', () => {
+    const invite = { name: 'Builders', expiresAt: 2_000_000_000 };
+    expect(
+      readInviteView({
+        ...invite,
+        inviter: { name: 'Mara', handle: 'mara', face: 'fox', role: 'owner' },
+        memberCount: 8,
+        agentCount: 4,
+      }),
+    ).toEqual({
+      ...invite,
+      inviter: { name: 'Mara', handle: 'mara', face: 'fox', role: 'owner' },
+      memberCount: 8,
+      agentCount: 4,
+    });
+    expect(
+      readInviteView({
+        ...invite,
+        inviter: { name: 'Mara', role: 'emperor', handle: 7 },
+        memberCount: 'many',
+      }),
+    ).toEqual({ ...invite, inviter: { name: 'Mara' } });
+    expect(readInviteView({ ...invite, inviter: { handle: 'mara' } })).toEqual(invite);
   });
 
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {

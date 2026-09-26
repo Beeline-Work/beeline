@@ -2,7 +2,6 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash, verifierFromEnvironment } from './auth.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -84,7 +83,7 @@ describe('opaque token ceremony', () => {
     await expect(auth.authenticateDaemon('cached-token')).resolves.toBeNull();
     expect(query).toHaveBeenCalledTimes(3);
   });
-  it('preserves an imported legacy identity and adds Welcome on first monolith sign-in', async () => {
+  it('preserves an imported legacy identity and lands it in no Workspace on first monolith sign-in', async () => {
     const legacy = 'a'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Legacy')`, [legacy]);
     await db.query(
@@ -95,14 +94,11 @@ describe('opaque token ceremony', () => {
     const tokens = await auth.exchangeGitHubOidc('proof');
     expect(tokens.identityId).toBe(legacy);
     expect(await auth.authenticatePhone(tokens.accessToken)).toBe(legacy);
-    const memberships = await db.query<{ name: string; role: string }>(
-      `SELECT w.name,m.role FROM memberships m JOIN workspaces w ON w.id=m.workspace_id
-       WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`,
-      [legacy],
-    );
-    expect(memberships.rows).toEqual([{ name: 'Beeline Welcome', role: 'member' }]);
+    expect(
+      (await db.query(`SELECT 1 FROM memberships WHERE identity_id=$1`, [legacy])).rowCount,
+    ).toBe(0);
   });
-  it('preserves existing Workspace ownership while adding the shared Welcome membership', async () => {
+  it('preserves existing Workspace ownership and adds no shared Welcome membership', async () => {
     const captain = 'c'.repeat(64);
     const tubingCrew = '11111111-1111-4111-8111-111111111111';
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [captain]);
@@ -125,141 +121,55 @@ describe('opaque token ceremony', () => {
 
     await auth.exchangeGitHubOidc('proof');
 
-    const workspaces = await db.query<{ id: string; name: string }>(
-      `SELECT id,name FROM workspaces ORDER BY id`,
-    );
-    expect(workspaces.rows).toEqual([
+    expect((await db.query(`SELECT id,name FROM workspaces ORDER BY id`)).rows).toEqual([
       { id: tubingCrew, name: 'Tubing Crew' },
-      { id: 'bee11e00-0000-4000-8000-000000000001', name: 'Beeline Welcome' },
     ]);
-    const memberships = await db.query<{
-      workspace_id: string;
-      identity_id: string;
-      role: string;
-    }>(
-      `SELECT workspace_id,identity_id,role FROM memberships
-       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id`,
-      [captain],
-    );
-    expect(memberships.rows).toEqual([
-      { workspace_id: tubingCrew, identity_id: captain, role: 'owner' },
-      {
-        workspace_id: 'bee11e00-0000-4000-8000-000000000001',
-        identity_id: captain,
-        role: 'member',
-      },
-    ]);
+    expect(
+      (
+        await db.query(
+          `SELECT workspace_id,identity_id,role FROM memberships
+           WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id`,
+          [captain],
+        )
+      ).rows,
+    ).toEqual([{ workspace_id: tubingCrew, identity_id: captain, role: 'owner' }]);
   });
-  it('adds each newly created identity to the one shared Beeline Welcome workspace', async () => {
-    const firstAuth = new TokenAuth(db, async () => ({
+  it('creates no Workspace or membership for a brand-new identity', async () => {
+    const auth = new TokenAuth(db, async () => ({
       subject: 'first-sign-in',
       login: 'first',
       name: 'First',
     }));
-    const secondAuth = new TokenAuth(db, async () => ({
-      subject: 'second-sign-in',
-      login: 'second',
-      name: 'Second',
-    }));
-
-    const first = await firstAuth.exchangeGitHubOidc('proof');
-    await firstAuth.exchangeGitHubOidc('proof-again');
-    const second = await secondAuth.exchangeGitHubOidc('proof');
-
-    const workspaces = await db.query<{ id: string; name: string }>(
-      `SELECT id,name FROM workspaces`,
-    );
-    expect(workspaces.rows).toEqual([
-      { id: 'bee11e00-0000-4000-8000-000000000001', name: 'Beeline Welcome' },
-    ]);
-    const memberships = await db.query<{ identity_id: string; role: string }>(
-      `SELECT identity_id,role FROM memberships WHERE room_id IS NULL ORDER BY identity_id`,
-    );
-    expect(memberships.rows).toEqual(
-      [first.identityId, second.identityId]
-        .sort()
-        .map((identity_id) => ({ identity_id, role: 'member' })),
-    );
+    const first = await auth.exchangeGitHubOidc('proof');
+    await auth.exchangeGitHubOidc('proof-again');
+    expect((await db.query(`SELECT 1 FROM workspaces`)).rowCount).toBe(0);
+    expect(
+      (await db.query(`SELECT 1 FROM memberships WHERE identity_id=$1`, [first.identityId]))
+        .rowCount,
+    ).toBe(0);
   });
-  it('joins new sign-ins to existing Welcome Rooms with one @system DM note and one push event', async () => {
+  it('never refills a Welcome Workspace that still exists, and migrate never reseeds it', async () => {
     const welcomeId = 'bee11e00-0000-4000-8000-000000000001';
-    const roomId = '11111111-1111-4111-8111-111111111111';
-    const firstAuth = new TokenAuth(db, async () => ({
-      subject: 'welcome-first',
-      login: 'first',
-      name: 'First',
-    }));
-    const first = await firstAuth.exchangeGitHubOidc('proof');
+    const roomId = 'bee11e00-0000-4000-8000-000000000002';
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [welcomeId]);
     await db.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Welcome Room')`,
-      [roomId, welcomeId, first.identityId],
+      `INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'welcome','public')`,
+      [roomId, welcomeId],
     );
-    await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [welcomeId, roomId, first.identityId],
-    );
-    await db.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('welcome-device-token-12345678901234567890',$1,'android','physical')`,
-      [first.identityId],
-    );
-    const secondAuth = new TokenAuth(db, async () => ({
+    const auth = new TokenAuth(db, async () => ({
       subject: 'welcome-second',
       login: 'second',
       name: 'Second',
     }));
-
-    const second = await secondAuth.exchangeGitHubOidc('proof');
-
+    const second = await auth.exchangeGitHubOidc('proof');
+    await migrate(db);
     expect(
-      (
-        await db.query(
-          `SELECT 1 FROM memberships
-           WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-          [roomId, second.identityId],
-        )
-      ).rowCount,
-    ).toBe(1);
-    expect(
-      (
-        await db.query<{ text: string; presentation: string }>(
-          `SELECT text,presentation FROM messages
-           WHERE room_id=$1 AND card_type='member-joined'`,
-          [roomId],
-        )
-      ).rows,
-    ).toEqual([]);
-    expect(
-      (
-        await db.query<{ text: string; presentation: string }>(
-          `SELECT message.text,message.presentation FROM messages message
-           JOIN rooms room ON room.id=message.room_id
-           WHERE room.workspace_id=$1
-             AND room.direct_participants @> jsonb_build_array($2::text,$3::text)
-             AND message.card_type='workspace-member-joined'`,
-          [welcomeId, first.identityId, SYSTEM_IDENTITY_ID],
-        )
-      ).rows,
-    ).toEqual([{ text: '@second joined', presentation: 'system' }]);
-    expect(
-      (
-        await db.query(
-          `SELECT 1 FROM memberships
-           WHERE room_id=$1 AND identity_id=$2 AND invited_by IS NOT NULL`,
-          [roomId, second.identityId],
-        )
-      ).rowCount,
+      (await db.query(`SELECT 1 FROM memberships WHERE identity_id=$1`, [second.identityId]))
+        .rowCount,
     ).toBe(0);
-    expect(
-      (
-        await db.query(
-          `SELECT 1 FROM workspace_join_notification_devices device
-           JOIN workspace_join_notifications notification ON notification.id=device.notification_id
-           WHERE notification.joining_identity_id=$1`,
-          [second.identityId],
-        )
-      ).rowCount,
-    ).toBe(1);
+    await db.query(`DELETE FROM workspaces WHERE id=$1`, [welcomeId]);
+    await migrate(db);
+    expect((await db.query(`SELECT 1 FROM workspaces WHERE id=$1`, [welcomeId])).rowCount).toBe(0);
   });
   it('redeems only the one-use auth ticket and receives no GitHub access token', async () => {
     const request = vi.fn(async (_url: string, init?: RequestInit) => {

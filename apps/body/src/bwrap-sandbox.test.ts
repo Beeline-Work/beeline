@@ -29,9 +29,12 @@ import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import {
+  BUBBLEWRAP_INSTALL_FIX,
+  BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER,
   buildBwrapArgv,
   credentialMaskPaths,
   detectBwrapSandbox,
+  ensureBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
   sandboxMountPlan,
@@ -579,6 +582,575 @@ describe('feature detection falls back rather than failing the daemon', () => {
         env: { PATH: '/nonexistent', BUZZY_BODY_SANDBOX: 'bwrap' },
       }).advisory,
     ).toMatch(/UNAVAILABLE/);
+  });
+
+  /**
+   * A Room shell is approved only inside this sandbox, so a host that is simply
+   * missing the package is worth one install attempt rather than a helper that
+   * quietly has no shell. Detection after the attempt is the verdict, never the
+   * installer's own exit code.
+   */
+  describe('bubblewrap on first need', () => {
+    const missing = { advisory: 'UNAVAILABLE: bwrap (bubblewrap) is not on PATH' };
+    const usable = { path: '/usr/bin/bwrap', advisory: 'ENABLED' };
+
+    /**
+     * apt losing the lists lock to another apt process, verbatim: three lines
+     * whose LAST one never says "could not get lock", which is why the verdict is
+     * read from the whole output.
+     */
+    const APT_LISTS_LOCK_HELD = [
+      'E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4711 (apt-get)',
+      'N: Be aware that removing the lock file is not a solution and may break your system.',
+      'E: Unable to lock directory /var/lib/apt/lists/',
+    ].join('\n');
+
+    /**
+     * Hermetic: a PATH holding an `apt-get` and no `bwrap`, so the verdict does
+     * not depend on what this host happens to have installed. The runner is
+     * always stubbed, so nothing on this PATH is ever executed.
+     */
+    function hostPath(executables: string[]): {
+      env: NodeJS.ProcessEnv;
+      dir: string;
+      install: (name: string) => void;
+      cleanup: () => void;
+    } {
+      const dir = mkdtempSync(resolve(tmpdir(), 'beeline-bwrap-host-'));
+      const install = (name: string) =>
+        writeFileSync(resolve(dir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      for (const name of executables) install(name);
+      return {
+        env: { PATH: dir, BEELINE_HARNESS_PATH_AUGMENT: '0' },
+        dir,
+        install,
+        cleanup: () => rmSync(dir, { recursive: true, force: true }),
+      };
+    }
+
+    /** The helper's own runtime directory, where the failure marker lives. */
+    function stateDir(): { path: string; markedAt: () => number | undefined; cleanup: () => void } {
+      const dir = mkdtempSync(resolve(tmpdir(), 'beeline-bwrap-state-'));
+      return {
+        path: dir,
+        markedAt: () => {
+          try {
+            return Number.parseInt(
+              readFileSync(resolve(dir, 'bubblewrap-install-failed'), 'utf8').trim(),
+              10,
+            );
+          } catch {
+            return undefined;
+          }
+        },
+        cleanup: () => rmSync(dir, { recursive: true, force: true }),
+      };
+    }
+
+    it('refreshes the package list, installs, then re-runs the real self-test', async () => {
+      const host = hostPath(['apt-get']);
+      try {
+        const commands: string[][] = [];
+        let detections = 0;
+        let extended = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          beforeInstall: () => {
+            extended += 1;
+          },
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
+          run: async (command, args) => {
+            commands.push([command, ...args]);
+            return { code: 0, output: '' };
+          },
+        });
+        // A stale cache answers "Unable to locate package" on every start, so
+        // the refresh is part of the attempt, not an optimisation.
+        expect(commands).toEqual([
+          ['sudo', '-n', 'apt-get', 'update'],
+          ['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap'],
+        ]);
+        // The caller owns the deadline this spend comes out of, and pays only
+        // when a package command really runs.
+        expect(extended).toBe(1);
+        expect(detections).toBe(2);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(result.shellDetail).toBeUndefined();
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    /**
+     * The runner reports a SIGTERM at the timeout and a maxBuffer overflow as
+     * failures whatever dpkg actually did, so a completed install must not be
+     * thrown away: detection always runs again and its verdict wins.
+     */
+    it('accepts an install the runner reported as failed when bwrap now works', async () => {
+      const host = hostPath(['apt-get']);
+      try {
+        let detections = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
+          run: async (command, args) =>
+            args.includes('install')
+              ? { code: null, output: 'Command failed: killed' }
+              : { code: 0, output: '' },
+        });
+        expect(detections).toBe(2);
+        expect(result.path).toBe('/usr/bin/bwrap');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    /**
+     * An install that exits 0 leaves two different states, and the sentence the
+     * model is told to relay into a Room has to name the one that happened.
+     */
+    it('names the reason the install left behind, not always a failed self-test', async () => {
+      const absent = hostPath(['apt-get']);
+      try {
+        const result = await ensureBwrapSandbox({
+          env: absent.env,
+          platform: 'linux',
+          detect: () => missing,
+          run: async () => ({ code: 0, output: '' }),
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('bubblewrap is not installed');
+        expect(result.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX);
+      } finally {
+        absent.cleanup();
+      }
+
+      const landed = hostPath(['apt-get']);
+      try {
+        const result = await ensureBwrapSandbox({
+          env: landed.env,
+          platform: 'linux',
+          detect: () => ({ advisory: 'UNAVAILABLE: /usr/bin/bwrap self-test failed (exit 1)' }),
+          run: async (command, args) => {
+            if (args.includes('install')) landed.install('bwrap');
+            return { code: 0, output: '' };
+          },
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('failed its start-up self-test');
+      } finally {
+        landed.cleanup();
+      }
+    });
+
+    it('reports the failure and the one-line fix when it cannot install', async () => {
+      const host = hostPath(['apt-get']);
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          detect: () => missing,
+          run: async (command, args) =>
+            args.includes('install')
+              ? { code: 1, output: 'sudo: a password is required' }
+              : { code: 0, output: '' },
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.advisory).toContain('sudo: a password is required');
+        expect(result.advisory).toContain(BUBBLEWRAP_INSTALL_FIX);
+        expect(result.advisory).toContain('A Room shell stays refused');
+        // The prompt sentence carries the fix and nothing the operator advisory
+        // says about this host: it is relayed into a Room.
+        expect(result.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX);
+        expect(result.shellDetail).not.toContain('sudo: a password is required');
+        expect(result.shellDetail).not.toContain('permission handler');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    /**
+     * One unreachable third-party repo exits `apt-get update` non-zero on a host
+     * where bubblewrap installs fine from the base archive, so the refresh is a
+     * courtesy and only the install's own result is the verdict.
+     */
+    it('installs anyway when the index refresh fails', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const commands: string[][] = [];
+        let detections = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
+          run: async (command, args) => {
+            commands.push([command, ...args]);
+            return args.includes('update')
+              ? { code: 100, output: 'E: Some index files failed to download' }
+              : { code: 0, output: '' };
+          },
+        });
+        expect(commands).toEqual([
+          ['sudo', '-n', 'apt-get', 'update'],
+          ['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap'],
+        ]);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(state.markedAt()).toBeUndefined();
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('arms the day-long skip on the install, never on the refresh', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 7_000,
+          detect: () => missing,
+          run: async (command, args) =>
+            args.includes('update')
+              ? { code: 100, output: 'E: Some index files failed to download' }
+              : { code: 100, output: 'E: Unable to locate package bubblewrap' },
+        });
+        expect(result.path).toBeUndefined();
+        // The reason a person reads is the install's, not the refresh's.
+        expect(result.advisory).toContain('Unable to locate package');
+        expect(result.advisory).not.toContain('index files');
+        expect(state.markedAt()).toBe(7_000);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('names an unsupported host instead of prescribing a command it cannot run', async () => {
+      const host = hostPath([]);
+      try {
+        let ran = false;
+        let extended = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          detect: () => missing,
+          beforeInstall: () => {
+            extended += 1;
+          },
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        // Nothing is going to run, so the caller is not asked for more deadline.
+        expect(extended).toBe(0);
+        expect(result.advisory).toContain('no apt-get');
+        // Naming the absent package manager and then prescribing it is the one
+        // thing this branch exists to avoid.
+        expect(result.advisory).toContain(BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER);
+        expect(result.advisory).not.toContain(BUBBLEWRAP_INSTALL_FIX);
+        expect(result.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER);
+        expect(result.shellDetail).not.toContain('apt-get');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    it('installs nothing when the operator turned the sandbox off', async () => {
+      const host = hostPath(['apt-get']);
+      try {
+        let ran = false;
+        const result = await ensureBwrapSandbox({
+          policy: 'off',
+          env: host.env,
+          platform: 'linux',
+          detect: () => ({ advisory: 'DISABLED by configuration (sandbox=off)' }),
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        expect(result.path).toBeUndefined();
+        expect(result.advisory).toContain('DISABLED by configuration');
+        expect(result.shellDetail).toContain('turned off by its operator');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    it('installs nothing when bwrap is present but failed its self-test', async () => {
+      const host = hostPath(['bwrap', 'apt-get']);
+      try {
+        let ran = false;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          detect: () => ({ advisory: 'UNAVAILABLE: self-test failed (exit 1)' }),
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        expect(result.advisory).toContain('self-test failed');
+        expect(result.advisory).not.toContain(BUBBLEWRAP_INSTALL_FIX);
+        expect(result.shellDetail).toContain('failed its start-up self-test');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    it('skips the install on a platform the package does not serve', async () => {
+      const host = hostPath(['apt-get']);
+      try {
+        let extended = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'darwin',
+          detect: () => missing,
+          beforeInstall: () => {
+            extended += 1;
+          },
+          run: async () => ({ code: 0, output: '' }),
+        });
+        expect(result.path).toBeUndefined();
+        expect(extended).toBe(0);
+        expect(result.advisory).toContain('Linux only');
+      } finally {
+        host.cleanup();
+      }
+    });
+
+    /**
+     * A host where bubblewrap is unobtainable would otherwise pay a full
+     * `apt-get update` + install before READY on every `Restart=always` bounce.
+     */
+    it('remembers a failed attempt for a day and skips the package commands', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const first = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000_000,
+          detect: () => missing,
+          run: async () => ({ code: 100, output: 'E: Unable to locate package bubblewrap' }),
+        });
+        expect(first.path).toBeUndefined();
+        expect(state.markedAt()).toBe(5_000_000);
+
+        let ran = false;
+        let extended = 0;
+        const second = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000_000 + 60 * 60_000,
+          beforeInstall: () => {
+            extended += 1;
+          },
+          detect: () => missing,
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        expect(extended).toBe(0);
+        expect(second.path).toBeUndefined();
+        expect(second.advisory).toContain('did not retry');
+        expect(second.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('retries once the remembered failure is a day old, and forgets it on success', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        writeFileSync(resolve(state.path, 'bubblewrap-install-failed'), '1000\n', 'utf8');
+        const commands: string[][] = [];
+        let detections = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 1000 + 25 * 60 * 60_000,
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
+          run: async (command, args) => {
+            commands.push([command, ...args]);
+            return { code: 0, output: '' };
+          },
+        });
+        expect(commands).toEqual([
+          ['sudo', '-n', 'apt-get', 'update'],
+          ['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap'],
+        ]);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(state.markedAt()).toBeUndefined();
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * The marker is consulted only AFTER detection, so an operator who installs
+     * the package by hand is not made to wait out somebody else's failure.
+     */
+    it('adopts a bwrap that appeared since the failure, marker or not', async () => {
+      const host = hostPath(['apt-get', 'bwrap']);
+      const state = stateDir();
+      try {
+        writeFileSync(resolve(state.path, 'bubblewrap-install-failed'), '9000\n', 'utf8');
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 9_001,
+          detect: () => usable,
+          run: async () => {
+            throw new Error('must not install');
+          },
+        });
+        expect(result.path).toBe('/usr/bin/bwrap');
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * A sibling helper that won the package-manager lock leaves a `bwrap` this
+     * one adopts on its next start, because detection runs before the marker is
+     * ever read — no waiting on a sibling, and no day-long lockout either.
+     */
+    it("adopts a sibling's install on the next start after losing the lock", async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const lost = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 4_000,
+          detect: () => missing,
+          run: async () => ({ code: 100, output: APT_LISTS_LOCK_HELD }),
+        });
+        expect(lost.path).toBeUndefined();
+
+        host.install('bwrap');
+        let ran = false;
+        const next = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000,
+          detect: () => usable,
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(next.path).toBe('/usr/bin/bwrap');
+        // No package command, and the earlier failure's marker had no say in it:
+        // detection runs before the marker is ever read.
+        expect(ran).toBe(false);
+        expect(state.markedAt()).toBe(4_000);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * An install that exits 0 without leaving `bwrap` on this unit's PATH is the
+     * one state the marker exists to bound: unmarked, it runs apt again before
+     * READY on every restart, forever.
+     */
+    it('remembers an install that exited 0 and left no bwrap behind', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 8_000,
+          detect: () => missing,
+          run: async () => ({ code: 0, output: '' }),
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('bubblewrap is not installed');
+        expect(state.markedAt()).toBe(8_000);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * A `bwrap` that landed and cannot unshare is not a missing package, so it
+     * keeps no marker: the cheap present-but-failed early return serves every
+     * later start without running apt at all.
+     */
+    it('keeps no marker when the installed bwrap fails its self-test', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 9_000,
+          detect: () => ({ advisory: 'UNAVAILABLE: /usr/bin/bwrap self-test failed (exit 1)' }),
+          run: async (command, args) => {
+            if (args.includes('install')) host.install('bwrap');
+            return { code: 0, output: '' };
+          },
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('failed its start-up self-test');
+        expect(state.markedAt()).toBeUndefined();
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('returns the detected sandbox untouched when the host already has one', async () => {
+      const result = await ensureBwrapSandbox({
+        detect: () => usable,
+        run: async () => {
+          throw new Error('must not install');
+        },
+      });
+      expect(result).toEqual(usable);
+    });
   });
 
   it('validates the persisted policy value', () => {

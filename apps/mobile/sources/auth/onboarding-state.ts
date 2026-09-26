@@ -190,7 +190,27 @@ export async function waitForAuthCallback(input: WaitForAuthCallbackInput): Prom
   return (await waitForAuthCallbackResult(input)).url;
 }
 
+/** React Native rejects an unanswerable fetch with a bare TypeError, not a typed error. */
+function isNetworkFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /network request failed|failed to fetch|load failed|networkerror/i.test(error.message)
+  );
+}
+
+/**
+ * The one no-connection notice. It names only the connection, never a bind or a
+ * proof, and nothing retries behind it: the person's own Try again is the retry.
+ */
+export const OFFLINE_NOTICE: OnboardingNotice = {
+  status: 'offline',
+  title: 'NO CONNECTION',
+  message: "You're offline. Connect to Wi-Fi or mobile data, then try again.",
+  retryable: true,
+};
+
 export function noticeForAuthError(error: unknown): OnboardingNotice {
+  if (isNetworkFailure(error)) return OFFLINE_NOTICE;
   const code = error instanceof OidcBindError ? error.code : 'unknown';
   const codeLabel = (code.replace(/[^a-z0-9_-]/gi, '_').slice(0, 40) || 'unknown').toUpperCase();
   const titleWithCode = (title: string): string => `${title} · ${codeLabel}`;
@@ -236,10 +256,13 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
       retryable: false,
     };
   }
+  if (code === 'offline' && !(error instanceof OidcBindError && error.status !== undefined)) {
+    return OFFLINE_NOTICE;
+  }
   if (code === 'offline' || (error instanceof OidcBindError && error.retryable)) {
     return {
-      status: code === 'offline' ? 'offline' : 'bind_retry',
-      title: titleWithCode(code === 'offline' ? 'OFFLINE' : 'BIND INTERRUPTED'),
+      status: 'bind_retry',
+      title: titleWithCode('BIND INTERRUPTED'),
       message:
         'The device key is ready but could not be bound. Check the connection and retry before the proof expires.',
       retryable: true,

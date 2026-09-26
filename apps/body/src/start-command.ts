@@ -12,6 +12,10 @@ import {
   selectRuntimeConfigPaths,
 } from './runtime.js';
 import { runUpdateCommand } from './self-update-cli.js';
+import {
+  installLaunchdAgentService,
+  installLaunchdTrustySquireBrokerService,
+} from './launchd.js';
 import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
 
 export type AgentStartStatus = 'started' | 'already-running' | 'failed';
@@ -107,6 +111,25 @@ async function startRuntime(
     }
     const pid = await installAgentService(runtime.agent.publicKey);
     report(`[beeline] agent daemon supervised by systemd (pid ${pid})`);
+    return { status: 'started', pid };
+  }
+  if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
+    try {
+      await installLaunchdTrustySquireBrokerService();
+    } catch (error) {
+      report(
+        `[beeline] trusty-squire host broker not installed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    const existingPid = await runtimeDaemonPid(configPath);
+    if (existingPid) {
+      report(`[beeline] agent already running (pid ${existingPid})`);
+      return { status: 'already-running', pid: existingPid };
+    }
+    const pid = await installLaunchdAgentService(runtime.agent.publicKey);
+    report(`[beeline] agent daemon supervised by launchd (pid ${pid})`);
     return { status: 'started', pid };
   }
   return startStoredRuntime(configPath, { report });

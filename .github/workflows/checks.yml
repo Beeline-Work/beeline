@@ -1,7 +1,9 @@
 # The consolidated PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and must stay stable: TYPECHECK, SHARED PACKAGE
-# TESTS, BODY SUITE, DEAD CODE, PUSH-GATEWAY SUITE, MOBILE SUITE,
+# TESTS, BODY SUITE, SERVER SUITE, SERVER INTEGRATION,
+# MAC HELPER ACCEPTANCE, DEAD CODE,
+# PUSH-GATEWAY SUITE, MOBILE SUITE,
 # MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
 # STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, APP LINK ASSOCIATIONS,
 # ACTIONLINT, Build auth container, Detect changes. A job `name:` IS a
@@ -11,10 +13,14 @@
 # suites prune by MODULE, not by guessing which tests import the file:
 #   apps/body            → BODY SUITE
 #   apps/push-gateway    → PUSH-GATEWAY SUITE
-#   apps/server          → PRODUCTION-CORPUS REPLAY
+#   apps/server          → SERVER SUITE + SERVER INTEGRATION + PRODUCTION-CORPUS REPLAY
 #   apps/mobile          → MOBILE SUITE + MOBILE-EXPORT REACHABILITY
 #   packages/**          → every path-filtered job (imported by every app)
 #   any path in no module → every path-filtered job (fail closed)
+# MAC HELPER ACCEPTANCE is the exception: it holds the repository's one
+# self-hosted Intel Mac, so it follows its own `macHelper` filter alone — the
+# macOS-specific sources, never run-everything. The Apple-silicon bundle is
+# proven by the release's own `helper_macos` leg, not by a PR gate.
 # A skipped required job uses a job-level `if:` so GitHub reports the check
 # as skipped-and-satisfied. Never put a required check behind a workflow-level
 # `on.pull_request.paths` filter: that omits the check entirely and the PR
@@ -25,7 +31,8 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables.
+# the tiny suite tables. SERVER INTEGRATION isolates the large PGlite-backed
+# integration file on a memory-capable runner; SERVER SUITE runs the rest.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -46,6 +53,9 @@ on:
           - shared-package-tests
           - dead-code
           - body-suite
+          - server-suite
+          - server-integration
+          - mac-helper-acceptance
           - push-gateway-suite
           - mobile-suite
           - mobile-export-reachability
@@ -70,6 +80,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       body: ${{ steps.decide.outputs.body }}
+      serverSuite: ${{ steps.decide.outputs.serverSuite }}
+      serverIntegration: ${{ steps.decide.outputs.serverIntegration }}
+      macHelper: ${{ steps.decide.outputs.macHelper }}
       pushGateway: ${{ steps.decide.outputs.pushGateway }}
       mobileSuite: ${{ steps.decide.outputs.mobileSuite }}
       mobileExportReachability: ${{ steps.decide.outputs.mobileExportReachability }}
@@ -104,6 +117,25 @@ jobs:
               - '!apps/mobile/**'
             bodyModule:
               - 'apps/body/**'
+            # Deliberately the macOS-specific sources only: this gate holds the
+            # repository's one Intel Mac, which the iOS store leg and the release's
+            # own darwin-x64 helper leg also need, so an ordinary apps/body or
+            # shared-package PR must not queue behind it.
+            macHelper:
+              - 'apps/body/src/launchd*'
+              - 'apps/body/src/squire-host.ts'
+              - 'apps/body/src/connector-squire.ts'
+              - 'apps/body/src/device-pairing.ts'
+              - 'apps/body/src/start-command.ts'
+              - 'apps/body/src/cli.ts'
+              - 'apps/body/src/self-update.ts'
+              - 'apps/body/src/managed-update.ts'
+              - 'scripts/build-beeline-bundle.mjs'
+              - 'scripts/verify-beeline-install.mjs'
+              - 'scripts/merge-beeline-bundles.mjs'
+              - 'relay-stack/web/install.sh'
+              - '.github/actions/daemon-leg/**'
+              - '.github/workflows/checks.yml'
             pushGatewayModule:
               - 'apps/push-gateway/**'
             serverModule:
@@ -165,6 +197,10 @@ jobs:
               - 'scripts/check-app-association-drift.mjs'
               - 'scripts/pages-site.mjs'
               - 'scripts/pages-site.test.mjs'
+              - 'scripts/merge-beeline-bundles.mjs'
+              - 'scripts/merge-beeline-bundles.test.mjs'
+              - 'scripts/verify-beeline-install.mjs'
+              - 'scripts/verify-beeline-install.test.mjs'
               - 'scripts/landing-animation.test.mjs'
               - 'scripts/pages-channel.mjs'
               - 'scripts/pages-channel.test.mjs'
@@ -216,6 +252,7 @@ jobs:
           PACKAGES: ${{ steps.filter.outputs.packages }}
           UNMAPPED: ${{ steps.filter.outputs.unmapped }}
           BODY_MODULE: ${{ steps.filter.outputs.bodyModule }}
+          MAC_HELPER: ${{ steps.filter.outputs.macHelper }}
           PUSH_GATEWAY_MODULE: ${{ steps.filter.outputs.pushGatewayModule }}
           SERVER_MODULE: ${{ steps.filter.outputs.serverModule }}
           MOBILE_MODULE: ${{ steps.filter.outputs.mobileModule }}
@@ -241,6 +278,9 @@ jobs:
             fi
           }
           set_out body "$BODY_MODULE"
+          set_out serverSuite "$SERVER_MODULE"
+          set_out serverIntegration "$SERVER_MODULE"
+          echo "macHelper=$MAC_HELPER" >> "$GITHUB_OUTPUT"
           set_out pushGateway "$PUSH_GATEWAY_MODULE"
           set_out mobileSuite "$MOBILE_MODULE"
           set_out mobileExportReachability "$MOBILE_MODULE"
@@ -398,6 +438,46 @@ jobs:
         working-directory: apps/body
         run: npx vitest run
 
+  mac-helper-acceptance:
+    name: MAC HELPER ACCEPTANCE
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.macHelper == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-helper-acceptance'))
+      )
+    runs-on: [self-hosted, macOS, X64, ios-builder]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Require the Intel runner
+        run: test "$(uname -m)" = x86_64
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Fresh-install the native Intel Mac bundle
+        run: npm run bundle:beeline -- --platform darwin-x64
+        env:
+          BEELINE_INSTALL_VERIFY_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Prove launchd crash, login-bootstrap, and terminal-exit behavior
+        working-directory: apps/body
+        run: BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd.test.ts src/launchd-acceptance.test.ts
+      - name: Prove pairing and a Room answer on macOS
+        working-directory: apps/body
+        env:
+          BEELINE_LAUNCHD_USER: '0'
+          BEELINE_ACCEPTANCE_INSTALL_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
+        run: npx vitest run src/daemon-api-client.integration.test.ts -t "takes an app grant through finish"
+      - name: Prove a Room answer and open_corner on macOS
+        working-directory: apps/body
+        env:
+          BEELINE_LAUNCHD_USER: '0'
+        run: npx vitest run src/fresh-room-discovery.integration.test.ts
+
   push-gateway-suite:
     name: PUSH-GATEWAY SUITE
     needs: changes
@@ -425,6 +505,58 @@ jobs:
       - name: Run the push-gateway suite
         working-directory: apps/push-gateway
         run: npx vitest run
+
+  server-suite:
+    name: SERVER SUITE
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Server tests import these workspaces from dist. The production corpus
+      # test has its own scaled-data gate below; Vitest discovers every other
+      # server test except the large integration file, which runs below.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      # This file asserts a synthetic 206 ms database delay stays under a
+      # 250 ms p95 wall-clock budget. Run it before the parallel PGlite suite
+      # so competing workers do not add scheduler latency to that contract.
+      - name: Run the claim latency budget alone
+        run: npm test -w @beeline/server -- --run src/agent-command.scaling.test.ts --maxWorkers=1 --minWorkers=1
+      - name: Run the server suite
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2
+
+  server-integration:
+    name: SERVER INTEGRATION
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
+      )
+    # This large PGlite file reached more than 15 GiB RSS in a local run;
+    # the standard hosted runner cannot hold it. The suite above stays hosted.
+    runs-on: [self-hosted, Linux, X64, beeline-prod-host]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Run the server integration contract
+        run: npm test -w @beeline/server -- --run src/integration.test.ts --maxWorkers=1 --minWorkers=1
 
   mobile-suite:
     name: MOBILE SUITE
@@ -734,8 +866,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      - name: Verify the committed app associations and Pages build
-        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs
+      - name: Verify the committed app associations, Pages build, and bundle merge
+        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs
       - name: Run the relay-front contract test
         run: npm test -w @beeline/relay-front -- --run src/invite-web.test.ts
 

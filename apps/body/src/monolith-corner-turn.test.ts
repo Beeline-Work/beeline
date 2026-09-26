@@ -182,8 +182,8 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])(
-    'does not start an autonomous harness while %s is pending',
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'] as const)(
+    'stops before the harness while %s is pending, without phrasing a reply of its own',
     async (gate) => {
       const agent = stored('11'.repeat(32), 'Bee');
       const execute = vi.fn(async (name: string) =>
@@ -218,9 +218,17 @@ describe('corner merge instructions', () => {
       expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
       expect(schedule).not.toHaveBeenCalled();
       expect(createAcpClient).not.toHaveBeenCalled();
+      // The server inscribes the owner wait as its own system line. The agent
+      // must post no reply at all, so a blocked reviewer turn is never phrased
+      // as the agent's own verdict text.
+      expect(execute).not.toHaveBeenCalledWith('postRoomMessage', expect.anything());
       expect(execute).toHaveBeenCalledWith(
         'postAgentTurnReceipt',
-        expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
+        expect.objectContaining({ status: 'complete' }),
+      );
+      expect(execute).not.toHaveBeenCalledWith(
+        'postAgentTurnReceipt',
+        expect.objectContaining({ completionKind: 'no-reply' }),
       );
       await scheduler.dispose();
     },

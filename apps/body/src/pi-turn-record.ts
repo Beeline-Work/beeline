@@ -67,6 +67,23 @@ export function summarizeProviderError(errorMessage: string): { reason: string; 
   return status === undefined ? { reason } : { reason, status };
 }
 
+/**
+ * The pi session file for one ACP session id, by pi-acp's own map or by pi's
+ * session layout. Exported because the turn's real token usage lives in the
+ * same file the turn's outcome does.
+ */
+export async function piSessionFilePath(
+  agentEnv: Record<string, string>,
+  sessionId: string,
+): Promise<string | undefined> {
+  const piDir = agentEnv.PI_CODING_AGENT_DIR;
+  if (!piDir || !sessionId) return undefined;
+  return (
+    (agentEnv.HOME ? await sessionFileFromMap(agentEnv.HOME, sessionId) : undefined) ??
+    (await sessionFileFromLayout(piDir, sessionId))
+  );
+}
+
 async function sessionFileFromMap(home: string, sessionId: string): Promise<string | undefined> {
   try {
     const raw = await readFile(resolve(home, '.pi', 'pi-acp', 'session-map.json'), 'utf8');
@@ -124,12 +141,7 @@ export async function readPiTurnRecord(input: {
   agentEnv: Record<string, string>;
   sessionId: string;
 }): Promise<PiTurnRecord | undefined> {
-  const piDir = input.agentEnv.PI_CODING_AGENT_DIR;
-  if (!piDir || !input.sessionId) return undefined;
-  const file =
-    (input.agentEnv.HOME
-      ? await sessionFileFromMap(input.agentEnv.HOME, input.sessionId)
-      : undefined) ?? (await sessionFileFromLayout(piDir, input.sessionId));
+  const file = await piSessionFilePath(input.agentEnv, input.sessionId);
   if (!file) return undefined;
   let raw: string;
   try {

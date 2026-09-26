@@ -21,6 +21,11 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
+import {
+  enqueueInstitutionalMemoryMergeReview,
+  recordInstitutionalCornerOutcome,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -215,6 +220,7 @@ export class GitHubOperations {
     clientSecret: string,
     private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
     private readonly onRoomChanged?: (roomId: string) => void,
+    private readonly institutionalMemory: InstitutionalMemoryShadowConfig = { enabled: false },
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -507,6 +513,29 @@ export class GitHubOperations {
       repositoryIds: [Number(row.repository_id)],
     });
     return { token: value.token, expiresAt: new Date(value.expiresAt).getTime() };
+  }
+
+  /**
+   * The installation token, repository, and default branch behind a corner or
+   * Room addressed by either id.
+   *
+   * A generated procedure's source Room is the CORNER it came out of, while an
+   * installation token is minted for the top-level Room only, so the lookup
+   * walks to the corner's parent — the same authority `roomToken` requires. It
+   * deliberately does not filter archived Rooms: a code-anchor check runs long
+   * after the corner that produced the procedure has been archived away.
+   */
+  async roomAnchorTarget(roomId: string) {
+    const parentId = (
+      await this.database.query<{ id: string }>(
+        `SELECT COALESCE(parent.id,own.id) id FROM rooms own
+         LEFT JOIN rooms parent ON parent.id=own.parent_id
+         WHERE own.id=$1`,
+        [roomId],
+      )
+    ).rows[0]?.id;
+    if (!parentId) throw new Error('GitHub repository installation not found');
+    return this.roomWorkflowTarget(parentId);
   }
 
   private async roomWorkflowTarget(roomId: string) {
@@ -1447,13 +1476,24 @@ export class GitHubOperations {
     patch: Partial<CornerLifecycleView>,
     database: SqlDatabase = this.database,
   ) {
-    const lifecycle = { ...(await this.lifecycle(cornerId, database)), ...patch };
+    const previous = await this.lifecycle(cornerId, database);
+    const lifecycle = { ...previous, ...patch };
     await database.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,
        command_check_state=CASE WHEN lifecycle->>'checks' IS DISTINCT FROM $2::jsonb->>'checks' THEN NULL ELSE command_check_state END,
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
+    // The outcome ledger records the TRANSITION, not the state: a corner that
+    // was already green and is re-read green did not reach green again, and a
+    // second row would move the measured cohort's clock for nothing.
+    if (patch.checks === 'passing' && previous.checks !== 'passing') {
+      await recordInstitutionalCornerOutcome(database, {
+        cornerId,
+        kind: 'ci_green',
+        detail: { checks: 'passing' },
+      });
+    }
   }
 
   private async systemNote(
@@ -1512,6 +1552,7 @@ export class GitHubOperations {
         )
       ).rows[0]?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
+      const observedChecks = currentLifecycle?.checks;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =
         currentPr ??
@@ -1564,7 +1605,7 @@ export class GitHubOperations {
         kind: 'merged',
         object: { text: pullRequest.title, url: pullRequest.url },
       };
-      await systemLine(database, {
+      const mergeNote = await systemLine(database, {
         id: hash(`beeline:${target.corner_id}:${mergeKey}`),
         roomId: target.corner_id,
         authorId: target.author_id,
@@ -1572,6 +1613,32 @@ export class GitHubOperations {
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
       });
+      const targetCommit = pullRequest.mergeCommitSha ?? pullRequest.headSha;
+      await recordInstitutionalCornerOutcome(database, {
+        cornerId: target.corner_id,
+        kind: 'merged',
+        detail: {
+          repository: pullRequest.repository,
+          ...(pullRequest.number !== undefined ? { pullRequestNumber: pullRequest.number } : {}),
+          ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
+        },
+      });
+      if (targetCommit) {
+        await enqueueInstitutionalMemoryMergeReview(database, {
+          cornerId: target.corner_id,
+          sourceMessageId: mergeNote.id,
+          repository: pullRequest.repository,
+          targetCommit,
+          pullRequestUrl: pullRequest.url,
+          pullRequestTitle: pullRequest.title,
+          objective: target.summary,
+          commits: pullRequest.commits,
+          files: pullRequest.files,
+          checks: observedChecks,
+          headSha: pullRequest.headSha ?? mergedPr?.headSha,
+          config: this.institutionalMemory,
+        });
+      }
       const summary = target.summary.trim() || pullRequest.title;
       // The merge summary card in the parent Room: a tap opens the pull request.
       await systemLine(database, {

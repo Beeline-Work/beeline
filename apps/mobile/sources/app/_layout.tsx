@@ -18,6 +18,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import { AppState, View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
+import { ProductTourProvider } from '@/components/buzz/tour/ProductTour';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
 import { useTrackScreens } from '@/track/useTrackScreens';
@@ -398,11 +399,13 @@ export default function RootLayout() {
               <ModalProvider>
                 <DesktopDeepLinkBridge />
                 <BrowserNavigationShortcuts />
-                <CommandPaletteProvider>
-                  <HorizontalSafeAreaWrapper>
-                    <SidebarNavigator />
-                  </HorizontalSafeAreaWrapper>
-                </CommandPaletteProvider>
+                <ProductTourProvider>
+                  <CommandPaletteProvider>
+                    <HorizontalSafeAreaWrapper>
+                      <SidebarNavigator />
+                    </HorizontalSafeAreaWrapper>
+                  </CommandPaletteProvider>
+                </ProductTourProvider>
               </ModalProvider>
               <UpdateReadyPrompt />
             </ThemeProvider>

@@ -21,7 +21,7 @@ const UPSTREAM_REF = process.env.BEELINE_BUZZ_REF ?? '07a3c768d619db31fee3f0590f
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const toolsRoot = resolve(repoRoot, '.beeline-tools');
 const outputRoot = resolve(repoRoot, 'relay-stack', 'web', 'dl');
-const supportedPlatforms = new Set(['linux-x64', 'darwin-arm64']);
+const supportedPlatforms = new Set(['linux-x64', 'darwin-arm64', 'darwin-x64']);
 
 function fail(message) {
   console.error(`build-beeline-bundle: ${message}`);
@@ -58,7 +58,9 @@ function parsePlatform() {
   const index = process.argv.indexOf('--platform');
   const platform = index >= 0 ? process.argv[index + 1] : hostPlatform();
   if (!platform || !supportedPlatforms.has(platform)) {
-    fail(`unsupported platform '${platform ?? ''}'; expected linux-x64 or darwin-arm64`);
+    fail(
+      `unsupported platform '${platform ?? ''}'; expected linux-x64, darwin-arm64, or darwin-x64`,
+    );
   }
   return platform;
 }
@@ -139,8 +141,11 @@ function assertBinaryPlatform(path, platform) {
   const valid =
     platform === 'linux-x64'
       ? description.includes('ELF 64-bit') && description.includes('x86-64')
-      : description.includes('Mach-O') &&
-        (description.includes('arm64') || description.includes('universal binary'));
+      : platform === 'darwin-arm64'
+        ? description.includes('Mach-O') &&
+          (description.includes('arm64') || description.includes('universal binary'))
+        : description.includes('Mach-O') &&
+          (description.includes('x86_64') || description.includes('universal binary'));
   if (!valid) fail(`${basename(path)} is not a ${platform} executable (${description})`);
 }
 

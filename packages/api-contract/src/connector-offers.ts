@@ -65,7 +65,8 @@ export function connectorOfferConsequence(
   approvedTools?: readonly string[],
 ): string {
   const clause = reason?.trim().replace(/[.]+$/u, '');
-  const boundary = kind === 'composio' && approvedTools?.length
+  const boundary =
+    kind === 'composio' && approvedTools?.length
     ? `${connectorOfferBoundary(kind)}; approved tools: ${approvedTools.join(', ')}`
     : connectorOfferBoundary(kind);
   if (clause) return `This changes your Workbench. Once it is added, I can ${clause} — ${boundary}`;
@@ -123,6 +124,8 @@ export function connectorPurpose(kind: ConnectorKind): string {
       return 'Read YouTube channel, video, and playlist data through the person’s own Google sign-in. Analytics (watch time, traffic, demographics) requires the channel owner account, not a manager.';
     case 'composio':
       return 'Link your own app accounts through Composio and let the helper run tools scoped to your connection; usage is recorded in Workbench.';
+    case 'registry-mcp':
+      return 'A pinned remote MCP server discovered through the official Registry; each call still uses the existing resource-owner authorization.';
   }
 }
 

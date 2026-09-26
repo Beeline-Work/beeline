@@ -13,11 +13,10 @@ const roomSessionSource = readFileSync(
 );
 
 describe('Chat-list swipe-left actions', () => {
-  it('offers destructive Leave for member Rooms and non-destructive Close for DMs', () => {
-    expect(source).toContain("const canLeaveRooms = chatList?.workspace.role === 'member'");
+  it('offers Leave for every human Room member and Close for DMs', () => {
     expect(source).toContain('!viewerIsAgent ? (');
     expect(source).toContain('testID={`chat-close-swipe-${item.room.id}`}');
-    expect(source).toContain('!item.directMessage && canLeaveRooms');
+    expect(source).toContain('!item.directMessage && (');
     expect(source).toContain('testID={`room-leave-action-${item.room.id}`}');
     expect(source).toContain('item.directMessage && (');
     expect(source).toContain('testID={`chat-close-action-${item.room.id}`}');
@@ -95,17 +94,14 @@ describe('Chat-list swipe-left actions', () => {
     );
   });
 
-  it('confirms "Leave #room?" with No/Yes before calling leaveRoom', () => {
+  it('uses the shared destructive confirmation before leaving', () => {
     const leavePath = source.slice(
       source.indexOf('const handleLeaveRoom'),
       source.indexOf('  useEffect(', source.indexOf('const handleLeaveRoom')),
     );
-    expect(leavePath).toContain('`Leave ${title}?`');
-    expect(leavePath).toContain("'Other members keep their access.'");
-    expect(leavePath).toContain("cancelText: 'No'");
-    expect(leavePath).toContain("confirmText: 'Yes'");
-    expect(leavePath).toContain('destructive: true');
-    expect(leavePath).toContain('transport.leaveRoom(item.room.id)');
+    expect(leavePath).toContain('leaveRoomWithConfirmation(');
+    expect(leavePath).toContain('item.leaveDeletesRoom === true,');
+    expect(leavePath).toContain('transport.leaveRoom(item.room.id, confirmDelete)');
     expect(leavePath).toContain('chatScheduler.current?.force()');
     expect(leavePath).not.toContain('transport.closeChat');
   });
@@ -115,13 +111,9 @@ describe('Chat-list swipe-left actions', () => {
     expect(source).toContain('Could not leave ${ROOM_LABEL}:');
   });
 
-  it('gives Workspace owners and admins a truthful cannot-leave action', () => {
-    expect(source).toContain('!item.directMessage && canManageWorkspace');
-    expect(source).toContain('testID={`room-leave-constraint-${item.room.id}`}');
-    expect(source).toContain('`Cannot leave ${title}`');
-    expect(source).toContain(
-      "'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.'",
-    );
+  it('never replaces the manager Leave action with a constraint', () => {
+    expect(source).not.toContain('room-leave-constraint-');
+    expect(source).not.toContain('explainRoomLeaveConstraint');
   });
 
   it('explicitly reopens a top-level chat when its Room surface is navigated to', () => {

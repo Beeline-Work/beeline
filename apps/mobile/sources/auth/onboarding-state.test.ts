@@ -10,13 +10,40 @@ describe('provider onboarding error states', () => {
     ['ticket_expired', 'token_expired', false],
     ['invalid_oidc_flow', 'token_expired', false],
     ['identity_conflict', 'link_conflict', false],
-    ['offline', 'offline', true],
     ['internal_error', 'bind_retry', true],
   ])('maps %s to explicit %s state', (code, status, retryable) => {
     const error = new OidcBindError(code, code, code === 'internal_error' ? 500 : undefined);
     const notice = noticeForAuthError(error);
     expect(notice).toMatchObject({ status, retryable });
     expect(notice.title).toContain(code.toUpperCase());
+  });
+
+  it.each([
+    [
+      'a typed offline error',
+      new OidcBindError('offline', 'Could not check GitHub sign-in completion'),
+    ],
+    ['a bare React Native fetch failure', new TypeError('Network request failed')],
+  ])('shows one no-connection notice for %s', (_label, error) => {
+    const notice = noticeForAuthError(error);
+    expect(notice).toEqual({
+      status: 'offline',
+      title: 'NO CONNECTION',
+      message: "You're offline. Connect to Wi-Fi or mobile data, then try again.",
+      retryable: true,
+    });
+  });
+
+  it('keeps a server that answered with an error distinct from no connection', () => {
+    const notice = noticeForAuthError(new OidcBindError('offline', 'unavailable', 503));
+    expect(notice.status).toBe('bind_retry');
+    expect(notice.title).not.toBe('NO CONNECTION');
+  });
+
+  it('keeps a genuine GitHub error on its own message', () => {
+    const notice = noticeForAuthError(new OidcBindError('github_denied', 'denied'));
+    expect(notice.status).toBe('browser_canceled');
+    expect(notice.title).toBe('SIGN-IN CANCELED · GITHUB_DENIED');
   });
 
   it.each(['invalid_redirect', 'invalid_configuration', 'invalid_state'])(

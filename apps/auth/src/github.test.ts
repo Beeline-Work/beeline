@@ -713,3 +713,76 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 });
+
+describe('file blob lookup for code anchors', () => {
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+  it('reads the immutable blob id of one file at one ref', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ type: 'file', sha: 'c'.repeat(40), encoding: 'base64', content: '' }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      app.fileBlobSha({
+        accessToken: 'room-token',
+        fullName: 'acme/beeline',
+        path: 'apps/server/src/release.ts',
+        ref: 'release/next',
+      }),
+    ).resolves.toBe('c'.repeat(40));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://api.github.com/repos/acme/beeline/contents/apps/server/src/release.ts?ref=release%2Fnext',
+    );
+  });
+
+  it('answers "no such file" for a 404 and for a directory, and never for a failed read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })),
+    );
+    await expect(
+      app.fileBlobSha({
+        accessToken: 'room-token',
+        fullName: 'acme/beeline',
+        path: 'apps/server/src/gone.ts',
+        ref: 'main',
+      }),
+    ).resolves.toBeUndefined();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify([{ type: 'dir', sha: 'd'.repeat(40) }]), { status: 200 }),
+      ),
+    );
+    await expect(
+      app.fileBlobSha({
+        accessToken: 'room-token',
+        fullName: 'acme/beeline',
+        path: 'apps/server/src',
+        ref: 'main',
+      }),
+    ).resolves.toBeUndefined();
+
+    // A dead token is not moved code: the caller must be able to tell them apart.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 403 }),
+      ),
+    );
+    await expect(
+      app.fileBlobSha({
+        accessToken: 'stale-token',
+        fullName: 'acme/beeline',
+        path: 'apps/server/src/release.ts',
+        ref: 'main',
+      }),
+    ).rejects.toThrow(GitHubHttpError);
+  });
+});

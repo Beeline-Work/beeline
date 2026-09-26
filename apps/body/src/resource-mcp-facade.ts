@@ -22,8 +22,20 @@ export function resourceFacadeArgs(): string[] {
   ];
 }
 
+/**
+ * A host declaration names its own stable resource target, and may declare
+ * that its TRANSPORT — not this façade — is what spends a Once grant, when
+ * the transport is itself the boundary every caller must cross (the Registry
+ * broker holds the provider token and is reachable straight from a sandbox).
+ * Both then ask the one server gate; exactly one of them consumes.
+ */
+export const MCP_RESOURCE_TARGET_KEY = 'beeline_resource_target';
+export const MCP_RESOURCE_GATE_KEY = 'beeline_resource_gate';
+export const MCP_RESOURCE_GATE_TRANSPORT = 'transport';
+
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list']);
-const NON_CONSUMING = new Set([
+/** Discovery and notifications never spend a Once grant. */
+export const NON_CONSUMING = new Set([
   ...DISCOVERY,
   'notifications/initialized',
   'notifications/cancelled',
@@ -171,6 +183,34 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
   return shortString(args[name]);
 }
 
+/** The Squire verbs that point the shared browser at a page. */
+const SQUIRE_NAVIGATION_TOOLS = new Set(['operate_start', 'operate_navigate', 'operate_login']);
+
+/**
+ * The page a Squire NAVIGATION call was pointed at — its own `url` argument,
+ * nothing else. It correlates an approval Squire emits later with the one
+ * Registry authorization attempt whose sign-in page Squire is driving, so it
+ * must not be satisfied by any URL that happens to ride some other call's
+ * arguments (`use_credential`'s request url, say): that would carry a
+ * `signInUrl` matching no attempt and silently skip the deduplication.
+ */
+export function drivenUrlIn(
+  tool: string | undefined,
+  args: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!tool || !SQUIRE_NAVIGATION_TOOLS.has(tool)) return undefined;
+  const value = args?.url;
+  if (typeof value !== 'string' || value.length > 2_048) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+      return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function credentialLabel(args: Record<string, unknown>): string | undefined {
   return (
     stringArg(args, 'name') ??
@@ -256,6 +296,7 @@ export function squireApprovalFromMcp(
 async function postSquireApproval(
   approval: SquireApprovalRelay,
   authFile: string,
+  signInUrl?: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
@@ -276,7 +317,7 @@ async function postSquireApproval(
   await fetchImpl(new URL('/v1/daemon/operations/postSquireApproval', auth.baseUrl), {
     method: 'POST',
     headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ ...context, ...approval }),
+    body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
     signal: AbortSignal.timeout(20_000),
   });
 }
@@ -285,6 +326,7 @@ export async function authorizeResourceMessage(
   message: Record<string, unknown>,
   target: string,
   authFile: string,
+  spendsGrant = true,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
   if (!message || Array.isArray(message) || typeof message !== 'object') return false;
@@ -312,7 +354,7 @@ export async function authorizeResourceMessage(
       body: JSON.stringify({
         ...context,
         target,
-        ...(NON_CONSUMING.has(message.method) ? { consume: false } : {}),
+        ...(spendsGrant && !NON_CONSUMING.has(message.method) ? {} : { consume: false }),
       }),
       signal: AbortSignal.timeout(20_000),
     },
@@ -323,6 +365,7 @@ export async function authorizeResourceMessage(
 export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   const target = env.BEELINE_RESOURCE_TARGET;
   const authFile = env.BEELINE_RESOURCE_AUTH_FILE;
+  const spendsGrant = env.BEELINE_RESOURCE_GATE !== MCP_RESOURCE_GATE_TRANSPORT;
   if (!target || !authFile || !env.BEELINE_RESOURCE_LAUNCH)
     throw new Error('resource route authorization is unavailable');
   const launch = JSON.parse(env.BEELINE_RESOURCE_LAUNCH) as {
@@ -339,14 +382,22 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   delete childEnv.BEELINE_RESOURCE_AUTH_FILE;
   const command = launch.command ?? launch.cmd;
   if (!command && !launch.url) throw new Error('resource transport is unavailable');
-  const squireRequests = new Map<string, Record<string, unknown>>();
+  const squireRequests = new Map<
+    string,
+    { message: Record<string, unknown>; drivenUrl?: string }
+  >();
+  let activeSquireBrowserUrl: string | undefined;
   const observeSquireResponse = async (message: Record<string, unknown>) => {
     if (target !== 'squire' || message.id === undefined) return;
     const key = JSON.stringify(message.id);
     const request = squireRequests.get(key);
     squireRequests.delete(key);
-    const approval = squireApprovalFromMcp(request, message);
-    if (approval) await postSquireApproval(approval, authFile).catch(() => {});
+    const approval = squireApprovalFromMcp(request?.message, message);
+    if (approval) {
+      await postSquireApproval(approval, authFile, request?.drivenUrl).catch(() => {});
+      if (request?.drivenUrl && activeSquireBrowserUrl === request.drivenUrl)
+        activeSquireBrowserUrl = undefined;
+    }
   };
   const authorizedResponseIds = new Set<string>();
   let child: ReturnType<typeof spawn> | undefined;
@@ -395,10 +446,23 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         return;
       }
       try {
-        if (!(await authorizeResourceMessage(message, target, authFile)))
+        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant)))
           throw new Error('resource approval required');
-        if (target === 'squire' && message.method === 'tools/call' && message.id !== undefined)
-          squireRequests.set(JSON.stringify(message.id), message);
+        if (target === 'squire' && message.method === 'tools/call') {
+          const call = record(message.params);
+          const tool = shortString(call?.name);
+          const navigationUrl = drivenUrlIn(tool, record(call?.arguments));
+          activeSquireBrowserUrl =
+            navigationUrl ??
+            (tool?.startsWith('operate_') && !SQUIRE_NAVIGATION_TOOLS.has(tool)
+              ? activeSquireBrowserUrl
+              : undefined);
+          if (message.id !== undefined)
+            squireRequests.set(JSON.stringify(message.id), {
+              message,
+              ...(activeSquireBrowserUrl ? { drivenUrl: activeSquireBrowserUrl } : {}),
+            });
+        }
         if (command) {
           const started = resourceChild();
           const key = messageIdKey(message.id);

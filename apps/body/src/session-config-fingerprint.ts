@@ -31,6 +31,7 @@ export interface SessionConfigInput {
   model?: string | undefined;
   /** The effort/thought level that selection carries. */
   effort?: string | undefined;
+  fastMode?: boolean | undefined;
   /** The persona the session prompt would carry, from configuration or roster. */
   soul?: { readonly name: string; readonly instructions: string } | undefined;
   /** The name the session introduces itself by. */
@@ -50,6 +51,7 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
   const fingerprint: unknown[] = [
     input.model ?? '',
     input.effort ?? '',
+    input.fastMode ?? false,
     input.soul?.name ?? '',
     input.soul?.instructions ?? '',
     input.agentName ?? '',

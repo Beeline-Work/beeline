@@ -365,8 +365,9 @@ The Room list uses the approved Previews layout in Obsidian and Bone. The
 workspace name and existing bezel avatar head the list; the workspace menu
 (Members and authorized Workspace settings) sits beside that identity, with
 compose in the same header. The search field stays visible below the conversation
-toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
-a separate brass action beside Search. All, Unread, and Pinned text filters
+toolbar on phone and desktop; its Search action focuses that field. The tray
+(`TrayGlyph`) is a separate brass action beside Search; it wears a brass count,
+compacting to `9+`, only while something needs the viewer. All, Unread, and Pinned text filters
 the list without removing access to quiet Rooms. The Messages section remains
 in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
 on All.
@@ -374,8 +375,11 @@ on All.
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`. An
 unread row sits on `bgUnread` with a `bodyStrong` name and a `textPrimary`
 preview; a trailing brass dot means the Room has new messages, independent of
-corner state; the row's corner summary shares that ground. Read cursors are
-unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
+corner state, and it takes a ring only while the Room asks the viewer to act —
+an approval waiting, or a mention still unread, because a mention the viewer
+has already read is no longer a need (`roomRowAttentionReason` in
+`buzz/room-list-row.ts`); the row's corner summary shares that ground. Read
+cursors are unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
 On phone, the byline sits above a two-line `body` preview in `textSecondary`;
 on desktop, author and preview share a two-line `meta` block. DMs omit the
 byline because the peer is already named in the heading. Rows have generous
@@ -387,7 +391,16 @@ Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
 Mobile has no selected Room state: pressing a conversation navigates away.
 Long press immediately toggles pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
-The Pinned filter uses text, while pinned rows show the pin glyph. At the
+The Pinned filter uses text, while pinned rows show the pin glyph.
+
+The tray holds exactly two sections, Needs you then Saved, each under a
+`sectionHead` with its brass count. A Needs-you cell is the asking sentence
+(never the viewer's own tag) over one `meta` line of source and age, with
+`expires in Nh` only in its last six hours. Every cell has the same weight:
+no dot, ring, type label or box. A quiet chevron marks the tap. A phone
+swipes right onto a brass-wash DISMISS rail; a desktop pointer swaps the
+chevron for DISMISS on the source line. Each section has its own empty
+state, so one never hides the other. At the
 default desktop sidebar width, all filters and both actions fit on the first
 toolbar row; the visible search field stays below it. An empty Pinned view is
 one shared component (`PinnedConversationsEmpty.tsx`) on phone and desktop: a
@@ -404,9 +417,13 @@ they read “5 corners” in quiet ink.
 The API batches canonical state derivation for visible corners; archived work
 is excluded. On mobile the label opens the existing Room Corners page. On
 desktop it toggles an inline list, waiting first, with each corner independently
-selectable and draggable. The active Room initially expands; explicit per-Room
+selectable and draggable. Opening a Room row leaves its corner list collapsed;
+opening a corner directly expands its parent Room. Explicit per-Room expansion
 choices persist. Expanded rows use the canonical waiting/working/review/idle
-vocabulary rather than inventing an ambiguous “needs you” state.
+vocabulary rather than inventing an ambiguous “needs you” state. Long-pressing
+that same summary — never the row, which still pins — opens a new, randomly
+named corner in the Room and lands the viewer in it. The long press is offered
+to a human viewer only; an agent's client gets no such affordance.
 
 **The standalone corners list is that same index, full height.** The screen
 opened from the Room header's corners door (`corners/[roomId]`) is chrome on
@@ -455,8 +472,8 @@ the gutter. Every screen that mounts the rail routes there. Jumping past it
 straight into `settings/identity` is what stranded the hub, and the product's
 only sign-out with it.
 
-**A Settings child names its parent as the eyebrow.** Bookmarks already
-does this (workspace name over large Bookmarks); the standalone corners
+**A Settings child names its parent as the eyebrow.** The tray already
+does this (workspace name over large Tray); the standalone corners
 list does it (Room name over the noun). Workbench is the same ladder:
 small Settings over large Workbench, and each tool or key page is small
 Workbench over the large tool or key name. `PageHeader` is the one

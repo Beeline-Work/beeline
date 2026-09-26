@@ -12,12 +12,12 @@ describe('Approved Room list layout', () => {
     expect(source).toContain('<RoomListSectionHeader title={section.title}');
     expect(source).toContain('openRoom(item.room.id)');
   });
-  it('uses the workspace identity and header actions with bookmarks beside search', () => {
+  it('uses the workspace identity and header actions with the tray beside search', () => {
     expect(source).toContain('<CommunityDrawerTrigger community={activeCommunity}');
     expect(source).toContain('<WorkspaceActionsMenu');
     expect(source).toMatch(/<RoomDeckComposeMenu\s+header/);
     expect(source).not.toContain('composeOverlay');
-    expect(toolbar).toContain('<BookmarksGlyph');
+    expect(toolbar).toContain('<TrayGlyph');
     expect(toolbar).toContain('{actions}');
     expect(toolbar).toContain('{searchOpen && search}');
     expect(toolbar).not.toContain('!desktop && actions');

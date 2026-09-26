@@ -18,6 +18,7 @@ describe('forwardMessageToNewCorner', () => {
       forwardMessageToNewCorner({
         confirm: async () => true,
         forwardText: '> hello\n\nFORWARDED FROM #general · @alice',
+        sourceMessageId: 'message-1',
         createCorner,
         roomId: 'room-1',
         openCorner,
@@ -25,7 +26,8 @@ describe('forwardMessageToNewCorner', () => {
       }),
     ).resolves.toEqual({ id: 'corner-1', title: 'quiet amber corner' });
 
-    expect(createCorner).toHaveBeenCalledWith('room-1', 'quiet amber corner');
+    // The swiped message rides the create so the server can mark it.
+    expect(createCorner).toHaveBeenCalledWith('room-1', 'quiet amber corner', 'message-1');
     expect(openCorner).toHaveBeenCalledWith('corner-1', 'quiet amber corner');
     expect(draftWhenOpened).toBe('> hello\n\nFORWARDED FROM #general · @alice');
     expect(takeCornerComposerDraft('corner-1')).toBeUndefined();
@@ -45,6 +47,7 @@ describe('forwardMessageToNewCorner', () => {
       forwardMessageToNewCorner({
         confirm: async () => false,
         forwardText: '> hello',
+        sourceMessageId: 'message-1',
         createCorner,
         roomId: 'room-1',
         openCorner,

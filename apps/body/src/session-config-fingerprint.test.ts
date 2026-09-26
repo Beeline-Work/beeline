@@ -5,7 +5,7 @@ describe('sessionConfigFingerprint', () => {
   it('changes when the corner reviewer changes', () => {
     const base = { model: 'model', yoloMode: false };
     expect(sessionConfigFingerprint(base)).toBe(
-      JSON.stringify(['model', '', '', '', '', false, []]),
+      JSON.stringify(['model', '', false, '', '', '', false, []]),
     );
     expect(sessionConfigFingerprint(base)).not.toBe(
       sessionConfigFingerprint({ ...base, reviewerHandle: 'echo' }),
@@ -13,6 +13,13 @@ describe('sessionConfigFingerprint', () => {
     expect(sessionConfigFingerprint({ ...base, reviewerHandle: 'echo' })).not.toBe(
       sessionConfigFingerprint({ ...base, reviewerHandle: 'foxy' }),
     );
+  });
+
+  it('retires a retained session when Fast mode changes', () => {
+    const standard = sessionConfigFingerprint({ model: 'gpt-6-sol', fastMode: false });
+    const fast = sessionConfigFingerprint({ model: 'gpt-6-sol', fastMode: true });
+    expect(fast).not.toBe(standard);
+    expect(sessionConfigFingerprint({ model: 'gpt-6-sol', fastMode: false })).toBe(standard);
   });
 
   it('treats every imported MCP server as part of the mounted set, not only Squire', () => {

@@ -1,5 +1,6 @@
 import { mkdir, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { cleanupLaunchdAgentService, type LaunchdRunner } from './launchd.js';
 import { cleanupAgentService, type SystemdRunner } from './systemd.js';
 import { runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
 
@@ -17,7 +18,7 @@ import { runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
  */
 export async function retireRemovedAgent(
   runtime: AgentRuntimeRecord,
-  options: { run?: SystemdRunner } = {},
+  options: { run?: SystemdRunner | LaunchdRunner } = {},
 ): Promise<string> {
   const deletedRoot = resolve(runtime.supervisorRoot, 'beeline', 'deleted-runtimes');
   const target = resolve(deletedRoot, `${runtime.agent.publicKey}-${Date.now()}`);
@@ -34,7 +35,7 @@ export async function retireRemovedAgent(
 export async function relocateAgentRuntime(
   runtime: AgentRuntimeRecord,
   target: string,
-  options: { run?: SystemdRunner } = {},
+  options: { run?: SystemdRunner | LaunchdRunner } = {},
 ): Promise<string> {
   const source = runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey);
   const destination = resolve(target);
@@ -43,7 +44,11 @@ export async function relocateAgentRuntime(
   }
   if (process.platform === 'linux') {
     await cleanupAgentService(runtime.agent.publicKey, {
-      ...(options.run ? { run: options.run } : {}),
+      ...(options.run ? { run: options.run as SystemdRunner } : {}),
+    });
+  } else if (process.platform === 'darwin') {
+    await cleanupLaunchdAgentService(runtime.agent.publicKey, {
+      ...(options.run ? { run: options.run as LaunchdRunner } : {}),
     });
   }
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });

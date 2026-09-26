@@ -53,6 +53,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
+import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type ChannelRole,
@@ -87,12 +88,17 @@ import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-roo
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { planComposerFill, type ComposerMention } from '@/buzz/composer-fill';
+import { roomStarterPrompts } from '@/buzz/starter-prompts';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
+import { anchorCornerMarkers } from '@/buzz/corner-markers';
+import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -215,10 +221,13 @@ import {
   availableSlashVerbs,
   availableCornerAppCommands,
   availableAgentMentionCommands,
+  fastModeCommandState,
+  FAST_MODE_COMMAND,
   slashVerbQuery,
   agentMentionSlashQuery,
   insertAgentSlashCommand,
   type BuiltInSlashVerbId,
+  type FastModeCommandState,
 } from '@/buzz/slash-verbs';
 import {
   cachedChannelKind,
@@ -330,6 +339,8 @@ import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { ForwardMessagePickerSheet } from '@/components/buzz/ForwardMessagePickerSheet';
+import { ForwardCornerSheet } from '@/components/buzz/ForwardCornerSheet';
+import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
 import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
@@ -343,6 +354,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
+import { ProductTourRoomCue } from '@/components/buzz/tour/TourTarget';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -622,6 +634,10 @@ export function BuzzChatSurface({
   const [agentCommandsByScope, setAgentCommandsByScope] = useState<
     Record<string, readonly AgentComposerCommand[]>
   >({});
+  /** Per-Room+agent Fast mode toggle (undefined = unread, null = not offered to this viewer). */
+  const [agentFastModeByScope, setAgentFastModeByScope] = useState<
+    Record<string, FastModeCommandState | null>
+  >({});
   const [sending, setSending] = useState(false);
   const [cornerProposalAction, setCornerProposalAction] = useState<{
     messageId: string;
@@ -695,12 +711,17 @@ export function BuzzChatSurface({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [openingRandomCorner, setOpeningRandomCorner] = useState(false);
+  const [forwardCornerPrompt, setForwardCornerPrompt] = useState<ChatDisplayMessage | null>(null);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [participantPickerKind, setParticipantPickerKind] = useState<'person' | 'agent' | null>(
     null,
   );
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [memberInviteBusy, setMemberInviteBusy] = useState(false);
+  const [agentConnectVisible, setAgentConnectVisible] = useState(false);
+  const [agentPairCommand, setAgentPairCommand] = useState<string | null>(null);
+  const [agentPairBusy, setAgentPairBusy] = useState(false);
+  const [agentPairError, setAgentPairError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
@@ -1249,7 +1270,7 @@ export function BuzzChatSurface({
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(() => {
-    const anchored = anchorRelayReports(combinedMessages);
+    const anchored = anchorCornerMarkers(anchorRelayReports(combinedMessages));
     const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
     if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
     // Folding cannot swallow the one exact server-owned unread boundary.
@@ -1629,7 +1650,6 @@ export function BuzzChatSurface({
       ),
     [roomMembers],
   );
-  const lifecycleAction = canManageWorkspace ? ('delete' as const) : null;
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -1771,8 +1791,12 @@ export function BuzzChatSurface({
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
     const published = agentCommandsByScope[mentionAgentCommandScope];
-    return availableAgentMentionCommands(published ?? [], mentionSlash.query);
-  }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
+    return availableAgentMentionCommands(
+      published ?? [],
+      mentionSlash.query,
+      agentFastModeByScope[mentionAgentCommandScope],
+    );
+  }, [agentCommandsByScope, agentFastModeByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
@@ -1818,7 +1842,9 @@ export function BuzzChatSurface({
     const pubkey = mentionSlashAgentPubkey;
     const scope = mentionAgentCommandScope;
     if (!pubkey || !scope || !roomClient || !activeCommunityId) return;
-    if (agentCommandsByScope[scope] !== undefined) return;
+    if (agentCommandsByScope[scope] !== undefined && agentFastModeByScope[scope] !== undefined) {
+      return;
+    }
     let cancelled = false;
     roomClient
       .agent(activeCommunityId, pubkey)
@@ -1827,6 +1853,10 @@ export function BuzzChatSurface({
           setAgentCommandsByScope((current) => ({
             ...current,
             [scope]: detail.commands ?? [],
+          }));
+          setAgentFastModeByScope((current) => ({
+            ...current,
+            [scope]: fastModeCommandState(detail, viewerPubkey),
           }));
         }
       })
@@ -1840,11 +1870,19 @@ export function BuzzChatSurface({
   }, [
     activeCommunityId,
     agentCommandsByScope,
+    agentFastModeByScope,
     decodedId,
     mentionAgentCommandScope,
     mentionSlashAgentPubkey,
     roomClient,
+    viewerPubkey,
   ]);
+  // Fast mode can change on the agent's profile, so each opening of an
+  // agent's palette reads it again rather than trusting an earlier answer.
+  useEffect(() => {
+    if (mentionSlashAgentPubkey) return;
+    setAgentFastModeByScope((current) => (Object.keys(current).length ? {} : current));
+  }, [mentionSlashAgentPubkey]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
@@ -1935,6 +1973,111 @@ export function BuzzChatSurface({
   const focusComposer = useCallback(() => {
     scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
+  // The first Room teaches by doing: each starter fills the live composer
+  // (tagging the Room's first agent when there is one) or opens the invite.
+  const firstRoomAgent = useMemo(
+    () =>
+      roomSurface?.members.find(
+        (member) => member.identity.kind === 'agent' && Boolean(member.identity.handle),
+      )?.identity,
+    [roomSurface?.members],
+  );
+  // The one way anything but typing puts words in the composer: a starter
+  // prompt and a catch-up request both go through here, and `planComposerFill`
+  // owns what that does to a draft somebody already started.
+  const fillComposer = useCallback(
+    (text: string, options: { mention?: ComposerMention; focusOnRefusal?: boolean } = {}) => {
+      const plan = planComposerFill({ draft: inputTextRef.current, text, ...options });
+      if (plan.focus) scheduleAnimationFrame(() => composerRef.current?.focus());
+      if (!plan.fill) return false;
+      if (plan.fill.mention) {
+        selectedAgentMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+        selectedMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+      }
+      inputTextRef.current = plan.fill.text;
+      setInputText(plan.fill.text);
+      setInputSelection(plan.fill.selection);
+      return true;
+    },
+    [],
+  );
+  // The same minted pairing command the Room deck and the create wizard show,
+  // in the same sheet: a Room with no agent has nobody to ask yet.
+  const connectAgent = useCallback(async () => {
+    if (!activeCommunityId || agentPairBusy || viewerIsAgent) return;
+    setAgentConnectVisible(true);
+    setAgentPairCommand(null);
+    setAgentPairError(null);
+    setAgentPairBusy(true);
+    try {
+      let pairingTransport = transport;
+      if (!pairingTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        pairingTransport = new BuzzRigTransport(identity);
+        setSessionTransport(pairingTransport);
+      }
+      const pairing = await (
+        await pairingTransport.ensureClient()
+      ).createAgentPairingCode(activeCommunityId);
+      setAgentPairCommand(agentPairingCommand(pairing.code));
+    } catch (reason) {
+      setAgentPairError(`Could not create agent invite: ${String(reason)}`);
+    } finally {
+      setAgentPairBusy(false);
+    }
+  }, [activeCommunityId, agentPairBusy, setSessionTransport, transport, viewerIsAgent]);
+  const closeAgentConnect = useCallback(() => {
+    setAgentConnectVisible(false);
+    setAgentPairCommand(null);
+    setAgentPairError(null);
+  }, []);
+  const copyPairCommand = useCallback(async (command: string) => {
+    await Clipboard.setStringAsync(command);
+  }, []);
+  const starterPrompts = useMemo(() => {
+    if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
+      return undefined;
+    return roomStarterPrompts({
+      roomAgent: firstRoomAgent,
+      workspaceAgentCount: workspaceRoster ? workspaceRoster.agents.length : null,
+      canManageWorkspace,
+    }).map((prompt) => ({
+      lead: prompt.lead,
+      detail: prompt.detail,
+      testID: prompt.testID,
+      onPress: () => {
+        if (prompt.action.kind === 'fill')
+          fillComposer(prompt.action.text, {
+            mention: prompt.action.mention,
+            focusOnRefusal: true,
+          });
+        else if (prompt.action.kind === 'add-room-agent') {
+          setMembershipError(null);
+          setParticipantPickerKind('agent');
+          setParticipantPickerVisible(true);
+        } else if (prompt.action.kind === 'connect-agent') void connectAgent();
+        else
+          router.push({
+            pathname: '/beeline/members',
+            params: {
+              ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+              action: 'invite',
+            },
+          } as never);
+      },
+    }));
+  }, [
+    activeCommunityId,
+    canManageWorkspace,
+    connectAgent,
+    emptyLedgerVariant,
+    fillComposer,
+    firstRoomAgent,
+    roomSurface?.viewer.permissions.send,
+    viewerIsAgent,
+    workspaceRoster,
+  ]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
   // dependency-free so it never re-creates renderItem — see the memo note on
@@ -2120,20 +2263,14 @@ export function BuzzChatSurface({
     if (
       isCorner ||
       !catchUpBoundaryId ||
-      inputTextRef.current.trim() ||
       pendingAttachments.length > 0 ||
       !roomSurface?.viewer.permissions.send
     ) return;
     const handle = agent.handle.replace(/^@/, '');
     const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-    selectedAgentMentionsRef.current.set(handle, agent.pubkey);
-    selectedMentionsRef.current.set(handle, agent.pubkey);
-    inputTextRef.current = prompt;
-    setInputText(prompt);
-    setInputSelection({ start: prompt.length, end: prompt.length });
-    setCatchUpSheetVisible(false);
-    scheduleAnimationFrame(() => composerRef.current?.focus());
-  }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
+    if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
+      setCatchUpSheetVisible(false);
+  }, [catchUpBoundaryId, fillComposer, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
   const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
   const slashVerbs = useMemo(
@@ -2181,11 +2318,12 @@ export function BuzzChatSurface({
             !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
           ),
         },
-        currentSlashQuery ?? '',
+        currentSlashQuery ?? mentionSlash?.query ?? '',
       ),
     [
       catchUpOfferVisible,
       currentSlashQuery,
+      mentionSlash?.query,
       canManageWorkspace,
       isCorner,
       isDirectMessage,
@@ -3969,40 +4107,37 @@ export function BuzzChatSurface({
     });
   }, [activeCommunityId]);
 
-  const handleRoomLifecycle = useCallback(async () => {
-    if (!transport || !canManageWorkspace || !lifecycleAction || roomLifecycleBusy) return;
-    const deleting = lifecycleAction === 'delete';
-    const confirmed = await Modal.confirm(
-      deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
-      deleting
-        ? `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`
-        : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
-      {
-        cancelText: 'Cancel',
-        confirmText: deleting ? `Delete ${ROOM_LABEL}` : `Leave ${ROOM_LABEL}`,
-        destructive: true,
-      },
-    );
-    if (!confirmed) return;
+  const handleRoomLifecycle = useCallback(async (action: 'delete' | 'leave') => {
+    if (!transport || (action === 'delete' && !canManageWorkspace) || roomLifecycleBusy) return;
+    const deleting = action === 'delete';
     setRoomLifecycleBusy(true);
     setMembershipError(null);
-    const operation = deleting ? transport.deleteRoom(decodedId) : transport.leaveRoom(decodedId);
-    void operation
-      .then(() => {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        returnToRoomList();
-      })
-      .catch((err) => {
-        setMembershipError(
-          `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
-        );
-      })
-      .finally(() => setRoomLifecycleBusy(false));
+    try {
+      if (deleting) {
+        const confirmed = await Modal.confirm(`Delete ${displayRoomName}?`,
+          `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`, {
+            cancelText: 'Cancel', confirmText: `Delete ${ROOM_LABEL}`, destructive: true,
+          });
+        if (!confirmed) return;
+        await transport.deleteRoom(decodedId);
+      } else {
+        const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
+        const left = await leaveRoomWithConfirmation(title, roomSurface?.leaveDeletesRoom === true,
+          (confirmDelete) => transport.leaveRoom(decodedId, confirmDelete));
+        if (!left) return;
+      }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      returnToRoomList();
+    } catch (err) {
+      setMembershipError(`Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`);
+    } finally {
+      setRoomLifecycleBusy(false);
+    }
   }, [
     decodedId,
     displayRoomName,
     canManageWorkspace,
-    lifecycleAction,
+    roomSurface?.leaveDeletesRoom,
     returnToRoomList,
     roomLifecycleBusy,
     transport,
@@ -4092,8 +4227,13 @@ export function BuzzChatSurface({
     viewerIsAgent,
   ]);
 
+  /**
+   * Mobile swipe-right asks first, through the shared bottom sheet — the same
+   * presentation Room creation uses. The sheet holds the message while it is
+   * open; declining creates nothing.
+   */
   const handleForwardToNewCorner = useCallback(
-    async (message: ChatDisplayMessage) => {
+    (message: ChatDisplayMessage) => {
       if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
       if (!transport) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -4104,48 +4244,55 @@ export function BuzzChatSurface({
         return;
       }
       void Haptics.selectionAsync();
-      setOpeningRandomCorner(true);
-      try {
-        await forwardMessageToNewCorner({
-          confirm: () =>
-            Modal.confirm(
-              `Forward to a new ${CORNER_LABEL}?`,
-              `A human-owned ${CORNER_LABEL} opens with this message ready to send in its composer.`,
-              { cancelText: 'Cancel', confirmText: `Open ${CORNER_LABEL}` },
-            ),
-          forwardText: formatForwardedMessage(
-            message.text,
-            displayRoomName,
-            message.authorIdentity ?? {
-              name: message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE',
-              ...(message.pubkey ? { handle: fallbackMemberHandle(message.pubkey) } : {}),
-            },
-            { roomId: decodedId, messageId: message.relayId ?? message.id },
-          ),
-          createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
-          roomId: decodedId,
-          openCorner: (cornerId, title) => {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            router.push(cornerHref(cornerId, decodedId, title));
-          },
-        });
-      } catch (err) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
-      } finally {
-        setOpeningRandomCorner(false);
-      }
+      setForwardCornerPrompt(message);
     },
-    [
-      decodedId,
-      desktopExperience,
-      displayRoomName,
-      isArchived,
-      openingRandomCorner,
-      transport,
-      viewerIsAgent,
-    ],
+    [desktopExperience, isArchived, openingRandomCorner, transport, viewerIsAgent],
   );
+
+  const confirmForwardToNewCorner = useCallback(async () => {
+    const target = forwardCornerPrompt;
+    if (!target) return;
+    if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
+    if (!transport) return;
+    setForwardCornerPrompt(null);
+    setOpeningRandomCorner(true);
+    try {
+      await forwardMessageToNewCorner({
+        confirm: async () => true,
+        forwardText: formatForwardedMessage(
+          target.text,
+          displayRoomName,
+          target.authorIdentity ?? {
+            name: target.pubkey ? fallbackMemberName(target.pubkey) : 'SOMEONE',
+            ...(target.pubkey ? { handle: fallbackMemberHandle(target.pubkey) } : {}),
+          },
+          { roomId: decodedId, messageId: target.relayId ?? target.id },
+        ),
+        sourceMessageId: target.relayId ?? target.id,
+        createCorner: (roomId, title, sourceMessageId) =>
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId),
+        roomId: decodedId,
+        openCorner: (cornerId, title) => {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.push(cornerHref(cornerId, decodedId, title));
+        },
+      });
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+    } finally {
+      setOpeningRandomCorner(false);
+    }
+  }, [
+    decodedId,
+    desktopExperience,
+    displayRoomName,
+    forwardCornerPrompt,
+    isArchived,
+    openingRandomCorner,
+    transport,
+    viewerIsAgent,
+  ]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -4485,6 +4632,28 @@ export function BuzzChatSurface({
     [decodedId, desktopExperience, openDesktopCorner],
   );
 
+  // The line beneath a message a corner was opened from; its Open goes
+  // straight into that corner (the work pane on desktop).
+  const renderCornerMarker = useCallback(
+    (marker: ChatDisplayMessage) => {
+      const fact = marker.daemonFact!;
+      return (
+        <View key={marker.id}>
+          <CornerOpenedMarker
+            title={cornerName(fact.name ?? fact.objective, fact.cornerId)}
+            closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
+            onOpen={() => openCorner(fact.cornerId)}
+            testID={`corner-opened-marker-${fact.cornerId}`}
+          />
+          {marker.relayReports?.map((report) => (
+            <RelayHandOff key={report.id} message={report} />
+          ))}
+        </View>
+      );
+    },
+    [openCorner],
+  );
+
   const closeDesktopWorkPane = useCallback(() => {
     const transition = commitDesktopWorkPane({ type: 'dismiss' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
@@ -4628,6 +4797,62 @@ export function BuzzChatSurface({
     [inputText],
   );
 
+  /**
+   * Fast mode is the owner's toggle, not text: it writes through the same
+   * `updateAgentModelSelection` operation as the profile switch and leaves
+   * the palette open on the new state.
+   */
+  const toggleAgentFastMode = useCallback(async () => {
+    const pubkey = mentionSlashAgentPubkey;
+    const scope = mentionAgentCommandScope;
+    const current = scope ? agentFastModeByScope[scope] : null;
+    if (!pubkey || !scope || !current || current.status === 'saving' || !activeCommunityId) {
+      return;
+    }
+    const enabled = !current.enabled;
+    setAgentFastModeByScope((state) => ({
+      ...state,
+      [scope]: { enabled: current.enabled, status: 'saving' },
+    }));
+    void Haptics.selectionAsync();
+    try {
+      let writeTransport = transport;
+      if (!writeTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        writeTransport = new BuzzRigTransport(identity);
+        setSessionTransport(writeTransport);
+      }
+      const client = await writeTransport.ensureClient();
+      await client.setAgentModelConfig(activeCommunityId, pubkey, { fastMode: enabled });
+      setAgentFastModeByScope((state) => ({ ...state, [scope]: { enabled } }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setAgentFastModeByScope((state) => ({
+        ...state,
+        [scope]: { enabled: current.enabled, status: 'failed' },
+      }));
+    }
+  }, [
+    activeCommunityId,
+    agentFastModeByScope,
+    mentionAgentCommandScope,
+    mentionSlashAgentPubkey,
+    setSessionTransport,
+    transport,
+  ]);
+
+  const selectAgentCommand = useCallback(
+    (name: string) => {
+      if (name === FAST_MODE_COMMAND) {
+        void toggleAgentFastMode();
+        return;
+      }
+      insertAgentCommand(name);
+    },
+    [insertAgentCommand, toggleAgentFastMode],
+  );
+
   const runSlashVerb = useCallback(
     (verb: BuiltInSlashVerbId) => {
       clearSlashComposer();
@@ -4727,7 +4952,7 @@ export function BuzzChatSurface({
     if (commandIndex < 0) {
       const command = mentionAgentCommands[highlightedSlashVerbIndex];
       if (command) {
-        insertAgentCommand(command.name);
+        selectAgentCommand(command.name);
         return;
       }
     } else if (commandIndex < cornerAppCommands.length) {
@@ -4750,7 +4975,7 @@ export function BuzzChatSurface({
   }, [
     handleSend,
     highlightedSlashVerbIndex,
-    insertAgentCommand,
+    selectAgentCommand,
     inputText,
     cornerAppCommands,
     mentionAgentCommands,
@@ -4939,6 +5164,11 @@ export function BuzzChatSurface({
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
+      if (item.daemonFact?.sourceMessageId) {
+        // Its source message is not resident, so the marker stands on its own row.
+        return renderCornerMarker(item);
+      }
+
       if (item.daemonFact) {
         return (
           <View>
@@ -4998,7 +5228,7 @@ export function BuzzChatSurface({
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
-      return (
+      const ledgerMessage = (
         <OrdinaryLedgerMessage
           message={renderedItem}
           firstBylineOfDay={bylineOpeners.has(item.id)}
@@ -5054,8 +5284,17 @@ export function BuzzChatSurface({
           onDismiss={dismissOutboxMessage}
         />
       );
+      return item.cornerMarkers?.length ? (
+        <View>
+          {ledgerMessage}
+          {item.cornerMarkers.map(renderCornerMarker)}
+        </View>
+      ) : (
+        ledgerMessage
+      );
     },
     [
+      renderCornerMarker,
       bylineOpeners,
       agentByPubkey,
       answeredMessageIds,
@@ -5193,6 +5432,9 @@ export function BuzzChatSurface({
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
+        <ProductTourRoomCue
+          ready={Boolean(roomSurface) && !isCorner && !isDirectMessage && !viewerIsAgent}
+        />
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -5359,8 +5601,7 @@ export function BuzzChatSurface({
             {!parentChannelId &&
               !isDirectMessage &&
               !viewerIsAgent &&
-              !isArchived &&
-              lifecycleAction && (
+              !isArchived && (
                 <TouchableOpacity
                   accessibilityLabel={`${ROOM_LABEL} actions`}
                   accessibilityRole="button"
@@ -5445,6 +5686,7 @@ export function BuzzChatSurface({
                       name={isDirectMessage ? displayRoomName : undefined}
                       objective={isCorner ? cornerObjectiveText : undefined}
                       onPress={focusComposer}
+                      starterPrompts={starterPrompts}
                     />
                   </View>
                 ) : (
@@ -5608,6 +5850,7 @@ export function BuzzChatSurface({
                   name={isDirectMessage ? displayRoomName : undefined}
                   objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
+                  starterPrompts={starterPrompts}
                 />
               </View>
             }
@@ -5705,7 +5948,7 @@ export function BuzzChatSurface({
                       apps={cornerAppCommands}
                       agentName={mentionAgentName}
                       agentLacksCommands={mentionAgentLacksCommands}
-                      onSelectCommand={insertAgentCommand}
+                      onSelectCommand={selectAgentCommand}
                       onSelectApp={openCornerApp}
                     />
                   );
@@ -6169,6 +6412,12 @@ export function BuzzChatSurface({
         />
       </HullActionSheetModal>
 
+      <ForwardCornerSheet
+        onClose={() => setForwardCornerPrompt(null)}
+        onOpen={() => void confirmForwardToNewCorner()}
+        visible={Boolean(forwardCornerPrompt)}
+      />
+
       <ForwardMessagePickerSheet
         busyRoomId={forwardBusyRoomId}
         error={forwardError}
@@ -6388,27 +6637,26 @@ export function BuzzChatSurface({
             testID="room-schedules-action"
           />
         )}
-        {lifecycleAction === 'delete' ? (
+        {canManageWorkspace && (
           <HullActionSheetRow
             accessibilityLabel={`Delete ${ROOM_LABEL}`}
             description={`Permanently remove this ${ROOM_LABEL}.`}
             destructive
             disabled={roomLifecycleBusy}
             label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
-            onPress={handleRoomLifecycle}
+            onPress={() => void handleRoomLifecycle('delete')}
             testID="delete-room-action"
           />
-        ) : lifecycleAction === 'leave' ? (
-          <HullActionSheetRow
-            accessibilityLabel={`Leave ${ROOM_LABEL}`}
-            description="Other members keep their access."
-            destructive
-            disabled={roomLifecycleBusy}
-            label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
-            onPress={handleRoomLifecycle}
-            testID="leave-room-action"
-          />
-        ) : null}
+        )}
+        <HullActionSheetRow
+          accessibilityLabel={`Leave ${ROOM_LABEL}`}
+          description={roomSurface?.leaveDeletesRoom ? 'Leaving deletes it for everyone.' : 'Other members keep their access.'}
+          destructive
+          disabled={roomLifecycleBusy}
+          label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
+          onPress={() => void handleRoomLifecycle('leave')}
+          testID="leave-room-action"
+        />
         {(renameError || membershipError) && (
           <View accessibilityRole="alert" style={styles.membershipError}>
             <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
@@ -6520,6 +6768,22 @@ export function BuzzChatSurface({
         onConnectAgent={handleConnectAgent}
         onInvitePerson={() => void handleInvitePerson()}
         visible={memberManagement.pickerVisible}
+      />
+      <MemberPickerSheet
+        agentConnectOnly
+        busy={agentPairBusy}
+        canManage={canManageWorkspace}
+        canConnectAgent={!viewerIsAgent}
+        candidates={undefined}
+        error={agentConnectVisible ? agentPairError : null}
+        onAdd={() => undefined}
+        onClose={closeAgentConnect}
+        onConnectAgent={() => void connectAgent()}
+        onCopyPairCommand={(command) => void copyPairCommand(command)}
+        onInvitePerson={() => undefined}
+        pairCommand={agentPairCommand}
+        testID="room-agent-connect-sheet"
+        visible={agentConnectVisible}
       />
       <CreatePollSheet
         visible={createPollVisible}

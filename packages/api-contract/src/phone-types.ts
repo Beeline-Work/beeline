@@ -323,7 +323,13 @@ export type RoomViewMessage = {
     readonly cornerId: string;
     /** The corner's short title (at most three words). Absent only on legacy cards. */
     readonly name?: string;
+    /** Empty on a person-opened corner, which has no objective; its `name` titles it. */
     readonly objective: string;
+    /**
+     * The parent-Room message a person opened this corner from. The phone
+     * anchors the card beneath that message as the "corner opened" marker.
+     */
+    readonly sourceMessageId?: string;
     readonly outcome?: 'landed' | 'abandoned';
     readonly pullRequest?: {
       readonly number?: number;
@@ -351,6 +357,36 @@ export type MessageBookmarkView = {
   readonly available: boolean;
   readonly author?: RoomViewIdentity;
   readonly text?: string;
+};
+
+/**
+ * One cell in the viewer's "Needs you" tray. A message qualifies when it tags
+ * the viewer AND asks (ends with `?`, or says please/approve/feedback); a
+ * pending agent-grant card the viewer can decide qualifies as it is. The
+ * server owns the whole projection — which items, their text, and when they
+ * leave — so every device shows the same tray.
+ */
+export type NeedsYouItemView = {
+  readonly messageId: string;
+  readonly workspaceId: string;
+  readonly roomId: string;
+  /** Room or corner name; for a DM, the other participant's name. */
+  readonly roomName: string;
+  readonly roomKind: 'room' | 'corner' | 'direct';
+  /**
+   * The asking sentence, the viewer's own tag removed, already shortened by
+   * the server (a long sentence keeps its END behind a leading `…`).
+   */
+  readonly text: string;
+  /** When the source message was written (Unix seconds). */
+  readonly createdAt: number;
+  /**
+   * When the cell leaves the tray on its own (Unix seconds): 24 hours after
+   * the viewer first saw it on any device. Absent for a pending approval,
+   * which never expires.
+   */
+  readonly expiresAt?: number;
+  readonly author?: RoomViewIdentity;
 };
 
 export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;
@@ -504,6 +540,8 @@ export type RoomLiveDelta =
 
 export type RoomView = {
   readonly room: RoomViewHeader;
+  /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
+  readonly leaveDeletesRoom?: boolean;
   readonly messages: readonly RoomViewMessage[];
   /** Settled corner tool activity, outside the bounded conversation window. */
   readonly toolRows?: readonly RoomViewMessage[];
@@ -601,6 +639,8 @@ export type ChatListCorner = {
 
 export type ChatListItem = {
   readonly room: RoomViewHeader;
+  /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
+  readonly leaveDeletesRoom?: boolean;
   /** Every current Room agent has a resolved presence fact and none is online.
    *  Carried by the deck so first-paint footer geometry matches the Room GET. */
   readonly agentsOffline?: boolean;
@@ -798,6 +838,7 @@ export type AgentDetailView = {
   readonly commands?: readonly AgentComposerCommand[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;
+  readonly fastMode?: boolean;
   /** Which persisted selection axis failed the daemon's live startup validation. */
   readonly modelUnavailable?: 'model' | 'effort' | 'selection';
   /**
@@ -852,6 +893,18 @@ export type InviteView = {
   readonly expiresAt: number;
   /** Present when the authenticated viewer has already accepted this invite. */
   readonly joinedWorkspaceId?: string;
+  /** The current Workspace member who minted this invite: who is asking. */
+  readonly inviter?: InviteInviterView;
+  /** Active people / agents in the Workspace, so the preview names its size. */
+  readonly memberCount?: number;
+  readonly agentCount?: number;
+};
+
+export type InviteInviterView = {
+  readonly name: string;
+  readonly handle?: string;
+  readonly face?: string;
+  readonly role?: 'owner' | 'admin' | 'member' | 'spectator';
 };
 
 /** Result of the server-authorized Workspace pairing bootstrap. */

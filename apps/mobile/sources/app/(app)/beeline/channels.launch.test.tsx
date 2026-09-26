@@ -26,9 +26,10 @@ describe('phone cold launch after the deck replace', () => {
     expect(deckSource).not.toContain('claimFirstLaunchLanding');
     expect(deckSource).not.toContain('welcomeRoomHref');
     // Those helpers would open #beeline if the deck called them.
-    expect(
-      desktopWorkspaceRoute(WORKSPACE_ID, [BEELINE_ROOM_ID], BEELINE_ROOM_ID).params,
-    ).toEqual({ channelId: BEELINE_ROOM_ID, communityId: WORKSPACE_ID });
+    expect(desktopWorkspaceRoute(WORKSPACE_ID, [BEELINE_ROOM_ID], BEELINE_ROOM_ID).params).toEqual({
+      channelId: BEELINE_ROOM_ID,
+      communityId: WORKSPACE_ID,
+    });
   });
 
   it('does not push the welcome Room after identity is loaded', () => {

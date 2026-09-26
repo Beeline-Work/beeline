@@ -249,6 +249,99 @@ export async function resolvePendingCornerBriefAttachments(
     }));
 }
 
+const UPGRADE_REQUEST_LENGTH = 16_000;
+const UPGRADE_BUILD_SPEC_LENGTH = 65_536;
+const UPGRADE_CRITERION_LENGTH = 2_000;
+/** Newest messages considered for the build spec; older history is marked, never read. */
+const UPGRADE_DISCUSSION_CANDIDATES = 200;
+
+function upgradeCriterion(request: string): string {
+  const text = `Deliver the code change this corner was asked for: ${request.replace(/\s+/g, ' ').trim()}`;
+  return text.length <= UPGRADE_CRITERION_LENGTH
+    ? text
+    : `${text.slice(0, UPGRADE_CRITERION_LENGTH - 1)}…`;
+}
+
+function upgradeBuildSpec(
+  discussion: readonly { name: string; text: string }[],
+  request: string,
+  olderHistory: boolean,
+): string {
+  const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
+  const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
+  const kept: string[] = [];
+  let remaining = UPGRADE_BUILD_SPEC_LENGTH - head.length - 128;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.length > remaining) continue;
+    remaining -= entry.length;
+    kept.unshift(entry);
+  }
+  const dropped = entries.length - kept.length;
+  const note =
+    dropped || olderHistory
+      ? `\n- _${[dropped ? `${dropped} message(s)` : '', olderHistory ? 'earlier history' : '']
+          .filter(Boolean)
+          .join(' and ')} omitted for length._`
+      : '';
+  return `${head}${note}${kept.join('')}\n`;
+}
+
+/**
+ * The brief a no-code corner gets the moment a person asks for code in it.
+ *
+ * Every other repository corner opens from a brief its agent typed before the
+ * corner existed. This one is already a conversation, so the conversation IS
+ * the assignment: the server composes it here, in the upgrade's own
+ * transaction, rather than leaving the one repository corner that `createCorner`
+ * would have refused — a code corner with no brief at all.
+ *
+ * The ONE explicit ask that triggered the upgrade is the whole authoritative
+ * intent. Everything said in the corner before it is carried as build-spec
+ * context, because a chat corner holds abandoned and superseded asks that a
+ * worker reading `intentVerbatim` could not rank against the live one.
+ */
+export async function composeCornerUpgradeBrief(
+  db: SqlDatabase,
+  cornerId: string,
+  approval: { sourceMessageId: string; snapshot: string },
+): Promise<CornerBriefStructuredDraft> {
+  if (!approval.snapshot.trim() || approval.snapshot.length > UPGRADE_REQUEST_LENGTH)
+    throw new Error(
+      `corner lane upgrade needs the code request written in one message of at most ${UPGRADE_REQUEST_LENGTH} characters — ask again in a shorter message`,
+    );
+  // Newest first, bounded in rows AND in bytes per row: a message longer than
+  // the whole build spec can never be rendered, so reading past that length
+  // would only be read to be thrown away.
+  const candidates = (
+    await db.query<{ id: string; text: string; name: string }>(
+      `SELECT message.id,left(message.text,$2) text,identity.name
+       FROM messages message JOIN identities identity ON identity.id=message.author_id
+       WHERE message.room_id=$1 AND message.presentation='message'
+         AND message.deleted_at IS NULL AND btrim(message.text)<>''
+       ORDER BY message.created_at DESC,message.id DESC
+       LIMIT $3`,
+      [cornerId, UPGRADE_BUILD_SPEC_LENGTH + 1, UPGRADE_DISCUSSION_CANDIDATES + 1],
+    )
+  ).rows;
+  const olderHistory = candidates.length > UPGRADE_DISCUSSION_CANDIDATES;
+  const discussion = candidates
+    .slice(0, UPGRADE_DISCUSSION_CANDIDATES)
+    .reverse()
+    .filter((row) => row.id !== approval.sourceMessageId);
+  return {
+    intentVerbatim: [{ sourceMessageId: approval.sourceMessageId, snapshot: approval.snapshot }],
+    buildSpec: upgradeBuildSpec(discussion, approval.snapshot, olderHistory),
+    criteria: [{ id: 'AC-1', text: upgradeCriterion(approval.snapshot) }],
+    references: [],
+    approvalBasis: {
+      kind: 'initiating-command',
+      sourceMessageId: approval.sourceMessageId,
+      snapshot: approval.snapshot,
+    },
+  };
+}
+
 export function cornerBriefRevisionHash(
   draft: CornerBriefStructuredDraft,
   attachments: readonly CornerBriefAttachment[],

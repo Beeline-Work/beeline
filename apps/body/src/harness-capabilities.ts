@@ -265,6 +265,54 @@ export function roomModeCandidates(
 }
 
 /**
+ * Whether a Room session on this harness actually runs shell commands — the
+ * fact a session prompt may state, which is a claim about the harness as much as
+ * about the sandbox.
+ *
+ *  - `runs`: the harness executes commands itself, so the daemon's gate never
+ *    sees them. Codex does in BOTH modes (`agent-full-access` under bubblewrap,
+ *    and its own offline read-only sandbox without it), and a harness that never
+ *    asks (`none`) has already run the command by the time we hear about it.
+ *  - `refused`: the harness asks, the Room gate is the whole decision, and it
+ *    refuses because no OS sandbox holds the read-only rule
+ *    (`roomPermissionDecision`).
+ *  - `unknown`: nothing measured says which. The prompt then states nothing and
+ *    the standing "if a shell command is refused, say so plainly rather than
+ *    retrying it" guidance stands —
+ *    claiming either way would tell the model to stop using a capability it has,
+ *    or to retry one it does not.
+ */
+export type RoomShellCapability = 'runs' | 'refused' | 'unknown';
+
+/**
+ * Does this harness stamp the exact ACP `execute` kind on a shell permission
+ * request — the one thing the Room shell gate reads?
+ *
+ * Only claude-agent-acp is measured: its native `Bash` request carries
+ * `kind: 'execute'`, captured verbatim in
+ * `fixtures/claude-agent-acp-permissions.ts`. Other asking harnesses are left
+ * unclaimed rather than assumed from the protocol — grok's captured frames
+ * arrive titled `use_tool` with no kind at all, and a harness told a shell is
+ * available that the gate then refuses spends every turn retrying it.
+ */
+function harnessDeclaresShellExecuteKind(agentCommand: string | undefined): boolean {
+  return Boolean(
+    agentCommand && /(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand),
+  );
+}
+
+export function roomShellCapability(
+  agentCommand: string | undefined,
+  options: { osSandbox?: boolean } = {},
+): RoomShellCapability {
+  const { enforcement } = harnessEnforcement(agentCommand);
+  if (enforcement === 'sandboxed' || enforcement === 'none') return 'runs';
+  if (enforcement === 'unknown') return 'unknown';
+  if (!harnessDeclaresShellExecuteKind(agentCommand)) return 'unknown';
+  return options.osSandbox ? 'runs' : 'refused';
+}
+
+/**
  * One-line operator line about how a Room's read-only rule is actually held for
  * this harness, or `undefined` when nothing needs saying.
  *

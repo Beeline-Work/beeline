@@ -85,6 +85,7 @@ import {
   type InstalledBundleIdentity,
   type PublishedBundle,
 } from './self-update-manifest.js';
+import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
 import { convergeTrustySquireBrokerService } from './systemd.js';
 
 // ---------------------------------------------------------------------------
@@ -1182,9 +1183,18 @@ export class SelfUpdateManager {
     // process nor the running elector is restarted by the swap itself. Pass the
     // anchor as the launcher's BEELINE_LIB_DIR so the canonicality refusal that
     // protects a source checkout still holds; best-effort on a host without
-    // systemd user services.
+    // its native per-user service manager.
     if (process.platform === 'linux' && this.options.env.BEELINE_SYSTEMD_USER !== '0') {
       await convergeTrustySquireBrokerService({
+        libDir: this.options.layout.libDir,
+        env: this.options.env,
+        log: this.log,
+      });
+    } else if (
+      process.platform === 'darwin' &&
+      this.options.env.BEELINE_LAUNCHD_USER !== '0'
+    ) {
+      await convergeLaunchdTrustySquireBrokerService({
         libDir: this.options.layout.libDir,
         env: this.options.env,
         log: this.log,

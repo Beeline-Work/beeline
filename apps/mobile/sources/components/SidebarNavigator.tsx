@@ -37,6 +37,8 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 
+const SETUP_SURFACES = ['/beeline/community', '/beeline/create-workspace'];
+
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
   const safeArea = useSafeAreaInsets();
@@ -53,7 +55,12 @@ export const SidebarNavigator = React.memo(() => {
   // here painted the desktop shell at phone width. Native Tauri still keeps
   // the frame at every width through `inDesktopShell`.
   const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell, isTablet);
-  const isAppSurface = pathname.startsWith('/beeline/') && !pathname.includes('/onboarding');
+  // Choosing, creating or joining a Workspace is a focused setup step, like
+  // onboarding: no Room sidebar (a person there may have no Workspace yet).
+  const isAppSurface =
+    pathname.startsWith('/beeline/') &&
+    !pathname.includes('/onboarding') &&
+    !SETUP_SURFACES.includes(pathname);
   const showSessionChrome =
     isAppSurface && showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
   const showSidebar = showSessionChrome && !zenMode;

@@ -17,6 +17,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { ProfileActions } from '@/components/buzz/ProfileActions';
+import { MemberGrantRow } from '@/components/buzz/MemberGrantRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -337,11 +338,13 @@ export function HumanProfile({
             <Text style={styles.section}>Grants</Text>
             {grants.length ? (
               grants.map((grant) => (
-                <SettingsRow
+                <MemberGrantRow
                   key={grant.grantId}
-                  title={grant.target}
-                  description={`${grant.agent.handle ? `@${grant.agent.handle}` : grant.agent.name} · ${grant.kind} · ${grant.status}`}
-                  testID={`member-grant-${grant.grantId}`}
+                  grant={grant}
+                  roomName={
+                    workspace?.managerSettings?.rooms?.find((room) => room.id === grant.roomId)
+                      ?.name
+                  }
                 />
               ))
             ) : (
@@ -390,7 +393,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textMuted,
     paddingTop: theme.buzz.space.md,
   },
+  // The segmented control is sized to its two labels, never stretched across
+  // the content column: `alignSelf` keeps it a label-width plate on the
+  // section head's left edge, and the two options carry no `flex`. At desktop
+  // width a `flex: 1` option filled the whole profile column for two short
+  // words (captain report, profile follow-up).
   roleToggle: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
     flexDirection: 'row',
     gap: theme.buzz.space.sm,
     paddingVertical: theme.buzz.space.sm,
@@ -400,9 +410,9 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.borderStrong,
     borderRadius: theme.buzz.radius,
     borderWidth: StyleSheet.hairlineWidth,
-    flex: 1,
     justifyContent: 'center',
     minHeight: 44,
+    paddingHorizontal: theme.buzz.space.md,
   },
   roleChoiceSelected: {
     backgroundColor: theme.buzz.accent,

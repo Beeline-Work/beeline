@@ -4,7 +4,16 @@ import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // own route file: Expo Router routes every default-exporting file under `app/`,
 // so a screen beside its route is a second URL for the same screen.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Platform,
+  ScrollView,
+  Share,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams, useNavigation, type Href } from 'expo-router';
@@ -29,6 +38,7 @@ import {
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
@@ -42,7 +52,12 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
+import {
+  AGENT_MODEL_PICKER_VISIBLE_ROWS,
+  effortConfigAxis,
+  fastModeConfigAxis,
+  filterAgentModelOptions,
+} from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
@@ -50,7 +65,6 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
 const MODEL_CATALOG_CONFIRM_ATTEMPTS = 140;
-const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 
 async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
@@ -208,7 +222,7 @@ function modelSelectionInput(
     return axisValue(detail, 'model', undefined) === model ? { model } : { model, effort: null };
   }
   if (axis.currentValue !== model) return { model, effort: null };
-  const effortAxis = detail.catalog.find((candidate) => candidate.category !== 'model');
+  const effortAxis = effortConfigAxis(detail.catalog);
   const effort = effortAxis?.currentValue;
   return effort && effortAxis.options.some((choice) => choice.id === effort)
     ? { model, effort }
@@ -267,12 +281,6 @@ export default function BuzzMembers({
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
-  const canBanSelectedAgent = Boolean(
-    surface?.viewer.permissions.manage &&
-    selectedAgent &&
-    selectedAgent.agent.role !== 'owner' &&
-    (surface.viewer.role === 'owner' || ['member', 'spectator'].includes(selectedAgent.agent.role)),
-  );
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const selectedAgentOwnerByline = selectedAgent?.owner
     ? ownerByline(selectedAgent.owner)
@@ -512,7 +520,7 @@ export default function BuzzMembers({
     setWorking('pair-agent');
     try {
       const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
-      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+      setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
       setError(`Could not create agent invite: ${String(reason)}`);
     } finally {
@@ -778,6 +786,25 @@ export default function BuzzMembers({
     }
   };
 
+  const setFastMode = async (enabled: boolean) => {
+    if (!selectedAgent || !ownsSelectedAgent || !modelAxes.fast) return;
+    setWorking('model-config');
+    setError(null);
+    try {
+      const pubkey = selectedAgent.agent.identity.pubkey;
+      const client = await writeClient();
+      await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, { fastMode: enabled });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.fastMode === enabled,
+      );
+    } catch (reason) {
+      setError(`Could not set Fast mode: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const toggleModelAxis = async (
     kind: ModelAxisKind,
     open: boolean,
@@ -811,11 +838,12 @@ export default function BuzzMembers({
         },
         MODEL_CATALOG_CONFIRM_ATTEMPTS,
       );
-      const effort = refreshed.catalog.find(
-        (candidate) =>
-          candidate.category !== 'model' &&
-          isAllowedAgentModelConfigCategory(candidate.category) &&
-          candidate.options.length > 0,
+      const effort = effortConfigAxis(
+        refreshed.catalog.filter(
+          (candidate) =>
+            isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
+            candidate.options.length > 0,
+        ),
       );
       if (!effort) {
         setModelAxisError('effort');
@@ -886,30 +914,23 @@ export default function BuzzMembers({
     }
   };
 
-  const removeSelectedAgent = async (banning = !ownsSelectedAgent) => {
+  // An agent is removed, never banned: a ban only blocks this identity, and
+  // its owner can pair the same helper back as a new agent at any time.
+  const removeSelectedAgent = async () => {
     if (!selectedAgent || !canRemoveSelectedAgent || !workspaceId) return;
-    if (banning && !canBanSelectedAgent) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
     const name = selectedAgent.agent.identity.name;
     const confirmed = await Modal.confirm(
-      banning ? `Ban ${name}?` : `Remove ${name}?`,
-      banning
-        ? 'This agent loses access to this Workspace and every Room in it. Rejoining is blocked until a manager lifts the ban.'
-        : 'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
-      {
-        cancelText: 'Cancel',
-        confirmText: banning ? 'Ban agent' : 'Remove agent',
-        destructive: true,
-      },
+      `Remove ${name}?`,
+      'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
+      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true },
     );
     if (!confirmed) return;
     setWorking('remove-agent');
     setError(null);
     try {
       const client = await writeClient();
-      if (banning)
-        await monolithPhoneOperation('banWorkspaceMember', { workspaceId, memberId: pubkey });
-      else await client.removeAgent(workspaceId, pubkey);
+      await client.removeAgent(workspaceId, pubkey);
       await waitForIndexedSurface(
         readWorkspace,
         (value) => !value.agents.some((member) => member.identity.pubkey === pubkey),
@@ -938,16 +959,16 @@ export default function BuzzMembers({
       Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
     const live =
       selectedAgent?.catalog.filter(
-        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+        (axis) =>
+          isAllowedAgentModelConfigCategory(axis.category, axis.id) && axis.options.length > 0,
       ) ?? [];
     return {
       model: live.find((axis) => axis.category === 'model'),
       // Effort choices may be model-specific. After a model switch, offer
       // nothing until the agent republishes a catalog whose current model
       // matches the persisted human selection.
-      effort: awaitingSelectedModelCatalog
-        ? undefined
-        : live.find((axis) => axis.category !== 'model'),
+      effort: awaitingSelectedModelCatalog ? undefined : effortConfigAxis(live),
+      fast: awaitingSelectedModelCatalog ? undefined : fastModeConfigAxis(live),
     };
   }, [selectedAgent]);
 
@@ -1071,19 +1092,30 @@ export default function BuzzMembers({
                             value={modelSearchQuery}
                           />
                         )}
-                        {open &&
-                          visibleChoices.map((choice) => (
-                            <TouchableOpacity
-                              key={choice.id}
-                              disabled={busy}
-                              onPress={() => void setModelOption(kind, choice.id)}
-                              style={[styles.choice, choice.id === current && styles.choiceActive]}
-                              testID={`model-option-${kind}-${choice.id}`}
-                            >
-                              <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
-                              {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
-                            </TouchableOpacity>
-                          ))}
+                        {open && (
+                          <ScrollView
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                            style={styles.choiceList}
+                            testID={`model-options-${kind}`}
+                          >
+                            {visibleChoices.map((choice) => (
+                              <TouchableOpacity
+                                key={choice.id}
+                                disabled={busy}
+                                onPress={() => void setModelOption(kind, choice.id)}
+                                style={[
+                                  styles.choice,
+                                  choice.id === current && styles.choiceActive,
+                                ]}
+                                testID={`model-option-${kind}-${choice.id}`}
+                              >
+                                <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
+                                {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        )}
                         {modelAppliesNote === kind && (
                           <Text style={styles.profileSettingCopy} testID={`model-applies-${kind}`}>
                             Applies at the next session
@@ -1099,6 +1131,33 @@ export default function BuzzMembers({
                       </View>
                     );
                   })}
+                  {modelAxes.fast && (
+                    <View style={styles.axisBlock} testID="fast-mode-setting">
+                      <Text style={styles.profileSettingLabel}>Fast mode</Text>
+                      <Text style={styles.profileSettingCopy}>
+                        Faster responses use more ChatGPT credits where available.
+                      </Text>
+                      {([false, true] as const).map((enabled) => (
+                        <TouchableOpacity
+                          key={String(enabled)}
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            disabled: busy,
+                            selected: selectedAgent.fastMode === enabled,
+                          }}
+                          disabled={busy}
+                          onPress={() => void setFastMode(enabled)}
+                          style={styles.choice}
+                          testID={`fast-mode-${enabled ? 'on' : 'off'}`}
+                        >
+                          <Text style={styles.choiceText}>{enabled ? 'On' : 'Off'}</Text>
+                          {selectedAgent.fastMode === enabled && (
+                            <Text style={styles.choiceText}>✓</Text>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
               {ownsSelectedAgent && (
@@ -1168,18 +1227,9 @@ export default function BuzzMembers({
                   )}
                 </View>
               )}
-              {ownsSelectedAgent && canBanSelectedAgent && (
-                <MonoButton
-                  label="Ban from Workspace"
-                  variant="secondary"
-                  disabled={busy}
-                  onPress={() => void removeSelectedAgent(true)}
-                  testID="ban-owned-agent"
-                />
-              )}
-              {(ownsSelectedAgent || canBanSelectedAgent) && (
+              {canRemoveSelectedAgent && (
                 <TouchableOpacity
-                  accessibilityLabel={ownsSelectedAgent ? 'Remove agent' : 'Ban agent'}
+                  accessibilityLabel="Remove from Workspace"
                   accessibilityRole="button"
                   disabled={busy}
                   onPress={() => void removeSelectedAgent()}
@@ -1187,11 +1237,7 @@ export default function BuzzMembers({
                   testID="remove-agent"
                 >
                   <Text style={styles.removeAgentText}>
-                    {working === 'remove-agent'
-                      ? 'Removing…'
-                      : ownsSelectedAgent
-                        ? 'Remove'
-                        : 'Ban'}
+                    {working === 'remove-agent' ? 'Removing…' : 'Remove from Workspace'}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1503,6 +1549,9 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.border,
       color: hull.textPrimary,
     },
+    // A catalog can advertise dozens of models; the open list shows at most
+    // AGENT_MODEL_PICKER_VISIBLE_ROWS 44pt rows and scrolls inside that bound.
+    choiceList: { maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 },
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
@@ -1561,6 +1610,11 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.dialogDanger,
       borderRadius: hull.radius,
     },
-    removeAgentText: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    removeAgentText: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textPrimary,
+      textAlign: 'center',
+    },
   };
 });

@@ -328,7 +328,9 @@ function attachmentPreview(
 /**
  * Whether the row's trailing brass square is lit. One square, one meaning:
  * this Room wants the viewer — a message newer than their read mark, or a
- * corner waiting on a human (`agentState === 'needs-you'`). A working agent
+ * corner waiting on a human (`agentState === 'needs-you'`). A mention of the
+ * viewer is attention only as part of unread: `mentionsViewer` is a fact about
+ * the latest message's words and never clears on read. A working agent
  * is not attention; the square stays dark while it works. Unread is never
  * hidden behind agent state: an unread Room lights the square whatever its
  * agents are doing.
@@ -336,20 +338,19 @@ function attachmentPreview(
 export function roomRowNeedsAttention(
   item: Pick<ChatListItem, 'unread' | 'agentState' | 'latestMessage'>,
 ): boolean {
-  return (
-    item.unread || item.agentState === 'needs-you' || item.latestMessage?.mentionsViewer === true
-  );
+  return item.unread || item.agentState === 'needs-you';
 }
 
 /** The one gold replacement line for a Room that asks the viewer to act. */
 export function roomRowAttentionReason(
-  item: Pick<ChatListItem, 'agentState' | 'attentionReason' | 'latestMessage'>,
+  item: Pick<ChatListItem, 'unread' | 'agentState' | 'attentionReason' | 'latestMessage'>,
 ): string | null {
   if (item.agentState === 'needs-you') {
     const actor = item.attentionReason?.actor?.trim();
     return actor ? `approval \u00b7 ${actor}` : 'approval';
   }
-  if (item.latestMessage?.mentionsViewer) {
+  // Only while unread: the mention fact stays true after the viewer reads it.
+  if (item.unread && item.latestMessage?.mentionsViewer) {
     return `mention \u00b7 @${previewHandle(item.latestMessage.author)}`;
   }
   return null;

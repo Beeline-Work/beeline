@@ -486,6 +486,75 @@ await database.query(
   [messageId('bot-system'), botRooms.system, SYSTEM_IDENTITY_ID, 'Workspace setup is complete.'],
 );
 
+// ---- Workbench apps (opt-in: AUDIT_WORKBENCH_APPS=1) -----------------------
+// One row per app, whatever serves it: a Registry app, a Squire API app whose
+// vault key folds into its row, a Squire browser app still connecting, and a
+// Registry app in error. One unrelated key stays under Keys.
+if (process.env.AUDIT_WORKBENCH_APPS === '1') {
+  // Niglet's helper stays online (presence evidence ages out after 90s).
+  const heartbeat = () =>
+    database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence','{"status":"online"}')
+       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET updated_at=now()`,
+      [ROOM, AGENT_NIGLET],
+    );
+  await heartbeat();
+  setInterval(() => void heartbeat(), 30_000).unref();
+  const squire = uuid();
+  const linear = uuid();
+  const notion = uuid();
+  await database.query(
+    `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
+       helper_agent_id,machine_id,status,connected_at,signed_in_as)
+     VALUES($1,$4,$5,'trusty-squire',$6,$6,'connected',now(),'alan@example.com'),
+           ($2,$4,$5,'registry-mcp',$6,$6,'connected',now(),NULL),
+           ($3,$4,$5,'registry-mcp',$6,$6,'error',NULL,NULL)`,
+    [squire, linear, notion, WORKSPACE, VIEWER, AGENT_NIGLET],
+  );
+  await database.query(
+    `UPDATE workspace_connectors SET registry_server_name=$2,registry_version='1.0.1',
+       display_name=$3,website_url=$4,status_error=$5 WHERE id=$1`,
+    [linear, 'app.linear/linear', 'Linear', 'https://linear.app', null],
+  );
+  await database.query(
+    `UPDATE workspace_connectors SET registry_server_name=$2,registry_version='1.0.0',
+       display_name=$3,website_url=$4,status_error=$5 WHERE id=$1`,
+    [notion, 'com.notion/mcp', 'Notion', 'https://notion.com', 'Notion refused the sign-in'],
+  );
+  await database.query(
+    `INSERT INTO workspace_connections(id,connector_id,owner_identity_id,reference,service,label,
+       hosts,state,last_synced_at,connection_metadata)
+     VALUES($1,$3,$4,'vault:resend','resend','default','["api.resend.com"]','active',now(),
+            '{"fieldNames":["api_key"]}'),
+           ($2,$3,$4,'vault:vercel','vercel','default','["api.vercel.com"]','active',now(),
+            '{"fieldNames":["token"]}')`,
+    [uuid(), uuid(), squire, VIEWER],
+  );
+  const apps: [string, string, string, string, string | null][] = [
+    ['linear', 'Linear', 'linear.app', 'registry-mcp', linear],
+    ['resend', 'Resend', 'resend.com', 'squire-api', null],
+    ['hackernews', 'Hacker News', 'news.ycombinator.com', 'squire-browser', null],
+    ['notion', 'Notion', 'notion.com', 'registry-mcp', notion],
+  ];
+  const appIds: Record<string, string> = {};
+  for (const [key, name, domain, transport, connector] of apps) {
+    appIds[key] = uuid();
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,domain,
+         transport,route,connector_id,machine_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9)`,
+      [appIds[key], WORKSPACE, VIEWER, key, name, domain, transport, connector, AGENT_NIGLET],
+    );
+  }
+  for (const operation of ['create_issue', 'list_issues', 'update_issue'])
+    await database.query(
+      `INSERT INTO workspace_app_usage(id,app_id,agent_id,room_id,requester_id,transport,operation)
+       VALUES($1,$2,$3,$4,$5,'registry-mcp',$6)`,
+      [uuid(), appIds.linear, AGENT_NIGLET, ROOM, VIEWER, operation],
+    );
+}
+
 const session = JSON.stringify(
   {
     origin,

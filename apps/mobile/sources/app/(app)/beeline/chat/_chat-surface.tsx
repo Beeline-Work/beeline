@@ -2016,7 +2016,7 @@ export function BuzzChatSurface({
     return roomStarterPrompts({
       roomAgent: firstRoomAgent,
       workspaceAgentCount: workspaceRoster ? workspaceRoster.agents.length : null,
-      canAddRoomMembers: canManageWorkspace,
+      canManageWorkspace,
     }).map((prompt) => ({
       lead: prompt.lead,
       detail: prompt.detail,

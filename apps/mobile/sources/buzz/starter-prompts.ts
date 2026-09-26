@@ -12,6 +12,9 @@ import type { ComposerMention } from '@/buzz/composer-fill';
  * that already has one is the wrong answer. An unread roster counts as "has
  * agents": the picker can always route on to the pairing command, while the
  * command cannot undo an agent nobody needed.
+ *
+ * Only a Workspace manager may mint an invite (`createInvite`), so the invite
+ * starter is offered to managers alone, like the Room agent picker.
  */
 export type RoomStarterPrompt = {
   readonly lead: string;
@@ -35,9 +38,10 @@ export function roomStarterPrompts(input: {
   readonly roomAgent?: { readonly pubkey: string; readonly handle?: string } | null;
   /** Agents in this Workspace, or null while that roster read is in flight. */
   readonly workspaceAgentCount: number | null;
-  /** Only a Workspace manager may add an existing agent to this Room. */
-  readonly canAddRoomMembers: boolean;
+  /** Only a Workspace manager may add an existing agent to this Room or invite a person. */
+  readonly canManageWorkspace: boolean;
 }): readonly RoomStarterPrompt[] {
+  const invite = input.canManageWorkspace ? [INVITE_PROMPT] : [];
   const handle = input.roomAgent?.handle;
   if (!handle) {
     if (input.workspaceAgentCount === 0)
@@ -48,9 +52,9 @@ export function roomStarterPrompts(input: {
           testID: 'starter-connect-agent',
           action: { kind: 'connect-agent' },
         },
-        INVITE_PROMPT,
+        ...invite,
       ];
-    if (input.canAddRoomMembers)
+    if (input.canManageWorkspace)
       return [
         {
           lead: 'Add an agent',
@@ -58,9 +62,9 @@ export function roomStarterPrompts(input: {
           testID: 'starter-add-agent',
           action: { kind: 'add-room-agent' },
         },
-        INVITE_PROMPT,
+        ...invite,
       ];
-    return [INVITE_PROMPT];
+    return invite;
   }
   const mention: ComposerMention = { handle, pubkey: input.roomAgent!.pubkey };
   return [
@@ -80,6 +84,6 @@ export function roomStarterPrompts(input: {
       testID: 'starter-open-corner',
       action: { kind: 'fill', text: `@${handle} Open a corner to `, mention },
     },
-    INVITE_PROMPT,
+    ...invite,
   ];
 }

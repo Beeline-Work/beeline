@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { roomStarterPrompts } from './starter-prompts';
 
-const MANAGER = { canAddRoomMembers: true };
+const MANAGER = { canManageWorkspace: true };
 
 describe('the first Room starter prompts', () => {
   it('offers the pairing command when the Workspace has no agent at all', () => {
@@ -26,26 +26,45 @@ describe('the first Room starter prompts', () => {
   });
 
   it('prefers the picker while the Workspace roster is still unread', () => {
-    expect(
-      roomStarterPrompts({ ...MANAGER, workspaceAgentCount: null })[0]!.action,
-    ).toEqual({ kind: 'add-room-agent' });
+    expect(roomStarterPrompts({ ...MANAGER, workspaceAgentCount: null })[0]!.action).toEqual({
+      kind: 'add-room-agent',
+    });
   });
 
   it('offers pairing when the Workspace has no agent, regardless of Room management permission', () => {
     expect(
-      roomStarterPrompts({ canAddRoomMembers: false, workspaceAgentCount: 0 }).map(
+      roomStarterPrompts({ canManageWorkspace: false, workspaceAgentCount: 0 }).map(
         (prompt) => prompt.testID,
       ),
-    ).toEqual(['starter-connect-agent', 'starter-invite']);
+    ).toEqual(['starter-connect-agent']);
   });
 
-  it('offers no agent starter when the viewer cannot add existing agents', () => {
+  it('offers neither the agent picker nor the invite when the viewer cannot manage the Workspace', () => {
     for (const workspaceAgentCount of [3, null])
       expect(
-        roomStarterPrompts({ canAddRoomMembers: false, workspaceAgentCount }).map(
+        roomStarterPrompts({ canManageWorkspace: false, workspaceAgentCount }).map(
           (prompt) => prompt.testID,
         ),
-      ).toEqual(['starter-invite']);
+      ).toEqual([]);
+  });
+
+  it('never offers the invite starter to a member who cannot mint an invite', () => {
+    // createInvite requires a Workspace manager; the starter would be a dead
+    // end for anyone else.
+    for (const roomAgent of [undefined, { pubkey: 'agent-1', handle: 'scout' }])
+      for (const workspaceAgentCount of [0, 1, null])
+        expect(
+          roomStarterPrompts({ canManageWorkspace: false, roomAgent, workspaceAgentCount }).map(
+            (prompt) => prompt.testID,
+          ),
+        ).not.toContain('starter-invite');
+    expect(
+      roomStarterPrompts({
+        canManageWorkspace: false,
+        roomAgent: { pubkey: 'agent-1', handle: 'scout' },
+        workspaceAgentCount: 1,
+      }).map((prompt) => prompt.testID),
+    ).toEqual(['starter-ask-agent', 'starter-open-corner']);
   });
 
   it('tags the Room agent once there is one, and drops the agent-getting starter', () => {
@@ -73,9 +92,7 @@ describe('the first Room starter prompts', () => {
 
   it('always keeps the invite starter last', () => {
     for (const roomAgent of [undefined, { pubkey: 'agent-1', handle: 'scout' }])
-      expect(
-        roomStarterPrompts({ ...MANAGER, roomAgent, workspaceAgentCount: 1 }).at(-1),
-      ).toEqual({
+      expect(roomStarterPrompts({ ...MANAGER, roomAgent, workspaceAgentCount: 1 }).at(-1)).toEqual({
         lead: 'Invite someone',
         detail: 'who should see the result',
         testID: 'starter-invite',

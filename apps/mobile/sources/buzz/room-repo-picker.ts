@@ -190,6 +190,64 @@ export function filterRepoCandidates(
   });
 }
 
+/** Owner login from `owner/repo` or a GitHub remote; null when neither names one. */
+export function repoOwnerFromCandidate(
+  candidate: Pick<RepoCandidate, 'name' | 'remote'>,
+): string | null {
+  const full =
+    githubFullNameFromInput(candidate.name) ??
+    (candidate.remote ? githubFullNameFromInput(candidate.remote) : null);
+  const owner = full?.split('/')[0]?.trim();
+  return owner || null;
+}
+
+/** Repo name under an owner heading — the owner is already in the section. */
+export function repoShortName(
+  candidate: Pick<RepoCandidate, 'name' | 'remote'>,
+  owner?: string | null,
+): string {
+  const full =
+    githubFullNameFromInput(candidate.name) ??
+    (candidate.remote ? githubFullNameFromInput(candidate.remote) : null);
+  if (full && owner && full.split('/')[0]?.toLowerCase() === owner.toLowerCase()) {
+    return full.split('/')[1] || candidate.name;
+  }
+  return candidate.name;
+}
+
+export type RepoOwnerGroup = {
+  owner: string | null;
+  data: RepoCandidate[];
+};
+
+/**
+ * Group listed repositories by the owner in their name or remote — never by
+ * GitHub App installation. One installation can grant repos from several
+ * owners; a heading that uses `accountLogin` then parks foreign repos under
+ * the wrong name.
+ */
+export function groupRepoCandidatesByOwner(candidates: readonly RepoCandidate[]): RepoOwnerGroup[] {
+  const groups = new Map<string, { owner: string; data: RepoCandidate[] }>();
+  const ungrouped: RepoCandidate[] = [];
+  for (const candidate of candidates) {
+    const owner = repoOwnerFromCandidate(candidate);
+    if (!owner) {
+      ungrouped.push(candidate);
+      continue;
+    }
+    const key = owner.toLowerCase();
+    const existing = groups.get(key);
+    if (existing) existing.data.push(candidate);
+    else groups.set(key, { owner, data: [candidate] });
+  }
+  const sections: RepoOwnerGroup[] = [...groups.values()].map((group) => ({
+    owner: group.owner,
+    data: group.data,
+  }));
+  if (ungrouped.length > 0) sections.push({ owner: null, data: ungrouped });
+  return sections;
+}
+
 /** Distinct repositories exposed by the account's GitHub App installation. */
 export function dedupeRepoCandidates(bindings: readonly RepoCandidate[]): RepoCandidate[] {
   const byKey = new Map<string, RepoCandidate>();

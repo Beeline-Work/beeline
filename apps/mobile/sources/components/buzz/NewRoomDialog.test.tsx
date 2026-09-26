@@ -3,54 +3,69 @@ import React, { useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-let windowHeight = 844;
-
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
     View: host('View'),
     Text: host('Text'),
-    ScrollView: host('ScrollView'),
     TextInput: host('TextInput'),
     Switch: host('Switch'),
     TouchableOpacity: host('TouchableOpacity'),
-    Pressable: host('Pressable'),
-    Modal: host('Modal'),
-    Platform: { OS: 'android' },
-    useWindowDimensions: () => ({ width: 390, height: windowHeight }),
+    Keyboard: { dismiss: () => undefined },
+    Platform: { OS: 'web' },
   };
 });
-vi.mock('react-native-keyboard-controller', () => ({
-  KeyboardAvoidingView: 'KeyboardAvoidingView',
-}));
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
-vi.mock('./MonoHull', () => ({ HullSurface: 'HullSurface' }));
+vi.mock('./HullDialog', async () => {
+  const React = await import('react');
+  return {
+    HullDialogInput: (props: any) => React.createElement('TextInput', props),
+  };
+});
 vi.mock('./RepoPicker', () => ({ RepoPicker: 'RepoPicker' }));
+vi.mock('./ChevronGlyph', () => ({ ChevronGlyph: 'ChevronGlyph', CHEVRON_ROW_SIZE: 16 }));
+vi.mock('./HullActionSheet', async () => {
+  const React = await import('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      React.createElement('HullActionSheetModal', props, props.children, props.footer),
+  };
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { NewRoomDialog } from './NewRoomDialog';
+import { beelineThemes } from '@/buzz/groknight';
+
 const repo = {
   key: 'repo',
   name: 'owner/widgets',
   remote: 'https://github.com/owner/widgets',
   defaultBranch: 'main',
 } as any;
+const createdRepo = { ...repo, key: 'new-repo', name: 'owner/new-repo' };
+const installations = [
+  { installationId: 78, accountLogin: 'owner', status: 'active' },
+  { installationId: 79, accountLogin: 'other', status: 'active' },
+] as any;
 
-function mount() {
+function mount({ startPicker = false, createFails = false } = {}) {
   const submit = vi.fn();
+  const createRepository = vi.fn();
+  const addAccount = vi.fn();
   function Harness() {
     const [roomName, setRoomName] = useState('');
     const [inviteOnly, setInviteOnly] = useState(false);
     const [pendingRepo, select] = useState<any>(null);
-    const [showRepoPicker, show] = useState(false);
+    const [showRepoPicker, show] = useState(startPicker);
+    const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
     return (
       <NewRoomDialog
         visible
-        workspaceName="Workshop"
         roomName={roomName}
         setRoomName={setRoomName}
         inviteOnly={inviteOnly}
@@ -60,18 +75,28 @@ function mount() {
         onClose={() => {}}
         pendingRepo={pendingRepo}
         showRepoPicker={showRepoPicker}
-        handleToggleRepoPicker={() => show(!showRepoPicker)}
+        handleToggleRepoPicker={() => show((current) => !current)}
         handleSelectNoRepository={() => {
           select(null);
           show(false);
         }}
-        handleSelectRepoCandidate={(repo) => {
-          select(repo);
+        handleSelectRepoCandidate={(candidate) => {
+          select(candidate);
           show(false);
         }}
         repoCandidates={[repo]}
-        repoInstallations={[]}
-        repoPickerError={null}
+        repoInstallations={installations}
+        repoPickerError={repoPickerError}
+        handleAddGitHubAccount={addAccount}
+        handleCreateRepository={async (installationId, name) => {
+          createRepository(installationId, name);
+          if (createFails) {
+            setRepoPickerError('Could not create repository');
+            throw new Error('creation failed');
+          }
+          select(createdRepo);
+          show(false);
+        }}
       />
     );
   }
@@ -82,187 +107,80 @@ function mount() {
   const host = (testID: string) =>
     renderer.root.findAll(
       (node: any) => typeof node.type === 'string' && node.props.testID === testID,
-    )[0]!;
-  return { renderer, host, submit };
-}
-
-function textContent(node: any): string {
-  return node.children
-    .map((child: any) => (typeof child === 'string' ? child : textContent(child)))
-    .join('');
-}
-
-function mountWithInstallFlow() {
-  const submit = vi.fn();
-  const addAccount = vi.fn();
-  const manageInstallation = vi.fn();
-  function Harness() {
-    const [roomName, setRoomName] = useState('');
-    const [inviteOnly, setInviteOnly] = useState(false);
-    const [pendingRepo, select] = useState<any>(null);
-    const [showRepoPicker, show] = useState(true);
-    return (
-      <NewRoomDialog
-        visible
-        workspaceName="Workshop"
-        roomName={roomName}
-        setRoomName={setRoomName}
-        inviteOnly={inviteOnly}
-        setInviteOnly={setInviteOnly}
-        creatingRoom={false}
-        createRoom={() => submit(roomName.trim(), pendingRepo)}
-        onClose={() => {}}
-        pendingRepo={pendingRepo}
-        showRepoPicker={showRepoPicker}
-        handleToggleRepoPicker={() => show(!showRepoPicker)}
-        handleSelectNoRepository={() => {
-          select(null);
-          show(false);
-        }}
-        handleSelectRepoCandidate={(repo) => {
-          select(repo);
-          show(false);
-        }}
-        repoCandidates={[repo]}
-        repoInstallations={[]}
-        repoPickerError={null}
-        repoPickerNotice="Refreshing repositories…"
-        handleAddGitHubAccount={addAccount}
-        handleManageGitHubInstallation={manageInstallation}
-      />
-    );
-  }
-  let renderer!: ReactTestRenderer;
-  act(() => {
-    renderer = create(<Harness />);
-  });
+    )[0];
+  const sheet = () => renderer.root.findByType('HullActionSheetModal').props;
   const picker = () => renderer.root.findByType('RepoPicker').props;
-  return { renderer, picker, submit, addAccount, manageInstallation };
+  return { renderer, host, sheet, picker, submit, createRepository, addAccount };
 }
 
-describe('New Room form', () => {
-  it.each([
-    { viewport: 'short', height: 320 },
-    { viewport: 'normal', height: 844 },
-  ])(
-    'allows chat-only creation after opening the repository picker in the $viewport viewport',
-    ({ viewport, height }) => {
-      windowHeight = height;
-      const { renderer, host, submit } = mount();
-
-      const header = renderer.root
-        .findAllByProps({ accessibilityRole: 'header' })
-        .find((node: any) => node.type === 'Text');
-      expect(textContent(header)).toBe('New Room');
-      expect(
-        renderer.root
-          .findAllByType('Text')
-          .some((node: any) => textContent(node).includes('Repository optional')),
-      ).toBe(true);
-      expect(host('create-room-name')).toBeDefined();
-      expect(
-        host('create-room-repo-row')
-          .findAllByType('Text')
-          .some((node: any) => textContent(node) === 'No repository (chat only)'),
-      ).toBe(true);
-      expect(host('create-room-submit')).toBeDefined();
-
-      act(() => host('create-room-repo-row').props.onPress());
-      expect(host('create-room-picker')).toBeDefined();
-      expect(host('create-room-content').type).toBe('ScrollView');
-      expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
-      expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBeUndefined();
-      expect(
-        renderer.root
-          .findAllByType('Text')
-          .some((node: any) => textContent(node).includes('Repository optional')),
-      ).toBe(true);
-      act(() => host('create-room-no-repository').props.onPress());
-      act(() => host('create-room-name').props.onChangeText(`${viewport}-room`));
-      act(() => host('create-room-submit').props.onPress());
-      expect(submit).toHaveBeenCalledWith(`${viewport}-room`, null, false);
-      act(() => renderer.unmount());
-      windowHeight = 844;
-    },
-  );
-
-  it('makes name primary, keeps the footer separate, and explains name gating for chat-only creation', () => {
-    const { renderer, host, submit } = mount();
-    expect(host('create-room-name').props.accessibilityLabel).toBe('Room name');
-    expect(host('create-room-name').props.autoFocus).toBe(true);
-    expect(host('create-room-name-hint').children.join('')).toContain('lowercase letters');
-    expect(host('create-room-submit').props.disabled).toBe(true);
-    const controls = renderer.root.findAll(
-      (node: any) => typeof node.type === 'string' && !!node.props.testID,
-    );
-    expect(controls.indexOf(host('create-room-name'))).toBeLessThan(
-      controls.indexOf(host('create-room-repo-row')),
-    );
-    expect(host('create-room-name').parent).not.toBe(host('create-room-submit').parent);
-    act(() => host('create-room-name').props.onChangeText('   '));
-    expect(host('create-room-submit').props.disabled).toBe(true);
-    act(() => host('create-room-name').props.onChangeText('Kitchen Room'));
-    expect(host('create-room-submit').props.disabled).toBe(true);
-    act(() => host('create-room-name').props.onChangeText('kitchen'));
-    expect(host('create-room-submit').props.disabled).toBe(false);
-    expect(host('create-room-name-hint')).toBeUndefined();
-    act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenCalledWith('kitchen', null, false);
+describe('New Room sheet', () => {
+  it('starts with only Name, Repository, and Public, with public enabled', () => {
+    const { renderer, host, sheet, submit } = mount();
+    expect(sheet().title).toBe('New Room');
+    expect(sheet().subtitle).toBeUndefined();
+    expect(host('create-room-name')?.props.accessibilityLabel).toBe('Room name');
+    expect(host('create-room-repo-row')).toBeDefined();
+    expect(host('create-room-public')?.props.value).toBe(true);
+    expect(host('create-room-public')?.props.thumbColor).toBe(beelineThemes.obsidian.bgBase);
+    expect(host('create-room-public')?.props.activeThumbColor).toBe(beelineThemes.obsidian.bgBase);
+    expect(host('create-room-submit')?.props.disabled).toBe(true);
+    act(() => host('create-room-name')?.props.onChangeText('planning'));
+    act(() => host('create-room-submit')?.props.onPress());
+    expect(submit).toHaveBeenCalledWith('planning', null, false);
     act(() => renderer.unmount());
   });
 
-  it('shows one chat-only choice while expanded and repo selection does not satisfy the name requirement', () => {
-    windowHeight = 320;
-    const { renderer, host, submit } = mount();
-    act(() => host('create-room-repo-row').props.onPress());
-    const labels = renderer.root.findAll(
-      (node: any) => node.type === 'Text' && node.children.join('') === 'No repository (chat only)',
-    );
-    expect(labels).toHaveLength(1);
-    expect(host('create-room-name').props.value).toBe('');
-    act(() => renderer.root.findByType('RepoPicker').props.onSelect(repo));
-    expect(host('create-room-submit').props.disabled).toBe(true);
-    act(() => host('create-room-name').props.onChangeText('work'));
-    act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenLastCalledWith('work', repo, false);
-    act(() => host('create-room-repo-row').props.onPress());
-    act(() => host('create-room-no-repository').props.onPress());
-    act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenLastCalledWith('work', null, false);
-    act(() => renderer.unmount());
-    windowHeight = 844;
-  });
-
-  it('hands the GitHub install flow to the repository picker', () => {
-    const { renderer, picker, addAccount, manageInstallation } = mountWithInstallFlow();
-    expect(picker().notice).toBe('Refreshing repositories…');
-    expect(picker().testIDPrefix).toBe('create-room-repo-picker');
-    expect(picker().error).toBeNull();
-    act(() => picker().onAddAccount());
-    expect(addAccount).toHaveBeenCalledTimes(1);
-    const installation = {
-      installationId: 78,
-      accountLogin: 'Beeline-Work',
-      status: 'active',
-    } as any;
-    act(() => picker().onManageInstallation(installation));
-    expect(manageInstallation).toHaveBeenCalledWith(installation);
-    // The picker is the only place this dialog surfaces install progress.
-    expect(
-      renderer.root
-        .findAllByType('Text')
-        .some((node: any) => textContent(node) === 'Refreshing repositories…'),
-    ).toBe(false);
+  it('switches to invite-only without changing repository selection', () => {
+    const { renderer, host, picker, submit, sheet } = mount();
+    act(() => host('create-room-public')?.props.onValueChange(false));
+    act(() => host('create-room-repo-row')?.props.onPress());
+    expect(sheet().title).toBe('Repository');
+    expect(host('create-room-name')).toBeUndefined();
+    expect(host('create-room-submit')).toBeUndefined();
+    act(() => picker().onSelect(repo));
+    act(() => host('create-room-name')?.props.onChangeText('private-room'));
+    act(() => host('create-room-submit')?.props.onPress());
+    expect(submit).toHaveBeenCalledWith('private-room', repo, true);
     act(() => renderer.unmount());
   });
 
-  it('keeps Invite-only independent of the optional repository', () => {
-    const { renderer, host, submit } = mount();
-    expect(host('create-room-invite-only').props.value).toBe(false);
-    act(() => host('create-room-invite-only').props.onValueChange(true));
-    act(() => host('create-room-name').props.onChangeText('private-room'));
-    act(() => host('create-room-submit').props.onPress());
-    expect(submit).toHaveBeenCalledWith('private-room', null, true);
+  it('keeps no repository as an explicit picker choice', () => {
+    const { renderer, picker, sheet } = mount({ startPicker: true });
+    expect(sheet().title).toBe('Repository');
+    expect(picker().onSelectNoRepository).toBeDefined();
+    act(() => picker().onSelectNoRepository());
+    expect(sheet().title).toBe('New Room');
+    act(() => renderer.unmount());
+  });
+
+  it('creates a repository in its own step and selects it for the Room', async () => {
+    const { renderer, host, picker, sheet, createRepository, submit } = mount({
+      startPicker: true,
+    });
+    act(() => picker().onStartCreateRepository());
+    expect(sheet().title).toBe('Create repository');
+    expect(sheet().navigation?.props.testID).toBe('create-repository-back');
+    act(() => sheet().navigation?.props.onPress());
+    expect(sheet().title).toBe('Repository');
+    act(() => picker().onStartCreateRepository());
+    expect(host('create-repository-submit')?.props.disabled).toBe(true);
+    act(() => host('create-repository-name')?.props.onChangeText('new-repo'));
+    await act(async () => host('create-repository-submit')?.props.onPress());
+    expect(createRepository).toHaveBeenCalledWith(78, 'new-repo');
+    expect(sheet().title).toBe('New Room');
+    act(() => host('create-room-name')?.props.onChangeText('planning'));
+    act(() => host('create-room-submit')?.props.onPress());
+    expect(submit).toHaveBeenCalledWith('planning', createdRepo, false);
+    act(() => renderer.unmount());
+  });
+
+  it('keeps a failed repository creation on the creation step', async () => {
+    const { renderer, host, picker, sheet } = mount({ startPicker: true, createFails: true });
+    act(() => picker().onStartCreateRepository());
+    act(() => host('create-repository-name')?.props.onChangeText('new-repo'));
+    await act(async () => host('create-repository-submit')?.props.onPress());
+    expect(sheet().title).toBe('Create repository');
+    expect(host('create-repository-error')).toBeDefined();
     act(() => renderer.unmount());
   });
 });

@@ -6,3 +6,4 @@ export * from './agent-access.js';
 export * from './system-events.js';
 export * from './corner-text.js';
 export * from './turn-silence.js';
+export * from './institutional-memory.js';

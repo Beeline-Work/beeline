@@ -134,23 +134,24 @@ export default function RootLayout() {
             headerTitle: 'Workflows',
           }}
         />
-        {/* Workbench keeps the stack header (its back control) on a phone; on
-            desktop the page draws the shared PageHeader so its title lines up
-            with the other sections. */}
+        {/* Workbench and its tool/key pages draw the shared PageHeader
+            (Settings over Workbench, Workbench over the tool or key name). */}
         <Stack.Screen
           name="beeline/settings/workbench"
           options={{
-            headerShown: !isDesktop,
-            headerTitle: 'Workbench',
+            headerShown: false,
           }}
         />
         <Stack.Screen
           name="beeline/settings/workbench/connection"
-          options={{ headerTitle: 'Key' }}
+          options={{ headerShown: false }}
         />
-        {/* The connect flow draws its own header with the connector name, so the
-            stack header would double it. Wallet uses the same in-page header. */}
         <Stack.Screen name="beeline/settings/workbench/wallet" options={{ headerShown: false }} />
+        <Stack.Screen name="beeline/settings/workbench/wallet-send" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="beeline/settings/workbench/wallet-receive"
+          options={{ headerShown: false }}
+        />
         <Stack.Screen name="beeline/settings/workbench/connect" options={{ headerShown: false }} />
         {/* The Squire sign-in browser renders as an overlay card over the
             connect screen — most of the screen, never full-bleed, with the

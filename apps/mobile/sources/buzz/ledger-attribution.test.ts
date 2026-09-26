@@ -40,6 +40,7 @@ describe('ledger attribution runs', () => {
       { daemonFact: { type: 'corner-complete', outcome: 'landed' } },
       { durableFact: { kind: 'merge' } },
       { grantRequest: { id: 'grant' } },
+      { squireApproval: { approvalUrl: 'https://trustysquire.test/approve' } },
       { connectorOffer: { offerId: 'offer' } },
       { choice: { choiceId: 'choice' } },
     ];

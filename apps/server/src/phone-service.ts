@@ -366,6 +366,8 @@ interface RoomScheduleRow {
   message: string;
   next_run_at: Date;
   created_at: Date;
+  surface_parent_id?: string | null;
+  surface_name?: string;
 }
 
 function hash(value: string): string {
@@ -595,6 +597,8 @@ function projectedMessage(
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
+    case 'squire-approval':
+      return { ...base, squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']> };
     case 'connector-offer':
       return {
         ...base,
@@ -671,6 +675,9 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
     message: row.message,
     nextRunAt: unix(row.next_run_at),
     createdAt: unix(row.created_at),
+    ...(row.surface_parent_id && row.surface_name
+      ? { corner: { id: row.room_id, name: row.surface_name } }
+      : {}),
   };
 }
 
@@ -3426,8 +3433,13 @@ export class PhoneService {
     await this.requireTopLevelRoom(roomId);
     await this.requireRoomWorkspaceManager(roomId, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
-      `SELECT id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at
-       FROM agent_schedules WHERE room_id=$1 ORDER BY created_at,id`,
+      `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
+              schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
+              schedule.created_at,surface.parent_id surface_parent_id,surface.name surface_name
+       FROM agent_schedules schedule
+       JOIN rooms surface ON surface.id=schedule.room_id
+       WHERE surface.id=$1 OR surface.parent_id=$1
+       ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
     return { schedules: schedules.rows.map(roomSchedule) };
@@ -3439,7 +3451,9 @@ export class PhoneService {
     await this.requireTopLevelRoom(input.roomId);
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const deleted = await this.database.query(
-      `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+      `DELETE FROM agent_schedules schedule USING rooms surface
+       WHERE schedule.id=$1 AND surface.id=schedule.room_id
+         AND (surface.id=$2 OR surface.parent_id=$2)`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
@@ -6422,7 +6436,37 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    void input;
+    if (input.refreshVault) {
+      const refreshes = await this.database.transaction(async (database) => {
+        const rows = (
+          await database.query<{ id: string; helper_agent_id: string }>(
+            `UPDATE workspace_connectors
+             SET pending_ops=CASE
+                   WHEN pending_ops @> '"sync"'::jsonb THEN pending_ops
+                   ELSE pending_ops || '"sync"'::jsonb
+                 END,
+                 updated_at=now()
+             WHERE owner_identity_id=$1 AND connector_type='trusty-squire'
+               AND status='connected'
+             RETURNING id,helper_agent_id`,
+            [viewerId],
+          )
+        ).rows;
+        if (rows.length) {
+          await database.query(
+            `UPDATE workspace_connections SET last_synced_at=NULL,updated_at=now()
+             WHERE connector_id=ANY($1::uuid[])`,
+            [rows.map((row) => row.id)],
+          );
+        }
+        return rows;
+      });
+      // The helper's live assignment wake makes the sync immediate; its
+      // ordinary five-minute poll remains the recovery path.
+      for (const helperId of new Set(refreshes.map((row) => row.helper_agent_id))) {
+        await notifyConnectorAssignment(this.database, helperId);
+      }
+    }
     const connectors = (
       await this.database.query<{
         id: string;

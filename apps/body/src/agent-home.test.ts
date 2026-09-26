@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   symlink,
   utimes,
@@ -244,6 +245,78 @@ describe('per-room harness state isolation', () => {
       expect(lstatSync(grok).isSymbolicLink()).toBe(true);
       expect(lstatSync(pi).isSymbolicLink()).toBe(true);
       expect(lstatSync(cursor).isSymbolicLink()).toBe(true);
+    }
+  });
+
+  it('repairs an isolated credential replaced by an atomic refresh and quarantines the stale file', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-stale-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, '{"token":"current"}');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+
+    // Claude-style atomic persistence renames a temporary file over the
+    // credential path. At the filesystem layer that replaces the symlink
+    // itself, leaving this Room detached from later operator refreshes.
+    const refreshed = resolve(roomRoot, 'claude/.credentials.json.next');
+    await writeFile(refreshed, '{"token":"stale-room-copy"}');
+    await rename(refreshed, target);
+    expect(lstatSync(target).isSymbolicLink()).toBe(false);
+    await writeFile(source, '{"token":"fresh-operator-login"}');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(target, 'utf8')).toBe('{"token":"fresh-operator-login"}');
+    const quarantined = readdirSync(resolve(roomRoot, 'claude')).filter((name) =>
+      name.startsWith('.credentials.json.beeline-quarantine-'),
+    );
+    expect(quarantined).toHaveLength(1);
+    expect(readFileSync(resolve(roomRoot, 'claude', quarantined[0]!), 'utf8')).toBe(
+      '{"token":"stale-room-copy"}',
+    );
+  });
+
+  it('repairs stale regular files for every shared credential path', async () => {
+    const operatorHome = await scratch('beeline-operator-home-all-credentials-');
+    const roomRoot = resolve(await scratch('beeline-room-all-credentials-'), 'agent-home');
+    const credentials = [
+      ['.claude/.credentials.json', 'claude/.credentials.json'],
+      ['.codex/auth.json', 'codex/auth.json'],
+      ['.grok/auth.json', 'grok/auth.json'],
+      ['.pi/agent/auth.json', 'pi/auth.json'],
+      ['.cursor/agent-cli-state.json', 'cursor/agent-cli-state.json'],
+      ['.config/cursor/auth.json', 'user/.config/cursor/auth.json'],
+      ['.local/share/opencode/auth.json', 'user/.local/share/opencode/auth.json'],
+    ] as const;
+
+    for (const [sourceName, targetName] of credentials) {
+      const source = resolve(operatorHome, sourceName);
+      const target = resolve(roomRoot, targetName);
+      await mkdir(resolve(source, '..'), { recursive: true });
+      await mkdir(resolve(target, '..'), { recursive: true });
+      await writeFile(source, `current:${sourceName}`);
+      await writeFile(target, `stale:${targetName}`);
+    }
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    for (const [sourceName, targetName] of credentials) {
+      const source = resolve(operatorHome, sourceName);
+      const target = resolve(roomRoot, targetName);
+      expect(lstatSync(target).isSymbolicLink()).toBe(true);
+      expect(realpathSync(target)).toBe(realpathSync(source));
+      expect(readFileSync(target, 'utf8')).toBe(`current:${sourceName}`);
+      expect(
+        readdirSync(resolve(target, '..')).filter((name) =>
+          name.startsWith(`${targetName.split('/').at(-1)}.beeline-quarantine-`),
+        ),
+      ).toHaveLength(1);
     }
   });
 

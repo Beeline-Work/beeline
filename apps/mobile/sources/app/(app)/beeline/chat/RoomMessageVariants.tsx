@@ -360,6 +360,68 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   );
 });
 
+export interface SquireApprovalCardProps {
+  message: ChatDisplayMessage;
+  onOpenSource?(roomId: string, messageId: string): void;
+}
+
+/**
+ * A notification, not an authority surface: the primary action opens the
+ * exact page Squire returned, where Squire's own passkey policy decides it.
+ */
+export const SquireApprovalCard = React.memo(function SquireApprovalCard({
+  message,
+  onOpenSource,
+}: SquireApprovalCardProps) {
+  const approval = message.squireApproval!;
+  const agentName = (approval.agent.handle ?? approval.agent.name).replace(/^@/, '');
+  const actionLabel =
+    approval.linkKind === 'passkey'
+      ? 'Use passkey ↗'
+      : approval.linkKind === 'vouch'
+        ? 'Vouch ↗'
+        : 'Review ↗';
+  const actions: TranscriptCardAction[] = [
+    {
+      label: actionLabel,
+      primary: true,
+      accessibilityRole: 'link',
+      onPress: () => void openExternalUrl(approval.approvalUrl),
+      testID: 'squire-approval-open',
+    },
+  ];
+  if (approval.sourceRoomId && approval.sourceMessageId && onOpenSource) {
+    actions.push({
+      label: 'View request',
+      accessibilityRole: 'link',
+      onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!),
+      testID: 'squire-approval-source',
+    });
+  }
+  return (
+    <TranscriptCard
+      tier="ask"
+      testID="squire-approval-card"
+      identity={
+        <IdentityMark
+          kind="agent"
+          seed={approval.agent.pubkey}
+          avatarUrl={approval.agent.avatar}
+          face={approval.agent.face}
+          name={approval.agent.name}
+          size={26}
+        />
+      }
+      title={approval.title}
+      subline={`${approval.detail} · requested by @${agentName}`}
+      sublineTestID="squire-approval-detail"
+      stamp={ledgerStamp(message.timestamp)}
+      footerNote="approval stays with Trusty Squire"
+      actions={actions}
+    />
+  );
+});
+
 export interface ConnectorOfferCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
@@ -1695,6 +1757,7 @@ export interface OrdinaryLedgerMessageProps {
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
+  onOpenSource?(roomId: string, messageId: string): void;
   onMention?(participantId: string): void;
   onOpenProfile?(participantId: string, kind?: 'human' | 'agent'): void;
   /** A tap on the row — the composer's "outside" — puts the keyboard away. */
@@ -1807,6 +1870,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onChannelReference,
   codeRoomId,
   onOpenCode,
+  onOpenSource,
   onMention,
   onOpenProfile,
   onTapOutsideComposer,
@@ -1885,6 +1949,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               ? () =>
                   isAgent ? onOpenProfile(message.pubkey!) : onOpenProfile(message.pubkey!, 'human')
               : undefined,
+          // The byline is a nested profile Pressable. Giving that Pressable
+          // the row's long-press action makes React Native cancel its onPress
+          // on release instead of navigating behind the actions sheet.
+          onLongPress: onMessageActions ? () => onMessageActions(message) : undefined,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,
           isViewer: isSelfSteer,
@@ -2019,15 +2087,41 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     speaksAsAgent: isAgent,
     immediatelyPrecedingMessage,
   });
+  const replySourceRoomId = message.reference?.channelId ?? codeRoomId;
+  const replySourceMessageId = message.replyToId;
+  const replyReferenceContents = (
+    <Text numberOfLines={2} style={styles.replyReferenceText}>
+      ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
+      {referencedTarget?.preview ?? 'Message not loaded'}
+    </Text>
+  );
   const replyReference = showReplyReference ? (
-    <View style={styles.replyReference} testID={`reply-reference-${message.id}`}>
-      <Text numberOfLines={2} style={styles.replyReferenceText}>
-        ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
-        {referencedTarget?.preview ?? 'Message not loaded'}
-      </Text>
-    </View>
+    onOpenSource && replySourceRoomId && replySourceMessageId ? (
+      <Pressable
+        accessibilityLabel="Open original message"
+        accessibilityRole="button"
+        onPress={() => onOpenSource(replySourceRoomId, replySourceMessageId)}
+        style={styles.replyReference}
+        testID={`reply-reference-${message.id}`}
+      >
+        {replyReferenceContents}
+      </Pressable>
+    ) : (
+      <View style={styles.replyReference} testID={`reply-reference-${message.id}`}>
+        {replyReferenceContents}
+      </View>
+    )
   ) : null;
   const forwarded = forwardedMessageParts(message.text);
+  const forwardSource = forwarded.source;
+  const forwardBodyAction =
+    forwardSource && onOpenSource
+      ? {
+          accessibilityLabel: 'Open original forwarded message',
+          onPress: () => onOpenSource(forwardSource.roomId, forwardSource.messageId),
+          testID: `forward-source-${message.id}`,
+        }
+      : undefined;
   const connectorReceipt = parseConnectorReceipt(forwarded.body);
   const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
   const ledgerText = isSelfSteer ? undefined : splitLedgerText(receiptBody);
@@ -2100,6 +2194,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             codeRoomId={codeRoomId}
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
+            bodyAction={forwardBodyAction}
             replyReference={replyReference}
             attachments={attachments}
           />
@@ -2121,6 +2216,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             codeRoomId={codeRoomId}
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
+            bodyAction={forwardBodyAction}
             replyReference={replyReference}
             machineNoise={machineNoise}
             attachments={attachments}
@@ -2128,9 +2224,22 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         )}
         {receiptCard}
         {forwarded.caption ? (
-          <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
-            {forwarded.caption}
-          </Text>
+          forwardSource && onOpenSource ? (
+            <Pressable
+              accessibilityLabel="Open original forwarded message"
+              accessibilityRole="button"
+              onPress={() => onOpenSource(forwardSource.roomId, forwardSource.messageId)}
+              testID={`forward-source-caption-${message.id}`}
+            >
+              <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
+                {forwarded.caption}
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
+              {forwarded.caption}
+            </Text>
+          )
         ) : null}
         {message.isUser && deliveryFailed ? (
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>

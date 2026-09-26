@@ -1,4 +1,5 @@
 import { HumanProfile } from './human-profile';
+import AgentProfileRoute from './agent-profile';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -24,6 +25,11 @@ const modal = vi.hoisted(() => ({
 const navigation = vi.hoisted(() => ({
   beforeRemove: null as null | ((event: any) => void),
   dispatch: vi.fn(),
+}));
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
+const routeParams = vi.hoisted(() => ({
+  communityId: '11111111-1111-4111-8111-111111111111',
+  agentId: 'd'.repeat(64),
 }));
 const client = vi.hoisted(() => ({
   composeMessage: vi.fn(async (input: any, options: any) => ({
@@ -136,7 +142,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn(), navigate: vi.fn() },
-  useLocalSearchParams: () => ({ communityId: WORKSPACE }),
+  useLocalSearchParams: () => routeParams,
   useNavigation: () => ({
     addListener: (_event: string, callback: (event: any) => void) => {
       navigation.beforeRemove = callback;
@@ -168,7 +174,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Share: { share },
-    Platform: { OS: 'ios' },
+    Platform: platform,
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
@@ -456,6 +462,7 @@ async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  platform.OS = 'ios';
   navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
   state.agent = baseAgent();
@@ -664,6 +671,31 @@ describe('Members workspace management', () => {
     });
     return renderer;
   }
+
+  it('opens a human profile on Android when window has no browser event API', async () => {
+    platform.OS = 'android';
+    vi.stubGlobal('window', {});
+    try {
+      const renderer = await personProfile();
+      expect(renderer.root.findByProps({ testID: 'human-profile' })).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('opens an agent profile on Android when window has no browser event API', async () => {
+    platform.OS = 'android';
+    vi.stubGlobal('window', {});
+    try {
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(<AgentProfileRoute />);
+      });
+      expect(renderer.root.findByProps({ testID: 'agent-profile' })).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();

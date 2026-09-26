@@ -123,6 +123,14 @@ import {
 } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 import { notifyConnectorHelper } from './postgres-live.js';
+import {
+  claimInstitutionalMemoryJob,
+  completeInstitutionalMemoryJob,
+  enqueueInstitutionalMemoryTurnReview,
+  failInstitutionalMemoryJob,
+  heartbeatInstitutionalMemoryJob,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -184,6 +192,9 @@ export class DaemonService {
     ) => Promise<Output<'getPrChecksStatus'>>,
     private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
     private readonly composioClient?: ComposioClient,
+    private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
+      enabled: false,
+    },
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -228,6 +239,7 @@ export class DaemonService {
       'retractAgentLiveOutput',
       'postAgentTurnReceipt',
       'postAgentActivity',
+      'postSquireApproval',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -235,6 +247,8 @@ export class DaemonService {
       'requestAgentGrant',
       'authorizeSquireCall',
       'authorizeResourceCall',
+      'getComposioTools',
+      'executeComposioTool',
       'getWalletToolState',
       'getWalletToolBalance',
       'getWalletToolChains',
@@ -376,6 +390,7 @@ export class DaemonService {
           this.prChecksStatus,
           this.googleOAuth,
           this.composioClient,
+          this.institutionalMemoryShadow,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -390,6 +405,8 @@ export class DaemonService {
             'authorizeResourceCall',
             'authorizeRepositoryCall',
             'authorizeHostCall',
+            'getComposioTools',
+            'executeComposioTool',
             ...[
               'getWalletToolState',
               'getWalletToolBalance',
@@ -461,11 +478,20 @@ export class DaemonService {
             // Transient corner-start clone/network: the helper retries startCorner.
             // Leave the original pending command for that attempt; do not ask
             // systemd to restart, and do not consume the request.
-          } else
+          } else {
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
+            if (candidate.status === 'complete') {
+              await enqueueInstitutionalMemoryTurnReview(db, {
+                roomId: scopedRoom!,
+                sourceMessageId: command.root_source_message_id,
+                requestId: command.turn_request_id,
+                config: this.institutionalMemoryShadow,
+              });
+            }
+          }
         }
         return result;
       });
@@ -510,6 +536,39 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
+      case 'claimInstitutionalMemoryJob': {
+        if (!this.institutionalMemoryShadow.enabled) return { enabled: false } as Output<Name>;
+        const job = await claimInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          this.institutionalMemoryShadow,
+        );
+        return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
+      }
+      case 'heartbeatInstitutionalMemoryJob':
+        await heartbeatInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'heartbeatInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
+      case 'completeInstitutionalMemoryJob':
+        await completeInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'completeInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
+      case 'failInstitutionalMemoryJob':
+        await failInstitutionalMemoryJob(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'failInstitutionalMemoryJob'>,
+          this.institutionalMemoryShadow,
+        );
+        return this.writeResult() as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -737,6 +796,11 @@ export class DaemonService {
       case 'postAgentActivity':
         return (await this.activity(
           input as Input<'postAgentActivity'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postSquireApproval':
+        return (await this.squireApproval(
+          input as Input<'postSquireApproval'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postPermissionRequest':
@@ -1288,7 +1352,15 @@ export class DaemonService {
   private async composioAccess(
     input: { roomId: string; requestId: string; generationId: string },
     agentId: string,
-  ): Promise<{ connectorId: string; helperAgentId: string; sessionId: string; scope: ReturnType<typeof storedComposioScope> }> {
+  ): Promise<
+    | {
+        connectorId: string;
+        helperAgentId: string;
+        sessionId: string;
+        scope: ReturnType<typeof storedComposioScope>;
+      }
+    | { status: 'permission-required'; grantId?: string }
+  > {
     await this.access(input.roomId, agentId);
     const row = (await this.database.query<{
       id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
@@ -1306,17 +1378,18 @@ export class DaemonService {
          AND owner_workspace.removed_at IS NULL
        JOIN memberships owner_room ON owner_room.room_id=r.id
          AND owner_room.identity_id=c.owner_identity_id AND owner_room.removed_at IS NULL
-       JOIN agent_commands command ON command.room_id=r.id AND command.agent_id=actor.agent_id
-         AND command.turn_request_id=$3 AND command.generation_id=$4 AND command.state='claimed'
-       JOIN messages source ON source.id=command.source_message_id
-       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
        WHERE r.id=$1 AND c.connector_type='composio'
          AND c.status='connected' AND c.owner_identity_id=helper.owner_id
-         AND requester.id=c.owner_identity_id
        ORDER BY c.updated_at DESC LIMIT 1`,
-      [input.roomId, agentId, input.requestId, input.generationId],
+      [input.roomId, agentId],
     )).rows[0];
     if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
+    const permission = await this.authorizeScopedGrant(input, agentId, 'mcp', 'composio');
+    if (!permission.allowed)
+      return {
+        status: 'permission-required',
+        ...(permission.grantId ? { grantId: permission.grantId } : {}),
+      };
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
     return { connectorId: row.id, helperAgentId: row.helper_agent_id,
@@ -1328,6 +1401,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'getComposioTools'>> {
     const access = await this.composioAccess(input, agentId);
+    if ('status' in access) return access;
     return {
       connectorId: access.connectorId,
       toolkits: access.scope.toolkits,
@@ -1340,6 +1414,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'executeComposioTool'>> {
     const access = await this.composioAccess(input, agentId);
+    if ('status' in access) return access;
     if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
       throw new Error('Composio arguments must be an object');
     const result = await this.composioClient!.execute(
@@ -1474,7 +1549,52 @@ export class DaemonService {
       )
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
+    if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Tailscale login URL is posted to the helper owner's connector DM so
+   * they can click it. Workbench still holds the same signIn; this is the
+   * owner-visible half when the node needs sign-in instead of failing.
+   */
+  private async notifyTailscaleSignIn(
+    connectorId: string,
+    url: string,
+    agentId: string,
+  ): Promise<void> {
+    if (!/^https:\/\/login\.tailscale\.com\//u.test(url)) return;
+    const row = (
+      await this.database.query<{
+        workspace_id: string;
+        connector_type: string;
+        owner_id: string;
+        helper_name: string;
+      }>(
+        `SELECT k.workspace_id,k.connector_type,a.owner_id,agent.name helper_name
+         FROM workspace_connectors k
+         JOIN agents a ON a.agent_id=k.helper_agent_id
+         JOIN identities agent ON agent.id=a.agent_id
+         WHERE k.id=$1::uuid AND k.helper_agent_id=$2`,
+        [connectorId, agentId],
+      )
+    ).rows[0];
+    if (!row || row.connector_type !== 'tailscale') return;
+    const roomId = await ensureConnectorDirectMessageRoom(
+      this.database,
+      row.workspace_id,
+      'tailscale',
+      row.owner_id,
+    );
+    await systemLine(this.database, {
+      roomId,
+      authorId: connectorIdentityId('tailscale'),
+      id: createHash('sha256').update(`tailscale-signin:${connectorId}:${url}`).digest('hex'),
+      subject: { kind: 'agent', id: agentId, name: row.helper_name },
+      verb: 'needs',
+      object: { text: 'Tailscale sign-in', url },
+      consequence: 'click the link to join this machine to the tailnet',
+    });
   }
 
   /**
@@ -3430,6 +3550,109 @@ export class DaemonService {
       });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
+  /**
+   * Squire owns the decision and its passkey page. Beeline only places that
+   * page in the resource owner's existing connector DM so Telegram is not a
+   * prerequisite for seeing it.
+   */
+  private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
+    if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
+    if (!input.title.trim() || input.title.length > 120)
+      throw new Error('Squire approval title is invalid');
+    if (!input.detail.trim() || input.detail.length > 500)
+      throw new Error('Squire approval detail is invalid');
+    if (
+      input.approvalId !== undefined &&
+      (!input.approvalId.trim() || input.approvalId.length > 240)
+    )
+      throw new Error('Squire approval id is invalid');
+    let approvalUrl: URL;
+    try {
+      approvalUrl = new URL(input.approvalUrl);
+    } catch {
+      throw new Error('Squire approval URL is invalid');
+    }
+    if (
+      !['http:', 'https:'].includes(approvalUrl.protocol) ||
+      approvalUrl.username ||
+      approvalUrl.password ||
+      !['approval', 'passkey', 'vouch'].includes(input.linkKind)
+    )
+      throw new Error('Squire approval URL is invalid');
+    const context = (
+      await this.database.query<{
+        workspace_id: string;
+        owner_id: string;
+        agent_name: string;
+        agent_handle: string | null;
+        agent_avatar: string | null;
+      }>(
+        `SELECT room.workspace_id,agent.owner_id,identity.name agent_name,
+                identity.handle agent_handle,identity.avatar agent_avatar
+         FROM rooms room
+         JOIN agents agent ON agent.agent_id=$2
+         JOIN identities identity ON identity.id=agent.agent_id
+         WHERE room.id=$1`,
+        [input.roomId, agentId],
+      )
+    ).rows[0];
+    if (!context) throw new Error('agent not found');
+    const member = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+       AND identity_id=$2 AND removed_at IS NULL`,
+      [context.workspace_id, context.owner_id],
+    );
+    if (!member.rowCount) throw new Error('resource owner access denied');
+    const roomId = await ensureConnectorDirectMessageRoom(
+      this.database,
+      context.workspace_id,
+      'trusty-squire',
+      context.owner_id,
+    );
+    const dedupeKey = input.approvalId?.trim() || approvalUrl.toString();
+    const messageId = createHash('sha256')
+      .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
+      .digest('hex');
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const agent = {
+      pubkey: agentId,
+      kind: 'agent' as const,
+      name: context.agent_name,
+      ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+      ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
+    };
+    const connectorId = connectorIdentityId('trusty-squire');
+    const line = await systemLine(this.database, {
+      id: messageId,
+      roomId,
+      authorId: connectorId,
+      subject: {
+        kind: 'person',
+        id: connectorId,
+        name: connectorDisplayName('trusty-squire'),
+      },
+      verb: 'needs your approval for',
+      object: input.title.trim(),
+      consequence: input.detail.trim(),
+      presentation: 'card',
+      cardType: 'squire-approval',
+      card: {
+        agent,
+        tool: input.tool.trim(),
+        title: input.title.trim(),
+        detail: input.detail.trim(),
+        approvalUrl: approvalUrl.toString(),
+        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
+        linkKind: input.linkKind,
+        sourceRoomId: input.roomId,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+      },
+    });
+    if (line.inserted)
+      this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+    return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const scope = input.scope;
@@ -4273,6 +4496,24 @@ export class DaemonService {
       status,
       auto,
       ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(!auto
+        ? {
+            approval: {
+              destination:
+                kind === 'repository'
+                  ? ('room' as const)
+                  : squireRoute
+                    ? ('trusty-squire-dm' as const)
+                    : kind === 'mcp' && target === 'wallet'
+                      ? ('wallet-dm' as const)
+                      : ('system-dm' as const),
+              authority:
+                kind === 'repository'
+                  ? ('workspace-manager' as const)
+                  : ('resource-owner' as const),
+            },
+          }
+        : {}),
       ...(escalations.length ? { escalations } : {}),
     };
   }
@@ -4398,7 +4639,7 @@ export class DaemonService {
 
   /** Resource access includes paid calls within the same target and requester scope. */
   private async authorizeScopedGrant(
-    input: Input<'authorizeSquireCall'>,
+    input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
     kind: 'mcp' | 'repository' | 'host',
     target: string,
@@ -4449,7 +4690,7 @@ export class DaemonService {
         g.requestedBy === requester.id,
     );
     if (grant) {
-      if (grant.status === 'once')
+      if (grant.status === 'once' && input.consume !== false)
         await this.consumeAgentGrant({ grantId: grant.grantId }, agentId);
       return { allowed: true, grantId: grant.grantId };
     }
@@ -4576,19 +4817,27 @@ export class DaemonService {
       machineId: context.machine_id ?? agentId,
       name: context.machine_name ?? context.agent_name,
     };
+    const owner = {
+      pubkey: context.owner_id,
+      kind: 'human' as const,
+      name: context.owner_name,
+      ...(context.owner_handle ? { handle: context.owner_handle } : {}),
+      ...(context.owner_avatar ? { avatar: context.owner_avatar } : {}),
+    };
     return {
       workspaceId: context.workspace_id,
       isCorner: context.parent_id !== null,
       addressee,
+      owner,
       agent,
       machine,
     };
   }
 
   /**
-   * workbench_status: what the Workbench can add, and what the person this
-   * turn answers already has. Names only — a connection is listed by service
-   * and label, never by anything the vault holds.
+   * workbench_status: what the Workbench can add, and what the owner of this
+   * helper's machine already has. Names only — a connection is listed by
+   * service and label, never by anything the vault holds.
    */
   private async agentWorkbench(
     input: Input<'readAgentWorkbench'>,
@@ -4612,7 +4861,7 @@ export class DaemonService {
          LEFT JOIN agents a ON a.agent_id=k.helper_agent_id
          WHERE k.workspace_id=$1 AND k.owner_identity_id=$2
          ORDER BY k.updated_at DESC`,
-        [context.workspaceId, context.addressee.pubkey],
+        [context.workspaceId, context.owner.pubkey],
       )
     ).rows;
     const catalog = connectorCatalog().map((entry) => {
@@ -4626,11 +4875,11 @@ export class DaemonService {
         available:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))),
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.addressee.pubkey))) &&
+          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4658,7 +4907,7 @@ export class DaemonService {
          JOIN workspace_connectors k ON k.id=c.connector_id
          WHERE c.owner_identity_id=$1 AND k.workspace_id=$2
          ORDER BY c.service,c.reference`,
-        [context.addressee.pubkey, context.workspaceId],
+        [context.owner.pubkey, context.workspaceId],
       )
     ).rows;
     return {
@@ -4666,6 +4915,11 @@ export class DaemonService {
         identityId: context.addressee.pubkey,
         name: context.addressee.name,
         ...(context.addressee.handle ? { handle: context.addressee.handle } : {}),
+      },
+      owner: {
+        identityId: context.owner.pubkey,
+        name: context.owner.name,
+        ...(context.owner.handle ? { handle: context.owner.handle } : {}),
       },
       catalog,
       connections: connections.map((row) => ({
@@ -5459,6 +5713,10 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
+  claimInstitutionalMemoryJob: true,
+  heartbeatInstitutionalMemoryJob: true,
+  completeInstitutionalMemoryJob: true,
+  failInstitutionalMemoryJob: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,
@@ -5506,6 +5764,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   retractAgentLiveOutput: true,
   postAgentTurnReceipt: true,
   postAgentActivity: true,
+  postSquireApproval: true,
   postPermissionRequest: true,
   postPermissionExecution: true,
   postWorkSchedule: true,

@@ -204,6 +204,8 @@ export type RoomScheduleView = {
   readonly message: string;
   readonly nextRunAt: number;
   readonly createdAt: number;
+  /** Present when the schedule runs in a child corner of the Room being listed. */
+  readonly corner?: { readonly id: string; readonly name: string };
 };
 export type CreateRoomScheduleInput = RoomInput & {
   readonly workspaceId: string;

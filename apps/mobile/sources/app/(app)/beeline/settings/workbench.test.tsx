@@ -1,17 +1,27 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const layout = vi.hoisted(() => ({ desktop: false }));
 const searchParams = vi.hoisted(() => ({
   params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } as Record<string, string>,
 }));
+const focus = vi.hoisted(() => ({
+  effect: undefined as undefined | (() => void | (() => void)),
+}));
+const appState = vi.hoisted(() => ({
+  listener: undefined as undefined | ((state: string) => void),
+}));
 
 vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => searchParams.params,
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    focus.effect = effect;
+    React.useEffect(effect, [effect]);
+  },
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -38,8 +48,15 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: {
+      addEventListener: (_event: string, listener: (state: string) => void) => {
+        appState.listener = listener;
+        return { remove: () => undefined };
+      },
+    },
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     Image: host('Image'),
+    Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -96,9 +113,12 @@ beforeAll(() => {
 });
 
 afterAll(() => vi.restoreAllMocks());
+afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  focus.effect = undefined;
+  appState.listener = undefined;
   layout.desktop = false;
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
@@ -117,16 +137,94 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Workbench settings screen', () => {
-  it('draws the shared page header on desktop and leaves the stack header to phones', async () => {
+  it('refetches edited and deleted keys after focus and Squire-flow returns', async () => {
+    vi.useFakeTimers();
+    const data = new MockWorkbenchSource();
+    let vault = await data.readWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
+    let cached = vault;
+    let firstRead = true;
+    const source = new MockWorkbenchSource();
+    const reads: Array<{ refreshVault?: boolean }> = [];
+    source.readWorkbench = async (input) => {
+      reads.push(input);
+      if (input.refreshVault) {
+        if (firstRead) {
+          firstRead = false;
+          return cached;
+        }
+        return {
+          ...cached,
+          connections: cached.connections.map((connection) => ({ ...connection, stale: true })),
+        };
+      }
+      cached = vault;
+      return cached;
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+
+    expect(reads.at(-1)?.refreshVault).toBe(true);
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' }).props.title,
+    ).toBe('vercel');
+    vault = {
+      ...vault,
+      connections: vault.connections.map((connection) =>
+        connection.ref === 'cred_vercel'
+          ? {
+              ...connection,
+              service: 'vercel-renamed',
+              name: 'Vercel renamed',
+              hosts: ['api.vercel-renamed.example'],
+            }
+          : connection,
+      ),
+    };
+    await act(async () => {
+      appState.listener?.('active');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+    const edited = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
+    expect(edited.props.title).toBe('vercel-renamed');
+    expect(edited.props.description).toBe('api.vercel-renamed.example');
+
+    vault = {
+      ...vault,
+      connections: vault.connections.filter((entry) => entry.ref !== 'cred_vercel'),
+    };
+    await act(async () => {
+      focus.effect?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+    expect(
+      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
+    ).toHaveLength(0);
+  });
+
+  it('draws the shared page header on every surface: small Settings over large Workbench', async () => {
     layout.desktop = true;
     const desktopRenderer = await render();
-    expect(desktopRenderer.root.findByProps({ testID: 'workbench-header' }).props.title).toBe(
-      'Workbench',
-    );
+    const desktopHeader = desktopRenderer.root.findByProps({ testID: 'workbench-header' });
+    expect(desktopHeader.props.title).toBe('Workbench');
+    expect(desktopHeader.props.eyebrow).toBe('Settings');
+    expect(desktopHeader.props.onBack).toBeUndefined();
 
     layout.desktop = false;
     const phoneRenderer = await render();
-    expect(phoneRenderer.root.findAllByProps({ testID: 'workbench-header' })).toHaveLength(0);
+    const phoneHeader = phoneRenderer.root.findByProps({ testID: 'workbench-header' });
+    expect(phoneHeader.props.title).toBe('Workbench');
+    expect(phoneHeader.props.eyebrow).toBe('Settings');
+    expect(phoneHeader.props.onBack).toBeTypeOf('function');
   });
 
   it('renders one state or action for each tool row', async () => {
@@ -178,8 +276,13 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
+    expect(entry.props.leading.props.company).toBe('google');
+    expect(entry.props.leading.props.domain).toBe('google.com');
     expect(entry.props.value).toBeUndefined();
-    expect(entry.props.action).toBeUndefined();
+    expect(entry.props.action).toBe('Connect');
+    expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
+    act(() => entry.props.trailingPress.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google-gmail');
     act(() => entry.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
     expect(gmail.props.action).toBe('Connect');
@@ -294,7 +397,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.action).toBe('Connect');
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
-    expect(google.props.action).toBeUndefined();
+    expect(google.props.action).toBe('Connect');
     expect(google.props.descriptionTone).toBe('danger');
     expect(google.props.description).toContain(
       'another Trusty Squire session is already using the browser',

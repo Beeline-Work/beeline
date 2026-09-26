@@ -23,6 +23,263 @@ export function resourceFacadeArgs(): string[] {
 }
 
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list']);
+const NON_CONSUMING = new Set([
+  ...DISCOVERY,
+  'notifications/initialized',
+  'notifications/cancelled',
+  'notifications/progress',
+  'notifications/roots/list_changed',
+]);
+
+function messageIdKey(id: unknown): string | undefined {
+  if (id === undefined) return undefined;
+  return JSON.stringify(id);
+}
+
+type SquireApprovalLink = {
+  readonly approvalUrl: string;
+  readonly approvalId?: string;
+  readonly linkKind: 'approval' | 'passkey' | 'vouch';
+};
+
+export type SquireApprovalRelay = SquireApprovalLink & {
+  readonly tool: string;
+  readonly title: string;
+  readonly detail: string;
+};
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function shortString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 240) : undefined;
+}
+
+function approvalUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+      return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function linkKindFor(key: string, url: string): SquireApprovalLink['linkKind'] {
+  const hint = `${key} ${url}`.toLowerCase();
+  return hint.includes('passkey') ? 'passkey' : hint.includes('vouch') ? 'vouch' : 'approval';
+}
+
+function approvalIdIn(value: unknown, depth = 0): string | undefined {
+  if (depth > 6) return undefined;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = approvalIdIn(entry, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const item = record(value);
+  if (!item) return undefined;
+  for (const [key, entry] of Object.entries(item)) {
+    const normalized = key.replace(/[-_]/g, '').toLowerCase();
+    if (normalized === 'approvalid') {
+      const found = shortString(entry);
+      if (found) return found;
+    }
+  }
+  for (const entry of Object.values(item)) {
+    const found = approvalIdIn(entry, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function approvalLinkIn(value: unknown, depth = 0): SquireApprovalLink | undefined {
+  if (depth > 6) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length <= 20_000 && /^[{[]/.test(trimmed)) {
+      try {
+        return approvalLinkIn(JSON.parse(trimmed), depth + 1);
+      } catch {
+        // A prose result may still contain Squire's absolute approval link.
+      }
+    }
+    const matches = trimmed.match(/https?:\/\/[^\s<>"']+/g) ?? [];
+    for (const match of matches) {
+      const url = approvalUrl(match.replace(/[),.;]+$/, ''));
+      if (url && /(approv|passkey|vouch)/i.test(url)) {
+        return { approvalUrl: url, linkKind: linkKindFor('', url) };
+      }
+    }
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = approvalLinkIn(entry, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const item = record(value);
+  if (!item) return undefined;
+  const statusHint = Object.values(item)
+    .filter((entry): entry is string => typeof entry === 'string')
+    .join(' ');
+  for (const [key, entry] of Object.entries(item)) {
+    const normalized = key.replace(/[-_]/g, '').toLowerCase();
+    const namedLink = [
+      'approvalurl',
+      'passkeyurl',
+      'vouchurl',
+      'approvallink',
+      'passkeylink',
+      'vouchlink',
+    ].includes(normalized);
+    const genericPendingLink =
+      ['url', 'link'].includes(normalized) && /(approv|passkey|vouch)/i.test(statusHint);
+    if (!namedLink && !genericPendingLink) continue;
+    const url = approvalUrl(entry);
+    if (url) {
+      const approvalId = approvalIdIn(item);
+      return {
+        approvalUrl: url,
+        ...(approvalId ? { approvalId } : {}),
+        linkKind: linkKindFor(key, `${statusHint} ${url}`),
+      };
+    }
+  }
+  for (const entry of Object.values(item)) {
+    const found = approvalLinkIn(entry, depth + 1);
+    if (found)
+      return found.approvalId
+        ? found
+        : { ...found, ...(approvalIdIn(item) ? { approvalId: approvalIdIn(item) } : {}) };
+  }
+  return undefined;
+}
+
+function stringArg(args: Record<string, unknown>, name: string): string | undefined {
+  return shortString(args[name]);
+}
+
+function credentialLabel(args: Record<string, unknown>): string | undefined {
+  return (
+    stringArg(args, 'name') ??
+    stringArg(args, 'label') ??
+    stringArg(args, 'service') ??
+    stringArg(args, 'reference')
+  );
+}
+
+/** Human copy derived only from non-secret, explicitly safe Squire arguments. */
+export function squireApprovalCopy(
+  tool: string,
+  args: Record<string, unknown>,
+): { title: string; detail: string } {
+  const credential = credentialLabel(args);
+  const reason = stringArg(args, 'reason');
+  switch (tool) {
+    case 'inject_card': {
+      const item = stringArg(args, 'item') ?? 'purchase';
+      const merchant = stringArg(args, 'merchant');
+      const amount =
+        typeof args.amount_cents === 'number' && Number.isSafeInteger(args.amount_cents)
+          ? `${(args.amount_cents / 100).toFixed(2)} ${String(args.currency ?? '').toUpperCase()}`.trim()
+          : undefined;
+      return {
+        title: 'Purchase approval',
+        detail: [item, merchant ? `at ${merchant}` : undefined, amount].filter(Boolean).join(' · '),
+      };
+    }
+    case 'fetch_credential':
+      return {
+        title: 'Credential access approval',
+        detail: [credential ? `Reveal ${credential}` : 'Reveal a saved credential', reason]
+          .filter(Boolean)
+          .join(' · '),
+      };
+    case 'edit_credential':
+      return {
+        title: 'Credential edit approval',
+        detail: credential ? `Edit ${credential}` : 'Edit a saved credential',
+      };
+    case 'delete_credential':
+      return {
+        title: 'Credential deletion approval',
+        detail: credential ? `Delete ${credential}` : 'Delete a saved credential',
+      };
+    case 'edit_payment_card':
+      return {
+        title: 'Card edit approval',
+        detail: credential ? `Edit ${credential}` : 'Edit a saved payment card',
+      };
+    case 'operate_fill_credential':
+    case 'operate_login':
+      return {
+        title: 'Sign-in approval',
+        detail: [credential ? `Sign in to ${credential}` : 'Continue a secure sign-in', reason]
+          .filter(Boolean)
+          .join(' · '),
+      };
+    default:
+      return {
+        title: 'Trusty Squire approval',
+        detail: reason ?? `Approve ${tool.replace(/_/g, ' ')}`,
+      };
+  }
+}
+
+/** A Squire MCP result exposes pending human work through its approval URL. */
+export function squireApprovalFromMcp(
+  request: Record<string, unknown> | undefined,
+  response: Record<string, unknown>,
+): SquireApprovalRelay | undefined {
+  if (!request || request.method !== 'tools/call' || request.id !== response.id) return undefined;
+  const params = record(request.params);
+  const tool = shortString(params?.name);
+  if (!tool || !('result' in response)) return undefined;
+  const link = approvalLinkIn(response.result);
+  if (!link) return undefined;
+  const args = record(params?.arguments) ?? {};
+  return { tool, ...squireApprovalCopy(tool, args), ...link };
+}
+
+async function postSquireApproval(
+  approval: SquireApprovalRelay,
+  authFile: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
+    baseUrl: string;
+    daemonToken: string;
+    turnContextPath: string;
+  };
+  const context = JSON.parse(await readFile(auth.turnContextPath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  if (
+    ![context.roomId, context.requestId, context.generationId].every(
+      (value) => typeof value === 'string' && value.length > 0,
+    )
+  )
+    return;
+  await fetchImpl(new URL('/v1/daemon/operations/postSquireApproval', auth.baseUrl), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...context, ...approval }),
+    signal: AbortSignal.timeout(20_000),
+  });
+}
 
 export async function authorizeResourceMessage(
   message: Record<string, unknown>,
@@ -31,17 +288,7 @@ export async function authorizeResourceMessage(
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
   if (!message || Array.isArray(message) || typeof message !== 'object') return false;
-  if (typeof message.method !== 'string') return 'result' in message || 'error' in message;
-  if (
-    [
-      'notifications/initialized',
-      'notifications/cancelled',
-      'notifications/progress',
-      'notifications/roots/list_changed',
-    ].includes(message.method) ||
-    DISCOVERY.has(message.method)
-  )
-    return true;
+  if (typeof message.method !== 'string') return false;
   const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
     baseUrl: string;
     daemonToken: string;
@@ -62,7 +309,11 @@ export async function authorizeResourceMessage(
     {
       method: 'POST',
       headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...context, target }),
+      body: JSON.stringify({
+        ...context,
+        target,
+        ...(NON_CONSUMING.has(message.method) ? { consume: false } : {}),
+      }),
       signal: AbortSignal.timeout(20_000),
     },
   );
@@ -87,19 +338,50 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   delete childEnv.BEELINE_RESOURCE_LAUNCH;
   delete childEnv.BEELINE_RESOURCE_AUTH_FILE;
   const command = launch.command ?? launch.cmd;
-  const child = command
-    ? spawn(command, launch.args ?? [], { env: childEnv, stdio: ['pipe', 'pipe', 'inherit'] })
-    : undefined;
-  if (!child && !launch.url) throw new Error('resource transport is unavailable');
-  child?.stdout.pipe(process.stdout);
-  child?.on('error', () => {
-    process.exitCode = 1;
-    process.stdin.destroy();
-  });
-  child?.on('exit', (code) => {
-    process.exitCode = code ?? 1;
-    process.stdin.destroy();
-  });
+  if (!command && !launch.url) throw new Error('resource transport is unavailable');
+  const squireRequests = new Map<string, Record<string, unknown>>();
+  const observeSquireResponse = async (message: Record<string, unknown>) => {
+    if (target !== 'squire' || message.id === undefined) return;
+    const key = JSON.stringify(message.id);
+    const request = squireRequests.get(key);
+    squireRequests.delete(key);
+    const approval = squireApprovalFromMcp(request, message);
+    if (approval) await postSquireApproval(approval, authFile).catch(() => {});
+  };
+  const authorizedResponseIds = new Set<string>();
+  let child: ReturnType<typeof spawn> | undefined;
+  let responsePending = Promise.resolve();
+  const resourceChild = () => {
+    if (child) return child;
+    const started = spawn(command!, launch.args ?? [], {
+      env: childEnv,
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    child = started;
+    const output = createInterface({ input: started.stdout });
+    output.on('line', (line) => {
+      responsePending = responsePending.then(async () => {
+        try {
+          const message = JSON.parse(line) as Record<string, unknown>;
+          const key = messageIdKey(message.id);
+          if (!key || !authorizedResponseIds.delete(key)) return;
+          await observeSquireResponse(message);
+          process.stdout.write(`${line}\n`);
+        } catch {
+          // Personal-resource output is visible only as a correlated JSON-RPC response.
+        }
+      });
+    });
+    started.on('error', () => {
+      process.exitCode = 1;
+      process.stdin.destroy();
+    });
+    started.on('exit', (code) => {
+      process.exitCode = code ?? 1;
+      process.stdin.destroy();
+    });
+    return started;
+  };
   let session: string | undefined;
   const lines = createInterface({ input: process.stdin });
   // Serialize calls so Once cannot be used by two requests before consumption.
@@ -115,8 +397,13 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
       try {
         if (!(await authorizeResourceMessage(message, target, authFile)))
           throw new Error('resource approval required');
-        if (child) {
-          child.stdin.write(`${line}\n`);
+        if (target === 'squire' && message.method === 'tools/call' && message.id !== undefined)
+          squireRequests.set(JSON.stringify(message.id), message);
+        if (command) {
+          const started = resourceChild();
+          const key = messageIdKey(message.id);
+          if (key) authorizedResponseIds.add(key);
+          started.stdin!.write(`${line}\n`);
           return;
         }
         const response = await fetch(launch.url!, {
@@ -134,6 +421,8 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         session = response.headers.get('mcp-session-id') ?? session;
         if (response.status === 202 || response.status === 204) return;
         if (response.headers.get('content-type')?.includes('text/event-stream')) {
+          const expectedId = messageIdKey(message.id);
+          if (!expectedId) return;
           const reader = response.body?.getReader();
           if (!reader) return;
           let buffer = '';
@@ -150,8 +439,10 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
                 if (!row.startsWith('data:')) continue;
                 const data = row.slice(5).trim();
                 const result = JSON.parse(data) as { id?: unknown };
+                if (messageIdKey(result.id) !== expectedId) continue;
+                await observeSquireResponse(result as Record<string, unknown>);
                 process.stdout.write(`${data}\n`);
-                if (result.id === message.id) return;
+                return;
               }
             }
           } finally {
@@ -159,7 +450,14 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
           }
         } else {
           const body = await response.text();
-          if (body) process.stdout.write(`${body}\n`);
+          if (body) {
+            const result = JSON.parse(body) as { id?: unknown };
+            const expectedId = messageIdKey(message.id);
+            if (!expectedId || messageIdKey(result.id) !== expectedId)
+              throw new Error('resource transport returned an unrelated response');
+            await observeSquireResponse(result as Record<string, unknown>);
+            process.stdout.write(`${body}\n`);
+          }
         }
       } catch {
         if (message.id !== undefined)
@@ -170,7 +468,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
     });
   });
   lines.on('close', () => {
-    void pending.finally(() => child?.stdin.end());
+    void pending.finally(() => child?.stdin?.end());
   });
   process.on('SIGTERM', () => {
     child?.kill();

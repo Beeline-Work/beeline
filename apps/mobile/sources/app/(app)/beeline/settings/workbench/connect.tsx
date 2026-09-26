@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { HullSurface } from '@/components/buzz/MonoHull';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -16,7 +16,6 @@ import {
   type ConnectorInstallState,
   type WorkbenchHelper,
 } from '@/buzz/workbench';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -218,26 +217,15 @@ export default function ConnectTrustySquireScreen() {
   const someHelpers = helpers !== null && helpers.length > 0;
 
   return (
-    <View style={styles.container}>
-      <HullSurface strength="quiet" style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="connect-back"
-        >
-          <ChevronGlyph
-            color={styles.backButtonText.color}
-            direction="left"
-            size={CHEVRON_BACK_SIZE}
-          />
-        </TouchableOpacity>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>Connect {connectorName}</Text>
-          {machineName ? <Text style={styles.note} testID="connect-selected-machine">{machineName}</Text> : null}
-        </View>
-      </HullSurface>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <PageHeader
+        backAccessibilityLabel="Back to Workbench"
+        eyebrow="Workbench"
+        meta={machineName ?? undefined}
+        onBack={() => router.back()}
+        testID="connect-header"
+        title={connectorName}
+      />
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         {helpers === null && !offerCeremony ? (
           <View style={styles.loading} testID="connect-loading">
@@ -397,18 +385,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { color: hull.textPrimary },
-    headerCopy: { flex: 1, minWidth: 0 },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: { flex: 1 },
     contentInner: {
       padding: hull.space.md,

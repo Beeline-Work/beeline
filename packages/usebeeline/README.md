@@ -104,10 +104,10 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 - **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved tool-by-tool because the sandbox — not an allowlist — is what holds the line.
 - **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap`, or a kernel that refuses unprivileged user namespaces, is logged once at start and every session afterwards runs unwrapped; the read-only rule then rests on the harness's own permission callback, which Codex, Claude Code, and Grok honour. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
 - **Write access requires a corner.** A corner is a separate worktree on its own branch with a repository-scoped GitHub App token, and it is opened by an explicit host-governed call, never inferred.
-- **Reach outside the sandbox is a grant.** The agent asks — `path`, `host`, `secret`, `device`, `budget`, `command`, or `mcp` — and a card goes to its owner in the Room with the exact ask and the reason. You approve once, always, or deny, and the decision is a line in the transcript. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered. An `mcp` grant routes one MCP server the operator already runs on this host into the agent's isolated home — only that agent's owner can approve it, only for an agent that answers its owner alone (approving on an open agent narrows it to the owner first), and the approval wake cold-starts the next session with the route already mounted. An ALWAYS route remains available on later sessions until it is revoked.
-- **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only; it never covers a budget or `mcp` grant.
+- **Reach outside the sandbox is a grant.** Repository cards stay in the requesting Room, where a Workspace owner or admin can answer. Personal-resource cards — host commands, paths, devices, secrets, wallets, Composio, and other MCP routes — go to the resource owner's private connector or `@system` DM, and only that owner can answer. Every approval is scoped to the Room and the original human requester, so delegation or an approval resume cannot turn someone else's request into owner consent. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered. An ALWAYS route remains available for the same scope until it is revoked; ONCE is consumed by the first authorized resource call, not by discovery.
+- **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. It bypasses repository prompts for any requester, but bypasses personal-resource prompts only when the original requester is the resource owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only. Generic budget grants are retired.
 - **Provider keys never reach Beeline's servers.** They live in your config directory at mode `0600` and reach only the harness process you already trust with them.
-- **Honest about what is not built yet:** today `command` and `mcp` are the kinds that actually change what a running agent may do. `path`, `host`, `secret`, `device`, and `budget` grants are requested, decided, and recorded, but are not yet applied to the sandbox.
+- **Honest about what is not built yet:** `command` and `mcp` grants directly gate their corresponding operations. `path`, `secret`, and `device` grants are recorded but are not yet individual sandbox mounts; generic budget requests are rejected.
 
 ## Command reference
 
@@ -129,13 +129,16 @@ corners also mount the release-owned `codegraph` server after its local index is
 
 `beeline-readonly-mcp` — reading, in a Room and in a corner:
 
-| Tool                                            | What it does                                                                            |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `list_files`, `read_file`                       | Walk and read the checkout                                                              |
-| `search_text`                                   | Search the checkout                                                                     |
-| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                                                       |
-| `read_agent_file`                               | Read the agent's approved skills or Workspace memory                                    |
-| `write_memory`                                  | Replace the agent's private Workspace `MEMORY.md` — the only memory write a Room allows |
+| Tool                                            | What it does                                         |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| `list_files`, `read_file`                       | Walk and read the checkout                           |
+| `search_text`                                   | Search the checkout                                  |
+| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                    |
+| `read_agent_file`                               | Read the agent's approved materialized skills        |
+
+The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
+Room/corner runtime. Institutional-memory shadow extraction is dark by default and is not served
+to agent prompts.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
@@ -155,7 +158,7 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `post_artifact`                                        | Everywhere      | Upload one file (path or html/bytes) as an attachment         |
 | `fetch_image`                                          | Everywhere      | Download one photograph into scratch for a data: embed        |
 | `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere      | Run a prompt again later — interval minutes or a 5-field cron |
-| `request_grant`                                        | Everywhere      | Ask the owner for reach outside the sandbox                   |
+| `request_grant`                                        | Everywhere      | Ask the correct Room manager or resource owner for access     |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
 
 ## The app

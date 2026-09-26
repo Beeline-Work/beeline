@@ -70,7 +70,7 @@ export function WalletSendForm({ workspaceId }: { workspaceId: string }) {
         autoCorrect={false}
         onChangeText={setTo}
         placeholder="0x…"
-        placeholderTextColor="#83838d"
+        placeholderTextColor={styles.fieldPlaceholder.color}
         style={styles.field}
         testID="wallet-send-to"
         value={to}
@@ -152,6 +152,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       paddingVertical: hull.space.sm,
     },
+    fieldPlaceholder: { color: hull.textMuted },
     sent: { ...hull.type.meta, color: hull.textPrimary, marginTop: hull.space.md },
     refused: { ...hull.type.meta, color: hull.textSecondary, marginTop: hull.space.md },
     sendPress: { minHeight: 44, justifyContent: 'center', marginTop: hull.space.lg },

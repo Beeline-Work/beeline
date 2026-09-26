@@ -10,6 +10,11 @@ import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
 import type {
+  ClaimInstitutionalMemoryJobResult,
+  CompleteInstitutionalMemoryJobInput,
+  FailInstitutionalMemoryJobInput,
+} from './institutional-memory.js';
+import type {
   WalletPayInput,
   WalletSendOutcome,
   WalletSwapInput,
@@ -101,6 +106,14 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
+  /** Phase-0 only: claims shadow extraction work and never returns live memory. */
+  claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
+  heartbeatInstitutionalMemoryJob: Operation<
+    AgentInput & { readonly jobId: string; readonly leaseToken: string },
+    WriteResult
+  >;
+  completeInstitutionalMemoryJob: Operation<CompleteInstitutionalMemoryJobInput, WriteResult>;
+  failInstitutionalMemoryJob: Operation<FailInstitutionalMemoryJobInput, WriteResult>;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
@@ -202,6 +215,9 @@ export type DaemonOperationMap = {
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
+  /** Relay a Squire-owned approval page into the agent owner's private
+   * Trusty Squire DM. Beeline never settles the approval itself. */
+  postSquireApproval: Operation<PostSquireApprovalInput, WriteResult>;
   postPermissionRequest: Operation<PostPermissionRequestInput, WriteResult>;
   postPermissionExecution: Operation<PostPermissionExecutionInput, WriteResult>;
   postWorkSchedule: Operation<PostWorkScheduleInput, WriteResult>;
@@ -234,7 +250,7 @@ export type DaemonOperationMap = {
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   authorizeResourceCall: Operation<
-    AuthorizeSquireCallInput & { readonly target: string },
+    AuthorizeSquireCallInput & { readonly target: string; readonly consume?: boolean },
     AuthorizeSquireCallResult
   >;
   authorizeRepositoryCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
@@ -257,18 +273,25 @@ export type DaemonOperationMap = {
     AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
     { readonly status: 'connected' } | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
   >;
-  getComposioTools: Operation<RoomInput & { readonly requestId: string; readonly generationId: string }, {
-    readonly connectorId: string;
-    readonly toolkits: readonly string[];
-    readonly tools: Readonly<Record<string, readonly string[]>>;
-  }>;
+  getComposioTools: Operation<
+    RoomInput & { readonly requestId: string; readonly generationId: string },
+    | {
+        readonly connectorId: string;
+        readonly toolkits: readonly string[];
+        readonly tools: Readonly<Record<string, readonly string[]>>;
+      }
+    | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
   executeComposioTool: Operation<RoomInput & {
     readonly requestId: string;
     readonly generationId: string;
     readonly toolkit: string;
     readonly tool: string;
     readonly arguments: Record<string, unknown>;
-  }, { readonly data: unknown; readonly logId?: string }>;
+  },
+    | { readonly data: unknown; readonly logId?: string }
+    | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {
@@ -836,6 +859,11 @@ export type RequestAgentGrantResult = {
   readonly auto: boolean;
   /** The card message when one was posted or joined. */
   readonly messageId?: string;
+  /** Server-owned placement and decision authority for a pending card. */
+  readonly approval?: {
+    readonly destination: 'room' | 'system-dm' | 'trusty-squire-dm' | 'wallet-dm';
+    readonly authority: 'workspace-manager' | 'resource-owner';
+  };
   /** Why yolo did not cover this ask, when it did not (C94). */
   readonly escalations?: readonly AgentGrantEscalation[];
 };
@@ -858,6 +886,15 @@ export type AgentGrantListResult = {
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
 export type AuthorizeSquireCallInput = TurnOutputAuthority & RoomInput;
+export type PostSquireApprovalInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly tool: string;
+    readonly title: string;
+    readonly detail: string;
+    readonly approvalUrl: string;
+    readonly approvalId?: string;
+    readonly linkKind: 'approval' | 'passkey' | 'vouch';
+  };
 export type AuthorizeSquireCallResult = {
   readonly allowed: boolean;
   readonly grantId?: string;
@@ -870,12 +907,19 @@ export type AuthorizeSquireCallResult = {
 /**
  * What an agent may learn about the Workbench from a Room: the catalog (every
  * connector kind, its name, one-line purpose, and whether it can be offered),
- * plus what the ADDRESSEE — the person whose message woke this turn — already
- * has paired and which keys they hold (names only; a vault value never crosses
- * this wire). Another member's rows are never visible.
+ * plus what the OWNER of this helper's machine already has paired and which
+ * keys they hold (names only; a vault value never crosses this wire). The
+ * addressee is who woke the turn (for offers); the catalog is never theirs
+ * unless they are also the owner.
  */
 export type AgentWorkbenchView = {
   readonly addressee: {
+    readonly identityId: string;
+    readonly name: string;
+    readonly handle?: string;
+  };
+  /** The human who owns this helper and this machine. */
+  readonly owner: {
     readonly identityId: string;
     readonly name: string;
     readonly handle?: string;
@@ -888,7 +932,7 @@ export type AgentWorkbenchView = {
     readonly available: boolean;
     /** You may offer it from this Room with offer_connector. */
     readonly offerable: boolean;
-    /** The addressee's own row for this kind, when they have one on any machine. */
+    /** The owner's own row for this kind, when they have one on any machine. */
     readonly paired?: {
       readonly status: 'installing' | 'connected' | 'error' | 'disconnected';
       readonly helperName: string;
@@ -896,7 +940,7 @@ export type AgentWorkbenchView = {
       readonly onThisMachine: boolean;
     };
   }[];
-  /** The addressee's provisioned keys, by name only. */
+  /** The owner's provisioned keys, by name only. */
   readonly connections: readonly {
     readonly connectorType: string;
     readonly service: string | null;

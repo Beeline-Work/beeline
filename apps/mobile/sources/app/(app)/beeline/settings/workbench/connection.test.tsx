@@ -60,6 +60,13 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 
+vi.mock('@/components/buzz/PageHeader', async () => {
+  const ReactModule = await import('react');
+  return {
+    PageHeader: (props: any) => ReactModule.createElement('PageHeader', props),
+  };
+});
+
 import ConnectionDetailScreen from './connection';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource, VERCEL_CONNECTION } from '@/buzz/workbench-source.mock';
@@ -109,12 +116,12 @@ async function flush(times = 4): Promise<void> {
 }
 
 describe('Connection detail screen', () => {
-  it('leaves the Key header and back control to the registered stack route', async () => {
+  it('draws the shared page header: small Workbench over the key name', async () => {
     const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'connection-back' })).toHaveLength(0);
-    expect(
-      renderer.root.findAll((node: any) => node.type === 'Text' && node.props.children === 'Key'),
-    ).toHaveLength(0);
+    const header = renderer.root.findByProps({ testID: 'connection-header' });
+    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.title).toBe('vercel');
+    expect(header.props.onBack).toBeTypeOf('function');
   });
 
   it('keeps the scroll content above the Android navigation inset', async () => {
@@ -122,15 +129,13 @@ describe('Connection detail screen', () => {
     const screen = renderer.root.findByProps({ testID: 'connection-detail-screen' });
     expect(screen.props.style).toEqual([
       expect.objectContaining({ flex: 1 }),
-      { paddingBottom: 34 },
+      { paddingTop: 0, paddingBottom: 34 },
     ]);
   });
 
   it('renders service identity and the complete vault facts', async () => {
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'connection-service-name' }).props.children).toBe(
-      'vercel',
-    );
+    expect(renderer.root.findByProps({ testID: 'connection-header' }).props.title).toBe('vercel');
     expect(renderer.root.findAllByProps({ testID: 'connection-key-label' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'connection-detail-metadata' })).toBeDefined();
     expect(renderer.root.findByProps({ title: 'Reference' }).props.description).toBe('cred_vercel');

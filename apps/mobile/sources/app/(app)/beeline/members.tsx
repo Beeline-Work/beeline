@@ -670,7 +670,7 @@ export default function BuzzMembers({
   }, [navigation, profileAgentId, agentEditDirty]);
 
   useEffect(() => {
-    if (!profileAgentId || typeof window === 'undefined') return;
+    if (!profileAgentId || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();

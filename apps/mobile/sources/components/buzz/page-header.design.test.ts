@@ -25,9 +25,17 @@ describe('the one page header', () => {
     expect(bookmarks).not.toContain('PRIVATE');
     expect(bookmarks).not.toContain('styles.header');
     expect(workbench).toContain('<PageHeader');
+    expect(workbench).toContain('eyebrow="Settings"');
+    expect(workbench).toContain('title="Workbench"');
   });
 
-  it('keeps the Workbench stack header only where the phone back control lives', () => {
-    expect(appLayout).toContain('headerShown: !isDesktop');
+  it('lets Workbench and its tool pages draw the shared header instead of the stack title', () => {
+    expect(appLayout).toMatch(
+      /name="beeline\/settings\/workbench"[\s\S]*?headerShown: false/,
+    );
+    expect(appLayout).toMatch(
+      /name="beeline\/settings\/workbench\/connection"[\s\S]*?headerShown: false/,
+    );
+    expect(appLayout).not.toContain('headerShown: !isDesktop');
   });
 });

@@ -122,7 +122,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 1;
+export const REQUIRED_SCHEMA_VERSION = 2;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -687,6 +687,170 @@ ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_status_check
 CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_turns_room_created ON agent_turns(room_id,created_at DESC);
 
+-- Institutional memory phase 0: server-owned shadow evidence. Nothing in
+-- these tables is read into a Room or corner prompt. A daemon id records who
+-- processed a job; it is never an ownership or visibility axis.
+CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  trigger_kind text NOT NULL CHECK (trigger_kind IN ('turn_review','merge_review','curator')),
+  mode text NOT NULL DEFAULT 'shadow' CHECK (mode IN ('shadow','live')),
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  source_request_id text,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  source_audience_kind text NOT NULL CHECK (
+    source_audience_kind IN ('workspace_candidate','human_private')
+  ),
+  idempotency_key text NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 300),
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','claimed','retry','completed','dead')),
+  lease_owner_agent_id text REFERENCES identities(id) ON DELETE SET NULL,
+  lease_owner_machine_id text,
+  lease_token text,
+  lease_expires_at timestamptz,
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  max_attempts integer NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 5),
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  proposal jsonb,
+  proposal_hash text CHECK (proposal_hash IS NULL OR proposal_hash ~ '^[0-9a-f]{64}$'),
+  extractor_version text CHECK (
+    extractor_version IS NULL OR length(extractor_version) BETWEEN 1 AND 120
+  ),
+  model text CHECK (model IS NULL OR length(model) BETWEEN 1 AND 160),
+  input_bytes integer NOT NULL DEFAULT 0 CHECK (input_bytes >= 0),
+  output_bytes integer NOT NULL DEFAULT 0 CHECK (output_bytes >= 0),
+  input_tokens integer CHECK (input_tokens IS NULL OR input_tokens >= 0),
+  output_tokens integer CHECK (output_tokens IS NULL OR output_tokens >= 0),
+  estimated_cost_usd_micros bigint CHECK (
+    estimated_cost_usd_micros IS NULL OR estimated_cost_usd_micros >= 0
+  ),
+  error text CHECK (error IS NULL OR length(error) BETWEEN 1 AND 1000),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
+  ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
+  WHERE status IN ('pending','retry','claimed');
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
+  ON institutional_memory_jobs(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_items (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('workspace_fact','human_profile_fact')),
+  subject_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
+  canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
+  body text NOT NULL CHECK (octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  source_corner_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  audience_kind text NOT NULL CHECK (audience_kind IN ('workspace','human_profile')),
+  confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  version integer NOT NULL CHECK (version > 0),
+  supersedes_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL,
+  created_by_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  repository text,
+  target_commit text,
+  path text,
+  content_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  last_served_at timestamptz,
+  CHECK (
+    (kind='workspace_fact' AND subject_identity_id IS NULL AND audience_kind='workspace') OR
+    (kind='human_profile_fact' AND subject_identity_id IS NOT NULL AND audience_kind='human_profile')
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
+  ON institutional_memory_items(
+    workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
+  ) WHERE state='active';
+CREATE INDEX IF NOT EXISTS institutional_memory_items_workspace_state_idx
+  ON institutional_memory_items(workspace_id,state,updated_at DESC,id);
+
+CREATE TABLE IF NOT EXISTS institutional_context_serves (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  requester_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
+  snapshot_revision bigint NOT NULL DEFAULT 0 CHECK (snapshot_revision >= 0),
+  mode text NOT NULL CHECK (mode IN ('shadow','live')),
+  served boolean NOT NULL,
+  shadow_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  item_ids uuid[] NOT NULL DEFAULT '{}',
+  skill_candidates text[] NOT NULL DEFAULT '{}',
+  workspace_fact_bytes integer NOT NULL DEFAULT 0 CHECK (workspace_fact_bytes >= 0),
+  profile_bytes integer NOT NULL DEFAULT 0 CHECK (profile_bytes >= 0),
+  skill_index_bytes integer NOT NULL DEFAULT 0 CHECK (skill_index_bytes >= 0),
+  wrapper_bytes integer NOT NULL DEFAULT 0 CHECK (wrapper_bytes >= 0),
+  total_bytes integer NOT NULL DEFAULT 0 CHECK (total_bytes BETWEEN 0 AND 8000),
+  estimated_tokens integer NOT NULL DEFAULT 0 CHECK (estimated_tokens >= 0),
+  actual_input_tokens integer CHECK (actual_input_tokens IS NULL OR actual_input_tokens >= 0),
+  candidate_count integer NOT NULL DEFAULT 0 CHECK (candidate_count >= 0),
+  dropped_counts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (mode<>'shadow' OR (served=false AND total_bytes=0 AND cardinality(item_ids)=0))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
+  ON institutional_context_serves(shadow_job_id) WHERE shadow_job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS institutional_context_serves_workspace_created_idx
+  ON institutional_context_serves(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_outcomes (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  serve_id uuid REFERENCES institutional_context_serves(id) ON DELETE CASCADE,
+  job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  kind text NOT NULL CHECK (kind IN (
+    'shadow_extracted','turn_completed','ci_green','merged','repeat_correction','repeat_review_finding'
+  )),
+  success boolean,
+  detail jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (serve_id IS NOT NULL OR job_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
+  ON institutional_memory_outcomes(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_correction_events (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  job_id uuid NOT NULL UNIQUE REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
+  body text NOT NULL CHECK (octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000),
+  memory_kind text NOT NULL CHECK (memory_kind IN ('workspace_fact','human_profile_fact')),
+  classifier_version text NOT NULL,
+  confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_memory_corrections_baseline_idx
+  ON institutional_memory_correction_events(workspace_id,requester_identity_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  job_id uuid NOT NULL UNIQUE REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
+  body text NOT NULL CHECK (octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000),
+  classifier_version text NOT NULL,
+  confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
+  ON institutional_memory_fact_events(workspace_id,created_at,id);
+
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   agent_id text NOT NULL REFERENCES identities(id),
@@ -1165,6 +1329,34 @@ ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
   CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository'));
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
+
+-- Immutable evidence for the requester-aware policy upgrade. This deliberately
+-- has no foreign keys: deleting a Workspace or agent must not erase what the
+-- release revoked. previous_status is NULL when the already-run production
+-- migration destroyed information that cannot be reconstructed safely.
+CREATE TABLE IF NOT EXISTS agent_grant_policy_revocations (
+  grant_id uuid PRIMARY KEY,
+  agent_id text NOT NULL,
+  workspace_id uuid NOT NULL,
+  room_id uuid NOT NULL,
+  owner_id text NOT NULL,
+  command_id text,
+  kind text NOT NULL,
+  target text NOT NULL,
+  requested_by text NOT NULL,
+  previous_status text CHECK (previous_status IS NULL OR previous_status IN ('pending','approved','once')),
+  reason text NOT NULL CHECK (reason IN (
+    'budget-retired','missing-requester-provenance','third-party-auto-resource',
+    'non-owner-resource-decision'
+  )),
+  recovered boolean NOT NULL DEFAULT false,
+  turn_disposition text CHECK (turn_disposition IS NULL OR turn_disposition IN (
+    'resumed','cancelled','not-active','unrecoverable'
+  )),
+  revoked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_grant_policy_revocations_owner_idx
+  ON agent_grant_policy_revocations(owner_id, revoked_at DESC);
 
 -- Preference cards: one lettered question or Room poll per row. Electorate is
 -- frozen at insert so a join/leave cannot move the denominator. Votes live in

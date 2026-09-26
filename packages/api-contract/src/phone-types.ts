@@ -265,6 +265,9 @@ export type RoomViewMessage = {
   };
   /** One grant card: the agent asks its owner; several asks in one turn share a card. */
   readonly grantRequest?: GrantRequestCardView;
+  /** One Squire-owned approval page relayed into the owner's connector DM.
+   * Beeline presents the link but never decides the request. */
+  readonly squireApproval?: SquireApprovalCardView;
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;
   /** One preference card: a lettered question or a Room poll. Never authority. */
@@ -395,6 +398,18 @@ export type GrantRequestCardView = {
   readonly requester: RoomViewIdentity;
   readonly grants: readonly AgentGrantView[];
   /** The message that caused a Squire route ask, when this card is in the owner's connector DM. */
+  readonly sourceRoomId?: string;
+  readonly sourceMessageId?: string;
+};
+
+export type SquireApprovalCardView = {
+  readonly agent: RoomViewIdentity;
+  readonly tool: string;
+  readonly title: string;
+  readonly detail: string;
+  readonly approvalUrl: string;
+  readonly approvalId?: string;
+  readonly linkKind: 'approval' | 'passkey' | 'vouch';
   readonly sourceRoomId?: string;
   readonly sourceMessageId?: string;
 };

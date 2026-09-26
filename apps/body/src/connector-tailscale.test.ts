@@ -1,6 +1,7 @@
 import { userInfo } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  formatToolReachLine,
   installTailscale,
   type TailscaleCommandResult,
   type TailscaleCommandRunner,
@@ -147,6 +148,57 @@ describe('installTailscale', () => {
       command: 'tailscale',
       args: ['up', '--timeout=10s', '--operator=root'],
     });
+  });
+
+  it('serves AuthURL from status when up fails without a printed login link', async () => {
+    const needsLogin = JSON.stringify({
+      BackendState: 'NeedsLogin',
+      AuthURL: 'https://login.tailscale.com/a/from-status',
+    });
+    const command = runner([
+      { code: 0, stdout: '1.90.6', stderr: '' },
+      { code: 1, stdout: needsLogin, stderr: '' },
+      { code: 1, stdout: '', stderr: 'sudo: a password is required' },
+      { code: 1, stdout: needsLogin, stderr: '' },
+    ]);
+
+    const result = await installTailscale({
+      run: command.run,
+      operator: 'beeline',
+      platform: 'linux',
+      getuid: () => 1000,
+    });
+
+    expect(result).toMatchObject({
+      status: 'installing',
+      signIn: {
+        method: 'oauth',
+        url: 'https://login.tailscale.com/a/from-status',
+      },
+    });
+  });
+
+  it('phrases reachability in one can/cannot sentence', () => {
+    expect(
+      formatToolReachLine({
+        can: false,
+        thing: 'Tailscale',
+        because: 'the CLI is not installed',
+        fix: 'the connector will install it and send the owner a login link',
+      }),
+    ).toBe(
+      "I can't reach Tailscale on this machine because the CLI is not installed; to fix it, the connector will install it and send the owner a login link.",
+    );
+    expect(
+      formatToolReachLine({
+        can: true,
+        thing: 'Tailscale',
+        because: 'this node is connected as sol@example.test',
+        fix: 'use the tailscale CLI for tailnet resources',
+      }),
+    ).toBe(
+      'I can reach Tailscale on this machine because this node is connected as sol@example.test; to fix it, use the tailscale CLI for tailnet resources.',
+    );
   });
 
   it('reuses an open login ceremony while polling instead of running up again', async () => {

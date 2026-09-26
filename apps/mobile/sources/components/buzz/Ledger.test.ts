@@ -172,6 +172,35 @@ describe('the ledger — an agent turn', () => {
     expect(leadStyle.fontSize).toBe(16);
   });
 
+  it('makes an exact-source body action tappable for either speaker lane', () => {
+    const onPress = vi.fn();
+    const bodyAction = {
+      accessibilityLabel: 'Open original message',
+      onPress,
+      testID: 'message-source',
+    };
+    const entry = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'entry',
+        bodyText: '> Agent quote',
+        bodyTestID: 'entry-body',
+        bodyAction,
+      }),
+    );
+    const steer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'steer',
+        bodyText: '> Human quote',
+        bodyTestID: 'steer-body',
+        bodyAction: { ...bodyAction, testID: 'human-message-source' },
+      }),
+    );
+
+    act(() => entry.root.findByProps({ testID: 'message-source' }).props.onPress());
+    act(() => steer.root.findByProps({ testID: 'human-message-source' }).props.onPress());
+    expect(onPress).toHaveBeenCalledTimes(2);
+  });
+
   it('opens a Room run with a byline: steel dot, name, role tag, stamp', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
@@ -196,6 +225,32 @@ describe('the ledger — an agent turn', () => {
     const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
     expect(dots.length).toBeGreaterThan(0);
     expect(dots.every((style) => style.backgroundColor !== '#b08a4a')).toBe(true);
+  });
+
+  it('lets the nested profile control claim the row long press', () => {
+    const onOpenProfile = vi.fn();
+    const onLongPress = vi.fn();
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'profile-message',
+        byline: {
+          name: 'Proofbot',
+          role: 'agent',
+          stamp: '17:22',
+          onOpenProfile,
+          onLongPress,
+        },
+        bodyText: 'A settled reply.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const byline = renderer.root.findByProps({ testID: 'chat-byline-profile' });
+    expect(byline.props.onLongPress).toBe(onLongPress);
+    expect(byline.props.delayLongPress).toBe(450);
+    act(() => byline.props.onLongPress());
+    expect(onLongPress).toHaveBeenCalledOnce();
+    expect(onOpenProfile).not.toHaveBeenCalled();
   });
 
   it('never prints a repeat byline for a continued run', () => {

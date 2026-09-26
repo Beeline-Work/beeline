@@ -58,9 +58,9 @@ const styles = StyleSheet.create((theme) => ({
   qr: { borderRadius: 3 },
   qrRow: { flexDirection: 'row' },
   tile: { height: 6, width: 6 },
-  placeholder: {
-    borderColor: '#83838d',
-    borderRadius: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
+    placeholder: {
+      borderColor: theme.buzz.textMuted,
+      borderRadius: 3,
+      borderWidth: StyleSheet.hairlineWidth,
+    },
 }));

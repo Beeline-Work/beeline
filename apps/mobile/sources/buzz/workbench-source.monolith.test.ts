@@ -121,7 +121,9 @@ describe('MonolithWorkbenchSource connections', () => {
     const view = await new MonolithWorkbenchSource().readWorkbench({
       workspaceId: 'ws1',
       viewerId: 'human-dani',
+      refreshVault: true,
     });
+    expect(state.calls.at(-1)?.input).toEqual({ workspaceId: 'ws1', refreshVault: true });
     expect(view.connections[0].service).toBe('github');
     expect(view.connections[1].service).toBeUndefined();
     // The server-derived brand domain rides through for the mark to fetch.

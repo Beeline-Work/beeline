@@ -331,6 +331,8 @@ export type ChatDisplayMessage = {
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
+  /** Trusty Squire's own approval page, relayed into its owner DM. */
+  squireApproval?: NonNullable<RoomViewMessage['squireApproval']>;
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
   connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
   choice?: NonNullable<RoomViewMessage['choice']>;
@@ -463,6 +465,7 @@ export function displayRoomMessage(
           },
         }
       : {}),
+    ...(message.squireApproval ? { squireApproval: { ...message.squireApproval } } : {}),
     ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
     ...(message.choice ? { choice: message.choice } : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),

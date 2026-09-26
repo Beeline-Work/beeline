@@ -8,6 +8,7 @@ import {
   type ServiceAccount,
 } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
+import { pushActionData } from '@beeline/api-contract/phone';
 import type { PushSender } from './background.js';
 
 export type PushDeliveryMessage = Parameters<PushSender['send']>[1];
@@ -87,18 +88,32 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
       channelId: message.type === 'message' ? message.channelId : roomId,
       ...(message.type === 'message' && message.cornerId ? { cornerId: message.cornerId } : {}),
       ...(message.type === 'message' ? { messageId: message.messageId } : {}),
+      ...(message.type === 'message' ? pushActionData(message.action) : {}),
     };
   }
   return data;
 }
 
+/**
+ * Android pushes are data-only: expo-notifications draws the notification
+ * itself (title `title`, body `message`, identifier `tag`), which is the only
+ * way it can attach the inline action buttons named by `categoryId`. An FCM
+ * `notification` block would be drawn by the system tray with no buttons.
+ * The identifier is the message id, never the Room: the phone's tap router
+ * remembers routed notification identifiers, so a Room-wide identifier would
+ * make every later push in that Room look already handled.
+ */
 export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
   const data = pushMessageData(message);
   return {
     token,
-    notification: { title: 'Beeline', body: message.text.slice(0, 200) },
-    data,
-    ...(data.roomId ? { android: { notification: { tag: data.roomId } } } : {}),
+    data: {
+      ...data,
+      title: 'Beeline',
+      message: message.text.slice(0, 200),
+      tag: message.messageId,
+    },
+    android: { priority: 'high' },
     apns: {
       payload: {
         aps: { sound: 'default', ...(data.roomId ? { threadId: data.roomId } : {}) },

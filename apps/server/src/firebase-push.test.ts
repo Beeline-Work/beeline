@@ -113,8 +113,12 @@ describe('Firebase push routing payload', () => {
       channelId,
       ...(cornerId ? { cornerId } : {}),
       messageId: 'message-1',
+      title: 'Beeline',
+      message: 'routing payload',
+      tag: 'message-1',
     });
-    expect(payload.android).toEqual({ notification: { tag: roomId } });
+    expect(payload).not.toHaveProperty('notification');
+    expect(payload.android).toEqual({ priority: 'high' });
     expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
     expect(payload.android).not.toHaveProperty('collapseKey');
   });
@@ -130,7 +134,7 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
-      android: { notification: { tag: 'room-welcome' } },
+      android: { priority: 'high' },
       apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
@@ -155,6 +159,63 @@ describe('Firebase push routing payload', () => {
       type: 'workspace-join',
       target: 'workspace',
       workspaceId: 'workspace-default',
+      title: 'Beeline',
+      message: 'alice joined Beeline',
+      tag: 'workspace-join:notification-id',
     });
+  });
+});
+
+describe('Firebase push inline actions', () => {
+  const base = {
+    messageId: 'message-1',
+    workspaceId: 'workspace-1',
+    roomId: 'dm-1',
+    channelId: 'dm-1',
+    target: 'message' as const,
+    type: 'message' as const,
+  };
+
+  it('names the grant category and the one pending grant it answers', () => {
+    const payload = firebasePushMessage('device-token', {
+      ...base,
+      text: '@wren asked @charles for host api.stripe.com · checking the invoice webhook',
+      action: {
+        kind: 'grant',
+        grantId: 'grant-1',
+        grantKind: 'host',
+        grantTarget: 'api.stripe.com',
+        agentName: 'wren',
+      },
+    });
+    expect(payload.data).toMatchObject({
+      categoryId: 'beeline-grant',
+      grantId: 'grant-1',
+      grantKind: 'host',
+      grantTarget: 'api.stripe.com',
+      agentName: 'wren',
+      messageId: 'message-1',
+      message: '@wren asked @charles for host api.stripe.com · checking the invoice webhook',
+    });
+  });
+
+  it('names the reply category and who is being answered', () => {
+    const payload = firebasePushMessage('device-token', {
+      ...base,
+      text: 'Maya: @charles can you look?',
+      action: { kind: 'reply', authorName: 'Maya' },
+    });
+    expect(payload.data).toMatchObject({
+      categoryId: 'beeline-reply',
+      authorName: 'Maya',
+      channelId: 'dm-1',
+      messageId: 'message-1',
+    });
+  });
+
+  it('adds no category to a push without an action', () => {
+    expect(firebasePushMessage('device-token', { ...base, text: 'hello' }).data).not.toHaveProperty(
+      'categoryId',
+    );
   });
 });

@@ -81,6 +81,29 @@ describe('APNs provider token and request', () => {
     });
   });
 
+  it('names the inline-action category so iOS offers Reply or the grant choices', () => {
+    const request = apnsPushRequest(
+      'device-token',
+      {
+        messageId: 'message-1',
+        workspaceId: 'workspace-1',
+        roomId: 'dm-1',
+        channelId: 'dm-1',
+        target: 'message',
+        type: 'message',
+        text: 'Maya: are you there?',
+        action: { kind: 'reply', authorName: 'Maya' },
+      },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    expect(request.payload).toMatchObject({
+      aps: { category: 'beeline-reply' },
+      categoryId: 'beeline-reply',
+      authorName: 'Maya',
+    });
+  });
+
   it.each([
     [200, '', 'success'],
     [400, 'BadDeviceToken', 'unregistered'],

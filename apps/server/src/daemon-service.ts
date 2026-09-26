@@ -4752,16 +4752,14 @@ export class DaemonService {
       await this.database.query<{
         owner_id: string;
         owner_handle: string | null;
-        agent_name: string;
         yolo_mode: boolean;
         owner_present: boolean;
       }>(
-        `SELECT a.owner_id,owner.handle owner_handle,agent.name agent_name,
+        `SELECT a.owner_id,owner.handle owner_handle,
        EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
        FROM agents a JOIN identities owner ON owner.id=a.owner_id
-       JOIN identities agent ON agent.id=a.agent_id
        JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
        WHERE a.agent_id=$2`,
         [input.roomId, agentId],
@@ -4812,7 +4810,6 @@ export class DaemonService {
         await this.noteBlockedTurnGate({
           roomId: input.roomId,
           agentId,
-          agentName: context.agent_name,
           kind,
           ownerHandle: context.owner_handle,
           grantId: pending.id,
@@ -4837,7 +4834,6 @@ export class DaemonService {
       await this.noteBlockedTurnGate({
         roomId: input.roomId,
         agentId,
-        agentName: context.agent_name,
         kind,
         ownerHandle: context.owner_handle,
         grantId: asked.grantId,
@@ -4873,7 +4869,6 @@ export class DaemonService {
   private async noteBlockedTurnGate(input: {
     readonly roomId: string;
     readonly agentId: string;
-    readonly agentName: string;
     readonly kind: 'repository' | 'host';
     readonly ownerHandle: string | null;
     readonly grantId: string;
@@ -4883,28 +4878,32 @@ export class DaemonService {
         `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
       )
       .digest('hex');
-    const line = await systemLine(this.database, {
-      id,
-      roomId: input.roomId,
-      subject: { kind: 'agent', id: input.agentId, name: input.agentName },
-      verb: 'is waiting for',
-      object: {
-        text:
-          input.kind === 'host'
-            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
-            : 'a Workspace admin to approve repository access',
-      },
-      ...(this.authorizedCommand?.source_message_id
-        ? { afterMessageId: this.authorizedCommand.source_message_id }
-        : {}),
-    });
-    if (line.inserted)
-      this.live.publish({
-        type: 'invalidate',
+    try {
+      const line = await systemLine(this.database, {
+        id,
         roomId: input.roomId,
-        reason: 'grant',
-        agentId: input.agentId,
+        subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
+        verb: 'is waiting for',
+        object: {
+          text:
+            input.kind === 'host'
+              ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
+              : 'a Workspace admin to approve repository access',
+        },
+        ...(this.authorizedCommand?.source_message_id
+          ? { afterMessageId: this.authorizedCommand.source_message_id }
+          : {}),
       });
+      if (line.inserted)
+        this.live.publish({
+          type: 'invalidate',
+          roomId: input.roomId,
+          reason: 'grant',
+          agentId: input.agentId,
+        });
+    } catch (error) {
+      console.error('[server] could not inscribe a blocked corner gate:', error);
+    }
   }
 
   // --- R5: connector offers -------------------------------------------------

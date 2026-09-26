@@ -65,7 +65,7 @@ export function NeedsYouCell({
       <Text style={styles.text} testID={`needs-you-text-${item.messageId}`}>
         {item.text}
       </Text>
-      <View style={styles.meta}>
+      <View style={[styles.meta, desktop && styles.metaDesktop]}>
         {item.roomKind === 'corner' ? (
           <CornerGlyph size={CORNER_META_SIZE} />
         ) : item.roomKind === 'room' ? (
@@ -148,20 +148,26 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
   },
   chevronColor: { color: theme.buzz.ledgerGhost },
+  // A pointer's dismiss sits on the source line, which keeps room for it, so
+  // revealing it never covers the sentence or reflows the cell.
+  metaDesktop: { paddingRight: 64 },
   dismiss: {
     position: 'absolute',
     right: 4,
-    top: 0,
     bottom: 0,
     minWidth: 44,
+    minHeight: 44,
     paddingHorizontal: 10,
-    justifyContent: 'center',
+    paddingBottom: 14,
+    justifyContent: 'flex-end',
   },
   dismissText: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   dismissMark: { color: theme.buzz.accent },
+  // The label leads from the left edge so it reads while the rail is still opening.
   rail: {
     width: SWIPE_RAIL_WIDTH,
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    paddingLeft: theme.buzz.space.md,
     justifyContent: 'center',
     backgroundColor: theme.buzz.brassWash,
   },

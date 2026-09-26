@@ -335,7 +335,7 @@ describe('corner message attribution', () => {
         db
           .query<{ text: string; author_id: string; created_at: Date }>(
             `SELECT text,author_id,created_at FROM messages
-           WHERE room_id=$1 AND presentation='system' AND text LIKE '%is waiting for%'
+           WHERE room_id=$1 AND presentation='system' AND text LIKE '%to approve%access'
            ORDER BY created_at`,
             [C],
           )
@@ -415,8 +415,8 @@ describe('corner message attribution', () => {
       expect(line.author_id).toBe(B);
       expect(line.text).toBe(
         host
-          ? '@goosy is waiting for @human to approve host access'
-          : '@goosy is waiting for a Workspace admin to approve repository access',
+          ? '@goosy asked @human to approve host access'
+          : '@goosy asked a Workspace admin to approve repository access',
       );
       // The notice never sorts above the message that provoked it.
       expect(line.created_at.getTime()).toBeGreaterThanOrEqual(

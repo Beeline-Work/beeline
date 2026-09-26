@@ -4878,32 +4878,21 @@ export class DaemonService {
         `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
       )
       .digest('hex');
-    try {
-      const line = await systemLine(this.database, {
-        id,
-        roomId: input.roomId,
-        subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
-        verb: 'is waiting for',
-        object: {
-          text:
-            input.kind === 'host'
-              ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
-              : 'a Workspace admin to approve repository access',
-        },
-        ...(this.authorizedCommand?.source_message_id
-          ? { afterMessageId: this.authorizedCommand.source_message_id }
-          : {}),
-      });
-      if (line.inserted)
-        this.live.publish({
-          type: 'invalidate',
-          roomId: input.roomId,
-          reason: 'grant',
-          agentId: input.agentId,
-        });
-    } catch (error) {
-      console.error('[server] could not inscribe a blocked corner gate:', error);
-    }
+    await systemLine(this.database, {
+      id,
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
+      verb: 'asked',
+      object: {
+        text:
+          input.kind === 'host'
+            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
+            : 'a Workspace admin to approve repository access',
+      },
+      ...(this.authorizedCommand?.source_message_id
+        ? { afterMessageId: this.authorizedCommand.source_message_id }
+        : {}),
+    });
   }
 
   // --- R5: connector offers -------------------------------------------------

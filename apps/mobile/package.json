@@ -207,5 +207,12 @@
     "typescript": "5.9.3"
   },
   "private": true,
-  "description": "Beeline mobile client. Isolated from monorepo workspaces."
+  "description": "Beeline mobile client. Isolated from monorepo workspaces.",
+  "expo": {
+    "autolinking": {
+      "buildFromSource": [
+        "expo-notifications"
+      ]
+    }
+  }
 }

@@ -2391,6 +2391,7 @@ export function BuzzChatSurface({
     boundaryId: string;
     acknowledgeQueue: boolean;
   } | null>(null);
+  const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(null);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
@@ -2478,6 +2479,16 @@ export function BuzzChatSurface({
       visibleTranscriptMessagesRef.current = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      const notification = pendingNotificationLandingRef.current;
+      if (
+        notification &&
+        visibleTranscriptMessagesRef.current.some(
+          (message) =>
+            message.id === notification.messageId || message.relayId === notification.messageId,
+        )
+      ) {
+        pendingNotificationLandingRef.current = null;
+      }
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
@@ -2821,6 +2832,7 @@ export function BuzzChatSurface({
             ?.scrollIntoView({ block: 'center' });
           return;
         }
+        pendingNotificationLandingRef.current = { messageId, attempts: 0 };
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
           viewPosition: 0.5,
@@ -5772,6 +5784,40 @@ export function BuzzChatSurface({
             }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength }) => {
+              const notification = pendingNotificationLandingRef.current;
+              if (notification && !userDraggingRef.current) {
+                const index = transcriptMessagesRef.current.findIndex(
+                  (message) =>
+                    message.id === notification.messageId ||
+                    message.relayId === notification.messageId,
+                );
+                if (index >= 0 && notification.attempts < 8) {
+                  notification.attempts += 1;
+                  // Native has not measured the distant row yet. Bring its
+                  // window into range, then resolve the durable id again in
+                  // case a newer message shifted the inverted list.
+                  flatListRef.current?.scrollToOffset({
+                    offset: averageItemLength * index,
+                    animated: false,
+                  });
+                  setTimeout(() => {
+                    if (pendingNotificationLandingRef.current !== notification) return;
+                    const currentIndex = transcriptMessagesRef.current.findIndex(
+                      (message) =>
+                        message.id === notification.messageId ||
+                        message.relayId === notification.messageId,
+                    );
+                    if (currentIndex >= 0 && !userDraggingRef.current) {
+                      flatListRef.current?.scrollToIndex({
+                        index: currentIndex,
+                        viewPosition: 0.5,
+                        animated: false,
+                      });
+                    }
+                  }, 100);
+                  return;
+                }
+              }
               const pending = pendingNewMessageLandingRef.current;
               if (!pending || userDraggingRef.current) return;
               const currentIndex = boundaryRowIndex(

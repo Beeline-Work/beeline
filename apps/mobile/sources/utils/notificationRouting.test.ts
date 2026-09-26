@@ -90,6 +90,54 @@ describe('getBuzzNotificationTargetFromData', () => {
       messageId: 'event-456',
     });
   });
+
+  it('reads routing back out of a JSON-shaped body Expo rewrote into an envelope', () => {
+    // Older Expo-service responses may put their routing fields inside data.
+    expect(
+      getBuzzNotificationTargetFromData({
+        title: 'Beeline',
+        body: '["a","b"]',
+        data: {
+          type: 'channel-activity',
+          target: 'message',
+          workspaceId: 'workspace-other',
+          roomId: 'room-other',
+          channelId: 'room-other',
+          messageId: 'message-other',
+        },
+      }),
+    ).toMatchObject({
+      type: 'channel-activity',
+      target: 'message',
+      workspaceId: 'workspace-other',
+      roomId: 'room-other',
+      channelId: 'room-other',
+      messageId: 'message-other',
+    });
+  });
+
+  it('prefers FCM route fields over a JSON body that contains its own data object', () => {
+    expect(
+      getBuzzNotificationTargetFromData({
+        type: 'channel-activity',
+        target: 'message',
+        workspaceId: 'workspace-other',
+        roomId: 'room-parent',
+        channelId: 'corner-child',
+        cornerId: 'corner-child',
+        messageId: 'real-message',
+        data: { type: 'channel-activity', channelId: 'stale-room', messageId: 'wrong-message' },
+      }),
+    ).toMatchObject({
+      channelId: 'corner-child',
+      cornerId: 'corner-child',
+      messageId: 'real-message',
+    });
+  });
+
+  it('ignores a nested payload that carries no routing contract', () => {
+    expect(getBuzzNotificationTargetFromData({ type: 'test', data: { answer: 42 } })).toBeNull();
+  });
 });
 
 describe('navigateToBuzzNotificationResponse', () => {

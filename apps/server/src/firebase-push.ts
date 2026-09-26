@@ -98,7 +98,11 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
     token,
     notification: { title: 'Beeline', body: message.text.slice(0, 200) },
     data,
-    ...(data.roomId ? { android: { notification: { tag: data.roomId } } } : {}),
+    android: {
+      notification: {
+        ...(data.roomId ? { tag: data.roomId } : {}),
+      },
+    },
     apns: {
       payload: {
         aps: { sound: 'default', ...(data.roomId ? { threadId: data.roomId } : {}) },

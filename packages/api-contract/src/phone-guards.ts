@@ -720,6 +720,7 @@ function readWalletDelegation(
   value: unknown,
 ): NonNullable<RoomViewMessage['walletDelegation']> | null {
   const item = record(value);
+  if (item?.standing === true) return { standing: true };
   if (!item || !integer(item.expiresAt) || !integer(item.ttlHours)) return null;
   return { expiresAt: item.expiresAt, ttlHours: item.ttlHours };
 }

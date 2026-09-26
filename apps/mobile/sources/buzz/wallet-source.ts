@@ -26,7 +26,7 @@ export interface WalletSource {
     to: string;
   }): Promise<WalletSendOutcome>;
   /** Re-grant delegated signing; renewal is USER-ONLY (C: delegation ladder probe). */
-  grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number }>;
+  grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number | null }>;
   /** The viewer's own transaction history. Oldest first, as the server
    *  stores it; screens render newest first by reversing. */
   readHistory(input: { workspaceId: string; limit?: number }): Promise<WalletHistoryResult>;
@@ -55,16 +55,13 @@ export class MonolithWalletSource implements WalletSource {
     return monolithPhoneOperation('sendFromWallet', input);
   }
 
-  async grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number }> {
+  async grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number | null }> {
     return monolithPhoneOperation('grantWalletDelegation', {
       workspaceId: input.workspaceId,
     });
   }
 
-  async readHistory(input: {
-    workspaceId: string;
-    limit?: number;
-  }): Promise<WalletHistoryResult> {
+  async readHistory(input: { workspaceId: string; limit?: number }): Promise<WalletHistoryResult> {
     return monolithPhoneOperation('readWalletHistory', {
       workspaceId: input.workspaceId,
       limit: input.limit,

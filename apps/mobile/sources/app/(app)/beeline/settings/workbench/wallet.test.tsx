@@ -177,6 +177,19 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(renderer.root.findByProps({ testID: 'wallet-address-qr-toggle' })).toBeTruthy();
   });
 
+  it('does not show Permission expired for a standing grant', async () => {
+    const source = new MockWalletSource();
+    const baseline = await source.readWallet();
+    source.readWallet = async () => ({
+      ...baseline,
+      delegation: { active: true, expiresAt: null },
+    });
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    expect(renderer.root.findAllByProps({ testID: 'wallet-delegation-banner' })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Permission expired');
+  });
+
   it('copies the address through expo-clipboard', async () => {
     const renderer = await render(WalletScreen);
     const copy = renderer.root.findByProps({ testID: 'wallet-address-copy' });

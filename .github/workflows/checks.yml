@@ -527,8 +527,13 @@ jobs:
       # test has its own scaled-data gate below; Vitest discovers every other
       # server test except the large integration file, which runs below.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      # This file asserts a synthetic 206 ms database delay stays under a
+      # 250 ms p95 wall-clock budget. Run it before the parallel PGlite suite
+      # so competing workers do not add scheduler latency to that contract.
+      - name: Run the claim latency budget alone
+        run: npm test -w @beeline/server -- --run src/agent-command.scaling.test.ts --maxWorkers=1 --minWorkers=1
       - name: Run the server suite
-        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --maxWorkers=2 --minWorkers=2
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2
 
   server-integration:
     name: SERVER INTEGRATION

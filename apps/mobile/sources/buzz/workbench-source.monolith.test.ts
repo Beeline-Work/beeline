@@ -64,9 +64,9 @@ describe('MonolithWorkbenchSource pairConnector — the ONE Google entry', () =>
       connectorId: 'google',
       helperId: 'helper-1',
     });
-    expect(
-      state.calls.find((call) => call.op === 'pairConnector')!.input.connectorType,
-    ).toBe('google-drive');
+    expect(state.calls.find((call) => call.op === 'pairConnector')!.input.connectorType).toBe(
+      'google-drive',
+    );
   });
 
   it('passes concrete connector ids through without a catalog read', async () => {
@@ -76,9 +76,9 @@ describe('MonolithWorkbenchSource pairConnector — the ONE Google entry', () =>
       connectorId: 'trusty-squire',
       helperId: 'helper-1',
     });
-    expect(
-      state.calls.find((call) => call.op === 'pairConnector')!.input.connectorType,
-    ).toBe('trusty-squire');
+    expect(state.calls.find((call) => call.op === 'pairConnector')!.input.connectorType).toBe(
+      'trusty-squire',
+    );
     expect(state.calls.some((call) => call.op === 'readWorkbench')).toBe(false);
   });
 });
@@ -135,21 +135,61 @@ describe('MonolithWorkbenchSource connections', () => {
     const dto = workbenchDto([]);
     state.readWorkbenchOutput = {
       ...dto,
-      catalog: [...dto.catalog, {
-        connectorType: 'composio', name: 'Composio', available: true,
+      catalog: [
+        ...dto.catalog,
+        {
+          connectorType: 'composio',
+          name: 'Composio',
+          available: true,
         approvedTools: ['GITHUB_DELETE_REPO'],
-      }],
-      connectors: [{
-        connectorId: 'composio-row', connectorType: 'composio',
+        },
+      ],
+      connectors: [
+        {
+          connectorId: 'composio-row',
+          connectorType: 'composio',
         status: { status: 'connected', steps: [] },
         approvedTools: ['GITHUB_GET_AN_ISSUE'],
-      }],
+        },
+      ],
     };
     const view = await new MonolithWorkbenchSource().readWorkbench({
-      workspaceId: 'ws1', viewerId: 'human-dani',
+      workspaceId: 'ws1',
+      viewerId: 'human-dani',
     });
-    expect(view.connectors.find((connector) => connector.id === 'composio')?.description)
-      .toContain('Approved tools: GITHUB_GET_AN_ISSUE.');
+    expect(view.connectors.find((connector) => connector.id === 'composio')?.description).toContain(
+      'Approved tools: GITHUB_GET_AN_ISSUE.',
+    );
+  });
+
+  it('appends dynamic Registry servers after the fixed catalog and keys them by connector row', async () => {
+    const dto = workbenchDto([]);
+    state.readWorkbenchOutput = {
+      ...dto,
+      connectors: [
+        {
+          connectorId: 'registry-row-uuid',
+          connectorType: 'registry-mcp',
+          registryServerName: 'app.linear/linear',
+          registryVersion: '1.0.1',
+          displayName: 'Linear',
+          websiteUrl: 'https://linear.app/',
+          status: { status: 'connected', steps: [], signIn: null },
+        },
+      ],
+    };
+    const view = await new MonolithWorkbenchSource().readWorkbench({
+      workspaceId: 'ws1',
+      viewerId: 'human-dani',
+    });
+    expect(view.connectors.at(-1)).toEqual(
+      expect.objectContaining({
+        id: 'registry-row-uuid',
+        name: 'Linear',
+        status: 'connected',
+        description: 'app.linear/linear@1.0.1 · https://linear.app/',
+      }),
+    );
   });
 });
 

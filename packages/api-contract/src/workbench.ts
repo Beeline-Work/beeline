@@ -30,6 +30,7 @@ export const CONNECTOR_KINDS = [
   'google-drive',
   'google-youtube',
   'composio',
+  'registry-mcp',
 ] as const;
 export type ConnectorKind = (typeof CONNECTOR_KINDS)[number];
 
@@ -94,6 +95,11 @@ export type WorkbenchConnectorView = {
   readonly createdAt: number;
   /** The paired Composio row's fixed approved tool scope. */
   readonly approvedTools?: readonly string[];
+  /** Registry identity for a dynamically connected remote MCP server. */
+  readonly registryServerName?: string;
+  readonly registryVersion?: string;
+  readonly displayName?: string;
+  readonly websiteUrl?: string;
 };
 
 /**

@@ -185,6 +185,12 @@ describe('parseAdvertisedConfigOptions', () => {
 });
 
 describe('agentArgsWithModelSelection — Grok launch configuration', () => {
+  it('preserves Grok launch flags when only Fast mode is configured', () => {
+    const args = ['agent', '--model', 'grok-4.5', '--reasoning-effort', 'high', 'stdio'];
+    expect(
+      agentArgsWithModelSelection({ kind: 'grok', command: 'grok', args }, { fastMode: false }),
+    ).toEqual(args);
+  });
   it('injects selected model and effort before Grok stdio', () => {
     expect(
       agentArgsWithModelSelection(

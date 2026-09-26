@@ -41,11 +41,12 @@ export function isGrokAgentCommand(agent: AgentLaunchCommand): boolean {
  */
 export function agentArgsWithModelSelection(
   agent: AgentLaunchCommand,
-  selection: { model?: string; effort?: string } | null | undefined,
+  selection: { model?: string; effort?: string; fastMode?: boolean } | null | undefined,
 ): string[] {
   const original = [...agent.args];
   if (
     !selection ||
+    (!selection.model && !selection.effort) ||
     !isGrokAgentCommand(agent) ||
     !original.includes('agent') ||
     !original.includes('stdio')

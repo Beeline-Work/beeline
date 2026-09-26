@@ -218,7 +218,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       properties: {
         revision: {
           type: 'string',
-          description: 'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
+          description:
+            'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
         },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
@@ -865,13 +866,45 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'search_mcp_registry',
+    description:
+      'Search the official MCP Registry by a concrete provider or product name. Returns bounded registry coordinates, presentation, provenance, transports, and declared secret-input NAMES only. Free to call and changes nothing. Search is name-based; try at most three concrete terms.',
+    inputSchema: {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 120 },
+        limit: { type: 'integer', minimum: 1, maximum: 10 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'connect_mcp_server',
+    description:
+      'Connect the exact MCP Registry server name and version returned by search. The server freshly re-fetches that entry and ignores URLs or package commands from the model. This is setup, not permission. On needs_sign_in try the owner’s connected Trusty Squire browser first; use handoffToOwner only when Squire is unavailable or unable without emitting its own link.',
+    inputSchema: {
+      type: 'object',
+      required: ['serverName', 'version', 'reason'],
+      properties: {
+        serverName: { type: 'string', minLength: 1, maxLength: 240 },
+        version: { type: 'string', minLength: 1, maxLength: 120 },
+        reason: { type: 'string', minLength: 1, maxLength: 500 },
+        handoffToOwner: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'composio_tools',
-    description: 'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
+    description:
+      'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'composio_execute',
-    description: 'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
+    description:
+      'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
     inputSchema: {
       type: 'object',
       required: ['toolkit', 'tool', 'arguments'],
@@ -1038,7 +1071,13 @@ export function agentToolsFor(
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
     // A connector is offered where a person is answering — a Room or a DM —
     // never from a corner, whose work is the branch (R5).
-    if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
+    if (
+      tool.name === 'workbench_status' ||
+      tool.name === 'offer_connector' ||
+      tool.name === 'search_mcp_registry' ||
+      tool.name === 'connect_mcp_server'
+    )
+      return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
@@ -2551,8 +2590,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   return {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
-    tailscaleReach: (enabled) =>
-      describeTailscaleReach({ enabled, installIfMissing: enabled }),
+    tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
   };
 }
 
@@ -2581,12 +2619,23 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
+    registryServers?: Array<{
+      connectorId: string;
+      serverName: string;
+      version: string;
+      displayName: string;
+      status: string;
+      websiteUrl?: string;
+      onThisMachine: boolean;
+    }>;
     machine?: { machineId: string; name: string };
   };
   const who = view.owner?.handle
     ? `@${view.owner.handle}`
     : (view.owner?.name ??
-      (view.addressee?.handle ? `@${view.addressee.handle}` : (view.addressee?.name ?? 'the owner of this machine')));
+      (view.addressee?.handle
+        ? `@${view.addressee.handle}`
+        : (view.addressee?.name ?? 'the owner of this machine')));
   const machine = view.machine?.name ?? 'this machine';
   const lines = [
     `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
@@ -2610,6 +2659,16 @@ export async function workbenchStatus(
     lines.push(
       `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
     );
+  lines.push('', 'Registry MCP servers:');
+  const registryServers = view.registryServers ?? [];
+  if (!registryServers.length) lines.push('- none');
+  for (const server of registryServers) {
+    lines.push(
+      `- ${server.displayName} (${server.serverName}@${server.version}): ${server.status}` +
+        `${server.onThisMachine ? ' on your machine' : ' on another machine'}` +
+        `${server.websiteUrl ? ` · ${server.websiteUrl}` : ''}`,
+    );
+  }
   if (deps.tailscaleReach) {
     const enabled = Boolean(
       view.catalog?.some(
@@ -3092,21 +3151,59 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
+    case 'search_mcp_registry': {
+      if (typeof args.query !== 'string' || !args.query.trim())
+        throw new Error('query must be a non-empty provider or product name');
+      const limit = args.limit === undefined ? undefined : Number(args.limit);
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10))
+        throw new Error('limit must be an integer from 1 to 10');
+      return JSON.stringify(
+        await daemonExecute('searchMcpRegistry', {
+          roomId: agentScheduleRoomId(),
+          query: args.query.trim(),
+          ...(limit !== undefined ? { limit } : {}),
+        }),
+      );
+    }
+    case 'connect_mcp_server': {
+      const serverName = stringArg(args, 'serverName')?.trim();
+      const version = stringArg(args, 'version')?.trim();
+      const reason = stringArg(args, 'reason')?.trim();
+      if (!serverName || !version || !reason)
+        throw new Error('serverName, version and reason are required');
+      const context = await activeCommandContext();
+      return JSON.stringify(
+        await daemonExecute('connectMcpServer', {
+          ...context,
+          serverName,
+          version,
+          reason,
+          ...(args.handoffToOwner === true ? { handoffToOwner: true } : {}),
+        }),
+      );
+    }
     case 'composio_tools': {
       const context = await activeCommandContext();
       return JSON.stringify(await daemonExecute('getComposioTools', context));
     }
     case 'composio_execute': {
       const context = await activeCommandContext();
-      if (typeof args.toolkit !== 'string' || typeof args.tool !== 'string' ||
-          !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+      if (
+        typeof args.toolkit !== 'string' ||
+        typeof args.tool !== 'string' ||
+        !args.arguments ||
+        typeof args.arguments !== 'object' ||
+        Array.isArray(args.arguments)
+      )
         throw new Error('Composio toolkit, tool and arguments are required');
-      return JSON.stringify(await daemonExecute('executeComposioTool', {
+      return JSON.stringify(
+        await daemonExecute('executeComposioTool', {
         ...context,
         toolkit: args.toolkit,
         tool: args.tool,
         arguments: args.arguments,
-      }));
+        }),
+      );
     }
     case 'offer_connector':
       return offerConnector(args);

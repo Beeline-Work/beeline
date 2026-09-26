@@ -56,6 +56,7 @@ import {
   prepareCodegraphIndex,
 } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
@@ -572,6 +573,7 @@ export class MonolithRoomTurnLoop {
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
@@ -579,11 +581,17 @@ export class MonolithRoomTurnLoop {
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
+        [
+          ...expectedMountedImportedMcpServerNames({
           operatorHome: this.options.config.operatorHome,
           agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
+            grantedHostRoutes: [
+              ...grantedHostRoutes,
+              ...registryRoutes.map((route) => route.routeName),
+            ],
         }),
+          ...registryRoutes.map((route) => route.routeName),
+        ],
         this.sessionCodegraphReady,
       ),
     });
@@ -599,10 +607,17 @@ export class MonolithRoomTurnLoop {
       );
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
+      return [
+        ...new Set([
+          ...approved,
+          ...Object.keys(
+            hostImportedMcpDeclarations({
         operatorHome: this.options.config.operatorHome,
         agentKind: this.options.config.agentKind,
-      }))])];
+            }),
+          ),
+        ]),
+      ];
     } catch {
       return [];
     }
@@ -649,6 +664,11 @@ export class MonolithRoomTurnLoop {
         ? { model: selectionModel, effort: selectionEffort }
         : undefined;
     const operatorHome = this.options.config.operatorHome ?? homedir();
+    const registryHostDeclarations = registryMcpHostDeclarations(
+      configuration.registryMcpRoutes,
+      operatorHome,
+    );
+    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -664,7 +684,8 @@ export class MonolithRoomTurnLoop {
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
-          grantedHostRoutes,
+          grantedHostRoutes: mountedHostRoutes,
+          extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
@@ -724,11 +745,14 @@ export class MonolithRoomTurnLoop {
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
+        [
+          ...expectedMountedImportedMcpServerNames({
           operatorHome: this.options.config.operatorHome,
           agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
+            grantedHostRoutes: mountedHostRoutes,
         }),
+          ...Object.keys(registryHostDeclarations),
+        ],
         codegraphReady,
       ),
     });
@@ -746,8 +770,9 @@ export class MonolithRoomTurnLoop {
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
-            grantedHostRoutes,
+            grantedHostRoutes: mountedHostRoutes,
           }),
+          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
@@ -781,16 +806,20 @@ export class MonolithRoomTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
+    const youtube = youtubeMcpServer(
+      this.options.config,
+      this.options.youtubeAccessToken,
+      resourceAuthFile,
+    );
     if (youtube) servers.push(youtube);
     const hostDeclarations = hostImportedMcpDeclarations({
       operatorHome,
       agentKind: this.options.config.agentKind,
     });
     const grantedRouteServers = grantedHostRouteWires(
-      grantedHostRoutes,
+      mountedHostRoutes,
       operatorHome,
-      hostDeclarations,
+      { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
@@ -819,7 +848,7 @@ export class MonolithRoomTurnLoop {
         operatorHome: this.options.config.operatorHome,
         agentKind: this.options.config.agentKind,
       }),
-      grantedHostRoutes,
+      mountedHostRoutes,
     );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,

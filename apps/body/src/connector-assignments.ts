@@ -55,6 +55,7 @@ import {
 } from './connector-squire.js';
 import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
+import { installRegistryMcp, type RegistryInstallResult } from './registry-mcp.js';
 
 export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
 
@@ -99,6 +100,11 @@ export type ConnectorAssignmentLoopOptions = {
   }) => Promise<InstallTailscaleResult>;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
+  /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
+  readonly registryHome?: string;
+  readonly installRegistry?: (
+    input: Parameters<typeof installRegistryMcp>[0],
+  ) => Promise<RegistryInstallResult>;
   /** Override the vault reader. */
   readonly readVault?: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   /** Override the grant revoker. */
@@ -127,6 +133,8 @@ export class ConnectorAssignmentLoop {
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
   private readonly googleHomeDir: string;
+  private readonly registryHomeDir: string;
+  private readonly installRegistry: typeof installRegistryMcp;
   private readonly composioWatches = new Map<string, unknown>();
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
@@ -152,7 +160,9 @@ export class ConnectorAssignmentLoop {
     this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
-    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress, sharedCredentials) =>
+    this.installGoogle =
+      options.installGoogle ??
+      ((connectorType, onProgress, sharedCredentials) =>
       installGoogleTool({
         connectorType,
         home: this.googleHome(),
@@ -163,6 +173,8 @@ export class ConnectorAssignmentLoop {
       }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
+    this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
+    this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
     this.schedule =
@@ -259,9 +271,12 @@ export class ConnectorAssignmentLoop {
       return;
     }
     const youtubeRows = assignments.filter((assignment) =>
-      isAdaptedYoutube(assignment.connectorType));
-    if (youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
-      youtubeRows.every((assignment) => assignment.kind === 'uninstall')) {
+      isAdaptedYoutube(assignment.connectorType),
+    );
+    if (
+      youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
+      youtubeRows.every((assignment) => assignment.kind === 'uninstall')
+    ) {
       clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
     }
     let googleBatch: ConnectorAssignment[] | undefined;
@@ -310,13 +325,17 @@ export class ConnectorAssignmentLoop {
     return (async () => {
       try {
         const grant = await this.api.execute('getGoogleOAuthGrant', {
-          agentId: this.agentId, connectorId,
+          agentId: this.agentId,
+          connectorId,
         });
         if (grant.status === 'ready' && grant.credentials)
           return { source: 'beeline', credentials: grant.credentials };
       } catch (error) {
         this.log(`Google grant lookup failed: ${describe(error)}`);
-        return { source: 'error', reason: 'Beeline could not read the Google grant; retry the connection' };
+        return {
+          source: 'error',
+          reason: 'Beeline could not read the Google grant; retry the connection',
+        };
       }
       return { source: 'pending', reason: 'waiting for Google sign-in' };
     })();
@@ -333,7 +352,9 @@ export class ConnectorAssignmentLoop {
         ? assignment.pairingGeneration
         : undefined;
     if (assignment.kind === 'install') {
-      if (assignment.connectorType === 'composio') {
+      if (assignment.connectorType === 'registry-mcp') {
+        await this.runRegistryMcpInstall(assignment);
+      } else if (assignment.connectorType === 'composio') {
         await this.runComposioInstall(assignment);
       } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
@@ -352,11 +373,61 @@ export class ConnectorAssignmentLoop {
       await this.runRevoke(assignment.connectorId, assignment.reference);
   }
 
+  private async runRegistryMcpInstall(
+    assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
+  ): Promise<void> {
+    const generation =
+      assignment.pairingGeneration !== undefined
+        ? { pairingGeneration: assignment.pairingGeneration }
+        : {};
+    const result = await this.installRegistry({
+      api: this.api as never,
+      agentId: this.agentId,
+      assignment,
+      home: this.registryHomeDir,
+    });
+    if (result.status === 'connected') {
+      const watch = this.composioWatches.get(assignment.connectorId);
+      if (watch !== undefined) this.cancel(watch);
+      this.composioWatches.delete(assignment.connectorId);
+      await this.api.execute('installConnector', {
+        agentId: this.agentId,
+        connectorId: assignment.connectorId,
+        ...generation,
+      });
+      return;
+    }
+    await this.api.execute('postConnectorStatus', {
+      agentId: this.agentId,
+      connectorId: assignment.connectorId,
+      steps: result.steps,
+      ...(result.status === 'installing'
+        ? {
+            signIn: {
+              method: 'oauth' as const,
+              url: result.authorizationUrl,
+              attemptId: result.attemptId,
+            },
+          }
+        : { signIn: null, errorMessage: result.errorMessage }),
+      ...generation,
+    });
+    if (result.status === 'installing' && !this.composioWatches.has(assignment.connectorId)) {
+      const watch = this.schedule(() => {
+        this.composioWatches.delete(assignment.connectorId);
+        if (!this.stopped) void this.runOnce();
+      }, CONNECT_WATCH_INTERVAL_MS);
+      this.composioWatches.set(assignment.connectorId, watch);
+    }
+  }
+
   private async runComposioInstall(
     assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
   ): Promise<void> {
-    const generation = assignment.pairingGeneration !== undefined
-      ? { pairingGeneration: assignment.pairingGeneration } : {};
+    const generation =
+      assignment.pairingGeneration !== undefined
+        ? { pairingGeneration: assignment.pairingGeneration }
+        : {};
     try {
       const link = await this.api.execute('getComposioLink', {
         agentId: this.agentId,

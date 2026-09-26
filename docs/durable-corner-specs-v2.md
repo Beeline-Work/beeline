@@ -23,6 +23,14 @@ by the planner in that command turn to the manifest. The old `content` column is
 legacy `buildSpec` projection for pre-migration rows; it is not accepted as the contract for a new
 repository or research corner.
 
+A no-code corner that a person upgrades into the code lane is the one repository corner nobody
+typed a brief for, so the server composes its first revision inside that upgrade's own transaction
+(`composeCornerUpgradeBrief`, `apps/server/src/corner-brief.ts`). The one explicit human ask that
+triggered the upgrade is the whole `intentVerbatim` and the `approvalBasis`; everything said in the
+corner before it is carried into `buildSpec` as context rather than authority, because a chat corner
+holds superseded asks a worker could not rank. The row is authored by `@system`, never by the agent
+whose work it authorizes, and a corner that already holds revisions keeps them.
+
 Approval is proportional. An initiating command authorizes a revision only when it already settles
 the exact material scope. Otherwise the planner asks the human one specific unresolved choice and
 records the answer against that revision. Silence is never approval, and settled requests do not

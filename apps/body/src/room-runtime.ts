@@ -608,6 +608,11 @@ export class RoomRuntimeCoordinator {
         console.error('[thin-core] live corner-complete apply failed', error),
       );
     });
+    this.options.daemonApi.setCornerRestartListener?.((roomId) => {
+      void this.applyCornerRestart(roomId).catch((error) =>
+        console.error('[thin-core] live corner-restart apply failed', error),
+      );
+    });
     // Hot-restart on a phone-side model/effort selection change: retire every
     // retained session now so the next turn cold-activates against the saved
     // selection, exactly as session start reads it. A busy session is left to
@@ -884,6 +889,18 @@ export class RoomRuntimeCoordinator {
 
   async applyCornerComplete(cornerId: string): Promise<void> {
     this.running.get(cornerId)?.body.requestClose?.();
+  }
+
+  /** Retire the scratch runtime. Ordinary desired-state reconciliation starts
+   * the same corner id again and re-reads its now-code lane. */
+  async applyCornerRestart(cornerId: string): Promise<void> {
+    const running = this.running.get(cornerId);
+    if (!running) {
+      this.discoveryWakes.wake();
+      return;
+    }
+    await this.stopRunning(cornerId, running);
+    this.discoveryWakes.wake();
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
@@ -1163,6 +1180,7 @@ export class RoomRuntimeCoordinator {
         objective,
         worktreePath: workspacePath,
         lane: restore.lane,
+        agentMayUpgradeCorner: repository.resolution === 'repository' && restore.lane === 'no_code',
         ...(restore.requesterHandle ? { requesterHandle: restore.requesterHandle } : {}),
         ...(worktree
           ? {
@@ -1191,6 +1209,10 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
+        onLaneChanged: () =>
+          void this.applyCornerRestart(corner.cornerId).catch((error) =>
+            console.error('[thin-core] corner lane-change restart failed', error),
+          ),
         onRestartRequested: () => this.requestLifecycleRestart(),
         canStartTurn: () => !this.restartRequested,
       });

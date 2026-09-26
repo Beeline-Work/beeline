@@ -95,7 +95,9 @@ async function daemonDoor(
                   ? { items: conversationItems }
                   : operation === 'createCorner'
                     ? { cornerId: CORNER }
-                    : { ok: true };
+                    : operation === 'upgradeCornerLane'
+                      ? { cornerId: CORNER, lane: 'code' }
+                      : { ok: true };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
@@ -113,6 +115,7 @@ async function callTool(
     name?: string;
     cornerId?: string;
     agentMayCloseCorner?: boolean;
+    agentMayUpgradeCorner?: boolean;
     toolCallId?: string;
   } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
@@ -137,6 +140,7 @@ async function callTool(
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
       BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
+      BEELINE_CORNER_CAN_UPGRADE: options.agentMayUpgradeCorner ? '1' : '',
       BEELINE_AGENT_DM: '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -368,6 +372,47 @@ describe('open_corner over the grok wire', () => {
     // The repository shape of the parent Room is not consulted at all: who may
     // archive is the server's opener check, not a question about the Room.
     expect(door.calls.some((call) => call.operation === 'getRoomRepositoryState')).toBe(false);
+  }, 30_000);
+
+  it('upgrades only an eligible corner through the active human command context', async () => {
+    const door = await daemonDoor();
+    const { result, error } = await callTool(
+      door.origin,
+      {},
+      {
+        name: 'upgrade_corner_to_code',
+        cornerId: CORNER,
+        agentMayUpgradeCorner: true,
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, lane: 'code' });
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({
+        operation: 'upgradeCornerLane',
+        cornerId: CORNER,
+        roomId: CORNER,
+        requestId: 'command-request',
+        generationId: 'g1',
+      }),
+    );
+  }, 30_000);
+
+  it('refuses the upgrade tool when this session is not an upgradeable no-code corner', async () => {
+    const door = await daemonDoor();
+    const { result } = await callTool(
+      door.origin,
+      {},
+      {
+        name: 'upgrade_corner_to_code',
+        cornerId: CORNER,
+      },
+    );
+
+    expect(result?.isError).toBe(true);
+    expect(door.calls.some((call) => call.operation === 'upgradeCornerLane')).toBe(false);
   }, 30_000);
 
   it('refuses close_corner outside a corner instead of archiving something else', async () => {
@@ -604,7 +649,6 @@ describe('relay tools', () => {
   });
 });
 
-
 describe('avatar skill tools over MCP', () => {
   it('sends generated geometry with active command authority and reads back refinement context', async () => {
     const { origin, calls } = await daemonDoor();
@@ -612,7 +656,13 @@ describe('avatar skill tools over MCP', () => {
     const saved = await callTool(origin, { drawing }, { name: 'set_avatar' });
     expect(saved.error).toBeUndefined();
     expect(saved.result?.isError).not.toBe(true);
-    expect(calls).toContainEqual({ operation: 'postAgentAvatar', roomId: ROOM, requestId: 'command-request', generationId: 'g1', drawing });
+    expect(calls).toContainEqual({
+      operation: 'postAgentAvatar',
+      roomId: ROOM,
+      requestId: 'command-request',
+      generationId: 'g1',
+      drawing,
+    });
     await callTool(origin, {}, { name: 'get_avatar' });
     expect(calls).toContainEqual({ operation: 'getAgentAvatar', roomId: ROOM });
   });

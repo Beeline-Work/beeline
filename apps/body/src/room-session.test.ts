@@ -100,7 +100,12 @@ describe('monolith Room inspection mount', () => {
         autoApprovePermissions: false,
       },
       api,
-      { roomId: 'room-id', workspaceId: 'workspace-id', cornerId: 'corner-id' },
+      {
+        roomId: 'room-id',
+        workspaceId: 'workspace-id',
+        cornerId: 'corner-id',
+        agentMayUpgradeCorner: true,
+      },
     );
     expect(server).toMatchObject({ name: 'beeline-agent', command: '/bin/beeline-mcp' });
     expect(server.env).toEqual(
@@ -109,6 +114,7 @@ describe('monolith Room inspection mount', () => {
         { name: 'BEELINE_DAEMON_ROOM_ID', value: 'room-id' },
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
         { name: 'BEELINE_DAEMON_TOKEN', value: 'daemon-secret' },
+        { name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' },
       ]),
     );
   });

@@ -89,7 +89,11 @@
  * shipped harnesses is strictly worse than the gap it closes. Harness state is
  * neither the repository nor the operator's tree, so the ordinary-session
  * property is intact: a Room's own file writes stay out of every checkout and
- * out of the operator's tree. That is a statement about where a session's file
+ * out of the operator's tree, except the host MCP resource directory
+ * (`~/.trusty-squire`): Squire's broker socket cannot live under `/tmp`
+ * because units use PrivateTmp and every ACP child gets `--tmpfs /tmp`. The
+ * bwrap profile binds that host directory read-write so every agent sees the
+ * same socket inode. That is a statement about where a session's file
  * edits land by default — not about what a determined session can reach through
  * non-filesystem channels (see "What this boundary is NOT" above).
  *
@@ -148,6 +152,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { executableOnPath } from './agent-command.js';
 import type { SessionMode } from './config.js';
 import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
+import { squireHostDir } from './mcp-route-class.js';
 
 /** Operator switch, persisted on the runtime record and mirrored onto BodyConfig. */
 export type SandboxPolicy = 'bwrap' | 'off';
@@ -348,6 +353,11 @@ export interface SandboxSessionSpec {
   protectedPaths?: string[];
   /** Explicit capabilities restored writable after protected parent mounts. */
   additionalWritablePaths?: string[];
+  /**
+   * Operator `$HOME`. When set, the host Squire directory is bound read-write
+   * so `TRUSTY_SQUIRE_BROKER_SOCKET` is the same inode in every sandbox.
+   */
+  operatorHome?: string;
   /** Per-session quota workbench mounted at this stable path. */
   workbench?: { dir: string; maxBytes: number; maxInodes: number };
   /** Credential stores hidden from this session ({@link credentialMaskPaths}).
@@ -383,18 +393,21 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     ...(spec.harnessHomeStateDirs ?? []),
     spec.tmpDir,
   ];
+  const hostMcpResources = spec.operatorHome ? [squireHostDir(spec.operatorHome)] : [];
   const writable = normalize(
     spec.mode === 'edit'
       ? [
           spec.worktreePath,
           spec.gitCommonDir,
           ...(spec.additionalWritablePaths ?? []),
+          ...hostMcpResources,
           ...harnessState,
         ]
-      : // A Room writes no checkout and no host path — only its own harness
-        // state, explicitly granted agent-private paths (persistent memory and
-        // the ephemeral workbench — never the repo), and the private /tmp.
-        [...(spec.additionalWritablePaths ?? []), ...harnessState],
+      : // A Room writes no checkout — only its own harness state, explicitly
+        // granted agent-private paths (persistent memory and the ephemeral
+        // workbench — never the repo), the host MCP resource dir when the
+        // operator home is known, and the private /tmp.
+        [...(spec.additionalWritablePaths ?? []), ...hostMcpResources, ...harnessState],
   );
   // Everything this session must still see through the /tmp tmpfs, minus what a
   // writable bind already restores. `tmpDir` is never restored read-only: under

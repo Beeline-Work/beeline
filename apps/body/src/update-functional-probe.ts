@@ -352,6 +352,7 @@ export async function runUpdateFunctionalProbe(input: {
           cwd,
           harnessStateDirs: stateDirs,
           harnessHomeStateDirs: homeStateDirs,
+          operatorHome,
           maskPaths: credentialMaskPaths(input.config.sandboxMaskPaths, operatorHome),
           ...(tmpDir ? { tmpDir } : {}),
         },

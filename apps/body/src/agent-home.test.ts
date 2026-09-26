@@ -126,7 +126,15 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(operatorHome, '.config/goose'), { recursive: true });
     await writeFile(
       resolve(operatorHome, '.config/goose/config.yaml'),
-      'GOOSE_PROVIDER: openrouter\nGOOSE_MODEL: anthropic/claude-sonnet-4.5\n',
+      [
+        'GOOSE_PROVIDER: openrouter',
+        'GOOSE_MODEL: anthropic/claude-sonnet-4.5',
+        'extensions:',
+        '  squire:',
+        '    cmd: npx',
+        '    args: ["-y", "@trusty-squire/mcp"]',
+        '',
+      ].join('\n'),
     );
     await writeFile(resolve(operatorHome, '.config/goose/secrets.yaml'), 'OPENROUTER_API_KEY: k\n');
 
@@ -134,7 +142,19 @@ describe('per-room harness state isolation', () => {
     // `connect` may skip the provider and key questions for a Goose that
     // already holds a provider; the daemon has to answer with that same Goose.
     const config = resolve(env.GOOSE_PATH_ROOT!, 'config/config.yaml');
-    expect(readFileSync(config, 'utf8')).toContain('GOOSE_PROVIDER: openrouter');
+    const operatorGoose = readFileSync(resolve(operatorHome, '.config/goose/config.yaml'), 'utf8');
+    const isolatedGoose = readFileSync(config, 'utf8');
+    expect(operatorGoose).not.toContain('TRUSTY_SQUIRE_BROKER_SOCKET');
+    expect(isolatedGoose).not.toBe(operatorGoose);
+    expect(isolatedGoose).toContain('GOOSE_PROVIDER: openrouter');
+    expect(readFileSync(config, 'utf8')).toContain('cmd: npx');
+    expect(readFileSync(config, 'utf8')).toContain('TRUSTY_SQUIRE_BROKER_SOCKET:');
+    expect(readFileSync(config, 'utf8')).toContain(
+      `TRUSTY_SQUIRE_BROKER_SOCKET: "${operatorHome}/.trusty-squire/broker.sock"`,
+    );
+    expect(readFileSync(config, 'utf8')).toContain(
+      `TRUSTY_SQUIRE_PROFILE_DIR: "${operatorHome}/.trusty-squire/chrome-profile"`,
+    );
     expect(readFileSync(resolve(env.GOOSE_PATH_ROOT!, 'config/secrets.yaml'), 'utf8')).toContain(
       'OPENROUTER_API_KEY',
     );
@@ -495,7 +515,15 @@ describe('operator skills + MCP passthrough', () => {
     expect(claudeSettings.permissions.allow).toEqual(['WebSearch', 'WebFetch']);
     expect(claudeSettings.permissions.allow).not.toContain('Read');
     expect(claudeSettings.permissions.allow).not.toContain('Bash');
-    expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
+    expect(tomlChildTableNames(isolatedText, ['mcp_servers']).sort()).toEqual(
+      ['project_tools', 'squire', 'stable_vault', 'vault_tools'].sort(),
+    );
+    expect(isolatedText).toContain('[mcp_servers.squire.env]');
+    expect(isolatedText).toContain(`TRUSTY_SQUIRE_PROFILE_DIR = "${operatorHome}/.trusty-squire/chrome-profile"`);
+    expect(isolatedText).toContain(`TRUSTY_SQUIRE_BROKER_SOCKET = "${operatorHome}/.trusty-squire/broker.sock"`);
+    expect(isolatedText).not.toContain('/tmp/trusty-squire-broker-');
+    expect(isolatedText).toContain('command = "project-tools"');
+    expect(isolatedText).not.toMatch(/\[mcp_servers\.project_tools\.env\]/);
 
     // Writing through the session cannot reach the operator's real config.
     await writeFile(isolatedConfig, '[mcp_servers.scribe]\ncommand = "scribe"\n');
@@ -686,7 +714,20 @@ describe('operator skills + MCP passthrough', () => {
     const claudeParsed = JSON.parse(readFileSync(claudeJson, 'utf8')) as {
       mcpServers: Record<string, unknown>;
     };
-    expect(Object.keys(claudeParsed.mcpServers)).toEqual(['files']);
+    expect(Object.keys(claudeParsed.mcpServers).sort()).toEqual(['files', 'squire', 'vault']);
+    expect(claudeParsed.mcpServers.files).toEqual({ command: 'files-mcp' });
+    const squire = claudeParsed.mcpServers.squire as { command: string; env: Record<string, string> };
+    expect(squire.command).toBe('npx');
+    expect(squire.env.TRUSTY_SQUIRE_PROFILE_DIR).toBe(
+      resolve(operatorHome, '.trusty-squire/chrome-profile'),
+    );
+    expect(squire.env.XDG_CONFIG_HOME).toBe(resolve(operatorHome, '.config'));
+    expect(squire.env.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
+      resolve(operatorHome, '.trusty-squire/broker.sock'),
+    );
+    expect(existsSync(resolve(operatorHome, '.trusty-squire'))).toBe(true);
+    expect(existsSync(resolve(roomRoot, 'user', '.config', 'trusty-squire'))).toBe(false);
+    expect(existsSync(resolve(roomRoot, '.trusty-squire'))).toBe(false);
     expect(claudeParsed).not.toHaveProperty('otherTopLevel');
 
     const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');

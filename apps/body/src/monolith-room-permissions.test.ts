@@ -88,7 +88,7 @@ describe('top-level Room MCP permission policy', () => {
     ).toBe('reject');
   });
 
-  it('still refuses the host-brokered Trusty Squire surface', () => {
+  it('allows a host-classified MCP route, with no tool allowlist', () => {
     expect(
       roomMcpPermissionDecision({
         toolCall: {
@@ -97,7 +97,16 @@ describe('top-level Room MCP permission policy', () => {
           rawInput: { server: 'squire', tool: 'use_credential' },
         },
       }),
-    ).toBe('reject');
+    ).toBe('allow');
+    expect(
+      roomMcpPermissionDecision({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.squire.operate_start',
+          rawInput: { server: 'squire', tool: 'operate_start' },
+        },
+      }),
+    ).toBe('allow');
   });
 
   it('classifies MCP calls structurally without trusting titles for shells', () => {
@@ -215,7 +224,7 @@ describe('top-level Room MCP permission policy', () => {
       ).toBe('reject');
     });
 
-    it('refuses Trusty Squire inside the envelope, before any allow rule', () => {
+    it('allows Trusty Squire inside the envelope as a host route', () => {
       expect(
         roomMcpPermissionDecision({
           toolCall: {
@@ -223,9 +232,9 @@ describe('top-level Room MCP permission policy', () => {
             rawInput: { tool_name: 'squire__use_credential', tool_input: {} },
           },
         }),
-      ).toBe('reject');
+      ).toBe('allow');
       expect(roomMcpPermissionDecision({ toolCall: { title: 'squire__use_credential' } })).toBe(
-        'reject',
+        'allow',
       );
     });
 

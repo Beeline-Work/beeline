@@ -1,4 +1,5 @@
 import type { AcpPermissionRequest } from './acp.js';
+import { isHostMcpIdentity } from './mcp-route-class.js';
 
 export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
 export const BEELINE_AGENT_MCP_SERVER_NAME = 'beeline-agent';
@@ -268,30 +269,24 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'fetch_image',
 ] as const;
 
-const SQUIRE_TITLE_PREFIXES = [
-  'mcp__squire__',
-  'mcp.squire.',
-  'squire.',
-  'squire/',
-  // grok's qualified `<server>__<tool>` spelling, inside `use_tool` or as the
-  // relabelled title.
-  'squire__',
-] as const;
-
 /**
- * Trusty Squire stays host-broker-gated even where other MCP calls are
- * approved: it is never session-mounted in a thin Room. This wins before any
- * allow rule, and reads the dispatcher envelope as well as the title so a
- * wrapper cannot carry it past the gate.
+ * A host-classified MCP route (Squire first; any code-owned host name).
+ * Identification uses the same classification as the import rewrite, not a
+ * Squire-only name list. Host routes are approved with other mounted MCP:
+ * there is no tool allowlist.
  */
-export function isSquireMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+export function isHostMcpPermissionRequest(request: AcpPermissionRequest): boolean {
   const rawInput = request.toolCall?.rawInput;
   if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
-    if ((rawInput as Record<string, unknown>).server === 'squire') return true;
+    const server = (rawInput as Record<string, unknown>).server;
+    if (typeof server === 'string' && isHostMcpIdentity(server)) return true;
   }
-  return toolIdentityCandidates(request.toolCall).some((candidate) =>
-    SQUIRE_TITLE_PREFIXES.some((prefix) => candidate.toLowerCase().startsWith(prefix)),
-  );
+  return toolIdentityCandidates(request.toolCall).some((candidate) => isHostMcpIdentity(candidate));
+}
+
+/** @deprecated Use {@link isHostMcpPermissionRequest}; Squire is the first host server. */
+export function isSquireMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+  return isHostMcpPermissionRequest(request);
 }
 
 /** The only host-governed mutations available directly from a thin Room. */

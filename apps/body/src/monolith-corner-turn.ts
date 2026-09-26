@@ -715,6 +715,7 @@ export class MonolithCornerTurnLoop {
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
+        operatorHome,
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
           // The shared npm cache. npm writes to its cache on every install,

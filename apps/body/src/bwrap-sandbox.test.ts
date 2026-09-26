@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
@@ -29,6 +29,7 @@ import {
   sandboxMountPlan,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
+import { ensureSquireHostBrokerDir, squireHostBrokerSocket } from './mcp-route-class.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
 
 const ROOM_BASE = [
@@ -101,6 +102,37 @@ describe('sandbox mount plan', () => {
       '/srv/beeline/agents/pk/rooms/r1/agent-home',
       '/srv/beeline/rooms/r1/agent-home/claude',
     ]);
+  });
+
+  it('binds the host Squire directory read-write so a private /tmp cannot mint a broker', () => {
+    const plan = sandboxMountPlan({
+      mode: 'readonly',
+      cwd: '/srv/repo',
+      operatorHome: '/home/op',
+      harnessStateDirs: ['/srv/rooms/r1/agent-home/claude'],
+    });
+    expect(plan.writable).toEqual([
+      '/home/op/.trusty-squire',
+      '/srv/rooms/r1/agent-home/claude',
+    ]);
+    const wrapped = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: {
+        mode: 'readonly',
+        cwd: '/srv/repo',
+        operatorHome: '/home/op',
+        harnessStateDirs: ['/srv/rooms/r1/agent-home/claude'],
+      },
+      command: '/fake-agent',
+    });
+    const tmpfsAt = wrapped.args.indexOf('--tmpfs');
+    const bindAt = wrapped.args.findIndex(
+      (arg, i) => arg === '--bind-try' && wrapped.args[i + 1] === '/home/op/.trusty-squire',
+    );
+    expect(tmpfsAt).toBeGreaterThanOrEqual(0);
+    expect(wrapped.args[tmpfsAt + 1]).toBe('/tmp');
+    expect(bindAt).toBeGreaterThan(tmpfsAt);
+    expect(wrapped.args).not.toContain('/tmp/trusty-squire-broker-');
   });
 
   it('binds the Room attach-scratch root read-write in the generated bwrap argv', () => {
@@ -730,6 +762,37 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(readFileSync(resolve(store, 'session.json'), 'utf8')).toBe('host-secret');
     } finally {
       await new Promise<void>((resolveClose) => busServer.close(() => resolveClose()));
+    }
+  });
+
+  it('two Room sandboxes connect to one host Squire socket inode', async () => {
+    const operatorHome = mkdtempSync(resolve(tmpdir(), 'squire-host-home-'));
+    const socket = squireHostBrokerSocket(operatorHome);
+    ensureSquireHostBrokerDir(operatorHome);
+    const server = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(socket, resolveListen);
+    });
+    try {
+      const spec = { mode: 'readonly' as const, cwd: checkout, operatorHome };
+      const script = [
+        `stat -c %i ${JSON.stringify(socket)}`,
+        `node -e 'require("net").connect(process.argv[1],()=>{process.stdout.write("connected\\n");process.exit(0)}).on("error",(e)=>{console.error(e);process.exit(1)})' ${JSON.stringify(socket)}`,
+      ].join(' && ');
+      const first = runWrapped(spec, script);
+      const second = runWrapped(spec, script);
+      expect(first.status, first.stderr).toBe(0);
+      expect(second.status, second.stderr).toBe(0);
+      const firstInode = first.stdout.trim().split('\n')[0];
+      const secondInode = second.stdout.trim().split('\n')[0];
+      expect(firstInode).toBe(secondInode);
+      expect(firstInode).toBe(String(statSync(socket).ino));
+      expect(first.stdout).toContain('connected');
+      expect(second.stdout).toContain('connected');
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      rmSync(operatorHome, { recursive: true, force: true });
     }
   });
 

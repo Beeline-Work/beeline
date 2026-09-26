@@ -33,8 +33,10 @@
  * native web-search tool (web access there is extension-package territory,
  * deliberately out of the isolated home). This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
- * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Squire is
- * omitted from ambient declarations and mounted only through its host broker.
+ * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Host MCP
+ * servers (Squire is the first code-owned case) are rewritten to the host
+ * instance during import (`mcp-route-class.ts`), never copied raw and never
+ * dropped. Local MCP declarations copy as-is.
  *
  * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
@@ -67,7 +69,14 @@ import {
   USING_BEELINE_SKILL_NAME,
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
-import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
+import {
+  classifyMcpRoute,
+  ensureSquireHostBrokerDir,
+  importedClaudeMcpServers,
+  importedGooseConfig,
+  importedHarnessMcpToml,
+  operatorHostMark,
+} from './mcp-route-class.js';
 import {
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
@@ -192,8 +201,9 @@ const agentHomeProvisionQueues = new Map<string, Promise<void>>();
  *     `mcpServers` key of `~/.claude.json`; the same object is written as a
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
  *
- * Everything else in those files (models, sandbox modes, approval policy) and
- * the reserved `squire` server deliberately stay behind. The generated Codex
+ * Everything else in those files (models, sandbox modes, approval policy)
+ * stays behind. A `host` MCP declaration is rewritten to the host instance
+ * (`mcp-route-class.ts`); local declarations copy as-is. The generated Codex
  * config also disables its internal multi-agent tools: Beeline must own all
  * parallel work through its visible Room/corner primitive.
  */
@@ -375,6 +385,7 @@ async function provisionAgentSkillsAndMcp(
       : []),
   ];
   const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
+  ensureSquireHostBrokerDir(operatorHome);
   await provisionManagedSkillsDir(
     resolve(root, skillDir, 'skills'),
     managedSkills,
@@ -387,7 +398,7 @@ async function provisionAgentSkillsAndMcp(
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
       const mcpSection = existsSync(source)
-        ? filteredHarnessMcpToml(readFileSync(source, 'utf8'))
+        ? importedHarnessMcpToml(readFileSync(source, 'utf8'), operatorHome)
         : undefined;
       // A Codex Room needs this config even when the operator shares no MCP
       // servers: Codex otherwise enables internal collaboration by default.
@@ -420,7 +431,11 @@ async function provisionAgentSkillsAndMcp(
       // Regeneration is deletion too: a config the operator removed must not
       // keep answering in a Room.
       if (existsSync(source)) {
-        await writeIsolatedHarnessFile(target, readFileSync(source, 'utf8'));
+        const text = readFileSync(source, 'utf8');
+        await writeIsolatedHarnessFile(
+          target,
+          name === 'config.yaml' ? importedGooseConfig(text, operatorHome) : text,
+        );
       } else {
         await unlink(target).catch(() => undefined);
       }
@@ -434,7 +449,7 @@ async function provisionAgentSkillsAndMcp(
     const claudeJson = resolve(operatorHome, '.claude.json');
     const claudeTarget = resolve(root, 'claude', '.claude.json');
     const mcpServers = existsSync(claudeJson)
-      ? readClaudeUserScopeMcpServers(claudeJson)
+      ? readClaudeUserScopeMcpServers(claudeJson, operatorHome)
       : undefined;
     if (mcpServers && Object.keys(mcpServers).length > 0) {
       await writeIsolatedHarnessFile(claudeTarget, `${JSON.stringify({ mcpServers }, null, 2)}\n`);
@@ -544,7 +559,15 @@ export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): b
     const source = readFileSync(path, 'utf8');
     for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
       const section = extractTomlSections(source, ['mcp_servers', name]);
-      if (name === 'squire' || (section && isTrustySquireMcpLaunch(section))) return true;
+      if (
+        classifyMcpRoute({
+          name,
+          sourceText: section,
+          hostMark: Boolean(section && /^\s*host\s*=\s*true\s*$/m.test(section)),
+        }) === 'host'
+      ) {
+        return true;
+      }
     }
   }
   const claudePath = resolve(operatorHome, '.claude.json');
@@ -554,17 +577,18 @@ export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): b
     const servers = parsed.mcpServers;
     if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return false;
     return Object.entries(servers).some(([name, value]) => {
-      if (name === 'squire') return true;
       const server = value as Record<string, unknown> | null;
-      return Boolean(
-        server &&
-        typeof server.command === 'string' &&
-        isTrustySquireMcpLaunch(
-          server.command,
-          Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
-            ? (server.args as string[])
-            : [],
-        ),
+      return (
+        classifyMcpRoute({
+          name,
+          command: typeof server?.command === 'string' ? server.command : undefined,
+          args:
+            Array.isArray(server?.args) && server.args.every((arg) => typeof arg === 'string')
+              ? (server.args as string[])
+              : [],
+          hostMark: operatorHostMark(server?.host),
+          sourceText: server ? JSON.stringify(server) : undefined,
+        }) === 'host'
       );
     });
   } catch {
@@ -572,35 +596,23 @@ export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): b
   }
 }
 
-function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | undefined {
+function readClaudeUserScopeMcpServers(
+  path: string,
+  operatorHome: string,
+): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
-      return Object.fromEntries(
-        Object.entries(parsed.mcpServers as Record<string, unknown>).filter(([name, value]) => {
-          if (name === 'squire') return false;
-          const server = value as Record<string, unknown> | null;
-          if (!server || typeof server.command !== 'string') return true;
-          const args =
-            Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
-              ? (server.args as string[])
-              : [];
-          return !isTrustySquireMcpLaunch(server.command, args);
-        }),
+      const imported = importedClaudeMcpServers(
+        parsed.mcpServers as Record<string, unknown>,
+        operatorHome,
       );
+      return Object.keys(imported).length > 0 ? imported : undefined;
     }
   } catch {
     // Malformed operator config: skip rather than fail the Room.
   }
   return undefined;
-}
-
-function filteredHarnessMcpToml(source: string): string | undefined {
-  const excluded = tomlChildTableNames(source, ['mcp_servers']).filter((name) => {
-    const section = extractTomlSections(source, ['mcp_servers', name]);
-    return name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
-  });
-  return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
 /**

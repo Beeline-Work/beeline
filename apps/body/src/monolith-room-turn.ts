@@ -33,7 +33,7 @@ import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import {
   isMountedMcpToolPermissionRequest,
-  isSquireMcpPermissionRequest,
+  isHostMcpPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
@@ -90,14 +90,15 @@ type HumanMessage = Pick<
  * Rooms and corners share one rule: every MCP tool call from a server the
  * host mounted into the session is approved, and nothing that is not an MCP
  * tool call (shell, native reads/writes, unstructured requests) crosses. The
- * read-only sandbox is the boundary, not the tool list; Trusty Squire stays
- * broker-gated on the host and is never session-mounted.
+ * read-only sandbox is the boundary, not the tool list. Host-classified MCP
+ * (Squire first) is a route to the host instance, identified by the same
+ * classification as the import rewrite, with no tool allowlist.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
   mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
 ): boolean {
-  if (isSquireMcpPermissionRequest(request)) return false;
+  if (isHostMcpPermissionRequest(request)) return true;
   return isMountedMcpToolPermissionRequest(request, mountedServers);
 }
 
@@ -591,6 +592,7 @@ export class MonolithRoomTurnLoop {
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
+        operatorHome,
         ...(attachScratchRoot ? { additionalWritablePaths: [attachScratchRoot] } : {}),
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },

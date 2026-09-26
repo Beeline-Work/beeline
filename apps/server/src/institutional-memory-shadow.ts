@@ -1514,6 +1514,78 @@ export async function tombstoneInstitutionalMemoryForMessage(
   }
 }
 
+/**
+ * A corner's own outcome, recorded against the CORNER rather than a serve.
+ *
+ * The recurring-work cycle-time measure is "corner created -> merged", and
+ * every corner in a repository cluster contributes to it whether or not memory
+ * ever reached that corner — which is what makes an eligible-but-unserved
+ * cohort comparable at all. Outcomes are recorded only for Workspaces that have
+ * an institutional rollout row, so a Workspace nobody is measuring accumulates
+ * nothing.
+ */
+export async function recordInstitutionalCornerOutcome(
+  database: SqlDatabase,
+  input: { cornerId: string; kind: 'merged' | 'ci_green'; detail?: Record<string, unknown> },
+): Promise<void> {
+  await database.query(
+    `INSERT INTO institutional_memory_outcomes(id,workspace_id,room_id,kind,success,detail)
+     SELECT $1,room.workspace_id,room.id,$2,true,$3::jsonb
+     FROM rooms room
+     WHERE room.id=$4
+       AND EXISTS (
+         SELECT 1 FROM institutional_memory_workspace_rollouts rollout
+         WHERE rollout.workspace_id=room.workspace_id)
+     ON CONFLICT DO NOTHING`,
+    [randomUUID(), input.kind, JSON.stringify(input.detail ?? {}), input.cornerId],
+  );
+}
+
+/**
+ * Attach the turn's REAL cost to the institutional context it received.
+ *
+ * The numbers come from the harness itself (see `apps/body/src/turn-usage.ts`)
+ * and are stamped only when the turn ends, in the same transaction as its
+ * receipt, so a serve row can never carry a cost for a turn that did not
+ * happen. An absent number stays absent: the budget gate answers it with its
+ * byte estimate rather than treating silence as zero.
+ */
+export async function recordInstitutionalServeUsage(
+  database: SqlDatabase,
+  input: {
+    roomId: string;
+    requestId: string;
+    inputTokens?: number;
+    promptBytes?: number;
+  },
+): Promise<void> {
+  const inputTokens =
+    Number.isSafeInteger(input.inputTokens) && (input.inputTokens ?? -1) >= 0
+      ? input.inputTokens!
+      : null;
+  const promptBytes =
+    Number.isSafeInteger(input.promptBytes) && (input.promptBytes ?? 0) > 0
+      ? input.promptBytes!
+      : null;
+  if (inputTokens === null && promptBytes === null) return;
+  await database.query(
+    `UPDATE institutional_context_serves
+     SET actual_input_tokens=COALESCE(actual_input_tokens,$3),
+         prompt_bytes=COALESCE(prompt_bytes,$4)
+     WHERE room_id=$1 AND request_id=$2 AND mode='live'`,
+    [input.roomId, input.requestId, inputTokens, promptBytes],
+  );
+}
+
+/**
+ * The turn's outcome, with the two facts the yield cohorts compare: how long it
+ * took and how much work it did.
+ *
+ * Both are read from the turn's own row rather than reported twice — elapsed is
+ * its terminal write minus the start it committed, and tool calls are what the
+ * harness's stream counted. A turn that reported neither still records its
+ * success, so the sample size is honest about what it measured.
+ */
 export async function recordInstitutionalMemoryTurnOutcome(
   database: SqlDatabase,
   roomId: string,
@@ -1530,6 +1602,19 @@ export async function recordInstitutionalMemoryTurnOutcome(
     )
   ).rows[0];
   if (!serve) return;
+  const turn = (
+    await database.query<{ elapsed_ms: string | null; tool_calls: number | null }>(
+      `SELECT GREATEST(0,extract(epoch FROM (created_at-started_at))*1000)::bigint::text elapsed_ms,
+              tool_calls
+       FROM agent_turns WHERE room_id=$1 AND request_id=$2
+       ORDER BY created_at DESC,agent_id LIMIT 1`,
+      [roomId, requestId],
+    )
+  ).rows[0];
+  const elapsedMs =
+    turn?.elapsed_ms === null || turn?.elapsed_ms === undefined
+      ? undefined
+      : Number(turn.elapsed_ms);
   await database.query(
     `INSERT INTO institutional_memory_outcomes
        (id,workspace_id,serve_id,room_id,request_id,kind,success,detail)
@@ -1541,7 +1626,13 @@ export async function recordInstitutionalMemoryTurnOutcome(
       roomId,
       requestId,
       success,
-      JSON.stringify({ status }),
+      JSON.stringify({
+        status,
+        ...(Number.isSafeInteger(elapsedMs) ? { elapsedMs } : {}),
+        ...(Number.isSafeInteger(turn?.tool_calls) && (turn?.tool_calls ?? -1) >= 0
+          ? { toolCalls: turn!.tool_calls }
+          : {}),
+      }),
     ],
   );
 }

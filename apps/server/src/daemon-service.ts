@@ -140,6 +140,7 @@ import {
   heartbeatInstitutionalMemoryJob,
   proposeInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
+  recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
@@ -3460,6 +3461,15 @@ export class DaemonService {
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
+    // Wire-supplied counts are only ever stored when they are what they claim:
+    // a negative, fractional, or absurd value is dropped, never clamped into a
+    // measurement.
+    const toolCalls =
+      Number.isSafeInteger(input.toolCalls) &&
+      (input.toolCalls ?? -1) >= 0 &&
+      (input.toolCalls ?? 0) <= 100_000
+        ? input.toolCalls!
+        : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
     let silence: { hiccupRestart: boolean; attempt: number } | undefined;
     await this.database.transaction(async (database) => {
@@ -3489,11 +3499,13 @@ export class DaemonService {
         // over a turn the requester already stopped.
         const written = await database.query<CommittedTurnLiveRow>(
           `WITH written AS (
-             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason)
-             VALUES($1,$2,$3,$4,$5,$6)
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason,
+                                     tool_calls)
+             VALUES($1,$2,$3,$4,$5,$6,$7)
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
-               failure_reason=EXCLUDED.failure_reason,created_at=now()
+               failure_reason=EXCLUDED.failure_reason,created_at=now(),
+               tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls)
              WHERE agent_turns.status<>'cancelled'
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
@@ -3508,10 +3520,22 @@ export class DaemonService {
             input.status,
             input.generationId ?? null,
             reason,
+            toolCalls,
           ],
         );
         if (!written.rowCount) return;
         committedTurn = written.rows[0];
+      }
+      // The turn's real cost belongs to the serve it answered, and it is written
+      // here — the same transaction as the receipt — so a serve row can never
+      // carry a measurement for a turn that was refused or never ended.
+      if (!input.heartbeat && input.status !== 'working') {
+        await recordInstitutionalServeUsage(database, {
+          roomId: input.roomId,
+          requestId: input.requestId,
+          ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+          ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
+        });
       }
       if (input.status === 'failed') {
         silence = await this.inscribeTurnFailure(

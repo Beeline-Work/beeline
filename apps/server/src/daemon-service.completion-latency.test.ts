@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -294,9 +295,11 @@ describe('agent reply completion latency', () => {
       AGENT,
     );
     expect(
-      (await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
-        command!.id,
-      ])).rows[0],
+      (
+        await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          command!.id,
+        ])
+      ).rows[0],
     ).toEqual({ state: 'pending' });
     await expect(
       daemon.execute(
@@ -411,4 +414,65 @@ describe('agent reply completion latency', () => {
     expect(event.trace.startedAt!).toBeLessThanOrEqual(event.trace.databaseAt);
     expect(event.trace.databaseAt).toBeLessThanOrEqual(event.trace.emittedAt);
   });
+  it('stamps the turn’s real cost and work on the rows that measure it', async () => {
+    const request = `measure-${randomUUID()}`;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent measure')`,
+      [request, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: request,
+      reason: 'human_tag',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, GENERATION);
+    await database.query(
+      `INSERT INTO institutional_context_serves
+       (id,workspace_id,room_id,request_id,requester_identity_id,mode,served,total_bytes,
+        estimated_tokens)
+       VALUES($1,$2,$3,$4,$5,'live',true,4000,1000)`,
+      [randomUUID(), WORKSPACE, ROOM, request, HUMAN],
+    );
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute('postAgentTurnReceipt', {
+      agentId: AGENT,
+      roomId: ROOM,
+      requestId: request,
+      status: 'complete',
+      generationId: GENERATION,
+      inputTokens: 30_000,
+      promptBytes: 60_000,
+      toolCalls: 7,
+    }, AGENT);
+    // The serve the turn answered now carries the harness's own numbers, and
+    // 30,000 of 60,000 real prompt bytes are the 4,000-byte institutional block.
+    expect(
+      (
+        await database.query(
+          `SELECT actual_input_tokens,prompt_bytes FROM institutional_context_serves
+           WHERE room_id=$1 AND request_id=$2`,
+          [ROOM, request],
+        )
+      ).rows[0],
+    ).toEqual({ actual_input_tokens: 30_000, prompt_bytes: 60_000 });
+    // Tool calls live on the turn, which is where the unserved cohort is read
+    // from too, and the outcome carries the elapsed time and the sample.
+    expect(
+      (
+        await database.query(
+          `SELECT tool_calls FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          [ROOM, request],
+        )
+      ).rows[0],
+    ).toEqual({ tool_calls: 7 });
+    expect(
+      (
+        await database.query(
+          `SELECT detail FROM institutional_memory_outcomes WHERE room_id=$1 AND request_id=$2`,
+          [ROOM, request],
+        )
+      ).rows[0],
+    ).toMatchObject({ detail: { status: 'complete', toolCalls: 7 } });
+  }, 10_000);
 });

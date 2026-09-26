@@ -1,3 +1,4 @@
+import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -357,6 +358,12 @@ export class MonolithRoomTurnLoop {
   private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /**
+   * The real size of the last settled prompt, captured while the session that
+   * sent it is still alive — `discardSession` clears both the client and the id,
+   * and the terminal receipt is posted on a path that may run after it.
+   */
+  private turnMetrics: { inputTokens?: number; promptBytes?: number } = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** The one provider re-pinned after an empty completion, until the session ends. */
@@ -516,6 +523,29 @@ export class MonolithRoomTurnLoop {
    * Drop this Room's live harness process. The next activation starts cold.
    * A rotation is a fact about one live session, so the pin goes with it.
    */
+  /**
+   * What this turn really cost and did, read at the moment its prompt settled.
+   *
+   * The token count is the harness's own (pi records it; every other harness
+   * leaves it unknown) and the byte count is the prompt this process handed over
+   * — together they are the only way the rollout budget gate can measure the
+   * institutional block's share of a real prompt instead of a byte estimate.
+   * Missing numbers are omitted rather than zeroed.
+   */
+  private async captureTurnMetrics(): Promise<{
+    inputTokens?: number;
+    promptBytes?: number;
+  }> {
+    const usage = this.sessionId
+      ? await readHarnessTurnUsage({ agentEnv: this.agentEnv, sessionId: this.sessionId })
+      : undefined;
+    const promptBytes = this.client?.lastPromptBytes;
+    return {
+      ...(usage ? { inputTokens: usage.inputTokens } : {}),
+      ...(promptBytes ? { promptBytes } : {}),
+    };
+  }
+
   private async discardSession(): Promise<void> {
     const client = this.client;
     this.client = undefined;
@@ -1227,6 +1257,7 @@ export class MonolithRoomTurnLoop {
                   } catch (error) {
                     promptError = error;
                   }
+                  this.turnMetrics = await this.captureTurnMetrics();
                   const settledSteerTail = active.steerTail;
                   await settledSteerTail;
                   if (settledSteerTail !== active.steerTail) continue;
@@ -1384,6 +1415,8 @@ export class MonolithRoomTurnLoop {
         requestId: item.id,
         status: 'complete',
         generationId: this.commandContext.generationId,
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
@@ -1451,6 +1484,8 @@ export class MonolithRoomTurnLoop {
           requestId: item.id,
           status: 'complete',
           generationId: this.commandContext.generationId,
+          toolCalls: trace.toolCallsTotal,
+          ...this.turnMetrics,
         });
         await trace.finish('complete');
         return;
@@ -1477,6 +1512,8 @@ export class MonolithRoomTurnLoop {
         generationId: this.commandContext.generationId,
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       await trace.finish('failed', reason.text);
       throw error;

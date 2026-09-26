@@ -792,7 +792,7 @@ describe('institutional memory phase-0 shadow capture', () => {
           `SELECT success,detail FROM institutional_memory_outcomes WHERE kind='turn_completed'`,
         )
       ).rows,
-    ).toEqual([{ success: true, detail: { status: 'complete' } }]);
+    ).toMatchObject([{ success: true, detail: { status: 'complete' } }]);
     expect(
       (
         await database.query(

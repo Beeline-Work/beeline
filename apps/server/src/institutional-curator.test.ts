@@ -9,7 +9,6 @@ import {
   AVAILABILITY_OBSERVATION_MAX_MS,
   CURATOR_CANDIDATE_WINDOW,
   INSTITUTIONAL_CURATOR_CANDIDATE_MAX,
-  INSTITUTIONAL_CONTEXT_TOKEN_TARGET,
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
   INSTITUTIONAL_REPEAT_WINDOW_DAYS,
   applyInstitutionalCuratorProposal,
@@ -515,21 +514,19 @@ describe('weekly institutional curator', () => {
   });
 
   it('holds a pilot cohort while the per-turn token budget is exceeded', async () => {
+    // The gate reads the harness's REAL prompt tokens, divided down to the
+    // institutional block's own share of that prompt. Half of an 8,000-byte
+    // block inside a 16,000-byte prompt is 4,000 institutional tokens over an
+    // 8,000-token prompt — twice the target, and something the byte estimate
+    // (a hard-capped 2,000) could never have shown.
     for (let index = 0; index < 20; index += 1) {
       const serveId = randomUUID();
       await database.query(
         `INSERT INTO institutional_context_serves
          (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,
-          mode,served,total_bytes,estimated_tokens,actual_input_tokens)
-         VALUES($1,$2,$3,$4,$5,1,'live',true,7900,1975,$6)`,
-        [
-          serveId,
-          WORKSPACE,
-          ROOM,
-          `token-proof:${index}`,
-          HUMAN,
-          INSTITUTIONAL_CONTEXT_TOKEN_TARGET * 3,
-        ],
+          mode,served,total_bytes,estimated_tokens,actual_input_tokens,prompt_bytes)
+         VALUES($1,$2,$3,$4,$5,1,'live',true,8000,2000,8000,16000)`,
+        [serveId, WORKSPACE, ROOM, `token-proof:${index}`, HUMAN],
       );
       await database.query(
         `INSERT INTO institutional_memory_outcomes
@@ -541,13 +538,16 @@ describe('weekly institutional curator', () => {
     expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
       completedTurns: 20,
       successfulTurns: 20,
-      p95ContextTokens: INSTITUTIONAL_CONTEXT_TOKEN_TARGET * 3,
+      p95ContextTokens: 4_000,
+      p95TurnInputTokens: 8_000,
+      tokenSampledServes: 20,
       rolloutReady: false,
     });
 
-    await database.query(`UPDATE institutional_context_serves SET actual_input_tokens=900`);
+    // A cheaper real prompt brings the block's share back under the target.
+    await database.query(`UPDATE institutional_context_serves SET actual_input_tokens=3000`);
     expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
-      p95ContextTokens: 900,
+      p95ContextTokens: 1_500,
       rolloutReady: true,
     });
   });

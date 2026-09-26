@@ -708,6 +708,14 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+-- How much work the turn did, as the harness's own stream counted it. A turn is
+-- the unit mid-close cohorts compare, so the count has to live where both the
+-- served and the unserved cohort can be read from — a serve ledger only ever
+-- holds the turns memory reached, which is exactly the biased half.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS tool_calls integer;
+ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_tool_calls_check;
+ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_tool_calls_check
+  CHECK (tool_calls IS NULL OR tool_calls >= 0);
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS started_at timestamptz;
 UPDATE agent_turns SET started_at=created_at WHERE started_at IS NULL;
 ALTER TABLE agent_turns ALTER COLUMN started_at SET DEFAULT now();
@@ -869,6 +877,11 @@ CREATE TABLE IF NOT EXISTS institutional_context_serves (
   total_bytes integer NOT NULL DEFAULT 0 CHECK (total_bytes BETWEEN 0 AND 8000),
   estimated_tokens integer NOT NULL DEFAULT 0 CHECK (estimated_tokens >= 0),
   actual_input_tokens integer CHECK (actual_input_tokens IS NULL OR actual_input_tokens >= 0),
+  -- The exact byte length of the prompt the harness actually answered. The p95
+  -- budget gate divides the harness's real token count through this figure to
+  -- attribute the institutional block's own share, so it is measured at the
+  -- send boundary rather than estimated here.
+  prompt_bytes integer CHECK (prompt_bytes IS NULL OR prompt_bytes > 0),
   candidate_count integer NOT NULL DEFAULT 0 CHECK (candidate_count >= 0),
   dropped_counts jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -901,6 +914,15 @@ ALTER TABLE institutional_memory_outcomes
     'shadow_extracted','memory_extracted','turn_completed','ci_green','merged',
     'procedure_extracted','curator_completed','repeat_correction','repeat_review_finding'
   ));
+-- A corner's own outcome — the merge and the green check — belongs to the corner,
+-- not to a serve or a job: the recurring-work cycle-time and yield cohorts
+-- compare corners that memory reached with corners it never did, so the
+-- unserved half must be recordable at all. Exactly one anchor stays required.
+ALTER TABLE institutional_memory_outcomes
+  DROP CONSTRAINT IF EXISTS institutional_memory_outcomes_check;
+ALTER TABLE institutional_memory_outcomes
+  ADD CONSTRAINT institutional_memory_outcomes_check
+  CHECK (serve_id IS NOT NULL OR job_id IS NOT NULL OR room_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
 

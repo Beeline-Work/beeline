@@ -23,6 +23,7 @@ import {
 } from './agent-command.js';
 import {
   enqueueInstitutionalMemoryMergeReview,
+  recordInstitutionalCornerOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 
@@ -1475,13 +1476,24 @@ export class GitHubOperations {
     patch: Partial<CornerLifecycleView>,
     database: SqlDatabase = this.database,
   ) {
-    const lifecycle = { ...(await this.lifecycle(cornerId, database)), ...patch };
+    const previous = await this.lifecycle(cornerId, database);
+    const lifecycle = { ...previous, ...patch };
     await database.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,
        command_check_state=CASE WHEN lifecycle->>'checks' IS DISTINCT FROM $2::jsonb->>'checks' THEN NULL ELSE command_check_state END,
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
+    // The outcome ledger records the TRANSITION, not the state: a corner that
+    // was already green and is re-read green did not reach green again, and a
+    // second row would move the measured cohort's clock for nothing.
+    if (patch.checks === 'passing' && previous.checks !== 'passing') {
+      await recordInstitutionalCornerOutcome(database, {
+        cornerId,
+        kind: 'ci_green',
+        detail: { checks: 'passing' },
+      });
+    }
   }
 
   private async systemNote(
@@ -1602,6 +1614,15 @@ export class GitHubOperations {
         card: { source: 'github', dedupe: mergeKey },
       });
       const targetCommit = pullRequest.mergeCommitSha ?? pullRequest.headSha;
+      await recordInstitutionalCornerOutcome(database, {
+        cornerId: target.corner_id,
+        kind: 'merged',
+        detail: {
+          repository: pullRequest.repository,
+          ...(pullRequest.number !== undefined ? { pullRequestNumber: pullRequest.number } : {}),
+          ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
+        },
+      });
       if (targetCommit) {
         await enqueueInstitutionalMemoryMergeReview(database, {
           cornerId: target.corner_id,

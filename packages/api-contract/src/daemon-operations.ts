@@ -665,6 +665,17 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly heartbeat?: boolean;
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
+  /**
+   * The turn's REAL prompt token cost as the harness itself reported it (pi's
+   * session record: uncached input + cache reads + cache writes), and the exact
+   * byte length of the prompt that produced it. Optional because most harnesses
+   * expose no usage at all; absent is "unknown", never zero, and the rollout
+   * budget gate falls back to its byte estimate rather than inventing a number.
+   */
+  readonly inputTokens?: number;
+  readonly promptBytes?: number;
+  /** Distinct tool calls this turn made, counted from the harness's own stream. */
+  readonly toolCalls?: number;
   /** Typed Room-safe classification; detail stays in the daemon log. */
   readonly reasonKind?:
     | 'hiccup'

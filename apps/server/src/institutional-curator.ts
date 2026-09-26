@@ -222,7 +222,19 @@ export interface InstitutionalObjectiveDashboard {
   readonly completedTurns: number;
   readonly successfulTurns: number;
   readonly p95ContextBytes: number;
+  /**
+   * The institutional block's own prompt-token cost, measured from the
+   * harness's REAL per-turn input tokens rather than the byte estimate that
+   * could never cross the cap. A serve whose harness reported no usage still
+   * falls back to `estimated_tokens`, so the sample never silently shrinks.
+   */
   readonly p95ContextTokens: number;
+  /** p95 of the turns' whole real prompt, the denominator of `tokenShare`. */
+  readonly p95TurnInputTokens: number;
+  /** Institutional tokens as a share of real input tokens, over sampled serves. */
+  readonly tokenShare: number;
+  /** Serves whose p95 token figure came from the harness rather than the estimate. */
+  readonly tokenSampledServes: number;
   readonly skillCandidatesServed: number;
   readonly skillsLoaded: number;
   readonly searches: number;
@@ -245,8 +257,212 @@ export interface InstitutionalObjectiveDashboard {
   readonly priorRepeatedCorrections: number;
   readonly repeatedReviewFindings: number;
   readonly priorRepeatedReviewFindings: number;
+  /**
+   * Recurring work is a repository's corners. Cycle time is corner created ->
+   * merged, reported per cohort (was memory eligible for THIS corner) with its
+   * sample size, and per repository only where both cohorts exist — a cluster
+   * with one side empty is not a comparison.
+   */
+  readonly cycleTimeWindowDays: number;
+  readonly cornerCycleTime: readonly InstitutionalCycleTimeCohort[];
+  readonly comparableClusters: readonly InstitutionalClusterCycleTime[];
+  /** Compounding yield: what each cohort's turns achieved and cost. */
+  readonly yieldByCohort: readonly InstitutionalCohortYield[];
   readonly shadowReady: boolean;
   readonly rolloutReady: boolean;
+}
+
+export type InstitutionalMemoryCohort = 'served' | 'unserved';
+
+export interface InstitutionalCycleTimeCohort {
+  readonly cohort: InstitutionalMemoryCohort;
+  readonly mergedCorners: number;
+  readonly p50Minutes: number;
+  readonly p90Minutes: number;
+}
+
+export interface InstitutionalClusterCycleTime {
+  readonly repository: string;
+  readonly served: InstitutionalCycleTimeCohort;
+  readonly unserved: InstitutionalCycleTimeCohort;
+}
+
+export interface InstitutionalCohortYield {
+  readonly cohort: InstitutionalMemoryCohort;
+  /** Corners in this cohort, and the turns they actually ran. */
+  readonly corners: number;
+  readonly completedTurns: number;
+  readonly successfulTurns: number;
+  readonly successRate: number;
+  /** Turns that reported a tool count, so the average states its own sample. */
+  readonly measuredTurns: number;
+  readonly toolCallsPerSuccessfulTurn: number;
+  /** Turns that reported a duration, and the median minutes over those. */
+  readonly timedTurns: number;
+  readonly turnMinutesP50: number;
+}
+
+/**
+ * How far back the recurring-work measures look. Long enough for a repository's
+ * corners to recur, short enough that a stale rollout does not dilute today's
+ * reading with work nobody can act on.
+ */
+export const INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS = 90;
+
+/**
+ * The two dimensions the objective functions name, measured over the SAME
+ * cohorts so they can be read together.
+ *
+ * A cohort is a corner: "served" means a live institutional snapshot with
+ * content actually reached that corner, "unserved" means one did not — the
+ * plan's eligible-but-unserved comparison. Corners are the unit because the
+ * question is whether the work went faster, and a corner is the unit of work.
+ *
+ * Cycle time is corner created -> merged, over corners whose merge landed inside
+ * the window, and it is only published per repository when BOTH cohorts are
+ * present: a cluster with an empty side is a total, not a comparison.
+ *
+ * Yield reads turn rows rather than serve rows on purpose. The serve ledger only
+ * holds turns memory reached, which is exactly the half that would bias the
+ * comparison; every corner's turns are there whether or not memory was involved.
+ * Each average carries its own sample size, so a cohort that reported few
+ * durations says so instead of implying it measured them all.
+ */
+async function institutionalCohortMeasures(
+  database: SqlDatabase,
+  workspaceId: string,
+): Promise<{
+  cycleTime: InstitutionalCycleTimeCohort[];
+  clusters: InstitutionalClusterCycleTime[];
+  yield: InstitutionalCohortYield[];
+}> {
+  const cornerScope = `
+    WITH corner_scope AS (
+      SELECT corner.id corner_id,corner.created_at created_at,
+             COALESCE(NULLIF(corner.repository_key,''),NULLIF(parent.repository_key,''),'') repository,
+             EXISTS (SELECT 1 FROM institutional_context_serves serve
+                     WHERE serve.room_id=corner.id AND serve.mode='live' AND serve.served) served
+      FROM rooms corner
+      LEFT JOIN rooms parent ON parent.id=corner.parent_id
+      WHERE corner.workspace_id=$1 AND corner.parent_id IS NOT NULL
+    ),
+    merged AS (
+      SELECT scope.served,scope.repository,
+             extract(epoch FROM (min(outcome.created_at)-scope.created_at))/60.0 minutes
+      FROM corner_scope scope
+      JOIN institutional_memory_outcomes outcome
+        ON outcome.room_id=scope.corner_id AND outcome.kind='merged'
+      WHERE outcome.created_at>=scope.created_at
+        AND outcome.created_at>=now()-$2*interval '1 day'
+      GROUP BY scope.corner_id,scope.served,scope.repository,scope.created_at
+    )`;
+  const cycle = (
+    await database.query<CycleRow>(
+      `${cornerScope}
+       SELECT CASE WHEN served THEN 'served' ELSE 'unserved' END cohort,
+              repository,count(*)::text merged_corners,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY minutes)::text p50_minutes,
+              percentile_disc(0.9) WITHIN GROUP (ORDER BY minutes)::text p90_minutes
+       FROM merged GROUP BY served,repository`,
+      [workspaceId, INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS],
+    )
+  ).rows;
+  const cycleTime: InstitutionalCycleTimeCohort[] = [];
+  const byRepository = new Map<string, { served?: CycleRow; unserved?: CycleRow }>();
+  for (const row of cycle) {
+    if (!row.repository) {
+      cycleTime.push(cycleCohort(row.cohort, row));
+      continue;
+    }
+    const entry = byRepository.get(row.repository) ?? {};
+    if (row.cohort === 'served') entry.served = row;
+    else entry.unserved = row;
+    byRepository.set(row.repository, entry);
+    cycleTime.push(cycleCohort(row.cohort, row));
+  }
+  const clusters: InstitutionalClusterCycleTime[] = [...byRepository.entries()]
+    .filter(([, entry]) => entry.served && entry.unserved)
+    .map(([repository, entry]) => ({
+      repository,
+      served: cycleCohort('served', entry.served!),
+      unserved: cycleCohort('unserved', entry.unserved!),
+    }))
+    .sort(
+      (left, right) =>
+        right.served.mergedCorners +
+          right.unserved.mergedCorners -
+          (left.served.mergedCorners + left.unserved.mergedCorners) ||
+        left.repository.localeCompare(right.repository),
+    );
+
+  const yieldRows = (
+    await database.query<YieldRow>(
+      `${cornerScope},
+       turn_scope AS (
+         SELECT scope.served,scope.corner_id,turn.status,turn.tool_calls,
+                GREATEST(0,extract(epoch FROM (turn.created_at-turn.started_at))) seconds
+         FROM corner_scope scope
+         JOIN agent_turns turn ON turn.room_id=scope.corner_id
+         WHERE turn.status IN ('complete','failed')
+       )
+       SELECT CASE WHEN served THEN 'served' ELSE 'unserved' END cohort,
+              count(DISTINCT corner_id)::text corners,
+              count(*)::text completed_turns,
+              count(*) FILTER (WHERE status='complete')::text successful_turns,
+              count(*) FILTER (WHERE status='complete' AND tool_calls IS NOT NULL)::text measured_turns,
+              COALESCE(sum(tool_calls) FILTER (WHERE status='complete' AND tool_calls IS NOT NULL),0)::text tool_calls,
+              count(*) FILTER (WHERE seconds IS NOT NULL)::text timed_turns,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY seconds)::text p50_seconds
+       FROM turn_scope GROUP BY served`,
+      [workspaceId, INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS],
+    )
+  ).rows;
+  return { cycleTime, clusters, yield: yieldRows.map(yieldCohort) };
+}
+
+interface CycleRow {
+  cohort: 'served' | 'unserved';
+  repository: string;
+  merged_corners: string;
+  p50_minutes: string | null;
+  p90_minutes: string | null;
+}
+
+function cycleCohort(cohort: 'served' | 'unserved', row: CycleRow): InstitutionalCycleTimeCohort {
+  return {
+    cohort,
+    mergedCorners: Number(row.merged_corners ?? 0),
+    p50Minutes: Number(row.p50_minutes ?? 0),
+    p90Minutes: Number(row.p90_minutes ?? 0),
+  };
+}
+
+interface YieldRow {
+  cohort: 'served' | 'unserved';
+  corners: string;
+  completed_turns: string;
+  successful_turns: string;
+  measured_turns: string;
+  tool_calls: string;
+  timed_turns: string;
+  p50_seconds: string | null;
+}
+
+function yieldCohort(row: YieldRow): InstitutionalCohortYield {
+  const completedTurns = Number(row.completed_turns ?? 0);
+  const successfulTurns = Number(row.successful_turns ?? 0);
+  const measuredTurns = Number(row.measured_turns ?? 0);
+  return {
+    cohort: row.cohort,
+    corners: Number(row.corners ?? 0),
+    completedTurns,
+    successfulTurns,
+    successRate: completedTurns ? successfulTurns / completedTurns : 0,
+    measuredTurns,
+    toolCallsPerSuccessfulTurn: measuredTurns ? Number(row.tool_calls ?? 0) / measuredTurns : 0,
+    timedTurns: Number(row.timed_turns ?? 0),
+    turnMinutesP50: Number(row.p50_seconds ?? 0) / 60,
+  };
 }
 
 function utcWeekKey(now: Date): string {
@@ -268,6 +484,9 @@ export async function institutionalObjectiveDashboard(
       successful_turns: string;
       p95_context_bytes: string;
       p95_context_tokens: string;
+      p95_turn_input_tokens: string;
+      token_share: string;
+      token_sampled_serves: string;
       skill_candidates_served: string;
       skills_loaded: string;
       searches: string;
@@ -291,8 +510,28 @@ export async function institutionalObjectiveDashboard(
          COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY total_bytes)
           FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_bytes,
          COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (
-            ORDER BY COALESCE(actual_input_tokens,estimated_tokens))
+            ORDER BY CASE
+              WHEN actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL
+              THEN LEAST(actual_input_tokens,
+                         ceil(actual_input_tokens::numeric*total_bytes/prompt_bytes)::int)
+              ELSE estimated_tokens END)
           FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_tokens,
+         -- The denominator of the share, and the same figure in the raw: a
+         -- Workspace whose real prompts are small is not the same finding as
+         -- one whose block is a large part of them.
+         COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY actual_input_tokens)
+          FROM institutional_context_serves
+          WHERE workspace_id=$1 AND mode='live' AND actual_input_tokens IS NOT NULL),0)
+           p95_turn_input_tokens,
+         COALESCE((SELECT sum(CASE
+              WHEN actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL
+              THEN LEAST(actual_input_tokens,
+                         ceil(actual_input_tokens::numeric*total_bytes/prompt_bytes)::int)
+              ELSE 0 END)::numeric / NULLIF(sum(actual_input_tokens),0)
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) token_share,
+         (SELECT count(*) FROM institutional_context_serves
+          WHERE workspace_id=$1 AND mode='live' AND actual_input_tokens IS NOT NULL)
+           token_sampled_serves,
          COALESCE((SELECT sum(cardinality(skill_candidates))
           FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) skill_candidates_served,
          (SELECT count(*) FROM workspace_skill_uses WHERE workspace_id=$1) skills_loaded,
@@ -338,6 +577,7 @@ export async function institutionalObjectiveDashboard(
   const deadJobs = Number(row?.dead_jobs ?? 0);
   const servedItems = Number(row?.served_items ?? 0);
   const staleServedItems = Number(row?.stale_served_items ?? 0);
+  const cohorts = await institutionalCohortMeasures(database, workspaceId);
   return {
     workspaceId,
     contextServes,
@@ -346,6 +586,9 @@ export async function institutionalObjectiveDashboard(
     successfulTurns,
     p95ContextBytes,
     p95ContextTokens,
+    p95TurnInputTokens: Number(row?.p95_turn_input_tokens ?? 0),
+    tokenShare: Number(row?.token_share ?? 0),
+    tokenSampledServes: Number(row?.token_sampled_serves ?? 0),
     skillCandidatesServed: Number(row?.skill_candidates_served ?? 0),
     skillsLoaded: Number(row?.skills_loaded ?? 0),
     searches: Number(row?.searches ?? 0),
@@ -358,6 +601,10 @@ export async function institutionalObjectiveDashboard(
     priorRepeatedCorrections: Number(row?.prior_repeated_corrections ?? 0),
     repeatedReviewFindings: Number(row?.repeated_review_findings ?? 0),
     priorRepeatedReviewFindings: Number(row?.prior_repeated_review_findings ?? 0),
+    cycleTimeWindowDays: INSTITUTIONAL_CYCLE_TIME_WINDOW_DAYS,
+    cornerCycleTime: cohorts.cycleTime,
+    comparableClusters: cohorts.clusters,
+    yieldByCohort: cohorts.yield,
     shadowReady: completedJobs >= 20 && deadJobs === 0,
     rolloutReady:
       completedTurns >= 20 &&

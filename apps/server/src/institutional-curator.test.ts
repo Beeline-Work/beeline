@@ -1345,6 +1345,51 @@ describe('weekly institutional curator', () => {
     });
   });
 
+  it('counts a repeat whose pair straddles the measurement boundary', async () => {
+    const jobId = async (key: string) => {
+      const id = randomUUID();
+      await database.query(
+        `INSERT INTO institutional_memory_jobs
+         (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+          requester_identity_id,source_audience_kind,idempotency_key)
+         VALUES($1,$2,'turn_review','live',$3,$4,$5,'human_private',$6)`,
+        [id, WORKSPACE, ROOM, MESSAGE, HUMAN, key],
+      );
+      return id;
+    };
+    // Two days apart, but on opposite sides of the window edge: grouping strictly
+    // inside each window found one row on each side and reported no repeat at
+    // all, so where the boundary happened to fall decided the measure.
+    for (const [index, age] of [
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS + 1,
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS - 1,
+    ].entries()) {
+      await database.query(
+        `INSERT INTO institutional_memory_correction_events
+         (id,workspace_id,requester_identity_id,job_id,source_room_id,source_message_id,
+          canonical_key,body,memory_kind,classifier_version,confidence,created_at)
+         VALUES($1,$2,$3,$4,$5,$6,'straddling-key','A correction.','human_profile_fact',
+                'v1',0.9,now()-$7*interval '1 day')`,
+        [randomUUID(), WORKSPACE, HUMAN, await jobId(`straddle-${index}`), ROOM, MESSAGE, age],
+      );
+      await database.query(
+        `INSERT INTO institutional_review_findings
+         (id,workspace_id,job_id,source_corner_id,taxonomy,summary,severity,path,
+          classifier_version,confidence,created_at)
+         VALUES($1,$2,$3,$4,'database.release-order','Marker last.','warning',
+                'apps/server/src/database.ts','v1',0.9,now()-$5*interval '1 day')`,
+        [randomUUID(), WORKSPACE, await jobId(`straddle-finding-${index}`), ROOM, age],
+      );
+    }
+
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      repeatedCorrections: 1,
+      priorRepeatedCorrections: 0,
+      repeatedReviewFindings: 1,
+      priorRepeatedReviewFindings: 0,
+    });
+  });
+
   it('advances a pilot cohort only after successful bounded live outcomes', async () => {
     for (let index = 0; index < 20; index += 1) {
       const serveId = randomUUID();

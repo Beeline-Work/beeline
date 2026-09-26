@@ -195,8 +195,17 @@ describe('message search vectors', () => {
       ).rows[0]?.document,
     ).toBe(null);
 
-    // A filled table's single probe must not read the heap: the partial index
-    // over unfilled rows is empty, so it answers without touching messages.
+    // A converged table's single probe must not read the heap. The index is NOT
+    // empty — every out-of-window row above is still in it — so what makes the
+    // probe free is the newest-first range scan stopping at the window edge.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT 'ancient-'||lpad(series::text,4,'0'),$1,$2,'ancient message '||series,
+              now()-($3+series)*interval '1 day'
+       FROM generate_series(1,500) series`,
+      [room, 'a'.repeat(64), INSTITUTIONAL_HISTORY_MAX_AGE_DAYS],
+    );
+    await database.query(`UPDATE messages SET search_document=NULL WHERE id LIKE 'ancient-%'`);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text)
        SELECT 'bulk-'||lpad(series::text,5,'0'),$1,$2,'bulk message '||series
@@ -229,6 +238,18 @@ describe('message search vectors', () => {
     };
     expect(await backfillMessageSearchDocuments(counted, 10)).toBe(0);
     expect(queries).toBe(1);
+    // Those 500 entries are still in the index and still unfilled: the converged
+    // probe cost one query anyway, which is the whole point of skipping them.
+    expect(
+      Number(
+        (
+          await database.query<{ count: string }>(
+            `SELECT count(*)::text count FROM messages
+             WHERE search_document IS NULL AND presentation='message'`,
+          )
+        ).rows[0]?.count ?? 0,
+      ),
+    ).toBe(501);
 
     await database.query(`UPDATE messages SET text='unrelated wording' WHERE id='search-001'`);
     expect(await searchable()).toBe(24);

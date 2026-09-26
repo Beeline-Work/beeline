@@ -1854,9 +1854,12 @@ export async function migrate(database: SqlDatabase): Promise<void> {
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
   // Without this the drained backfill's first probe is a full heap read of the
-  // busiest table on every release. It indexes only unfilled conversational
-  // rows, so it is empty once the backfill completes and the trigger keeps it
-  // that way.
+  // busiest table on EVERY release, including every release that has nothing
+  // left to fill. It is not empty once the backfill converges and is not meant
+  // to be: it keeps one entry per conversational row the trigger never saw,
+  // which is every pre-window row the backfill deliberately skips below. The
+  // drain reads newest-first and stops at the window edge, so those entries are
+  // never visited — they are exactly what makes a converged probe free.
   await createIndexConcurrently(
     database,
     'messages_search_document_backfill_idx',

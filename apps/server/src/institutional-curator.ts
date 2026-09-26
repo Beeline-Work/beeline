@@ -165,6 +165,52 @@ function boundedCuratorCandidates(candidates: readonly CuratorCandidate[]): Cura
   return bounded;
 }
 
+/**
+ * Repeat evidence for one ledger and one window: events whose own lesson the
+ * ledger ALREADY carried within the preceding window. Counting each event
+ * against its own predecessor rather than grouping strictly inside the window is
+ * what keeps a pair straddling the boundary from vanishing out of both
+ * measurements; where the boundary falls must not move the measure.
+ *
+ * A repeat is counted at the scope the fact is served at: a workspace_fact is
+ * shared, so two DIFFERENT people correcting one canonical key is the repeat the
+ * system exists to reduce, while a human_profile_fact only repeats for its own
+ * subject. Params: $1 Workspace, $2 window days.
+ */
+const CORRECTION_REPEAT = {
+  table: 'institutional_memory_correction_events',
+  eligible: 'true',
+  sameLesson: `prior.memory_kind=event.memory_kind
+             AND prior.canonical_key=event.canonical_key
+             AND (event.memory_kind='workspace_fact'
+                  OR prior.requester_identity_id=event.requester_identity_id)`,
+} as const;
+
+const REVIEW_FINDING_REPEAT = {
+  table: 'institutional_review_findings',
+  eligible: 'event.path IS NOT NULL',
+  sameLesson: `prior.taxonomy=event.taxonomy AND prior.path=event.path`,
+} as const;
+
+function repeatedEventsSql(
+  ledger: typeof CORRECTION_REPEAT | typeof REVIEW_FINDING_REPEAT,
+  window: 'current' | 'prior',
+): string {
+  const range =
+    window === 'current'
+      ? `event.created_at>=now()-$2*interval '1 day'`
+      : `event.created_at<now()-$2*interval '1 day'
+             AND event.created_at>=now()-2*$2*interval '1 day'`;
+  return `(SELECT count(*) FROM ${ledger.table} event
+          WHERE event.workspace_id=$1 AND ${ledger.eligible} AND ${range}
+            AND EXISTS (
+              SELECT 1 FROM ${ledger.table} prior
+              WHERE prior.workspace_id=event.workspace_id
+                AND ${ledger.sameLesson}
+                AND (prior.created_at,prior.id)<(event.created_at,event.id)
+                AND prior.created_at>=event.created_at-$2*interval '1 day'))`;
+}
+
 export interface InstitutionalObjectiveDashboard {
   readonly workspaceId: string;
   readonly contextServes: number;
@@ -268,41 +314,14 @@ export async function institutionalObjectiveDashboard(
             AND (item.state<>'active' OR item.deleted_at IS NOT NULL)
             AND item.updated_at<=serve.created_at) stale_served_items,
          -- Repeat evidence the criteria name, over ledgers that already have
-         -- writers. A repeat is counted at the scope the fact is served at: a
-         -- workspace_fact is shared, so two DIFFERENT people correcting one
-         -- canonical key is the repeat the system exists to reduce, while a
-         -- human_profile_fact only repeats for its own subject.
-         --
-         -- Each counter is WINDOWED, and its immediately preceding window of
-         -- equal length rides alongside it: a lifetime total only ever rises, so
-         -- no single read of one could express the REDUCTION the criteria ask
-         -- for. Two adjacent windows are a difference, not a causal claim.
-         (SELECT COALESCE(sum(repeats-1),0) FROM (
-            SELECT count(*) repeats FROM institutional_memory_correction_events
-            WHERE workspace_id=$1 AND created_at>=now()-$2*interval '1 day'
-            GROUP BY memory_kind,canonical_key,
-              CASE WHEN memory_kind='workspace_fact' THEN NULL ELSE requester_identity_id END
-            HAVING count(*)>1) repeated) repeated_corrections,
-         (SELECT COALESCE(sum(repeats-1),0) FROM (
-            SELECT count(*) repeats FROM institutional_memory_correction_events
-            WHERE workspace_id=$1 AND created_at<now()-$2*interval '1 day'
-              AND created_at>=now()-2*$2*interval '1 day'
-            GROUP BY memory_kind,canonical_key,
-              CASE WHEN memory_kind='workspace_fact' THEN NULL ELSE requester_identity_id END
-            HAVING count(*)>1) repeated) prior_repeated_corrections,
-         (SELECT COALESCE(sum(repeats-1),0) FROM (
-            SELECT count(*) repeats FROM institutional_review_findings
-            WHERE workspace_id=$1 AND path IS NOT NULL
-              AND created_at>=now()-$2*interval '1 day'
-            GROUP BY taxonomy,path
-            HAVING count(*)>1) repeated) repeated_review_findings,
-         (SELECT COALESCE(sum(repeats-1),0) FROM (
-            SELECT count(*) repeats FROM institutional_review_findings
-            WHERE workspace_id=$1 AND path IS NOT NULL
-              AND created_at<now()-$2*interval '1 day'
-              AND created_at>=now()-2*$2*interval '1 day'
-            GROUP BY taxonomy,path
-            HAVING count(*)>1) repeated) prior_repeated_review_findings`,
+         -- writers. Each counter is WINDOWED, and its immediately preceding
+         -- window of equal length rides alongside it: a lifetime total only ever
+         -- rises, so no single read of one could express the REDUCTION the
+         -- criteria ask for. Two adjacent windows are a difference, not a cause.
+         ${repeatedEventsSql(CORRECTION_REPEAT, 'current')} repeated_corrections,
+         ${repeatedEventsSql(CORRECTION_REPEAT, 'prior')} prior_repeated_corrections,
+         ${repeatedEventsSql(REVIEW_FINDING_REPEAT, 'current')} repeated_review_findings,
+         ${repeatedEventsSql(REVIEW_FINDING_REPEAT, 'prior')} prior_repeated_review_findings`,
       [workspaceId, INSTITUTIONAL_REPEAT_WINDOW_DAYS],
     )
   ).rows[0];

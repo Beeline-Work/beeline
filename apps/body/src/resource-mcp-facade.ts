@@ -382,15 +382,22 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   delete childEnv.BEELINE_RESOURCE_AUTH_FILE;
   const command = launch.command ?? launch.cmd;
   if (!command && !launch.url) throw new Error('resource transport is unavailable');
-  const squireRequests = new Map<string, Record<string, unknown>>();
-  let squireDrivenUrl: string | undefined;
+  const squireRequests = new Map<
+    string,
+    { message: Record<string, unknown>; drivenUrl?: string }
+  >();
+  let activeSquireBrowserUrl: string | undefined;
   const observeSquireResponse = async (message: Record<string, unknown>) => {
     if (target !== 'squire' || message.id === undefined) return;
     const key = JSON.stringify(message.id);
     const request = squireRequests.get(key);
     squireRequests.delete(key);
-    const approval = squireApprovalFromMcp(request, message);
-    if (approval) await postSquireApproval(approval, authFile, squireDrivenUrl).catch(() => {});
+    const approval = squireApprovalFromMcp(request?.message, message);
+    if (approval) {
+      await postSquireApproval(approval, authFile, request?.drivenUrl).catch(() => {});
+      if (request?.drivenUrl && activeSquireBrowserUrl === request.drivenUrl)
+        activeSquireBrowserUrl = undefined;
+    }
   };
   const authorizedResponseIds = new Set<string>();
   let child: ReturnType<typeof spawn> | undefined;
@@ -443,9 +450,18 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call') {
           const call = record(message.params);
-          squireDrivenUrl =
-            drivenUrlIn(shortString(call?.name), record(call?.arguments)) ?? squireDrivenUrl;
-          if (message.id !== undefined) squireRequests.set(JSON.stringify(message.id), message);
+          const tool = shortString(call?.name);
+          const navigationUrl = drivenUrlIn(tool, record(call?.arguments));
+          activeSquireBrowserUrl =
+            navigationUrl ??
+            (tool?.startsWith('operate_') && !SQUIRE_NAVIGATION_TOOLS.has(tool)
+              ? activeSquireBrowserUrl
+              : undefined);
+          if (message.id !== undefined)
+            squireRequests.set(JSON.stringify(message.id), {
+              message,
+              ...(activeSquireBrowserUrl ? { drivenUrl: activeSquireBrowserUrl } : {}),
+            });
         }
         if (command) {
           const started = resourceChild();

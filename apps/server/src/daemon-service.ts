@@ -1677,21 +1677,34 @@ export class DaemonService {
         row.install_room_id &&
         row.install_command_id
       ) {
-        await ensureConnectorIdentity(database, 'registry-mcp');
-        await systemLine(database, {
-          id: createHash('sha256')
-            .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)
-            .digest('hex'),
-          roomId: row.install_room_id,
-          authorId: connectorIdentityId('registry-mcp'),
-          subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
-          verb: 'connected',
-          consequence: 'the requesting agent can continue the original task',
-          kind: 'connector-offer-decided',
-          commandId: row.install_command_id,
-          wakes: [row.install_agent_id],
-        });
-        registryResume = { roomId: row.install_room_id, agentId: row.install_agent_id };
+        // A resume-kind line completes its parent command. OAuth can finish
+        // while that command is still writing its own reply, so only resume
+        // an already-ended install turn. Lock the command with the connector
+        // row to serialize this decision against the reply's completion.
+        const command = (
+          await database.query<{ state: string }>(
+            `SELECT state FROM agent_commands
+             WHERE id=$1 AND room_id=$2 AND agent_id=$3 FOR UPDATE`,
+            [row.install_command_id, row.install_room_id, row.install_agent_id],
+          )
+        ).rows[0];
+        if (command?.state === 'complete') {
+          await ensureConnectorIdentity(database, 'registry-mcp');
+          await systemLine(database, {
+            id: createHash('sha256')
+              .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)
+              .digest('hex'),
+            roomId: row.install_room_id,
+            authorId: connectorIdentityId('registry-mcp'),
+            subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+            verb: 'connected',
+            consequence: 'the requesting agent can continue the original task',
+            kind: 'connector-offer-decided',
+            commandId: row.install_command_id,
+            wakes: [row.install_agent_id],
+          });
+          registryResume = { roomId: row.install_room_id, agentId: row.install_agent_id };
+        }
       }
       return {
         row,
@@ -1823,10 +1836,12 @@ export class DaemonService {
       )
     ).rows[0];
     if (!target) return;
-    if (target.command_state === null ||
-        target.command_state === 'pending' ||
-        target.command_state === 'claimed' ||
-        target.command_state === 'cancelled')
+    if (
+      target.command_state === null ||
+      target.command_state === 'pending' ||
+      target.command_state === 'claimed' ||
+      target.command_state === 'cancelled'
+    )
       return;
     await ensureConnectorIdentity(this.database, 'registry-mcp');
     const wrote = await systemLine(this.database, {

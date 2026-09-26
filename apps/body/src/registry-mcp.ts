@@ -240,6 +240,10 @@ export type RegistryInstallResult =
     }
   | { status: 'error'; steps: readonly ConnectorStep[]; errorMessage: string };
 
+/** The server's OAuth attempt ended; only an explicit Retry starts another. */
+export const CEREMONY_EXPIRED =
+  'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one';
+
 /** Matches the server attempt interval, for a peer that does not name its clock. */
 const OAUTH_ATTEMPT_FALLBACK_MS = 10 * 60_000;
 
@@ -316,9 +320,16 @@ export async function installRegistryMcp(input: {
       state: stored.state,
     });
     if (claimed.status !== 'ready' || typeof claimed.code !== 'string') {
-      // A gone attempt row is not "the person has not signed in yet": re-posting
-      // its dead URL forever is the wedge, so fall through to fresh discovery.
-      if (claimed.status === 'expired') return discover();
+      // The old attempt is over. Let the helper end this row; a later explicit
+      // Retry gets a new assignment and discovers a new authorization page.
+      if (claimed.status === 'expired') {
+        rmSync(path, { force: true });
+        return {
+          status: 'error',
+          steps: steps('connect', CEREMONY_EXPIRED),
+          errorMessage: CEREMONY_EXPIRED,
+        };
+      }
       return {
         status: 'installing',
         steps: steps('connect'),

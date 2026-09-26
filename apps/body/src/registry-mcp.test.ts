@@ -8,6 +8,7 @@ import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { rewriteGrantedHostRoutes } from './host-mcp-route.js';
 import { credentialMaskPaths } from './bwrap-sandbox.js';
 import {
+  CEREMONY_EXPIRED,
   installRegistryMcp,
   OWN_MACHINE_REFUSAL,
   REGISTRY_MCP_APPROVAL_REFUSAL,
@@ -803,7 +804,7 @@ describe('Registry MCP OAuth installer', () => {
     });
   });
 
-  it('mints a fresh authorization request once its attempt has expired', async () => {
+  it('ends an expired attempt and only mints a fresh page on a later retry', async () => {
     const home = mkdtempSync(join(tmpdir(), 'beeline-registry-mcp-'));
     homes.push(home);
     let claimStatus: 'pending' | 'expired' = 'pending';
@@ -817,7 +818,9 @@ describe('Registry MCP OAuth installer', () => {
             expiresAt: 5_000,
           };
         if (name === 'claimRegistryMcpOAuthCode')
-          return claimStatus === 'pending' ? { status: 'pending', expiresAt: 5_000 } : { status: claimStatus };
+          return claimStatus === 'pending'
+            ? { status: 'pending', expiresAt: 5_000 }
+            : { status: claimStatus };
         throw new Error(`unexpected ${name}`);
       }),
     };
@@ -866,6 +869,12 @@ describe('Registry MCP OAuth installer', () => {
     });
 
     claimStatus = 'expired';
+    const expired = await installRegistryMcp(input);
+    expect(expired).toMatchObject({ status: 'error', errorMessage: CEREMONY_EXPIRED });
+    expect(
+      api.execute.mock.calls.filter(([name]) => name === 'beginRegistryMcpOAuth'),
+    ).toHaveLength(1);
+
     const reissued = await installRegistryMcp(input);
     if (reissued.status !== 'installing') throw new Error('expected a fresh OAuth sign-in');
     expect(new URL(reissued.authorizationUrl).searchParams.get('state')).toBe('second-state');

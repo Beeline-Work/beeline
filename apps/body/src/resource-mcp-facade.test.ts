@@ -151,7 +151,7 @@ describe('resource MCP transport authorization', () => {
     ).toBeUndefined();
   });
 
-  it('posts a Squire approval before returning its pending result to the client', async () => {
+  it('correlates a browser approval with its navigation, then clears it for unrelated calls', async () => {
     const root = await mkdtemp('/tmp/squire-approval-facade-test-');
     const context = join(root, 'turn.json');
     const auth = join(root, 'auth.json');
@@ -161,8 +161,8 @@ describe('resource MCP transport authorization', () => {
       `require('node:readline').createInterface({input:process.stdin}).on('line', line => {
         const m=JSON.parse(line);
         if(m.id===undefined) return;
-        const result=m.method==='tools/call'
-          ? {content:[{type:'text',text:JSON.stringify({status:'approval_pending',approval_id:'buy-1',approval_url:'https://approve.trustysquire.test/approval/buy-1'})}]}
+        const result=m.method==='tools/call' && m.params?.name!=='operate_login'
+          ? {content:[{type:'text',text:JSON.stringify({status:'approval_pending',approval_id:'buy-'+m.id,approval_url:'https://approve.trustysquire.test/approval/buy-'+m.id})}]}
           : {};
         process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
       });`,
@@ -213,6 +213,31 @@ describe('resource MCP transport authorization', () => {
           id: 1,
           method: 'tools/call',
           params: {
+            name: 'operate_login',
+            arguments: { url: 'https://mcp.linear.app/authorize?state=old-attempt' },
+          },
+        })}\n`,
+      );
+      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 1)).toBe(true), {
+        timeout: 5000,
+      });
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'operate_click', arguments: { ref: 'approval-button' } },
+        })}\n`,
+      );
+      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 2)).toBe(true), {
+        timeout: 5000,
+      });
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: {
             name: 'inject_card',
             arguments: {
               item: 'Headphones',
@@ -223,21 +248,28 @@ describe('resource MCP transport authorization', () => {
           },
         })}\n`,
       );
-      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 1)).toBe(true), {
+      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 3)).toBe(true), {
         timeout: 5000,
       });
       expect(requests.map((request) => request.url)).toEqual([
         '/v1/daemon/operations/authorizeResourceCall',
+        '/v1/daemon/operations/authorizeResourceCall',
+        '/v1/daemon/operations/postSquireApproval',
+        '/v1/daemon/operations/authorizeResourceCall',
         '/v1/daemon/operations/postSquireApproval',
       ]);
-      expect(requests[1]?.body).toMatchObject({
+      expect(requests[2]?.body.signInUrl).toBe(
+        'https://mcp.linear.app/authorize?state=old-attempt',
+      );
+      expect(requests[4]?.body).toMatchObject({
         roomId: 'room',
         requestId: 'owner-turn',
         tool: 'inject_card',
         title: 'Purchase approval',
         detail: 'Headphones · at Acme · 199.00 USD',
-        approvalUrl: 'https://approve.trustysquire.test/approval/buy-1',
+        approvalUrl: 'https://approve.trustysquire.test/approval/buy-3',
       });
+      expect(requests[4]?.body.signInUrl).toBeUndefined();
     } finally {
       lines.close();
       child.kill();

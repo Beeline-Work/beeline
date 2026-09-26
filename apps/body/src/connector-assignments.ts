@@ -55,7 +55,12 @@ import {
 } from './connector-squire.js';
 import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
-import { installRegistryMcp, type RegistryInstallResult } from './registry-mcp.js';
+import {
+  CEREMONY_EXPIRED,
+  installRegistryMcp,
+  type RegistryInstallResult,
+} from './registry-mcp.js';
+export { CEREMONY_EXPIRED };
 
 export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
 
@@ -70,10 +75,6 @@ export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
  * all and the five-minute interval stays pure recovery.
  */
 export const CONNECT_WATCH_INTERVAL_MS = 2_000;
-
-/** Said once, on the row, when a published ceremony ran out its own clock. */
-export const CEREMONY_EXPIRED =
-  'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one';
 
 type ConnectorApi = Pick<DaemonApiClient, 'execute'>;
 

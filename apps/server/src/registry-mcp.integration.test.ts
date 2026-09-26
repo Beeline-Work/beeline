@@ -252,6 +252,7 @@ describe('Registry MCP connection orchestration', () => {
       ).rows,
     ).toHaveLength(2);
 
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [COMMAND]);
     await daemon.execute('installConnector', { agentId: HELPER, connectorId }, HELPER);
     expect(
       (
@@ -404,10 +405,44 @@ describe('Registry MCP connection orchestration', () => {
     );
     expect(
       (
-        await database.query(`SELECT 1 FROM agent_commands WHERE action='resume' AND parent_command_id=$1`, [
-          COMMAND,
-        ]),
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE action='resume' AND parent_command_id=$1`,
+          [COMMAND],
+        )
       ).rowCount,
     ).toBe(2);
+  });
+
+  it('does not finish the install command when OAuth completes during its reply', async () => {
+    const first = await daemon.execute('connectMcpServer', connectInput(), HELPER);
+    const connectorId = (first as { connectorId: string }).connectorId;
+
+    await daemon.execute('installConnector', { agentId: HELPER, connectorId }, HELPER);
+
+    const command = await database.query<{ state: string }>(
+      `SELECT state FROM agent_commands WHERE id=$1`,
+      [COMMAND],
+    );
+    expect(command.rows[0]?.state).toBe('claimed');
+    expect(
+      (
+        await database.query(`SELECT 1 FROM messages WHERE author_id=$1 AND room_id=$2`, [
+          connectorIdentityId('registry-mcp'),
+          ROOM,
+        ])
+      ).rowCount,
+    ).toBe(0);
+    await expect(
+      daemon.execute(
+        'postRoomMessage',
+        {
+          roomId: ROOM,
+          requestId: REQUEST,
+          generationId: GENERATION,
+          text: 'Continuing Linear setup',
+        },
+        HELPER,
+      ),
+    ).resolves.toMatchObject({ id: expect.any(String) });
   });
 });

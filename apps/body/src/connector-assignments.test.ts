@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
+import { installRegistryMcp } from './registry-mcp.js';
 import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
@@ -158,6 +159,106 @@ describe('ConnectorAssignmentLoop', () => {
     } finally {
       clock.mockRestore();
       loop.stop();
+    }
+  });
+
+  it('ends a real expired Registry attempt before another authorization page can be minted', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-registry-ceremony-'));
+    const assignment: ConnectorAssignment = {
+      kind: 'install',
+      connectorId: '22222222-2222-4222-8222-222222222222',
+      connectorType: 'registry-mcp',
+      registryServerName: 'app.linear/linear',
+      registryVersion: '1.0.1',
+      registryManifest: {
+        name: 'app.linear/linear',
+        version: '1.0.1',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+        packages: [],
+        secretInputNames: [],
+      },
+      pairingGeneration: 1,
+    };
+    let assignments: ConnectorAssignment[] = [assignment];
+    let begins = 0;
+    let claimsExpired = false;
+    const posts: Record<string, unknown>[] = [];
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        if (op === 'getConnectorAssignments') return { assignments };
+        if (op === 'beginRegistryMcpOAuth')
+          return {
+            state: `state-${++begins}`,
+            redirectUri: 'https://beeline.example/callback',
+            expiresAt: Date.now() + 600_000,
+          };
+        if (op === 'claimRegistryMcpOAuthCode')
+          return claimsExpired
+            ? { status: 'expired' }
+            : { status: 'pending', expiresAt: Date.now() + 600_000 };
+        if (op === 'postConnectorStatus') {
+          posts.push(input);
+          if (input.errorMessage) assignments = [];
+          return {};
+        }
+        throw new Error(`unexpected ${op}`);
+      },
+    };
+    const transport = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://mcp.linear.app/mcp')
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate': 'Bearer resource_metadata="https://mcp.linear.app/resource"',
+          },
+        });
+      if (url === 'https://mcp.linear.app/resource')
+        return Response.json({ authorization_servers: ['https://mcp.linear.app'] });
+      if (url === 'https://mcp.linear.app/.well-known/oauth-authorization-server')
+        return Response.json({
+          authorization_endpoint: 'https://mcp.linear.app/authorize',
+          token_endpoint: 'https://mcp.linear.app/token',
+          registration_endpoint: 'https://mcp.linear.app/register',
+          code_challenge_methods_supported: ['S256'],
+        });
+      if (url === 'https://mcp.linear.app/register') return Response.json({ client_id: 'client' });
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      registryHome: home,
+      installRegistry: (input) =>
+        installRegistryMcp({ ...input, transport, resolveHost: async () => ['93.184.216.34'] }),
+      schedule: () => 1,
+      cancel: () => {},
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(1);
+      expect(posts.at(-1)?.signIn).toMatchObject({ attemptId: expect.any(String) });
+
+      claimsExpired = true;
+      await loop.runOnce();
+      await settle();
+      expect(posts.at(-1)).toMatchObject({ errorMessage: CEREMONY_EXPIRED, signIn: null });
+      expect(begins).toBe(1);
+
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(1);
+
+      assignments = [{ ...assignment, pairingGeneration: 2 }];
+      await loop.runOnce();
+      await settle();
+      expect(begins).toBe(2);
+      expect(posts.at(-1)?.signIn).toMatchObject({ url: expect.stringContaining('state=state-2') });
+    } finally {
+      loop.stop();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

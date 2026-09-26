@@ -146,3 +146,23 @@ it('anchors up-relays below their corner card and keeps an unanchored report vis
   ]).toEqual(folded);
   expect(foldSystemLines([middle, report])).toEqual([middle, report]);
 });
+
+it('keeps a corner opened from a message out of a folded lifecycle run', () => {
+  const opened = (id: string, timestamp: number, sourceMessageId?: string) => ({
+    id,
+    text: 'Opened',
+    timestamp,
+    daemonFact: {
+      type: 'corner-open' as const,
+      cornerId: `corner-${id}`,
+      objective: '',
+      name: `corner ${id}`,
+      ...(sourceMessageId ? { sourceMessageId } : {}),
+    },
+  });
+  // Two agent-opened corners fold into one run; a marker never joins it.
+  const folded = foldSystemLines([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
+  expect(folded.map((m) => m.id)).toEqual(['a', 'm']);
+  expect(folded[0]!.notificationLifecycleRun).toBeDefined();
+  expect(folded[1]!.notificationLifecycleRun).toBeUndefined();
+});

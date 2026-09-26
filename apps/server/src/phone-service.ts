@@ -4578,8 +4578,8 @@ export class PhoneService {
     const id = randomUUID();
     await this.database.transaction(async (database) => {
       const parent = (
-        await database.query<{ workspace_id: string }>(
-          `SELECT room.workspace_id FROM rooms room
+        await database.query<{ workspace_id: string; viewer_name: string }>(
+          `SELECT room.workspace_id,viewer.name viewer_name FROM rooms room
            JOIN memberships room_member ON room_member.room_id=room.id
              AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -4630,6 +4630,35 @@ export class PhoneService {
           [id, input.appInstallationId, randomUUID(), viewerId],
         );
       }
+      // A corner opened FROM a message (the phone's swipe-right forward) leaves
+      // one durable marker in the parent Room, the same `corner-open` card an
+      // agent's `open_corner` writes, carrying the source message so every
+      // reader anchors it beneath that message. No kind: a person opening a
+      // scratch corner wakes no subscriber. A source that is not a message in
+      // this Room (an unsent outbox row) opens the corner without a marker.
+      const source = input.sourceMessageId
+        ? await database.query(`SELECT 1 FROM messages WHERE id=$1 AND room_id=$2`, [
+            input.sourceMessageId,
+            input.roomId,
+          ])
+        : undefined;
+      if (source?.rowCount) {
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
+          verb: 'opened a corner',
+          object: { text: title, id },
+          presentation: 'card',
+          cardType: 'daemon-fact',
+          card: {
+            type: 'corner-open',
+            cornerId: id,
+            name: title,
+            objective: '',
+            sourceMessageId: input.sourceMessageId,
+          },
+        });
+      }
     });
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
@@ -4658,6 +4687,15 @@ export class PhoneService {
         roomId,
         title,
       ]);
+      // The marker beneath a forwarded message names the corner it opened, so
+      // it follows the corner's current name rather than the random one it was
+      // opened under.
+      await database.query(
+        `UPDATE messages SET card=jsonb_set(card,'{name}',to_jsonb($3::text))
+         WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2
+           AND card->>'sourceMessageId' IS NOT NULL`,
+        [access.parent_id, roomId, title],
+      );
       return access.parent_id;
     });
     this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });

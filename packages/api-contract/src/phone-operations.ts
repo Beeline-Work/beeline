@@ -250,6 +250,13 @@ export type CancelAgentTurnInput = RoomInput & {
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
   readonly appInstallationId?: string;
+  /**
+   * The parent-Room message this corner was opened from (the mobile
+   * swipe-right forward). When it names a message in that Room, the server
+   * writes one `corner-open` card carrying it, which the phone renders as the
+   * marker beneath that message.
+   */
+  readonly sourceMessageId?: string;
 };
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;

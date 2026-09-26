@@ -323,7 +323,13 @@ export type RoomViewMessage = {
     readonly cornerId: string;
     /** The corner's short title (at most three words). Absent only on legacy cards. */
     readonly name?: string;
+    /** Empty on a person-opened corner, which has no objective; its `name` titles it. */
     readonly objective: string;
+    /**
+     * The parent-Room message a person opened this corner from. The phone
+     * anchors the card beneath that message as the "corner opened" marker.
+     */
+    readonly sourceMessageId?: string;
     readonly outcome?: 'landed' | 'abandoned';
     readonly pullRequest?: {
       readonly number?: number;

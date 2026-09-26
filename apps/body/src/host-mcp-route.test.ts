@@ -79,6 +79,23 @@ describe('granted MCP host routes', () => {
     expect(rewritten.env).not.toHaveProperty('TRUSTY_SQUIRE_PROFILE_DIR');
   });
 
+  it('keeps a dynamic Registry route behind its stable resource target', () => {
+    const rewritten = rewriteHostMcpDeclaration(
+      'registry-linear-row',
+      {
+        command: 'registry-bridge',
+        beeline_resource_target: 'registry-mcp:app.linear/linear',
+      },
+      '/home/op',
+      '/tmp/turn.resource-auth.json',
+    );
+    expect(rewritten).not.toHaveProperty('beeline_resource_target');
+    expect(rewritten.env).toMatchObject({
+      BEELINE_RESOURCE_TARGET: 'registry-mcp:app.linear/linear',
+      BEELINE_RESOURCE_AUTH_FILE: '/tmp/turn.resource-auth.json',
+    });
+  });
+
   it('answers whether a grant reaches Squire, not merely some host server', () => {
     const declarations = {
       browser: { command: 'browser-mcp' },

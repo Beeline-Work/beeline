@@ -21,6 +21,7 @@ import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
 import type { GoogleOAuth } from './google-oauth.js';
+import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
 
@@ -58,6 +59,7 @@ export interface ServerOptions {
   objectService?: ObjectService;
   github?: GitHubServerHooks;
   googleOAuth?: GoogleOAuth;
+  registryMcpOAuth?: RegistryMcpOAuth;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
@@ -740,10 +742,16 @@ async function route(
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
   if (method === 'GET' && url.pathname === '/v1/google/oauth/callback') {
-    if (!options.googleOAuth) { json(response, 503, { error: 'Google OAuth is unavailable' }); return; }
+    if (!options.googleOAuth) {
+      json(response, 503, { error: 'Google OAuth is unavailable' });
+      return;
+    }
     const state = url.searchParams.get('state');
     const code = url.searchParams.get('code');
-    if (!state) { json(response, 400, { error: 'Google authorization was not completed' }); return; }
+    if (!state) {
+      json(response, 400, { error: 'Google authorization was not completed' });
+      return;
+    }
     const completed = code
       ? await options.googleOAuth.complete(state, code)
       : (await options.googleOAuth.cancel(state), false);
@@ -752,9 +760,37 @@ async function route(
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
     });
-    response.end(code && completed
+    response.end(
+      code && completed
       ? '<p>Google sign-in completed. Return to Beeline while the helper verifies the tool.</p>'
-      : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>');
+        : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>',
+    );
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/registry-mcp/oauth/callback') {
+    if (!options.registryMcpOAuth) {
+      json(response, 503, { error: 'Registry MCP OAuth is unavailable' });
+      return;
+    }
+    const state = url.searchParams.get('state');
+    const code = url.searchParams.get('code');
+    if (!state) {
+      json(response, 400, { error: 'Provider authorization was not completed' });
+      return;
+    }
+    const completed = code
+      ? await options.registryMcpOAuth.complete(state, code)
+      : (await options.registryMcpOAuth.cancel(state), false);
+    response.writeHead(completed ? 200 : 400, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(
+      completed
+        ? '<p>Provider sign-in completed. Return to Beeline while the helper connects the tool.</p>'
+        : '<p>Provider sign-in did not complete. Return to Beeline and retry.</p>',
+    );
     return;
   }
   if (options.authHandler && url.pathname.startsWith('/auth/')) {
@@ -1132,7 +1168,12 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/agents\/([0-9a-f]{64})$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.readAgent(match[1]!, match[2]!, identityId!, url.searchParams.get('workCursor') ?? undefined);
+    const result = await options.phone.readAgent(
+      match[1]!,
+      match[2]!,
+      identityId!,
+      url.searchParams.get('workCursor') ?? undefined,
+    );
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
@@ -1291,11 +1332,7 @@ async function route(
         ? request.headers['x-artifact-title']
         : '';
     try {
-      json(
-        response,
-        201,
-        await options.objectService.uploadArtifact(agentId, raw, mime, title),
-      );
+      json(response, 201, await options.objectService.uploadArtifact(agentId, raw, mime, title));
     } catch (error) {
       json(response, 422, {
         error: 'artifact_rejected',
@@ -1364,7 +1401,8 @@ async function route(
     void options.connectionPresence?.evidence(undefined, agentId);
     json(response, 410, {
       error: 'media_store_retired',
-      detail: 'agents share files with post_artifact; the bytea media store no longer accepts agent uploads',
+      detail:
+        'agents share files with post_artifact; the bytea media store no longer accepts agent uploads',
     });
     return;
   }

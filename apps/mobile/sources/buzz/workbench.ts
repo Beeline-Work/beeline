@@ -12,7 +12,7 @@
  */
 import { connectorAdapter } from '@beeline/api-contract/workbench';
 
-export type WorkbenchConnectorId =
+export type FixedWorkbenchConnectorId =
   | 'trusty-squire'
   | 'wallet'
   | 'tailscale'
@@ -21,6 +21,7 @@ export type WorkbenchConnectorId =
   | 'google-drive'
   | 'google-youtube'
   | 'composio';
+export type WorkbenchConnectorId = string;
 
 export function isGoogleToolConnectorId(
   id: string,
@@ -97,7 +98,7 @@ export type WorkbenchHelper = {
 /** The one-sentence user story under each catalog row before anything is
  *  paired (board revision 2, PR #1351). The Google tools share the entry's
  *  one covering sentence. */
-export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
+export const CONNECTOR_DESCRIPTIONS: Record<FixedWorkbenchConnectorId, string> = {
   'trusty-squire':
     'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
   wallet:

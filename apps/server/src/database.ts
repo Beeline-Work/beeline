@@ -1488,6 +1488,19 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit 
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS website_url text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_agent_id text REFERENCES identities(id) ON DELETE SET NULL;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_room_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
+-- agent_commands is installed immediately after this base schema and its
+-- ids are text, so this provenance pointer deliberately follows the existing
+-- grant command pointer instead of introducing an early cross-schema FK.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_command_id text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_handoff_attempt text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relayed_attempt text;
 
 CREATE TABLE IF NOT EXISTS google_oauth_attempts (
   state text PRIMARY KEY,
@@ -1502,13 +1515,24 @@ CREATE TABLE IF NOT EXISTS google_oauth_grants (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
 );
+CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
+  state text PRIMARY KEY,
+  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  code text,
+  expires_at timestamptz NOT NULL
+);
 
 -- Per-machine unique: one connector per (workspace, owner, type, machine).
 -- NULL machine_id (legacy agents before this migration) are each their own
 -- machine; PostgreSQL treats NULL as distinct in unique indexes.
 DROP INDEX IF EXISTS workspace_connectors_owner_unique;
+DROP INDEX IF EXISTS workspace_connectors_machine_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_machine_unique
-  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id);
+  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id)
+  WHERE connector_type <> 'registry-mcp';
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_registry_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, machine_id, registry_server_name)
+  WHERE connector_type = 'registry-mcp';
 CREATE INDEX IF NOT EXISTS workspace_connectors_helper_idx
   ON workspace_connectors(helper_agent_id);
 

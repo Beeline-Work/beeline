@@ -27,7 +27,11 @@ import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SOUL_HOUSE_RULE } from './response-directives.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
-import { sharedNpmCacheDir } from './warm-node-modules.js';
+import {
+  sharedCargoTargetDir,
+  sharedNpmCacheDir,
+  sharedPnpmStoreDir,
+} from './warm-node-modules.js';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.
@@ -2539,6 +2543,8 @@ describe('thin monolith corner turn', () => {
               { name: 'GH_TOKEN', value: 'room-installation-token' },
               { name: 'GITHUB_TOKEN', value: 'room-installation-token' },
               { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
+              { name: 'PNPM_CONFIG_STORE_DIR', value: sharedPnpmStoreDir(root) },
+              { name: 'CARGO_TARGET_DIR', value: sharedCargoTargetDir(root) },
             ],
           }),
           expect.objectContaining({ name: 'beeline-agent' }),

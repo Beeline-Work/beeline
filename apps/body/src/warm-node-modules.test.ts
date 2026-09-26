@@ -27,6 +27,8 @@ import {
   readWarmPlan,
   seedWarmNodeModules,
   sharedNpmCacheDir,
+  sharedCargoTargetDir,
+  sharedPnpmStoreDir,
   STAGING_SWEEP_MS,
   WARM_STORE_MAX_ENTRIES,
   warmNodeModulesStoreDir,
@@ -136,6 +138,8 @@ async function worktree(spec: WorktreeSpec = {}): Promise<string> {
 describe('host-wide directories', () => {
   it('places both beside the corner pool they serve', () => {
     expect(sharedNpmCacheDir('/state')).toBe('/state/beeline/npm-cache');
+    expect(sharedPnpmStoreDir('/state')).toBe('/state/beeline/pnpm-store');
+    expect(sharedCargoTargetDir('/state')).toBe('/state/beeline/cargo-target');
     expect(warmNodeModulesStoreDir('/state')).toBe('/state/beeline/node-modules');
   });
 });

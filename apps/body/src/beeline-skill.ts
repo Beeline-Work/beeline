@@ -181,8 +181,10 @@ Follow these steps in order. Do not skip or reorder them.
 
 - Run \`gh pr view N --json headRefOid,files\` and record \`headRefOid\`.
 - Run \`gh pr diff N\`.
-- Check out that exact head in a new scratch git worktree. Never use the author's worktree.
-- Review and test only the recorded revision. If the head moves, start over.
+- Review the objective, files, and complete PR diff before making another working copy.
+- Check out that exact head only when an empirical command must read or run the tree. Never use the author's worktree.
+- When a checkout is needed, create a temporary detached worktree, install an EXIT trap that removes it with \`git worktree remove --force\` and deletes its temporary directory, and run every command there. Cleanup is mandatory on PASS, FAIL, and command error.
+- Review and test only the recorded revision. If the head moves, clean up the scratch worktree and start over.
 
 ## 2. P0 - OBJECTIVE FULFILLED, DEMONSTRATED
 

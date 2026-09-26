@@ -4802,7 +4802,7 @@ export class DaemonService {
           cardType: 'grant-auto',
           card: { grantId },
         });
-        return { messageId: undefined, cardRoomId: resourceRoomId };
+        return { messageId: undefined, cardRoomId: resourceRoomId, cardAction: undefined };
       }
       if (resourceRoomId) {
         const dmRoomId = resourceRoomId;
@@ -4827,7 +4827,7 @@ export class DaemonService {
             sourceRoomId: input.roomId,
             ...(sourceMessageId ? { sourceMessageId } : {}),
           });
-          return { messageId: open.id, cardRoomId: dmRoomId };
+          return { messageId: open.id, cardRoomId: dmRoomId, cardAction: 'restated' as const };
         }
         const messageId = id();
         await systemLine(database, {
@@ -4846,7 +4846,7 @@ export class DaemonService {
             ...(sourceMessageId ? { sourceMessageId } : {}),
           },
         });
-        return { messageId, cardRoomId: dmRoomId };
+        return { messageId, cardRoomId: dmRoomId, cardAction: 'inserted' as const };
       }
       // Several asks in one turn become one card: join this agent's open card
       // in the Room while every grant on it is still pending and it is recent.
@@ -4873,7 +4873,7 @@ export class DaemonService {
           requester,
           grants,
         });
-        return { messageId: open.id };
+        return { messageId: open.id, cardRoomId: undefined, cardAction: 'restated' as const };
       }
       const messageId = id();
       await systemLine(database, {
@@ -4887,7 +4887,7 @@ export class DaemonService {
         cardType: 'grant-request',
         card: { agent, owner, requester, grants: [grantView] },
       });
-      return { messageId };
+      return { messageId, cardRoomId: undefined, cardAction: 'inserted' as const };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
     if (result.cardRoomId)
@@ -4897,6 +4897,7 @@ export class DaemonService {
       status,
       auto,
       ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(result.cardAction ? { cardAction: result.cardAction } : {}),
       ...(!auto
         ? {
             approval: {
@@ -5135,7 +5136,7 @@ export class DaemonService {
       },
       agentId,
     );
-    if (kind === 'host')
+    if (kind === 'host' || (kind === 'repository' && asked.cardAction === 'restated'))
       await this.noteBlockedTurnGate({
         roomId: input.roomId,
         agentId,
@@ -5165,11 +5166,10 @@ export class DaemonService {
    *
    * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
    * already reaches the agent as its tool error, not a turn that never started.
-   * A repository ask that MINTS its grant this turn is excluded too, because
-   * `requestAgentGrant` puts that grant's actionable card in this same corner
-   * one row earlier; only a host ask, whose card goes to the owner's `@system`
-   * DM, and a later turn blocked on an already-pending grant, which writes no
-   * card at all, leave the corner with nothing else to say.
+   * A repository ask that inserts a card is excluded too, because that card
+   * appears in this corner. A restated repository card is old to the current
+   * requester, so it needs this line. A host ask's card goes to the owner's
+   * `@system` DM; it also needs a line in the corner.
    */
   private async noteBlockedTurnGate(input: {
     readonly roomId: string;

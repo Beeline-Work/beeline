@@ -9682,7 +9682,12 @@ describe('monolith integration', () => {
       })
     ).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
     expect(first).toEqual(
-      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+      expect.objectContaining({
+        status: 'pending',
+        auto: false,
+        messageId: expect.any(String),
+        cardAction: 'inserted',
+      }),
     );
     // A second ask in the same turn joins the same card.
     const second = (await (
@@ -9696,6 +9701,7 @@ describe('monolith integration', () => {
       })
     ).json()) as { grantId: string; status: string; messageId: string };
     expect(second.messageId).toBe(first.messageId);
+    expect(second).toEqual(expect.objectContaining({ cardAction: 'restated' }));
     const cards = await database.query<{
       room_id: string;
       author_id: string;

@@ -1038,6 +1038,8 @@ export type RequestAgentGrantResult = {
   readonly auto: boolean;
   /** The card message when one was posted or joined. */
   readonly messageId?: string;
+  /** Whether this request created a card or restated a recent one. Absent for auto grants. */
+  readonly cardAction?: 'inserted' | 'restated';
   /** Server-owned placement and decision authority for a pending card. */
   readonly approval?: {
     readonly destination: 'room' | 'system-dm' | 'trusty-squire-dm' | 'wallet-dm';

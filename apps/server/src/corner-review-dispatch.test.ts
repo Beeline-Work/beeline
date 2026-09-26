@@ -83,6 +83,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
   await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
+  await db.query(`UPDATE agents SET yolo_mode=true`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
@@ -139,6 +140,106 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 }
 
 describe('corner message attribution', () => {
+  it("makes a second requester's repository wait visible when their fresh grant joins a recent card", async () => {
+    const secondHuman = 'd'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Second','second') ON CONFLICT DO NOTHING`,
+      [secondHuman],
+    );
+    for (const room of [null, R, C])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+        [W, room, secondHuman],
+      );
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    const turn = async (requester: string, sourceId: string, generationId: string) => {
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'@hoots edit this repository','message')`,
+        [sourceId, C, requester],
+      );
+      await createAgentCommand(db, {
+        roomId: C,
+        agentId: A,
+        sourceMessageId: sourceId,
+        reason: 'human_tag',
+      });
+      const command = (await commands(A, C)).find((item) => item.sourceMessageId === sourceId)!;
+      await claim(command, generationId);
+      const permission = await daemon.execute(
+        'authorizeRepositoryCall',
+        { roomId: C, requestId: command.turnRequestId, generationId },
+        A,
+      );
+      expect(permission.allowed).toBe(false);
+      await daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: C,
+          agentId: A,
+          requestId: command.turnRequestId,
+          generationId,
+          status: 'complete',
+        },
+        A,
+      );
+      return permission;
+    };
+    const first = await turn(H, 'e'.repeat(64), 'g-first');
+    expect(first.messageId).toEqual(expect.any(String));
+    const firstView = await phone.readRoom(C, H);
+    expect(firstView?.messages.some((message) => message.id === first.messageId)).toBe(true);
+    expect(
+      firstView?.messages.some((message) => message.text?.includes('to approve repository access')),
+    ).toBe(false);
+    const second = await turn(secondHuman, 'f'.repeat(64), 'g-second');
+    expect(second.messageId).toBe(first.messageId);
+    expect(second.grantId).not.toBe(first.grantId);
+    expect(
+      (
+        await db.query<{ requested_by: string; status: string }>(
+          `SELECT requested_by,status FROM agent_grants WHERE id=ANY($1::uuid[]) ORDER BY requested_by`,
+          [[first.grantId, second.grantId]],
+        )
+      ).rows,
+    ).toEqual([
+      { requested_by: H, status: 'pending' },
+      { requested_by: secondHuman, status: 'pending' },
+    ]);
+    const cards = await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type='grant-request'`,
+      [C],
+    );
+    expect(cards.rows).toHaveLength(1);
+    const secondView = await phone.readRoom(C, secondHuman);
+    expect(secondView?.messages.some((message) => message.id === second.messageId)).toBe(true);
+    expect(
+      secondView?.messages.some(
+        (message) => message.text === '@hoots asked a Workspace admin to approve repository access',
+      ),
+    ).toBe(true);
+    // Outside the merge window a fresh requester gets a new card and needs no
+    // separate wait line, just like the first successful tag.
+    const thirdHuman = '1'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Third','third') ON CONFLICT DO NOTHING`,
+      [thirdHuman],
+    );
+    for (const room of [null, R, C])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+        [W, room, thirdHuman],
+      );
+    await db.query(`UPDATE messages SET created_at=now()-interval '3 minutes' WHERE id=$1`, [
+      first.messageId,
+    ]);
+    const third = await turn(thirdHuman, '2'.repeat(64), 'g-third');
+    expect(third.messageId).not.toBe(first.messageId);
+    expect(
+      (await phone.readRoom(C, thirdHuman))?.messages.some(
+        (message) => message.id === third.messageId,
+      ),
+    ).toBe(true);
+  });
   // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
   // check webhook exists to create the configured reviewer's command.
   it('wakes the configured reviewer when the worker completes a zero-check PR, without changing the no-reviewer path', async () => {

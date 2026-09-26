@@ -33,7 +33,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
-  'Shell commands run inside this session’s OS sandbox when it has one; the session prompt says whether it does. If shell access is blocked, say so plainly rather than retrying it, and continue with read-only inspection: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
+  'If a shell command is refused, say so plainly rather than retrying it, and continue with read-only inspection: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
   'A mounted tool is not standing resource consent: each resource call checks the original requester. Repository permission under yolo bypasses prompts for anyone; personal resources bypass only for their owner requester. Otherwise repository asks go to Workspace managers in the Room and resource asks go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget card. Delegation and follow-up work retain the original requester. Network web search is enabled.',
   BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
@@ -71,10 +71,15 @@ export interface RepositoryPrimerInfo {
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
- * The permission gate approves a shell only inside the OS sandbox
- * (`monolith-room-turn.ts`), so a model told nothing would keep asking for one
- * and a person would read the silence as the agent ignoring them. `detail` is
- * the operator-facing sandbox advisory, which names the one-line fix.
+ * `roomShellCapability` (`harness-capabilities.ts`) settles it from the harness
+ * and the sandbox together, because a model told nothing keeps asking for a
+ * shell it cannot have — and a model told the wrong thing stops using one it
+ * has. An unmeasured harness passes no state at all and the standing
+ * "if shell access is blocked, say so plainly" line carries the case.
+ *
+ * `detail` is the ONE bounded sentence from `BwrapAvailability.shellDetail`,
+ * carrying the operator's one-line fix and nothing else: the model is told to
+ * relay it into a Room every Workspace member can read.
  */
 export type RoomShellState =
   { readonly available: true } | { readonly available: false; readonly detail?: string };
@@ -84,12 +89,13 @@ function shellLine(shell: RoomShellState | undefined): string {
   if (shell.available) {
     return (
       ' Shell commands are available in this session: run one with your own shell tool when the' +
-      ' work needs it, inside the session OS sandbox, and report its output in your reply.'
+      ' work needs it, and report its output in your reply.'
     );
   }
   return (
     ' Shell commands are NOT available in this session, so a request that needs one cannot be run.' +
-    ` Say that plainly in your reply instead of retrying it${shell.detail ? `: ${shell.detail}` : '.'}`
+    ' Say that plainly in your reply instead of retrying it.' +
+    `${shell.detail ? ` ${shell.detail}` : ''}`
   );
 }
 

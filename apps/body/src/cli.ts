@@ -69,7 +69,7 @@ import {
   runConnectFinishCommand,
 } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { ensureBwrapSandbox } from './bwrap-sandbox.js';
+import { BUBBLEWRAP_INSTALL_BUDGET_MS, ensureBwrapSandbox } from './bwrap-sandbox.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -254,12 +254,17 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // than a failed spawn per session — and so the operator learns the state of
   // the boundary before any Room comes online. Absent bubblewrap is installed
   // on this one pass: a Room shell is approved only inside that sandbox, so
-  // without it the helper silently has no shell at all.
+  // without it the helper silently has no shell at all. That install does not
+  // come out of the unit's own start budget — an unreachable apt mirror would
+  // otherwise time the unit out and restart into the same install forever — so
+  // the start deadline is extended first, and only when a package command is
+  // really about to run.
   const sandbox = await ensureBwrapSandbox({
     ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
+    beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
   });
   if (sandbox.path) config.bwrapPath = sandbox.path;
-  else config.sandboxUnavailableDetail = sandbox.advisory;
+  else if (sandbox.shellDetail) config.sandboxUnavailableDetail = sandbox.shellDetail;
   // Owner-configured credential masks ride the runtime record; the
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.

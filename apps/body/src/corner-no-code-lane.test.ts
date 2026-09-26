@@ -467,3 +467,152 @@ it('retires a no-code session on the timed restore read when the server already 
   expect(onCloseRequested).not.toHaveBeenCalled();
   expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-id' });
 });
+
+it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing after it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-turn-'));
+  roots.push(root);
+  const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+  const scratchRoot = join(workspace, 'agent-home');
+  await mkdir(scratchRoot, { recursive: true });
+  const agent = stored('11'.repeat(32), 'Bee');
+  const runtime = {
+    agentId: '11'.repeat(32),
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+  } as unknown as AgentRuntimeRecord;
+  const config: BodyConfig = {
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    agentHomeRoot: scratchRoot,
+    workspaceRoot: workspace,
+    autoApprovePermissions: true,
+  };
+  const source = {
+    id: 'e'.repeat(64),
+    authorId: HUMAN,
+    createdAt: 1,
+    type: 'message' as const,
+    body: 'go edit the widget renderer',
+    attachments: [],
+  };
+  const command = {
+    id: source.id,
+    roomId: 'corner-id',
+    agentId: agent.publicKey,
+    sourceMessageId: source.id,
+    turnRequestId: source.id,
+    action: 'input' as const,
+    reason: 'human_tag',
+    rootCommandId: source.id,
+    rootSourceMessageId: source.id,
+    agentDepth: 0,
+    source,
+  };
+  // The server settles this turn and its command inside the upgrade, and the
+  // corner's lane is what the timed restore read then sees.
+  let lane = 'no_code';
+  let delivered = false;
+  const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+    if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
+      return { allowed: true };
+    if (name === 'getAgentCommands') {
+      if (delivered) return { commandProtocol: 1, commands: [] };
+      delivered = true;
+      return { commandProtocol: 1, commands: [command] };
+    }
+    if (name === 'claimAgentCommand') return { id: input.commandId, createdAt: 1 };
+    if (name === 'getCornerRestoreState')
+      return {
+        cornerId: 'corner-id',
+        objective: 'Fix the widget renderer',
+        lane,
+        closeRequested: false,
+      };
+    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getWorkspaceRoster')
+      return {
+        members: [
+          { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          { identityId: HUMAN, kind: 'human', name: 'Ada', handle: 'ada', role: 'owner' },
+        ],
+      };
+    if (name === 'getAgentConfiguration') return { commands: [] };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+  const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+  vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+    async (_session, _prompt, _timeout, onChunk, _onPlan, onToolCalls) => {
+      const text = 'Upgrading this corner so I can edit the renderer.';
+      onChunk?.(text, text, text);
+      const calls = [{ id: 'call-1', title: 'upgrade_corner_to_code', status: 'completed' }];
+      // What the real tool does server-side, observed here as the lane fact.
+      lane = 'code';
+      onToolCalls?.(calls);
+      return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+    },
+  );
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const onLaneChanged = vi.fn();
+
+  await new MonolithCornerTurnLoop({
+    cornerId: 'corner-id',
+    parentRoomId: 'room-id',
+    workspaceId: 'workspace',
+    objective: 'Fix the widget renderer',
+    worktreePath: workspace,
+    lane: 'no_code',
+    requesterHandle: 'ada',
+    agentMayUpgradeCorner: true,
+    runtime,
+    config,
+    api,
+    scheduler,
+    pollMs: 1,
+    closePollMs: 1,
+    onPoll: vi.fn(),
+    onFailure: vi.fn(),
+    onCloseRequested: vi.fn(async () => undefined),
+    onLaneChanged,
+    createAcpClient: () => acp,
+  }).run();
+  await scheduler.dispose();
+
+  const written = execute.mock.calls.map(([name]) => name);
+  // This session's write authority ended with the upgrade: a closing reply
+  // would be refused, and the refusal would fail a turn that succeeded.
+  expect(written).not.toContain('postRoomMessage');
+  expect(execute).not.toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'failed' }),
+  );
+  expect(execute).not.toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'complete' }),
+  );
+  // The half-written answer does not stay on the page under a corner that is
+  // already restarting.
+  expect(written).toContain('retractAgentLiveOutput');
+  expect(onLaneChanged).toHaveBeenCalledTimes(1);
+});

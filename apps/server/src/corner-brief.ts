@@ -270,12 +270,12 @@ function upgradeBuildSpec(
   let remaining = UPGRADE_BUILD_SPEC_LENGTH - head.length - 128;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
-    if (entry.length > remaining) break;
+    if (entry.length > remaining) continue;
     remaining -= entry.length;
     kept.unshift(entry);
   }
   const omitted = entries.length - kept.length;
-  const note = omitted ? `\n- _${omitted} earlier message(s) omitted for length._` : '';
+  const note = omitted ? `\n- _${omitted} message(s) omitted for length._` : '';
   return `${head}${note}${kept.join('')}\n`;
 }
 

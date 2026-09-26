@@ -41,7 +41,7 @@ import {
 import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { toolCallFailureLine } from './tool-call-failure.js';
+import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
@@ -418,6 +418,17 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
   if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
   const input = serialized(call.rawInput);
   return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
+}
+
+/**
+ * True only for a lane upgrade the harness reports as COMPLETED — the one tool
+ * call that hands this turn's authority to the restarted code session.
+ */
+function upgradedCornerLane(calls: readonly ToolCallEntry[]): boolean {
+  return calls.some(
+    (call) =>
+      /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '') && isCompletedToolCall(call),
+  );
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
@@ -1304,6 +1315,11 @@ export class MonolithCornerTurnLoop {
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
     let deliberateNoReply = false;
+    // Observed LIVE from the stream, where the catch below can reach it: the
+    // server settles this turn and its command inside `upgradeCornerLane`, so
+    // from that tool call onwards this session owns no write authority at all
+    // and every later reply, activity row and receipt would be refused.
+    let laneUpgraded = false;
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -1634,6 +1650,7 @@ export class MonolithCornerTurnLoop {
                   undefined,
                   (calls) => {
                     trace.toolCalls(calls);
+                    if (upgradedCornerLane(calls)) laneUpgraded = true;
                     // Observe (snapshot the narration that preceded each newly
                     // seen call) THEN publish: a human watching a corner sees a
                     // tool's row the moment it settles, not batched at the
@@ -1683,6 +1700,19 @@ export class MonolithCornerTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              // A successful lane upgrade ends this turn textlessly, like a
+              // Room turn that only opened a corner: the corner is already
+              // restarting on its code lane, and the human's own request is
+              // re-delivered there. Anything this session still wanted to say
+              // would be refused, and the refusal would fail a turn whose work
+              // succeeded.
+              if (laneUpgraded) {
+                console.log(
+                  `[thin-core] corner ${cornerId} turn ${requestId} upgraded to the code lane`,
+                );
+                await stream.retract();
+                return;
+              }
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
@@ -1839,6 +1869,10 @@ export class MonolithCornerTurnLoop {
         },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
+      if (laneUpgraded) {
+        await trace.finish('complete');
+        return;
+      }
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
@@ -1857,6 +1891,17 @@ export class MonolithCornerTurnLoop {
       if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
         await trace.finish('cancelled');
+        return;
+      }
+      // The upgrade already settled this turn complete. A later stumble in a
+      // session the corner is discarding is not a failed turn, and saying so
+      // would inscribe "could not answer" over work that succeeded.
+      if (laneUpgraded) {
+        console.log(
+          `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,
+          error,
+        );
+        await trace.finish('complete');
         return;
       }
       const reason = distillTurnFailureReason(error);

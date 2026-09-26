@@ -497,3 +497,36 @@ it("refuses the upgrade when the asking message cannot be the brief's approval",
     (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
   ).toHaveLength(0);
 });
+
+it('keeps the discussion that fits when one message is too long for the brief', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  await phone.execute(
+    'sendRoomMessage',
+    {
+      roomId: cornerId,
+      messageId: randomBytes(32).toString('hex'),
+      text: 'The widget renderer drops the trailing label',
+    },
+    HUMAN,
+  );
+  // An agent report far past the whole build spec's budget. Dropping it must
+  // not drop the human's diagnosis behind it.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    randomBytes(32).toString('hex'),
+    cornerId,
+    AGENT,
+    `analysis ${'y'.repeat(70_000)}`,
+  ]);
+  const command = await commissioned(cornerId);
+
+  await daemon.execute(
+    'upgradeCornerLane',
+    { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+    AGENT,
+  );
+
+  const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  expect(brief?.buildSpec).toContain('The widget renderer drops the trailing label');
+  expect(brief?.buildSpec).not.toContain('yyyy');
+  expect(brief?.buildSpec).toContain('1 message(s) omitted for length');
+});

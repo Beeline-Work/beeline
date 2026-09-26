@@ -6715,6 +6715,10 @@ export class PhoneService {
         signed_in_as: string | null;
         sign_in: ConnectorStatus['signIn'] | null;
         composio_scope: unknown;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        display_name: string | null;
+        website_url: string | null;
         connected_at: Date | null;
         created_at: Date;
       }>(
@@ -6724,7 +6728,8 @@ export class PhoneService {
                           WHERE sibling.machine_id=c.machine_id
                             AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
-                c.signed_in_as,c.sign_in,c.composio_scope,c.connected_at,c.created_at
+                c.signed_in_as,c.sign_in,c.composio_scope,c.registry_server_name,
+                c.registry_version,c.display_name,c.website_url,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
          WHERE c.owner_identity_id=$1
@@ -6845,6 +6850,10 @@ export class PhoneService {
         ...(row.connector_type === 'composio'
           ? { approvedTools: approvedComposioTools(row.composio_scope, viewerId) }
           : {}),
+        ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
+        ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
+        ...(row.display_name ? { displayName: row.display_name } : {}),
+        ...(row.website_url ? { websiteUrl: row.website_url } : {}),
         ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
         createdAt: seconds(row.created_at),
       })),
@@ -7002,7 +7011,8 @@ export class PhoneService {
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps,pairing_generation,composio_scope
        ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1,$8::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id)
+         WHERE connector_type <> 'registry-mcp' DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
            status_steps=EXCLUDED.status_steps,

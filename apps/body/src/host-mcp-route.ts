@@ -7,7 +7,12 @@
  * additionally gets the non-electing façade wrapper. Routes are merged after
  * local servers are copied, and ungranted host servers stay out.
  */
-import { resourceFacadeArgs } from './resource-mcp-facade.js';
+import {
+  MCP_RESOURCE_GATE_KEY,
+  MCP_RESOURCE_GATE_TRANSPORT,
+  MCP_RESOURCE_TARGET_KEY,
+  resourceFacadeArgs,
+} from './resource-mcp-facade.js';
 import { join, resolve } from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -139,6 +144,13 @@ export function rewriteHostMcpDeclaration(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...declaration };
   delete next[MCP_ROUTE_CLASS_KEY];
+  const explicitResourceTarget =
+    typeof next[MCP_RESOURCE_TARGET_KEY] === 'string'
+      ? (next[MCP_RESOURCE_TARGET_KEY] as string)
+      : undefined;
+  const transportGate = next[MCP_RESOURCE_GATE_KEY] === MCP_RESOURCE_GATE_TRANSPORT;
+  delete next[MCP_RESOURCE_TARGET_KEY];
+  delete next[MCP_RESOURCE_GATE_KEY];
   const launch = isSquireDeclaration(name, declaration) ? squireFacadeLaunch(hostHome) : undefined;
   const routeEnv = launch?.env ?? hostRouteEnv(hostHome);
   const gooseShape = 'cmd' in declaration && !('command' in declaration);
@@ -150,11 +162,13 @@ export function rewriteHostMcpDeclaration(
   if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
   else next.env = { ...recordValue(declaration.env), ...routeEnv };
   if (resourceAuthFile) {
-    const target = isSquireDeclaration(name, declaration) ? 'squire' : name;
+    const target =
+      explicitResourceTarget ?? (isSquireDeclaration(name, declaration) ? 'squire' : name);
     const env = {
       ...recordValue(next.env),
       ...recordValue(next.envs),
       BEELINE_RESOURCE_TARGET: target,
+      ...(transportGate ? { BEELINE_RESOURCE_GATE: MCP_RESOURCE_GATE_TRANSPORT } : {}),
       BEELINE_RESOURCE_AUTH_FILE: resourceAuthFile,
       BEELINE_RESOURCE_LAUNCH: JSON.stringify(next),
     };

@@ -376,6 +376,8 @@ export interface RoomAgentHomeInput {
    * next prepare so the session fingerprint changes.
    */
   grantedHostRoutes?: readonly string[];
+  /** Beeline-owned dynamic host routes (Registry MCP), already scoped by the server. */
+  extraHostRoutes?: Record<string, Record<string, unknown>>;
   resourceAuthFile?: string;
 }
 
@@ -438,7 +440,8 @@ export async function prepareRoomAgentHome(
       await assertRealContainedDirectory(path, root);
     }
   } catch (error) {
-    if (input.failClosed || input.resourceAuthFile || error instanceof AgentHomeSecurityError) throw error;
+    if (input.failClosed || input.resourceAuthFile || error instanceof AgentHomeSecurityError)
+      throw error;
     console.error(`[body] per-room agent home unavailable at ${root}; using daemon state:`, error);
     return {};
   }
@@ -464,6 +467,7 @@ export async function prepareRoomAgentHome(
         input.openRouterRouting,
         input.isReviewer ?? false,
         input.grantedHostRoutes ?? [],
+        input.extraHostRoutes ?? {},
         input.agentKind,
         input.resourceAuthFile,
       ),
@@ -498,6 +502,7 @@ async function provisionAgentSkillsAndMcp(
   openRouterRouting: RoomAgentHomeInput['openRouterRouting'],
   isReviewer: boolean,
   grantedHostRoutes: readonly string[],
+  extraHostRoutes: Record<string, Record<string, unknown>>,
   agentKind: AgentKind | undefined,
   resourceAuthFile?: string,
 ): Promise<void> {
@@ -625,6 +630,7 @@ async function provisionAgentSkillsAndMcp(
     agentKind,
     failClosed,
     resourceAuthFile,
+    extraHostRoutes,
   );
   await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
 }
@@ -640,6 +646,7 @@ async function applyGrantedHostRoutes(
   agentKind: AgentKind | undefined,
   failClosed: boolean,
   resourceAuthFile?: string,
+  extraHostRoutes: Record<string, Record<string, unknown>> = {},
 ): Promise<void> {
   if (granted.length === 0) return;
   try {
@@ -647,7 +654,7 @@ async function applyGrantedHostRoutes(
       ensureSquireHostDir(operatorHome);
     const routesFor = (kind: AgentKind) =>
       rewriteGrantedHostRoutes(
-        hostImportedMcpDeclarations({ operatorHome, agentKind: kind }),
+        { ...hostImportedMcpDeclarations({ operatorHome, agentKind: kind }), ...extraHostRoutes },
         granted,
         operatorHome,
         resourceAuthFile,

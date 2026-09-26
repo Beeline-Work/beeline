@@ -95,11 +95,14 @@ import { postRoomChoice } from './room-choice.js';
 import { connectorAdapter } from '@beeline/api-contract/workbench';
 import { composioScopeForOwner, storedComposioScope } from './composio-config.js';
 import { ComposioClient } from './connector-composio.js';
+import { McpRegistryClient } from './mcp-registry.js';
+import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import {
   applyVaultList,
   connectorCatalog,
   connectorDisplayName,
   connectorIdentityId,
+  ensureConnectorIdentity,
   ensureConnectorDirectMessageRoom,
   isMetadataStale,
   receiveConnectionUsage,
@@ -130,7 +133,7 @@ import {
   turnSilenceLockKey,
 } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
-import { notifyConnectorHelper } from './postgres-live.js';
+import { notifyAgentConfigChange, notifyConnectorHelper } from './postgres-live.js';
 import {
   claimInstitutionalMemoryJob,
   completeInstitutionalMemoryJob,
@@ -147,6 +150,25 @@ type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['in
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
 export const INBOX_REPLAY_REWIND_MS = 5_000;
+
+/**
+ * A system line's subject is spoken in the Ledger's own voice, so it is the
+ * PINNED registry coordinate, never the publisher's free-text title: a title
+ * of `@dani` would otherwise render as a person. The leading `@` is stripped
+ * so no coordinate can read as a handle either.
+ */
+function registrySubject(serverName: string | null): string {
+  return serverName?.replace(/^@+/, '').trim() || 'MCP server';
+}
+
+function registryMcpRouteName(serverName: string, connectorId: string): string {
+  const slug = serverName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return `registry-${slug || 'mcp'}-${connectorId.slice(0, 8)}`;
+}
 
 /** A durable silence line stays in the transcript; a later answer does not rewrite it. */
 async function settleTurnFailureLine(
@@ -206,6 +228,8 @@ export class DaemonService {
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
     },
+    private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
+    private readonly registryMcpOAuth?: RegistryMcpOAuth,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -273,6 +297,7 @@ export class DaemonService {
       'authorizeHostCall',
       'listTurnAgentGrants',
       'offerConnector',
+      'connectMcpServer',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -405,6 +430,8 @@ export class DaemonService {
           this.googleOAuth,
           this.composioClient,
           this.institutionalMemoryShadow,
+          this.mcpRegistry,
+          this.registryMcpOAuth,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -939,6 +966,22 @@ export class DaemonService {
           credentials ? { status: 'ready', credentials } : { status: 'pending' }
         ) as Output<Name>;
       }
+      case 'beginRegistryMcpOAuth': {
+        if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
+        return (await this.registryMcpOAuth.begin(
+          (input as Input<'beginRegistryMcpOAuth'>).connectorId,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      }
+      case 'claimRegistryMcpOAuthCode': {
+        if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
+        const request = input as Input<'claimRegistryMcpOAuthCode'>;
+        return (await this.registryMcpOAuth.claim(
+          request.connectorId,
+          request.state,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      }
       case 'installConnector':
         return (await this.connectorInstall(
           input as Input<'installConnector'>,
@@ -1079,6 +1122,13 @@ export class DaemonService {
       case 'readAgentWorkbench':
         return (await this.agentWorkbench(
           input as Input<'readAgentWorkbench'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'searchMcpRegistry':
+        return (await this.searchMcpRegistry(input as Input<'searchMcpRegistry'>)) as Output<Name>;
+      case 'connectMcpServer':
+        return (await this.connectMcpServer(
+          input as Input<'connectMcpServer'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'offerConnector':
@@ -1262,8 +1312,13 @@ export class DaemonService {
         status: string;
         pending_ops: string[];
         pairing_generation: number;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        registry_manifest: import('@beeline/api-contract/daemon').RegistryMcpManifest | null;
       }>(
-        `SELECT id,connector_type,status,pending_ops,pairing_generation FROM workspace_connectors
+        `SELECT id,connector_type,status,pending_ops,pairing_generation,
+                registry_server_name,registry_version,registry_manifest
+         FROM workspace_connectors
          WHERE helper_agent_id=$1 AND status IN ('installing','connected','error','disconnected')
          ORDER BY created_at`,
         [agentId],
@@ -1301,6 +1356,9 @@ export class DaemonService {
             connectorId: row.id,
             connectorType: row.connector_type as never,
             ...generation,
+            ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
+            ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
+            ...(row.registry_manifest ? { registryManifest: row.registry_manifest } : {}),
           });
         if (row.status === 'disconnected')
           assignments.push({
@@ -1554,10 +1612,20 @@ export class DaemonService {
           pairing_generation: number;
           connector_type: string;
           owner_identity_id: string;
+          workspace_id: string;
+          machine_id: string | null;
+          helper_agent_id: string;
           composio_ready: boolean;
           composio_scope: unknown;
+          install_agent_id: string | null;
+          install_room_id: string | null;
+          install_command_id: string | null;
+          registry_server_name: string | null;
         }>(
-          `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
+          `SELECT id,pairing_generation,connector_type,owner_identity_id,workspace_id,machine_id,
+                  helper_agent_id,composio_ready,composio_scope,install_agent_id,install_room_id,
+                  install_command_id,registry_server_name
+           FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
         )
@@ -1602,9 +1670,46 @@ export class DaemonService {
           })),
         );
       }
+      let registryResume: { roomId: string; agentId: string } | undefined;
+      if (
+        row.connector_type === 'registry-mcp' &&
+        row.install_agent_id &&
+        row.install_room_id &&
+        row.install_command_id
+      ) {
+        // A resume-kind line completes its parent command. OAuth can finish
+        // while that command is still writing its own reply, so only resume
+        // an already-ended install turn. Lock the command with the connector
+        // row to serialize this decision against the reply's completion.
+        const command = (
+          await database.query<{ state: string }>(
+            `SELECT state FROM agent_commands
+             WHERE id=$1 AND room_id=$2 AND agent_id=$3 FOR UPDATE`,
+            [row.install_command_id, row.install_room_id, row.install_agent_id],
+          )
+        ).rows[0];
+        if (command?.state === 'complete') {
+          await ensureConnectorIdentity(database, 'registry-mcp');
+          await systemLine(database, {
+            id: createHash('sha256')
+              .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)
+              .digest('hex'),
+            roomId: row.install_room_id,
+            authorId: connectorIdentityId('registry-mcp'),
+            subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+            verb: 'connected',
+            consequence: 'the requesting agent can continue the original task',
+            kind: 'connector-offer-decided',
+            commandId: row.install_command_id,
+            wakes: [row.install_agent_id],
+          });
+          registryResume = { roomId: row.install_room_id, agentId: row.install_agent_id };
+        }
+      }
       return {
         row,
         completedOffers: await completeConnectorOffersForConnector(database, row.id),
+        registryResume,
       };
     });
     for (const offer of result.completedOffers) {
@@ -1614,6 +1719,31 @@ export class DaemonService {
         reason: 'connector-offer',
         agentId: offer.agentId,
       });
+    }
+    if (result.registryResume) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: result.registryResume.roomId,
+        reason: 'connector-ready',
+        agentId: result.registryResume.agentId,
+      });
+    }
+    if (result.row.connector_type === 'registry-mcp') {
+      const agents = await this.database.query<{ agent_id: string }>(
+        `SELECT actor.agent_id FROM agents actor
+         JOIN memberships member ON member.identity_id=actor.agent_id
+           AND member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+         WHERE actor.owner_id=$2
+           AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE($3,$4)`,
+        [
+          result.row.workspace_id,
+          result.row.owner_identity_id,
+          result.row.machine_id,
+          result.row.helper_agent_id,
+        ],
+      );
+      for (const actor of agents.rows)
+        await notifyAgentConfigChange(this.database, actor.agent_id, result.row.workspace_id);
     }
     return { id: result.row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
@@ -1635,7 +1765,11 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
     const row = (
-      await this.database.query<{ id: string }>(
+      await this.database.query<{
+        id: string;
+        connector_type: string;
+        registry_server_name: string | null;
+      }>(
         `UPDATE workspace_connectors
          SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
              status_error=COALESCE($3::text,status_error),
@@ -1648,7 +1782,7 @@ export class DaemonService {
            AND helper_agent_id=$8
            AND status='installing'
            AND pairing_generation=$9
-         RETURNING id`,
+         RETURNING id,connector_type,registry_server_name`,
         [
           input.connectorId,
           JSON.stringify(input.steps),
@@ -1664,7 +1798,73 @@ export class DaemonService {
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
     if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
+    if (row.connector_type === 'registry-mcp' && input.signIn?.url && input.signIn.attemptId)
+      await this.resumeRegistrySignIn(row, input.signIn);
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Registry sign-in page the helper just published is ONE fact: the first
+   * needs_sign_in per attempt posts a resume-kind line into the install Room,
+   * whose command resume wakes the turn that called connect_mcp_server — but
+   * only once that turn has ENDED. A still-claimed install command means the
+   * agent is mid-turn and will read the needs_sign_in result itself, so
+   * writing the line would complete its command out from under it. The
+   * helper's 2s watch re-posts the same attempt after the turn ends, and that
+   * later report is the one that resumes. The same attempt never resumes
+   * twice — the line id is derived from the attempt, so repeat reports
+   * collide and write nothing.
+   */
+  private async resumeRegistrySignIn(
+    row: { id: string; registry_server_name: string | null },
+    signIn: NonNullable<Input<'postConnectorStatus'>['signIn']>,
+  ): Promise<void> {
+    if (signIn.method !== 'oauth') return;
+    const target = (
+      await this.database.query<{
+        install_room_id: string;
+        install_agent_id: string;
+        install_command_id: string;
+        command_state: string | null;
+      }>(
+        `SELECT c.install_room_id,c.install_agent_id,c.install_command_id,command.state command_state
+         FROM workspace_connectors c
+         LEFT JOIN agent_commands command ON command.id=c.install_command_id
+         WHERE c.id=$1::uuid AND c.install_room_id IS NOT NULL
+           AND c.install_agent_id IS NOT NULL AND c.install_command_id IS NOT NULL`,
+        [row.id],
+      )
+    ).rows[0];
+    if (!target) return;
+    if (
+      target.command_state === null ||
+      target.command_state === 'pending' ||
+      target.command_state === 'claimed' ||
+      target.command_state === 'cancelled'
+    )
+      return;
+    await ensureConnectorIdentity(this.database, 'registry-mcp');
+    const wrote = await systemLine(this.database, {
+      id: createHash('sha256')
+        .update(`registry-mcp-signin-resume:${row.id}:${signIn.attemptId}`)
+        .digest('hex'),
+      roomId: target.install_room_id,
+      authorId: connectorIdentityId('registry-mcp'),
+      subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
+      verb: 'needs',
+      object: { text: 'provider sign-in', url: signIn.url },
+      consequence: 'the provider sign-in page is ready · connect this tool through Trusty Squire',
+      kind: 'connector-offer-decided',
+      commandId: target.install_command_id,
+      wakes: [target.install_agent_id],
+    });
+    if (wrote.inserted)
+      this.live.publish({
+        type: 'invalidate',
+        roomId: target.install_room_id,
+        reason: 'connector-ready',
+        agentId: target.install_agent_id,
+      });
   }
 
   /**
@@ -2692,6 +2892,31 @@ export class DaemonService {
         [agentId, roomId],
       )
     ).rows[0];
+    const registryMcpRoutes = roomId
+      ? (
+          await this.database.query<{
+            id: string;
+            registry_server_name: string;
+            display_name: string | null;
+          }>(
+            `SELECT connector.id,connector.registry_server_name,connector.display_name
+             FROM workspace_connectors connector
+             JOIN rooms room ON room.workspace_id=connector.workspace_id AND room.id=$2
+             JOIN agents actor ON actor.agent_id=$1
+               AND actor.owner_id=connector.owner_identity_id
+               AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(connector.machine_id,connector.helper_agent_id)
+             WHERE connector.connector_type='registry-mcp' AND connector.status='connected'
+             ORDER BY connector.created_at,connector.id`,
+            [agentId, roomId],
+          )
+        ).rows.map((route) => ({
+          connectorId: route.id,
+          serverName: route.registry_server_name,
+          displayName: route.display_name ?? route.registry_server_name,
+          routeName: registryMcpRouteName(route.registry_server_name, route.id),
+          target: `registry-mcp:${route.registry_server_name}`,
+        }))
+      : [];
     return {
       ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
@@ -2699,6 +2924,7 @@ export class DaemonService {
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
+      ...(registryMcpRoutes.length ? { registryMcpRoutes } : {}),
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
@@ -3662,6 +3888,11 @@ export class DaemonService {
       (!input.approvalId.trim() || input.approvalId.length > 240)
     )
       throw new Error('Squire approval id is invalid');
+    if (
+      input.signInUrl !== undefined &&
+      (!input.signInUrl.trim() || input.signInUrl.length > 2_048)
+    )
+      throw new Error('Squire sign-in URL is invalid');
     let approvalUrl: URL;
     try {
       approvalUrl = new URL(input.approvalUrl);
@@ -3744,6 +3975,20 @@ export class DaemonService {
         ...(sourceMessageId ? { sourceMessageId } : {}),
       },
     });
+    // A Registry OAuth turn whose Squire call produced this approval link has
+    // already delivered the one owner link. Only the row whose OWN sign-in page
+    // Squire was driving is marked, so a second registry row in the same turn —
+    // or an unrelated Squire approval — never suppresses its own owner handoff.
+    if (input.signInUrl) {
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET registry_squire_relayed_attempt=sign_in->>'attemptId',updated_at=now()
+         WHERE connector_type='registry-mcp' AND status='installing'
+           AND install_agent_id=$1 AND install_room_id=$2
+           AND sign_in->>'attemptId' IS NOT NULL AND sign_in->>'url'=$3`,
+        [agentId, input.roomId, input.signInUrl],
+      );
+    }
     if (line.inserted)
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
@@ -4943,14 +5188,20 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     const paired = (
       await this.database.query<{
+        id: string;
         connector_type: string;
         status: 'installing' | 'connected' | 'error' | 'disconnected';
         machine_id: string | null;
         helper_agent_id: string;
         helper_name: string;
         updated_at: Date;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        display_name: string | null;
+        website_url: string | null;
       }>(
-        `SELECT k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+        `SELECT k.id,k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+                k.registry_server_name,k.registry_version,k.display_name,k.website_url,
                 COALESCE(NULLIF(a.machine_name,''),helper.name) helper_name,k.updated_at
          FROM workspace_connectors k
          JOIN identities helper ON helper.id=k.helper_agent_id
@@ -5008,6 +5259,21 @@ export class DaemonService {
         [context.owner.pubkey, context.workspaceId],
       )
     ).rows;
+    const registryServers = paired.flatMap((row) =>
+      row.registry_server_name && row.registry_version
+        ? [
+            {
+              connectorId: row.id,
+              serverName: row.registry_server_name,
+              version: row.registry_version,
+              displayName: row.display_name ?? row.registry_server_name,
+              status: row.status,
+              ...(row.website_url ? { websiteUrl: row.website_url } : {}),
+              onThisMachine: (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
+            },
+          ]
+        : [],
+    );
     return {
       addressee: {
         identityId: context.addressee.pubkey,
@@ -5026,8 +5292,185 @@ export class DaemonService {
         label: row.label ?? row.reference,
         state: row.state,
       })),
+      registryServers,
       machine: context.machine,
     };
+  }
+
+  private async searchMcpRegistry(
+    input: Input<'searchMcpRegistry'>,
+  ): Promise<Output<'searchMcpRegistry'>> {
+    const query = typeof input.query === 'string' ? input.query.trim() : '';
+    if (!query || query.length > 120) throw new Error('Registry search query is invalid');
+    const limit = input.limit === undefined ? 10 : input.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new Error('Registry search limit is invalid');
+    return { servers: await this.mcpRegistry.search(query, Math.min(10, limit)) };
+  }
+
+  /** Exact Registry selection, owner+machine row creation, and optional one-link fallback. */
+  private async connectMcpServer(
+    input: Input<'connectMcpServer'>,
+    agentId: string,
+  ): Promise<Output<'connectMcpServer'>> {
+    const serverName = typeof input.serverName === 'string' ? input.serverName.trim() : '';
+    const version = typeof input.version === 'string' ? input.version.trim() : '';
+    const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
+    if (!serverName || !version || !reason || reason.length > 500)
+      throw new Error('Registry server name, version and reason are required');
+
+    // Integrity boundary: every call re-fetches the pinned record. A cached
+    // search result, model-supplied URL, or package command is never trusted.
+    const manifest = await this.mcpRegistry.exact(serverName, version);
+    if (!manifest)
+      return { status: 'unsupported', reason: 'The exact Registry entry was not found.' };
+    const remote = manifest.remotes.find((entry) => entry.type === 'streamable-http');
+    if (!remote)
+      return {
+        status: 'unsupported',
+        reason: manifest.remotes.length
+          ? 'This server does not publish a streamable-http remote.'
+          : 'This Registry entry publishes packages only; package execution is not supported.',
+      };
+
+    const context = await this.offerContext(input.roomId, agentId);
+    const commandId = this.authorizedCommand?.id ?? null;
+    const row = await this.database.transaction(async (database) => {
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `registry-mcp:${context.workspaceId}:${context.owner.pubkey}:${context.machine.machineId}:${serverName}`,
+      ]);
+      const existing = (
+        await database.query<{
+          id: string;
+          status: 'installing' | 'connected' | 'error' | 'disconnected';
+          registry_version: string;
+          sign_in: ConnectorStatus['signIn'] | null;
+          registry_handoff_attempt: string | null;
+          registry_squire_relayed_attempt: string | null;
+        }>(
+          `SELECT id,status,registry_version,sign_in,registry_handoff_attempt,
+                  registry_squire_relayed_attempt
+           FROM workspace_connectors
+           WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
+             AND connector_type='registry-mcp' AND registry_server_name=$4
+           FOR UPDATE`,
+          [context.workspaceId, context.owner.pubkey, context.machine.machineId, serverName],
+        )
+      ).rows[0];
+      if (existing && existing.registry_version !== version)
+        return { ...existing, versionConflict: true as const, created: false };
+      if (existing) {
+        if (existing.status === 'error' || existing.status === 'disconnected') {
+          await database.query(
+            `UPDATE workspace_connectors SET helper_agent_id=$2,status='installing',
+               status_steps=$3::jsonb,status_error=NULL,sign_in=NULL,
+               registry_manifest=$4::jsonb,display_name=$5,website_url=$6,
+               install_agent_id=$7,install_room_id=$8,install_command_id=$9,
+               registry_handoff_attempt=NULL,registry_squire_relayed_attempt=NULL,
+               pairing_generation=pairing_generation+1,updated_at=now()
+             WHERE id=$1`,
+            [
+              existing.id,
+              agentId,
+              JSON.stringify([
+                { label: 'Discover remote authentication', status: 'pending' },
+                { label: 'Connect provider account', status: 'pending' },
+              ]),
+              JSON.stringify(manifest),
+              manifest.title ?? manifest.name,
+              manifest.websiteUrl ?? null,
+              agentId,
+              input.roomId,
+              commandId,
+            ],
+          );
+          return { ...existing, status: 'installing' as const, sign_in: null, created: true };
+        }
+        return { ...existing, created: false };
+      }
+      const id = randomUUID();
+      await database.query(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+           status,status_steps,registry_server_name,registry_version,registry_manifest,
+           display_name,website_url,install_agent_id,install_room_id,install_command_id
+         ) VALUES($1,$2,$3,'registry-mcp',$4,$5,'installing',$6::jsonb,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)`,
+        [
+          id,
+          context.workspaceId,
+          context.owner.pubkey,
+          agentId,
+          context.machine.machineId,
+          JSON.stringify([
+            { label: 'Discover remote authentication', status: 'pending' },
+            { label: 'Connect provider account', status: 'pending' },
+          ]),
+          serverName,
+          version,
+          JSON.stringify(manifest),
+          manifest.title ?? manifest.name,
+          manifest.websiteUrl ?? null,
+          agentId,
+          input.roomId,
+          commandId,
+        ],
+      );
+      return {
+        id,
+        status: 'installing' as const,
+        registry_version: version,
+        sign_in: null,
+        registry_handoff_attempt: null,
+        registry_squire_relayed_attempt: null,
+        created: true,
+      };
+    });
+
+    if ('versionConflict' in row)
+      return {
+        status: 'unsupported',
+        reason: `This server is already pinned to ${row.registry_version}; automatic upgrades are not supported.`,
+      };
+    if (row.created) await notifyConnectorHelper(this.database, row.id);
+    if (row.status === 'connected') return { status: 'connected', connectorId: row.id };
+
+    const signIn = row.sign_in;
+    if (input.handoffToOwner && signIn?.url && signIn.attemptId) {
+      const shouldPost =
+        row.registry_squire_relayed_attempt !== signIn.attemptId &&
+        row.registry_handoff_attempt !== signIn.attemptId;
+      if (shouldPost) {
+        const won = await this.database.query(
+          `UPDATE workspace_connectors SET registry_handoff_attempt=$2,updated_at=now()
+           WHERE id=$1::uuid AND registry_handoff_attempt IS DISTINCT FROM $2
+             AND registry_squire_relayed_attempt IS DISTINCT FROM $2`,
+          [row.id, signIn.attemptId],
+        );
+        if (won.rowCount) {
+          const dmRoomId = await ensureConnectorDirectMessageRoom(
+            this.database,
+            context.workspaceId,
+            'registry-mcp',
+            context.owner.pubkey,
+          );
+          await systemLine(this.database, {
+            id: createHash('sha256')
+              .update(`registry-mcp-signin:${row.id}:${signIn.attemptId}`)
+              .digest('hex'),
+            roomId: dmRoomId,
+            authorId: connectorIdentityId('registry-mcp'),
+            subject: { kind: 'system', name: registrySubject(serverName) },
+            verb: 'needs',
+            object: { text: 'provider sign-in', url: signIn.url },
+            consequence: 'complete this sign-in to connect the tool',
+          });
+          this.live.publish({ type: 'invalidate', roomId: dmRoomId, reason: 'message', agentId });
+        }
+      }
+    }
+    return signIn?.url
+      ? { status: 'needs_sign_in', connectorId: row.id, authorizationUrl: signIn.url }
+      : { status: 'connecting', connectorId: row.id };
   }
 
   /**
@@ -6117,6 +6560,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getComposioTools: true,
   executeComposioTool: true,
   getGoogleOAuthGrant: true,
+  beginRegistryMcpOAuth: true,
+  claimRegistryMcpOAuthCode: true,
   installConnector: true,
   postConnectorStatus: true,
   postConnectorVault: true,
@@ -6142,6 +6587,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   authorizeHostCall: true,
   listTurnAgentGrants: true,
   readAgentWorkbench: true,
+  searchMcpRegistry: true,
+  connectMcpServer: true,
   offerConnector: true,
   createCorner: true,
   upgradeCornerLane: true,

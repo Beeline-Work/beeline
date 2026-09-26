@@ -44,10 +44,10 @@ describe('Room slugs', () => {
       workspace,
       otherWorkspace,
     ]);
-    await db.query(
-      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Road-Map')`,
-      [room, workspace],
-    );
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Road-Map')`, [
+      room,
+      workspace,
+    ]);
 
     await expect(reserveRoomName(db, workspace, 'road-map')).rejects.toThrow(/conflict/);
     await expect(reserveRoomName(db, workspace, 'Road-Map')).rejects.toThrow(/conflict/);
@@ -698,9 +698,31 @@ describe('the workspace_connectors machine_id migration ordering', () => {
     // Verify the unique index on machine_id exists
     const indexes = await database.query<{ indexname: string }>(
       `SELECT indexname FROM pg_indexes
-       WHERE tablename='workspace_connectors' AND indexname='workspace_connectors_machine_unique'`,
+       WHERE tablename='workspace_connectors'
+         AND indexname='workspace_connectors_fixed_machine_unique'`,
     );
     expect(indexes.rows.length).toBe(1);
+  });
+
+  it('keeps the connector uniqueness index in place across releases', async () => {
+    const database = new PgliteDatabase();
+    try {
+      await migrate(database);
+      const oid = async () =>
+        (
+          await database.query<{ oid: number }>(
+            `SELECT c.oid FROM pg_class c WHERE c.relname='workspace_connectors_fixed_machine_unique'`,
+          )
+        ).rows[0]?.oid;
+      const first = await oid();
+      expect(first).toBeDefined();
+      // A re-run must not drop and rebuild it: while it is gone
+      // `pairConnector`'s ON CONFLICT has no arbiter index to infer.
+      await migrate(database);
+      expect(await oid()).toBe(first);
+    } finally {
+      database.close();
+    }
   });
 });
 
@@ -714,35 +736,37 @@ describe('the agent_grants kind vocabulary migration', () => {
 
   afterEach(() => database.close());
 
-    it('widens the agent_grants kind check so an upgraded database accepts an mcp route', async () => {
-      // The pre-migration production shape: agent_grants already exists, so the
-      // CREATE TABLE IF NOT EXISTS is a no-op and the old CHECK survives.
-      await database.query(`ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check`);
-      await database.query(`ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
+  it('widens the agent_grants kind check so an upgraded database accepts an mcp route', async () => {
+    // The pre-migration production shape: agent_grants already exists, so the
+    // CREATE TABLE IF NOT EXISTS is a no-op and the old CHECK survives.
+    await database.query(
+      `ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check`,
+    );
+    await database.query(`ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
         CHECK (kind IN ('path','host','secret','device','budget','command'))`);
-      const owner = 'a'.repeat(64);
-      const agent = 'b'.repeat(64);
-      await database.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [owner, agent],
-      );
-      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
-      const storeRoute = (kind: string) =>
-        database.query(
-          `INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,reason,requested_by,status)
+    const owner = 'a'.repeat(64);
+    const agent = 'b'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+      [owner, agent],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
+    const storeRoute = (kind: string) =>
+      database.query(
+        `INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,reason,requested_by,status)
            VALUES(gen_random_uuid(),$3,$1,$5,$2,'squire','route it',$4,'pending')`,
-          [DEFAULT_WORKSPACE_ID, kind, agent, owner, WELCOME_ROOM_ID],
-        );
+        [DEFAULT_WORKSPACE_ID, kind, agent, owner, WELCOME_ROOM_ID],
+      );
 
-      await expect(storeRoute('mcp')).rejects.toThrow();
+    await expect(storeRoute('mcp')).rejects.toThrow();
 
-      await migrate(database);
+    await migrate(database);
 
-      await expect(storeRoute('mcp')).resolves.toBeDefined();
-      // Widening the vocabulary is not removing it: an unknown kind is still refused.
-      await expect(storeRoute('nonsense')).rejects.toThrow();
-      expect(
-        (await database.query<{ kind: string }>(`SELECT kind FROM agent_grants`)).rows,
-      ).toEqual([{ kind: 'mcp' }]);
-    });
+    await expect(storeRoute('mcp')).resolves.toBeDefined();
+    // Widening the vocabulary is not removing it: an unknown kind is still refused.
+    await expect(storeRoute('nonsense')).rejects.toThrow();
+    expect((await database.query<{ kind: string }>(`SELECT kind FROM agent_grants`)).rows).toEqual([
+      { kind: 'mcp' },
+    ]);
+  });
 });

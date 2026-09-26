@@ -43,6 +43,11 @@ import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
+  REGISTRY_MCP_BROKER_FLAG,
+  RegistryMcpHostBroker,
+  runRegistryMcpBroker,
+} from './registry-mcp.js';
+import {
   InstitutionalMemoryShadowWorker,
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
@@ -382,6 +387,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let registryMcpBroker: RegistryMcpHostBroker | undefined;
   let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   const refreshCatalog = (): Promise<void> => {
@@ -403,6 +409,25 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   };
   let stoppingStatus = 'daemon stopped';
   try {
+    registryMcpBroker = new RegistryMcpHostBroker(
+      config.operatorHome,
+      fetch,
+      // The one per-call gate a Registry route has: the server's existing
+      // requester-aware resource approval, asked here because the broker
+      // socket — not the harness MCP client — is what every caller reaches.
+      async ({ roomId, requestId, generationId, target, consume }) =>
+        (
+          await daemonApi.execute('authorizeResourceCall', {
+            roomId,
+            requestId,
+            generationId,
+            target,
+            consume,
+          })
+        ).allowed === true,
+    );
+    await registryMcpBroker.start();
+    process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
     let lifecycleRestartDrain: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
@@ -562,6 +587,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,
+          registryHome: config.operatorHome,
           log: (message) => console.log(`[body] connector: ${message}`),
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
@@ -618,6 +644,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   } finally {
     clearInterval(scratchSweepTimer);
     connectorLoop?.stop();
+    delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
+    await registryMcpBroker?.stop();
     institutionalMemoryWorker?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid record while it still names THIS process — a
@@ -637,6 +665,10 @@ async function main(): Promise<void> {
   }
   if (command === RESOURCE_FACADE_FLAG) {
     runResourceFacade();
+    return;
+  }
+  if (command === REGISTRY_MCP_BROKER_FLAG) {
+    runRegistryMcpBroker();
     return;
   }
   if (command === SQUIRE_FACADE_FLAG) {

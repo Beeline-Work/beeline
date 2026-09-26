@@ -19,8 +19,8 @@ describe('single Settings surface', () => {
   });
 
   it('keeps only the approved essential rows', () => {
-    expect(settings).toContain('testID="identity-face-setting"');
-    expect(settings).toContain('testID="identity-managed-handle"');
+    expect(settings).toContain('avatarTestID="identity-face-setting"');
+    expect(settings).toContain('handleTestID="identity-managed-handle"');
     expect(appearanceSetting).toContain('title="Appearance"');
     expect(settings).toContain('<AppearanceSetting');
     expect(pushLevelSetting).toContain('title="Notifications"');

@@ -37,6 +37,7 @@ vi.mock('react-native', async () => {
       },
     },
     Pressable: host('Pressable'),
+    TouchableOpacity: host('TouchableOpacity'),
     Text: host('Text'),
     View: host('View'),
     useWindowDimensions: () => ({ width: layout.width, height: 900 }),

@@ -33,8 +33,8 @@ describe('desktop profile settings path', () => {
 
   it('keeps the person Identity controls on that destination', () => {
     expect(identitySettings).toContain('testID="identity-settings"');
-    expect(identitySettings).toContain('testID="identity-managed-handle"');
-    expect(identitySettings).toContain('testID="identity-face-setting"');
+    expect(identitySettings).toContain('handleTestID="identity-managed-handle"');
+    expect(identitySettings).toContain('avatarTestID="identity-face-setting"');
   });
 
   it('keeps Appearance on that same Settings surface, after the identity hero', () => {

@@ -20,6 +20,7 @@ const deck = vi.hoisted(() => ({
       defaultBranch: 'main',
     }),
   ),
+  createCorner: vi.fn(async (_roomId: string, _title: string) => 'corner-new'),
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -140,6 +141,9 @@ vi.mock('@/sync/transport', () => ({
     githubRepositoryCreate(input: { installationId: number; name: string; private?: boolean }) {
       return deck.createRepository(input);
     }
+    createHumanCorner(roomId: string, title: string) {
+      return deck.createCorner(roomId, title);
+    }
   },
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -224,6 +228,7 @@ beforeEach(() => {
   deck.chatsReads = 0;
   deck.reconnects = 0;
   deck.createRepository.mockClear();
+  deck.createCorner.mockClear();
   deck.subscriptions.length = 0;
   deck.chatsResponse = chatList({ id: 'm1', text: 'earlier', createdAt: 10 });
 });
@@ -280,6 +285,40 @@ describe('Room deck live path', () => {
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/beeline/corners/[roomId]',
       params: { roomId: 'room-a' },
+    });
+    act(() => {
+      row!.unmount();
+      renderer.unmount();
+    });
+  });
+
+  it('opens a new corner from a long press on the row corner glyph and lands in it', async () => {
+    const renderer = await mountDeck();
+    const list = renderer.root.find((node: any) => node.type === 'SectionList');
+    let row: ReactTestRenderer;
+    await act(async () => {
+      row = create(
+        list.props.renderItem({
+          item: { ...paintedRows(renderer)[0], cornerCount: 1 },
+          index: 0,
+          section: { data: [paintedRows(renderer)[0]] },
+        }),
+      );
+    });
+    const conversation = row!.root.findByType(ConversationRow);
+    vi.mocked(router.push).mockClear();
+    await act(async () => {
+      await conversation.props.onLongPressCorners();
+    });
+
+    expect(deck.createCorner).toHaveBeenCalledOnce();
+    const [roomId, title] = deck.createCorner.mock.calls[0]!;
+    expect(roomId).toBe('room-a');
+    expect(title).toMatch(/ corner$/);
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'corner-new', parent: 'room-a', title, returnTo: 'room-list' },
     });
     act(() => {
       row!.unmount();

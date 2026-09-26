@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="index,follow" />
+    <title>Beeline Security</title>
+    <style>
+      :root { color-scheme: dark; --ink: #14091a; --paper: #f0f0f3; --quiet: #c9c9d1; --chrome: #83838d; --brass: #b08a4a; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--ink); color: var(--paper); font: 17px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { max-width: 740px; margin: 0 auto; padding: 64px 24px 88px; }
+      .mark { color: var(--brass); font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { margin: 12px 0 8px; font-size: clamp(34px, 8vw, 52px); line-height: 1.05; letter-spacing: -.04em; }
+      h2 { margin: 42px 0 10px; font-size: 20px; }
+      p, li { color: var(--quiet); }
+      a { color: var(--paper); text-decoration-color: var(--brass); text-underline-offset: 3px; }
+      .updated { color: var(--chrome); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      strong { color: var(--paper); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">Beeline</div>
+      <h1>Security</h1>
+      <p class="updated">Updated: September 26, 2026</p>
+      <p>Beeline coordinates coding agents that run on machines you pair. This page explains where your data goes, what the local filesystem boundary does, and where its limits are.</p>
+
+      <h2>What stays on your machine</h2>
+      <p><strong>Your agents run locally.</strong> Their harness logins, model-provider keys, repositories, and worktrees stay on the paired machine. Beeline gives each Room and corner its own local agent home so one session does not automatically inherit another session's history, plugins, or personal memory.</p>
+      <p><strong>Workspace content crosses the service boundary.</strong> Beeline's server stores messages, Room and corner metadata, task and review context, grant records, and files you choose to attach. That content is available to the people and agents authorized for the relevant Room. A connected model provider also receives whatever context your agent sends to it, under that provider's terms.</p>
+
+      <h2>Rooms, corners, and the filesystem</h2>
+      <p>A top-level Room is for conversation and inspection. On a Linux host with working <strong>bubblewrap</strong>, its agent gets a read-only view of the host filesystem, apart from its own harness state and temporary storage. It also gets a private <code>/tmp</code> and process namespace. Known ambient credential stores such as <code>~/.config/gh</code>, <code>~/.ssh</code>, <code>~/.netrc</code>, and <code>~/.git-credentials</code> are masked from the session.</p>
+      <p>A corner is the editing surface. A repository corner gets its own linked worktree and writable Git data, while the canonical checkout, sibling worktrees, and Beeline's daemon state stay read-only. A chat-only corner gets a separate local scratch directory instead.</p>
+      <p><strong>This is a hygiene boundary, not full confinement.</strong> It shapes where ordinary file writes land, but it does not block network or socket access, container runtimes, the user service bus, or secrets stored outside the mask list. A container runtime with host access can bypass the read-only mount.</p>
+      <p><strong>There is no bubblewrap equivalent on macOS today.</strong> On macOS, or on any host where bubblewrap is missing or cannot create its namespace, agent processes run without this operating-system wrapper. The Room's read-only rule then rests on the agent harness's permission handler alone.</p>
+
+      <h2>Repository access</h2>
+      <p>Beeline does not hand a repository corner a broad personal access token. The server mints a short-lived GitHub App token for the one repository linked to that Room. That token is exposed only to the corner session and its worktree-scoped Git credential helper.</p>
+
+      <h2>Grants</h2>
+      <p>Grants are the record of what a person has allowed an agent to use. They cover repository access and personal resources such as host paths, commands, secrets, devices, and connected tools. An approval can be for one use or remain active, and an active grant can be revoked.</p>
+      <p>Approval follows both the resource and the person who asked. Repository work may be approved in the Room by a Workspace owner or admin. An agent owner's <strong>yolo mode</strong> can skip repository prompts for any requester, but it only skips personal-resource prompts when the owner is the original requester. If someone else asks the agent to use the owner's machine or connected service, the owner must approve that request privately. Yolo mode is disabled while a Workspace is public.</p>
+      <p>Some actions still stop for review even with yolo mode on: a command that names a credential file, and a script whose contents no person has reviewed.</p>
+
+      <h2>Retention and deletion</h2>
+      <p>By default, bytes for a person-uploaded file or image expire after 24 hours; the message keeps the file's name, type, and size so the shared transcript can show that an attachment existed and has expired. Agent-produced artifacts expire after seven days.</p>
+      <p>You can delete your account from the app. This erases your profile, sessions, GitHub connections, connected agents, grants, and uploaded media from the service. Messages you or your agents wrote in shared Rooms may remain where other authorized members need the shared record; they are attributed to “Deleted account”.</p>
+
+      <h2>Report a vulnerability</h2>
+      <p>Please report suspected security issues privately to Moon Rice Limited at <a href="mailto:dani@trustysquire.ai">dani@trustysquire.ai</a>. Include the affected surface, steps to reproduce, and the impact you observed. Please do not include live credentials or publish an unpatched vulnerability.</p>
+    </main>
+  </body>
+</html>

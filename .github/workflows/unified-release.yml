@@ -1080,7 +1080,7 @@ jobs:
     # classify itself as a failed attempt, and (below) must never redispatch its
     # pinned identity — that redispatch cancelled the fresh cut that replaced it.
     if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
     permissions:
@@ -1160,6 +1160,7 @@ jobs:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           SERVER_RESULT: ${{ needs.server.result }}
           HELPER_RESULT: ${{ needs.helper.result }}
+          HELPER_MACOS_RESULT: ${{ needs.helper_macos.result }}
           MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
           RELEASE_PROOF_RESULT: ${{ needs.release_proof.result }}
           MOBILE_NATIVE_ANDROID_RESULT: ${{ needs.mobile_native_android.result }}
@@ -1186,9 +1187,13 @@ jobs:
           # binary built in this attempt (local iOS archive+export ~30 min on the Mac
           # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
           # every component yet was classified "budget" and never published its
-          # release record. When a native build ran, allow 60 minutes instead.
+          # release record. When a native build ran, allow 60 minutes instead. The
+          # macOS helper bundles are the same shape: a cold `cargo build --release`
+          # of buzz-agent/buzz-dev-mcp on a hosted Mac runner, serial ahead of the
+          # helper leg, so a helper release that delivered everything must not be
+          # classified "budget" either.
           budget_seconds=1200
-          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
+          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ] || [ "$HELPER_MACOS_RESULT" = success ]; then
             budget_seconds=3600
           fi
           # Termination rules for the retry loop: a cancelled attempt (including

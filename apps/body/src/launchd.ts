@@ -91,12 +91,26 @@ export function launchdAgentSupervisorPath(env: NodeJS.ProcessEnv = process.env)
  * installed wrapper preserves the same contract instead: launchd restarts a
  * failed job, so ordinary clean/hiccup exits become 1 while the three
  * deliberate terminal statuses become 0 and remain stopped.
+ *
+ * The daemon runs as a backgrounded child with SIGTERM forwarded to it: a
+ * non-interactive shell dies on SIGTERM without signalling or waiting for a
+ * FOREGROUND child, which would skip the daemon's own drain and make the
+ * plist's ExitTimeOut ceiling unreachable. `wait` interrupted by the trapped
+ * signal returns >128 while the child is still draining, so it is resumed
+ * until the child's real status is in hand.
  */
 export function launchdAgentSupervisorScript(): string {
   return `#!/bin/sh
 set -u
-"$2" daemon --agent "$1"
+"$2" daemon --agent "$1" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT
+wait "$child"
 status=$?
+while [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; do
+  wait "$child"
+  status=$?
+done
 case "$status" in
   ${DAEMON_DISTRESS_EXIT_STATUS}|${DELIBERATE_REMOVAL_EXIT_STATUS}|${UNKNOWN_AGENT_EXIT_STATUS}) exit 0 ;;
   *) exit 1 ;;
@@ -139,7 +153,7 @@ export function launchdAgentPlist(
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-${environmentXml({ HOME: home, PATH: path, BEELINE_MANAGED_BY_LAUNCHD: '1' })}
+${environmentXml({ HOME: home, PATH: path })}
   </dict>
   <key>WorkingDirectory</key>
   <string>${xml(home)}</string>
@@ -245,12 +259,21 @@ async function writeManagedFile(path: string, content: string, mode: number): Pr
 async function launchdStatus(
   run: LaunchdRunner,
   target: string,
-): Promise<{ pid: number; state: string }> {
+): Promise<{ pid: number; state: string; lastExitStatus?: number }> {
   try {
     const result = await run(['print', target]);
     const pid = Number(result.stdout.match(/^\s*pid\s*=\s*(\d+)\s*$/m)?.[1] ?? '0');
     const state = result.stdout.match(/^\s*state\s*=\s*([^\n]+)$/m)?.[1]?.trim() ?? '';
-    return { pid: Number.isSafeInteger(pid) && pid > 0 ? pid : 0, state };
+    // launchd prints `(never exited)` until the job has exited once, so only a
+    // numeric status is a recorded exit.
+    const exited = Number(
+      result.stdout.match(/^\s*last exit (?:status|code)\s*=\s*(-?\d+)\s*$/m)?.[1] ?? 'x',
+    );
+    return {
+      pid: Number.isSafeInteger(pid) && pid > 0 ? pid : 0,
+      state,
+      ...(Number.isSafeInteger(exited) ? { lastExitStatus: exited } : {}),
+    };
   } catch {
     return { pid: 0, state: 'unloaded' };
   }
@@ -290,12 +313,21 @@ export async function installLaunchdAgentService(
   await bootoutIfLoaded(run, target);
   await run(['enable', target]);
   if (options.start === false) return 0;
+  // `RunAtLoad` starts the job as part of bootstrap, and the job was booted
+  // out above, so there is nothing left for a `kickstart -k` to replace.
   await run(['bootstrap', domain, plistPath]);
-  await run(['kickstart', '-k', target]);
   const deadline = Date.now() + (options.waitTimeoutMs ?? LAUNCHD_RESTART_WAIT_MS);
   do {
     const status = await launchdStatus(run, target);
     if (status.pid > 0 && (before.pid === 0 || status.pid !== before.pid)) return status.pid;
+    // `KeepAlive.SuccessfulExit=false` leaves a job that exited 0 stopped
+    // forever: the wrapper maps the deliberate terminal daemon statuses to 0,
+    // so waiting out the restart deadline would report the wrong cause.
+    if (status.pid === 0 && status.lastExitStatus === 0) {
+      throw new Error(
+        `launchd left ${label} stopped: the daemon exited with a deliberate terminal status`,
+      );
+    }
     await sleep(100);
   } while (Date.now() < deadline);
   throw new Error(`launchd did not replace ${label}'s pid before the restart deadline`);

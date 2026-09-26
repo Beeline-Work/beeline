@@ -209,7 +209,16 @@ export type SquireProfileClaim =
       readonly action: string;
     };
 
-function readLinuxStartTime(pid: number): string | undefined {
+/**
+ * Squire records a darwin owner's birth as `darwin:<ps -o lstart=>` with runs
+ * of whitespace collapsed (its own `readProcessStartTime`), so this reading has
+ * to produce the identical token or a live owner would read as a reused pid.
+ */
+function readProcessStartTime(pid: number): string | undefined {
+  if (process.platform === 'darwin') {
+    const started = readPsField(pid, 'lstart=')?.replace(/\s+/g, ' ');
+    return started ? `darwin:${started}` : undefined;
+  }
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const close = stat.lastIndexOf(')');
@@ -219,7 +228,11 @@ function readLinuxStartTime(pid: number): string | undefined {
   }
 }
 
-function readLinuxProcessGroup(pid: number): number | undefined {
+function readProcessGroup(pid: number): number | undefined {
+  if (process.platform === 'darwin') {
+    const group = Number(readPsField(pid, 'pgid=') ?? 'x');
+    return Number.isSafeInteger(group) && group > 0 ? group : undefined;
+  }
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const close = stat.lastIndexOf(')');
@@ -231,14 +244,22 @@ function readLinuxProcessGroup(pid: number): number | undefined {
   }
 }
 
+function readPsField(pid: number, format: string): string | undefined {
+  try {
+    const value = execFileSync('ps', ['-o', format, '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readProcessParentPid(pid: number): number | undefined {
   if (process.platform === 'darwin') {
-    try {
-      const parent = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
-      return Number.isSafeInteger(parent) && parent > 0 ? parent : undefined;
-    } catch {
-      return undefined;
-    }
+    const parent = Number(readPsField(pid, 'ppid=') ?? 'x');
+    return Number.isSafeInteger(parent) && parent > 0 ? parent : undefined;
   }
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -282,7 +303,7 @@ async function brokerMainPid(run: ShellRunner): Promise<number | undefined> {
 function lockOwnerIsAlive(owner: SquireProfileLockOwner): boolean {
   if (!isProcessAlive(owner.pid)) return false;
   if (owner.startTime === null || owner.startTime === 'unknown') return true;
-  const actual = readLinuxStartTime(owner.pid);
+  const actual = readProcessStartTime(owner.pid);
   if (actual === undefined) return true;
   return actual === owner.startTime;
 }
@@ -334,7 +355,7 @@ export function reclaimSquireProfileClaim(options?: {
   const ourPids = options?.ourPids ?? [];
   const ours = owner.host === hostname() && (
     ourPids.includes(owner.pid) ||
-    (ourPids.length > 0 && ourPids.includes(readLinuxProcessGroup(owner.pid) ?? -1))
+    (ourPids.length > 0 && ourPids.includes(readProcessGroup(owner.pid) ?? -1))
   );
   if (ours) {
     removeProfileLock(lockPath);

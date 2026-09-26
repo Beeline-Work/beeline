@@ -744,9 +744,11 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_ios\.result == 'success'/);
+  // helper_macos is a direct need so release_result can widen its budget for the
+  // cold cargo build the macOS helper bundles pay for.
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper', 'mobile_ota', 'mobile_native_android', 'mobile_native_ios',
-    'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
+    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_native_android',
+    'mobile_native_ios', 'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
   ]);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);

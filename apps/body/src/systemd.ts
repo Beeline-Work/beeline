@@ -85,7 +85,7 @@ export function isCanonicalInstalledLauncher(
   );
 }
 
-export function assertCanonicalInstalledLauncher(
+function assertCanonicalInstalledLauncher(
   env: NodeJS.ProcessEnv,
   invocationPath?: string,
 ): void {

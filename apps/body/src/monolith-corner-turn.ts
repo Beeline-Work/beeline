@@ -512,6 +512,8 @@ export interface MonolithCornerTurnOptions {
   onPoll(): void;
   onFailure(retryInMs: number): void;
   onCloseRequested(): Promise<void>;
+  /** The server now reports a different lane than this session was started for. */
+  onLaneChanged?: () => void;
   onRestartRequested?: () => void;
   canStartTurn?: () => boolean;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
@@ -1983,6 +1985,14 @@ export class MonolithCornerTurnLoop {
             return false;
           this.lastCloseCheck = now;
           const state = await api.execute('getCornerRestoreState', { cornerId });
+          // The lane upgrade's retire arrives as an ephemeral live push, which a
+          // disconnected socket never receives. This timed read is the recovery:
+          // a scratch session whose corner is no longer no-code must not keep
+          // serving code requests it has no checkout for.
+          if (this.options.lane === 'no_code' && state.lane !== 'no_code') {
+            this.options.onLaneChanged?.();
+            return true;
+          }
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.
           await this.harvest;

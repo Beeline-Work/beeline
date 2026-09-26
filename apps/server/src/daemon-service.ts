@@ -5704,37 +5704,49 @@ export class DaemonService {
     )
       throw new Error('corner lane upgrade requires a repository-backed parent Room');
 
-    const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
     await this.database.query(
       `UPDATE corner_facts
-       SET lane='code',owner_agent_id=$2,lane_upgraded_by=$3,
+       SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),lane_upgraded_by=$3,
            lane_upgrade_message_id=$4,lane_upgraded_at=now(),updated_at=now()
        WHERE corner_id=$1 AND lane='no_code'`,
       [cornerId, agentId, requester.id, command.source_message_id],
     );
+    const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
     const resumed = await createAgentCommand(this.database, {
       roomId: cornerId,
       agentId,
       sourceMessageId: command.source_message_id,
-      turnRequestId: `lane-upgrade:${command.turn_request_id}`,
+      turnRequestId: laneRequestId,
       action: 'resume',
       reason: 'corner_lane_upgrade',
       parent: command,
       retainDepth: true,
     });
     if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
+    // `agent_commands` is unique on (room,message,agent,action), so a request
+    // that was ITSELF a resume returns its own already-claimed row here. Then
+    // completing `command.id` below would consume the very re-delivery it just
+    // created and the human's ask would vanish. Re-arm whatever row came back.
     await this.database.query(
-      `UPDATE agent_commands SET state='complete',completed_at=now()
-       WHERE id=$1 AND state='claimed'`,
-      [command.id],
+      `UPDATE agent_commands SET
+         state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
+         completed_at=NULL,turn_request_id=$2,reason='corner_lane_upgrade'
+       WHERE id=$1 AND state<>'pending'`,
+      [resumed.id, laneRequestId],
     );
+    if (resumed.id !== command.id)
+      await this.database.query(
+        `UPDATE agent_commands SET state='complete',completed_at=now()
+         WHERE id=$1 AND state='claimed'`,
+        [command.id],
+      );
     await this.database.query(
       `UPDATE agent_turns SET status='complete',created_at=now()
        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
       [cornerId, agentId, command.turn_request_id],
     );
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
-    return { cornerId, lane: 'code' as const, featureBranch };
+    return { cornerId, lane: 'code' as const };
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (

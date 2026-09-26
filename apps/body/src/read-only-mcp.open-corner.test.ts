@@ -96,11 +96,7 @@ async function daemonDoor(
                   : operation === 'createCorner'
                     ? { cornerId: CORNER }
                     : operation === 'upgradeCornerLane'
-                      ? {
-                          cornerId: CORNER,
-                          lane: 'code',
-                          featureBranch: 'feature/corner-222222222222',
-                        }
+                      ? { cornerId: CORNER, lane: 'code' }
                       : { ok: true };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
@@ -392,11 +388,7 @@ describe('open_corner over the grok wire', () => {
 
     expect(error).toBeUndefined();
     expect(result?.isError).toBeUndefined();
-    expect(JSON.parse(result!.content[0]!.text)).toEqual({
-      cornerId: CORNER,
-      lane: 'code',
-      featureBranch: 'feature/corner-222222222222',
-    });
+    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, lane: 'code' });
     expect(door.calls).toContainEqual(
       expect.objectContaining({
         operation: 'upgradeCornerLane',

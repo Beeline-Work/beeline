@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { createAgentCommand } from './agent-command.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -19,7 +20,8 @@ import type { AgentCommand } from '@beeline/api-contract/daemon';
  */
 
 const HUMAN = 'a'.repeat(64),
-  AGENT = 'b'.repeat(64);
+  AGENT = 'b'.repeat(64),
+  AGENT2 = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111',
   CODE_ROOM = '22222222-2222-4222-8222-222222222222',
   CHAT_ROOM = '44444444-4444-4444-8444-444444444444';
@@ -30,10 +32,14 @@ beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);
   await db.query(
-    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Ada','ada'),($2,'agent','Hoots','hoots')`,
-    [HUMAN, AGENT],
+    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Ada','ada'),($2,'agent','Hoots','hoots'),($3,'agent','Wren','wren')`,
+    [HUMAN, AGENT, AGENT2],
   );
-  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [
+    AGENT,
+    AGENT2,
+    HUMAN,
+  ]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Lanes')`, [WORKSPACE]);
   await db.query(
     `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_resolution,repository_target_branch)
@@ -44,7 +50,7 @@ beforeAll(async () => {
     CHAT_ROOM,
     WORKSPACE,
   ]);
-  for (const who of [HUMAN, AGENT])
+  for (const who of [HUMAN, AGENT, AGENT2])
     for (const room of [null, CODE_ROOM, CHAT_ROOM])
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
@@ -65,17 +71,21 @@ beforeEach(async () => {
 });
 
 /** The human ask that authorizes the corner, claimed and ready to answer. */
-async function commissioned(roomId: string): Promise<AgentCommand> {
+async function commissioned(roomId: string, agentId = AGENT): Promise<AgentCommand> {
   await phone.execute(
     'sendRoomMessage',
-    { roomId, messageId: randomBytes(32).toString('hex'), text: '@hoots please do this' },
+    {
+      roomId,
+      messageId: randomBytes(32).toString('hex'),
+      text: `@${agentId === AGENT ? 'hoots' : 'wren'} please do this`,
+    },
     HUMAN,
   );
-  const command = (await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands.at(-1);
+  const command = (await daemon.execute('getAgentCommands', { roomId }, agentId)).commands.at(-1);
   await daemon.execute(
     'claimAgentCommand',
     { roomId, commandId: command!.id, generationId: 'g1' },
-    AGENT,
+    agentId,
   );
   return command!;
 }
@@ -107,18 +117,24 @@ async function humanCorner(roomId: string, title = 'Release notes'): Promise<str
     .id;
 }
 
-async function upgrade(cornerId: string) {
-  const command = await commissioned(cornerId);
+async function upgrade(cornerId: string, agentId = AGENT) {
+  const command = await commissioned(cornerId, agentId);
   return daemon.execute(
     'upgradeCornerLane',
-    {
-      cornerId,
-      requestId: command.turnRequestId,
-      generationId: 'g1',
-    } as never,
-    AGENT,
+    { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+    agentId,
   );
 }
+
+/** Commands the corner is still holding for its agent, oldest first. */
+const pending = (cornerId: string, agentId = AGENT) =>
+  db
+    .query<{ source_message_id: string; reason: string; turn_request_id: string }>(
+      `SELECT source_message_id,reason,turn_request_id FROM agent_commands
+       WHERE room_id=$1 AND agent_id=$2 AND state='pending' ORDER BY created_at,id`,
+      [cornerId, agentId],
+    )
+    .then((result) => result.rows);
 
 const lane = (cornerId: string) =>
   db
@@ -209,11 +225,7 @@ it('upgrades one repository-backed human corner on its explicit human code reque
 
   const result = await upgrade(cornerId);
 
-  expect(result).toEqual({
-    cornerId,
-    lane: 'code',
-    featureBranch: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`,
-  });
+  expect(result).toEqual({ cornerId, lane: 'code' });
   expect(
     (
       await db.query<{
@@ -302,4 +314,59 @@ it('rejects a no-code corner whose parent Room has no repository', async () => {
 
   await expect(upgrade(cornerId)).rejects.toThrow('requires a repository-backed parent Room');
   expect(await lane(cornerId)).toBe('no_code');
+});
+
+it('re-delivers a human ask whose own command was already a resume', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  const messageId = randomBytes(32).toString('hex');
+  await phone.execute(
+    'sendRoomMessage',
+    { roomId: cornerId, messageId, text: 'go edit the widget renderer' },
+    HUMAN,
+  );
+  // The retry path records the human's ask as a resume on that same message.
+  const resume = await createAgentCommand(db, {
+    roomId: cornerId,
+    agentId: AGENT,
+    sourceMessageId: messageId,
+    turnRequestId: messageId,
+    action: 'resume',
+    reason: 'tagged_lifecycle_retry',
+  });
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: cornerId, commandId: resume!.id, generationId: 'g1' },
+    AGENT,
+  );
+
+  await daemon.execute(
+    'upgradeCornerLane',
+    { cornerId, requestId: messageId, generationId: 'g1' },
+    AGENT,
+  );
+
+  expect(await lane(cornerId)).toBe('code');
+  expect(await pending(cornerId)).toEqual([
+    {
+      source_message_id: messageId,
+      reason: 'corner_lane_upgrade',
+      turn_request_id: `lane-upgrade:${messageId}`,
+    },
+  ]);
+});
+
+it('leaves an agent-opened corner with its original opener when another agent upgrades it', async () => {
+  const cornerId = await open(CODE_ROOM, 'no_code', 'owner/widgets');
+
+  await upgrade(cornerId, AGENT2);
+
+  expect(
+    (
+      await db.query<{ owner_agent_id: string; lane: string; lane_upgraded_by: string }>(
+        `SELECT owner_agent_id,lane,lane_upgraded_by FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0],
+  ).toMatchObject({ owner_agent_id: AGENT, lane: 'code', lane_upgraded_by: HUMAN });
+  expect(await pending(cornerId, AGENT2)).toMatchObject([{ reason: 'corner_lane_upgrade' }]);
 });

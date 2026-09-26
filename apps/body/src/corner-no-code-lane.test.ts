@@ -355,3 +355,79 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   expect(prompt).not.toContain('gh pr merge');
   expect(prompt).not.toContain(CORNER_AUTHOR_CONTRACT);
 });
+
+it('retires a no-code session on the timed restore read when the server already moved it to code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-lane-poll-'));
+  roots.push(root);
+  const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+  await mkdir(workspace, { recursive: true });
+  const agent = stored('11'.repeat(32), 'Bee');
+  const runtime = {
+    agentId: '11'.repeat(32),
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+  } as unknown as AgentRuntimeRecord;
+  const config: BodyConfig = {
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    workspaceRoot: workspace,
+    autoApprovePermissions: true,
+  };
+  const execute = vi.fn(async (name: string) => {
+    if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+    if (name === 'getCornerRestoreState')
+      return {
+        cornerId: 'corner-id',
+        objective: 'Write it up',
+        lane: 'code',
+        closeRequested: false,
+      };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const onLaneChanged = vi.fn();
+  const onCloseRequested = vi.fn(async () => undefined);
+
+  await new MonolithCornerTurnLoop({
+    cornerId: 'corner-id',
+    parentRoomId: 'room-id',
+    workspaceId: 'workspace',
+    objective: 'Write it up',
+    worktreePath: workspace,
+    lane: 'no_code',
+    runtime,
+    config,
+    api,
+    scheduler,
+    pollMs: 1,
+    onPoll: vi.fn(),
+    onFailure: vi.fn(),
+    onCloseRequested,
+    onLaneChanged,
+  }).run();
+  await scheduler.dispose();
+
+  expect(onLaneChanged).toHaveBeenCalledTimes(1);
+  expect(onCloseRequested).not.toHaveBeenCalled();
+  expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-id' });
+});

@@ -1209,6 +1209,10 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
+        onLaneChanged: () =>
+          void this.applyCornerRestart(corner.cornerId).catch((error) =>
+            console.error('[thin-core] corner lane-change restart failed', error),
+          ),
         onRestartRequested: () => this.requestLifecycleRestart(),
         canStartTurn: () => !this.restartRequested,
       });

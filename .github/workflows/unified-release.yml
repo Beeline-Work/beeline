@@ -278,8 +278,10 @@ jobs:
         # failed — while `pending` covers an attempt lost between the two. A
         # fresh identity has no artifact under this name, so the Mac bundles
         # build exactly as before. Every failure — a list error, rate limit, a
-        # blip — degrades to that same fresh path: this lookup must never be
-        # what loses a release, because every other job needs this one.
+        # blip, an expired artifact — resolves to no run id, which helper_macos
+        # reads as "rebuild", so this lookup can never be what loses a release:
+        # every other job needs this one, and an empty answer costs a cold Mac
+        # build rather than the attempt.
         if: >-
           inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
           contains(fromJSON('["pending","built"]'), steps.plan.outputs.stage_helper)
@@ -444,9 +446,15 @@ jobs:
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
+    # Reuse is the only reason to skip this build, so it is the only thing that
+    # does. Any stage still owing merged bytes and holding no usable reuse run
+    # id rebuilds them here — including a `built` retry whose artifact expired,
+    # was deleted, or whose lookup hit a transient error. A redundant cold
+    # rebuild is wasteful; a stage with neither a reuse path nor a rebuild path
+    # is a dead end that burns every remaining attempt.
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      needs.initialize.outputs.stage_helper == 'pending' &&
+      contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper) &&
       needs.initialize.outputs.helper_reuse_run_id == ''
     runs-on: ${{ fromJSON(matrix.runs_on) }}
     # Every run is cold: the bundle builds buzz-agent and buzz-dev-mcp with
@@ -493,10 +501,13 @@ jobs:
 
   helper:
     needs: [initialize, helper_macos]
+    # This leg runs when it holds bytes — freshly rebuilt or reused — or when the
+    # stage is already past owing any. A stage that still owes them and got
+    # neither is a failed Mac build, and helper_macos is where that reads.
     if: >-
       !cancelled() && inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      (needs.initialize.outputs.stage_helper != 'pending' || needs.helper_macos.result == 'success' ||
-        needs.initialize.outputs.helper_reuse_run_id != '')
+      (needs.helper_macos.result == 'success' || needs.initialize.outputs.helper_reuse_run_id != '' ||
+        !contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper))
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 12
     permissions:
@@ -512,40 +523,44 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      # The Mac bundles exist only when initialize decided to build them, so the
-      # downloads and the merge inputs below are gated on that one decision —
-      # daemon-leg's own emptiness check then still names the missing Mac inputs
-      # instead of failing deep inside the merge.
+      # The Mac bundles exist in this run only when helper_macos built them, so
+      # they alone gate their own downloads and the merge inputs — daemon-leg's
+      # emptiness check then still names missing Mac inputs instead of failing
+      # deep inside the merge. The build phase itself runs whenever the `built`
+      # stage is not recorded yet, or whenever a rebuild just happened and only
+      # this run holds the bytes to merge and upload.
       - uses: actions/download-artifact@v4
-        if: >-
-          needs.initialize.outputs.stage_helper == 'pending' &&
-          needs.initialize.outputs.helper_reuse_run_id == ''
+        if: needs.helper_macos.result == 'success'
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
-        if: >-
-          needs.initialize.outputs.stage_helper == 'pending' &&
-          needs.initialize.outputs.helper_reuse_run_id == ''
+        if: needs.helper_macos.result == 'success'
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
-        if: needs.initialize.outputs.stage_helper == 'pending'
+        if: >-
+          needs.initialize.outputs.stage_helper == 'pending' ||
+          needs.helper_macos.result == 'success'
         with:
           phase: build
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
-          darwin_arm64_bundle_dir: ${{ needs.initialize.outputs.helper_reuse_run_id == '' && format('{0}/daemon-darwin-arm64', runner.temp) || '' }}
-          darwin_x64_bundle_dir: ${{ needs.initialize.outputs.helper_reuse_run_id == '' && format('{0}/daemon-darwin-x64', runner.temp) || '' }}
+          darwin_arm64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-arm64', runner.temp) || '' }}
+          darwin_x64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-x64', runner.temp) || '' }}
       - name: Checkpoint the helper build
-        if: needs.initialize.outputs.stage_helper == 'pending'
+        if: >-
+          needs.initialize.outputs.stage_helper == 'pending' ||
+          needs.helper_macos.result == 'success'
         run: |
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper-built.json",JSON.stringify({component:"helper",version,sourceSha,state:"built",artifactRef})+"\n")' \
             "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
-        if: needs.initialize.outputs.stage_helper == 'pending'
+        if: >-
+          needs.initialize.outputs.stage_helper == 'pending' ||
+          needs.helper_macos.result == 'success'
         with:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper-built
           path: checkpoint-helper-built.json

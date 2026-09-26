@@ -93,6 +93,7 @@ export function apnsPushRequest(
         alert: { title: 'Beeline', body: message.text.slice(0, 200) },
         sound: 'default',
         ...(threadId ? { 'thread-id': threadId } : {}),
+        ...(data.categoryId ? { category: data.categoryId } : {}),
       },
       ...data,
     },

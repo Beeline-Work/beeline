@@ -4,8 +4,9 @@ export type InstitutionalRolloutStage = 'off' | 'shadow' | 'pilot' | 'live' | 'p
 
 /**
  * A Workspace with no row is not enrolled. Its stage is the only authority for
- * serving memory, so the global feature flag can never enable live memory
- * everywhere at once.
+ * both serving memory and running host jobs, so the global feature flag can
+ * neither enable live memory everywhere at once nor spend host model sessions
+ * on a Workspace no turn can read memory from.
  */
 export async function institutionalWorkspaceRolloutStage(
   database: SqlDatabase,
@@ -24,5 +25,5 @@ export function rolloutAllowsLive(stage: InstitutionalRolloutStage | undefined):
 }
 
 export function rolloutAllowsJobs(stage: InstitutionalRolloutStage | undefined): boolean {
-  return stage === undefined || stage === 'shadow' || stage === 'pilot' || stage === 'live';
+  return stage === 'shadow' || stage === 'pilot' || stage === 'live';
 }

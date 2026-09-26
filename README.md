@@ -146,8 +146,9 @@ omit the optional block. `propose_memory_item` is the active-command-bound write
 audience. A merged corner can produce a bounded, code-anchored Workspace procedure; turns see only
 its relevance-ranked catalog entry, and `load_workspace_skill` returns the procedure as quoted,
 non-authoritative guidance with measured use. Generated procedures are never installed as native
-harness skills. Explicit Workspace rollout rows can narrow the global flag through
-off/shadow/pilot/live/paused stages. The server's idempotent weekly curator ages and retains items,
+harness skills. Serving live memory requires an explicit
+`institutional_memory_workspace_rollouts` row at `pilot`/`live`, and host jobs require one at
+`shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent weekly curator ages and retains items,
 queues audience-partitioned consolidation on authorized user hosts, honors Workspace job/token
 budgets, and advances an opted-in cohort only when its objective dashboard clears the rollout gate.
 

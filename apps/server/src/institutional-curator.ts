@@ -133,7 +133,7 @@ type CuratorPartition = {
   workspaceId: string;
   key: string;
   audience: 'workspace_candidate' | 'human_private';
-  /** Oldest curation among this partition's candidates; null = never curated. */
+  /** Most recent curation of any candidate; null = no candidate ever curated. */
   curatedAt: number | null;
   candidates: CuratorCandidate[];
 };
@@ -378,10 +378,8 @@ async function curatorPartitions(
   );
   const groups = new Map<string, CuratorPartition>();
   const absorb = (partition: CuratorPartition, curatedAt: Date | null): void => {
-    if (!partition.candidates.length) partition.curatedAt = curatedAt?.getTime() ?? null;
-    else if (partition.curatedAt !== null)
-      partition.curatedAt =
-        curatedAt === null ? null : Math.min(partition.curatedAt, curatedAt.getTime());
+    if (!curatedAt) return;
+    partition.curatedAt = Math.max(partition.curatedAt ?? 0, curatedAt.getTime());
   };
   for (const item of memory.rows) {
     const key =
@@ -805,6 +803,9 @@ export async function applyInstitutionalCuratorProposal(
            WHERE id=ANY($1::uuid[])`,
           [action.duplicateIds],
         );
+        await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
+          current.id,
+        ]);
         consolidatedSkills += 1;
       } else if (action.action === 'retain') {
         await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [

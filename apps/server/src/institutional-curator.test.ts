@@ -218,6 +218,16 @@ describe('weekly institutional curator', () => {
         ])
       ).rows[0]?.state,
     ).toBe('stale');
+    // The surviving target counts as curated, so its partition stops re-winning
+    // a job slot every cycle.
+    expect(
+      (
+        await database.query<{ curated_at: Date | null }>(
+          `SELECT curated_at FROM workspace_skills WHERE id=$1`,
+          [SKILL],
+        )
+      ).rows[0]?.curated_at,
+    ).toBeInstanceOf(Date);
   });
 
   it('advances a shadow cohort only after enough host-reviewed evidence', async () => {
@@ -612,10 +622,42 @@ describe('weekly institutional curator', () => {
         MESSAGE,
       ],
     );
-    // Every profile partition was curated recently; the shared one never was.
+    // Each profile partition ALSO receives a fresh, never-curated item this week,
+    // the steady state of an active Workspace.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+          source_message_id,audience_kind,confidence,version,created_by_command_id,updated_at)
+       VALUES
+         ($1,$4,'human_profile_fact',$5,'one-fresh','Fresh one.','active',$7,$8,
+          'human_profile',0.9,1,'fresh-one',$9),
+         ($2,$4,'human_profile_fact',$6,'two-fresh','Fresh two.','active',$7,$8,
+          'human_profile',0.9,1,'fresh-two',$9),
+         ($3,$4,'human_profile_fact',$10,'human-fresh','Fresh human.','active',$7,$8,
+          'human_profile',0.9,1,'fresh-human',$9)`,
+      [
+        '30000000-0000-4000-8000-000000000321',
+        '30000000-0000-4000-8000-000000000322',
+        '30000000-0000-4000-8000-000000000323',
+        WORKSPACE,
+        others[0],
+        others[1],
+        ROOM,
+        MESSAGE,
+        NOW,
+        HUMAN,
+      ],
+    );
+    // Every profile partition was curated THIS cycle; the shared one 40 days ago.
     await database.query(
       `UPDATE institutional_memory_items SET curated_at=$2
-       WHERE workspace_id=$1 AND kind='human_profile_fact'`,
+       WHERE workspace_id=$1 AND kind='human_profile_fact' AND curated_at IS NULL
+         AND canonical_key NOT LIKE '%-fresh'`,
+      [WORKSPACE, NOW],
+    );
+    await database.query(
+      `UPDATE institutional_memory_items SET curated_at=$2::timestamptz-interval '40 days'
+       WHERE workspace_id=$1 AND kind='workspace_fact'`,
       [WORKSPACE, NOW],
     );
 

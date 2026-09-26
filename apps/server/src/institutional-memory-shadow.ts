@@ -462,7 +462,7 @@ export async function claimInstitutionalMemoryJob(
            FROM institutional_memory_jobs job
            JOIN rooms room ON room.id=job.source_room_id
            JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
-           LEFT JOIN institutional_memory_workspace_rollouts rollout
+           JOIN institutional_memory_workspace_rollouts rollout
              ON rollout.workspace_id=job.workspace_id
            JOIN memberships worker ON worker.room_id=job.source_room_id
              AND worker.identity_id=$1 AND worker.removed_at IS NULL
@@ -474,7 +474,7 @@ export async function claimInstitutionalMemoryJob(
              )
              AND (job.mode='shadow' OR $5::boolean)
              AND (
-               rollout.stage IS NULL OR rollout.stage IN ('pilot','live') OR
+               rollout.stage IN ('pilot','live') OR
                (rollout.stage='shadow' AND job.mode='shadow')
              )
              AND COALESCE((

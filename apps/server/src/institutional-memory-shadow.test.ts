@@ -86,6 +86,12 @@ beforeEach(async () => {
        ($1,$4,$2,'owner'),($1,$4,$3,'member')`,
     [OTHER_WORKSPACE, OTHER_HUMAN, OTHER_AGENT, OTHER_ROOM],
   );
+  // Host jobs need enrollment too, so shadow capture starts from a shadow row.
+  await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
+     VALUES($1,'shadow'),($2,'shadow')`,
+    [WORKSPACE, OTHER_WORKSPACE],
+  );
 });
 
 afterEach(async () => {
@@ -168,7 +174,7 @@ function workspaceProposal(roomId: string, sourceMessageId: string) {
 /** Live memory is per-Workspace enrollment, never the global flag alone. */
 async function enrollLive(workspaceId = WORKSPACE): Promise<void> {
   await database.query(
-    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`,
+    `UPDATE institutional_memory_workspace_rollouts SET stage='live' WHERE workspace_id=$1`,
     [workspaceId],
   );
 }
@@ -318,10 +324,30 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(context).toMatchObject({ text: '', itemIds: [], totalBytes: 0 });
   });
 
+  it('spends no host session on a Workspace nobody enrolled', async () => {
+    await database.query(
+      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await expect(enqueue()).resolves.toBeUndefined();
+    expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
+
+    // A job queued while enrolled is not claimable once enrollment is withdrawn.
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'shadow')`,
+      [WORKSPACE],
+    );
+    await expect(enqueue()).resolves.toMatch(/^[0-9a-f-]{36}$/);
+    await database.query(
+      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await expect(claimInstitutionalMemoryJob(database, AGENT, liveConfig)).resolves.toBeUndefined();
+  });
+
   it('uses an explicit rollout stage to narrow global enablement', async () => {
     await database.query(
-      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
-       VALUES($1,'off')`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='off' WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     await expect(enqueue()).resolves.toBeUndefined();
@@ -376,8 +402,8 @@ describe('institutional memory phase-0 shadow capture', () => {
 
   it('enforces a Workspace rollout token budget when claiming host work', async () => {
     await database.query(
-      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage,daily_token_budget)
-       VALUES($1,'live',1000)`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='live',daily_token_budget=1000
+       WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     await database.transaction((db) =>

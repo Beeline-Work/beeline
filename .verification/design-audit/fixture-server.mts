@@ -9,7 +9,7 @@
  * row, a transcript carrying every message presentation, a corner with an
  * objective, agents with server-assigned faces, and a Members roster.
  *
- * Run:  node --import tsx .verification/design-audit/fixture-server.ts
+ * Run:  node --import tsx .verification/design-audit/fixture-server.mts
  * It prints one JSON line with the origin and the session tokens the browser
  * needs in sessionStorage, then stays up until killed.
  */

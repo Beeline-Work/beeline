@@ -204,7 +204,10 @@ describe('native variable-height history anchoring', () => {
     expect(failedLanding).toContain('transcriptMessagesRef.current');
     expect(failedLanding).toContain('offset: averageItemLength * currentIndex');
     expect(failedLanding).toContain('landAtNewMessageBoundary(');
-    expect(failedLanding).not.toContain('averageItemLength * index');
+    const boundaryRetry = failedLanding.slice(
+      failedLanding.indexOf('const pending = pendingNewMessageLandingRef.current'),
+    );
+    expect(boundaryRetry).not.toContain('averageItemLength * index');
 
     const landing = chatSource.slice(
       chatSource.indexOf('const landAtNewMessageBoundary ='),

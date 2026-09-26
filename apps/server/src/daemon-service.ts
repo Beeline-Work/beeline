@@ -5044,11 +5044,18 @@ export class DaemonService {
     target = target.trim();
     const requester = await this.grantRequester();
     const context = (
-      await this.database.query<{ owner_id: string; yolo_mode: boolean; owner_present: boolean }>(
-        `SELECT a.owner_id,EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
+      await this.database.query<{
+        owner_id: string;
+        owner_handle: string | null;
+        yolo_mode: boolean;
+        owner_present: boolean;
+      }>(
+        `SELECT a.owner_id,owner.handle owner_handle,
+       EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
-       FROM agents a JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
+       FROM agents a JOIN identities owner ON owner.id=a.owner_id
+       JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
        WHERE a.agent_id=$2`,
         [input.roomId, agentId],
       )
@@ -5093,7 +5100,17 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
+    if (pending) {
+      if (kind !== 'mcp')
+        await this.noteBlockedTurnGate({
+          roomId: input.roomId,
+          agentId,
+          kind,
+          ownerHandle: context.owner_handle,
+          grantId: pending.id,
+        });
+      return { allowed: false, grantId: pending.id, status: 'pending' as const };
+    }
     const asked = await this.requestAgentGrant(
       {
         ...input,
@@ -5108,12 +5125,69 @@ export class DaemonService {
       },
       agentId,
     );
+    if (kind === 'host')
+      await this.noteBlockedTurnGate({
+        roomId: input.roomId,
+        agentId,
+        kind,
+        ownerHandle: context.owner_handle,
+        grantId: asked.grantId,
+      });
     return {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
+  }
+
+  /**
+   * A gate that stopped a corner turn before its harness could start is a fact
+   * the SERVER states, not prose the agent wrote. Inscribing it here, once per
+   * pending grant per TURN (the derived id carries the grant and the turn
+   * request, so a retried authorization inside one turn collides while a later
+   * turn blocked on the same grant still speaks instead of settling silently),
+   * is what keeps it out of `postRoomMessage`: a system line is never an agent
+   * reply, so it never reaches `routeAgentResult`,
+   * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
+   * writes no message and records a plain `complete` receipt, so neither gate
+   * can settle as the calm `had nothing to add` line.
+   *
+   * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
+   * already reaches the agent as its tool error, not a turn that never started.
+   * A repository ask that MINTS its grant this turn is excluded too, because
+   * `requestAgentGrant` puts that grant's actionable card in this same corner
+   * one row earlier; only a host ask, whose card goes to the owner's `@system`
+   * DM, and a later turn blocked on an already-pending grant, which writes no
+   * card at all, leave the corner with nothing else to say.
+   */
+  private async noteBlockedTurnGate(input: {
+    readonly roomId: string;
+    readonly agentId: string;
+    readonly kind: 'repository' | 'host';
+    readonly ownerHandle: string | null;
+    readonly grantId: string;
+  }) {
+    const id = createHash('sha256')
+      .update(
+        `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
+      )
+      .digest('hex');
+    await systemLine(this.database, {
+      id,
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
+      verb: 'asked',
+      object: {
+        text:
+          input.kind === 'host'
+            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
+            : 'a Workspace admin to approve repository access',
+      },
+      ...(this.authorizedCommand?.source_message_id
+        ? { afterMessageId: this.authorizedCommand.source_message_id }
+        : {}),
+    });
   }
 
   // --- R5: connector offers -------------------------------------------------

@@ -112,9 +112,7 @@ class FailOnce implements SqlDatabase {
     return this.inner.query<Row>(sql, values);
   }
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.inner.transaction((inner) =>
-      work(new FailOnce(inner, this.match, this.owner)),
-    );
+    return this.inner.transaction((inner) => work(new FailOnce(inner, this.match, this.owner)));
   }
 }
 
@@ -321,6 +319,119 @@ describe('corner message attribution', () => {
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
   });
 
+  // A corner turn blocked by an unapproved gate never parses as the agent's
+  // own verdict. The server inscribes the wait as a system line and the turn
+  // settles with no reply; because a line is not a reply, a configured
+  // reviewer's blocked turn neither hands the branch back nor spends the
+  // handback budget.
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'] as const)(
+    'inscribes a pending %s gate as a system line and hands nothing back',
+    async (gate) => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [B]);
+      await greenHead(21, '1'.repeat(40));
+      const host = gate === 'authorizeHostCall';
+      const waiting = () =>
+        db
+          .query<{ text: string; author_id: string; created_at: Date }>(
+            `SELECT text,author_id,created_at FROM messages
+           WHERE room_id=$1 AND presentation='system' AND text LIKE '%to approve%access'
+           ORDER BY created_at`,
+            [C],
+          )
+          .then((r) => r.rows);
+      const cards = () =>
+        db
+          .query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='grant-request'`, [C])
+          .then((r) => r.rows);
+      const causeOf = (messageId: string) =>
+        db
+          .query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [messageId])
+          .then((r) => r.rows[0]!.created_at.getTime());
+      const [review] = await commands(B, C);
+      await claim(review!);
+      const blocked = await daemon.execute(
+        gate,
+        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1' },
+        B,
+      );
+      expect(blocked.allowed).toBe(false);
+      // A fresh repository ask puts its own actionable grant-request card in
+      // this corner, so the server adds no second sentence beside it; a host
+      // ask's card goes to the owner's @system DM, leaving the corner silent
+      // unless the server speaks.
+      expect(await cards()).toHaveLength(host ? 0 : 1);
+      expect(await waiting()).toHaveLength(host ? 1 : 0);
+      // The body posts no reply on this path; the turn settles as a plain
+      // complete receipt. A system line is never a reviewer verdict, so the
+      // worker is not woken and the handback budget is untouched.
+      await daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: C,
+          agentId: B,
+          requestId: review!.turnRequestId,
+          generationId: 'g1',
+          status: 'complete',
+        },
+        B,
+      );
+      expect(await commands(A, C)).toEqual([]);
+      expect(
+        (
+          await db.query<{ review_handback_count: number }>(
+            `SELECT review_handback_count FROM corner_facts WHERE corner_id=$1`,
+            [C],
+          )
+        ).rows[0]?.review_handback_count,
+      ).toBe(0);
+      // A LATER turn blocked by the same still-pending grant writes no card of
+      // its own, so it speaks rather than settling silently.
+      const again = await systemLine(db, {
+        roomId: C,
+        authorId: H,
+        subject: { kind: 'person', id: H, name: 'Human' },
+        verb: 'requested work',
+      });
+      await createAgentCommand(db, {
+        roomId: C,
+        agentId: B,
+        sourceMessageId: again.id,
+        reason: 'corner_objective',
+      });
+      const next = (await commands(B, C)).find((command) => command.id !== review!.id)!;
+      await claim(next, 'g2');
+      await daemon.execute(
+        gate,
+        { roomId: C, requestId: next.turnRequestId, generationId: 'g2' },
+        B,
+      );
+      expect(await cards()).toHaveLength(host ? 0 : 1);
+      const lines = await waiting();
+      expect(lines).toHaveLength(host ? 2 : 1);
+      // The server states the wait in the corner, authored by the agent whose
+      // turn stopped, and names the approver for the host gate.
+      const line = lines.at(-1)!;
+      expect(line.author_id).toBe(B);
+      expect(line.text).toBe(
+        host
+          ? '@goosy asked @human to approve host access'
+          : '@goosy asked a Workspace admin to approve repository access',
+      );
+      // The notice never sorts above the message that provoked it.
+      expect(line.created_at.getTime()).toBeGreaterThanOrEqual(
+        (await causeOf(next.sourceMessageId)) + 1_000,
+      );
+      // A retried authorization inside the SAME turn collides on identity.
+      await daemon.execute(
+        gate,
+        { roomId: C, requestId: next.turnRequestId, generationId: 'g2' },
+        B,
+      );
+      expect(await waiting()).toHaveLength(host ? 2 : 1);
+    },
+  );
+
   it('commits the verdict and the handoff together, or neither', async () => {
     // The stall this whole corner removes is a durable verdict nobody was
     // woken for. A handoff written AFTER the verdict commits can produce
@@ -346,10 +457,9 @@ describe('corner message attribution', () => {
     expect(await stored(verdict)).toBe(0);
     expect(
       (
-        await db.query<{ state: string }>(
-          `SELECT state FROM agent_commands WHERE id=$1`,
-          [review!.id],
-        )
+        await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          review!.id,
+        ])
       ).rows[0]?.state,
     ).toBe('claimed');
     expect(await commands(A, C)).toEqual([]);
@@ -369,28 +479,40 @@ describe('corner message attribution', () => {
     await greenHead(19, '1'.repeat(40));
     const [firstReview] = await commands(B, C);
     await claim(firstReview!);
-    await result(firstReview!, 'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.');
+    await result(
+      firstReview!,
+      'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.',
+    );
     const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
     expect(repair).toBeDefined();
     await claim(repair!);
     await result(repair!, 'Fixed F1; the agreed label is present and the affected check passed.');
-    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [C])).rowCount).toBe(0);
+    expect(
+      (await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [C])).rowCount,
+    ).toBe(0);
 
     await greenHead(19, '2'.repeat(40));
     const [secondReview] = await commands(B, C);
     expect(secondReview).toBeDefined();
     await claim(secondReview!);
     await expect(
-      daemon.execute('approveCornerMerge', {
-        cornerId: C,
-        headSha: '2'.repeat(40),
-        briefRevision: 1,
-      }, B),
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: C,
+          headSha: '2'.repeat(40),
+          briefRevision: 1,
+        },
+        B,
+      ),
     ).resolves.toMatchObject({ status: 'approved', headSha: '2'.repeat(40) });
     expect(
-      (await db.query<{ head_sha: string; brief_revision: number }>(
-        `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`, [C],
-      )).rows,
+      (
+        await db.query<{ head_sha: string; brief_revision: number }>(
+          `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows,
     ).toEqual([{ head_sha: '2'.repeat(40), brief_revision: 1 }]);
   });
 
@@ -595,7 +717,11 @@ describe('corner message attribution', () => {
           JSON.stringify({
             checks: 'passing',
             lifecycle: 'in-review',
-            pr: { number: 10, url: 'https://github.com/acme/repo/pull/10', headSha: '4'.repeat(40) },
+            pr: {
+              number: 10,
+              url: 'https://github.com/acme/repo/pull/10',
+              headSha: '4'.repeat(40),
+            },
           }),
         ],
       );

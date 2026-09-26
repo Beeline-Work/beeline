@@ -26,6 +26,25 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
+/**
+ * Read the routing contract out of an Expo-service envelope.
+ *
+ * Expo's Android bridge rewrites `content.data` with the parsed notification
+ * body whenever the FCM data payload carries a JSON `body` — its Expo-service
+ * envelope shape — and that rewrite replaces Beeline's own top-level fields.
+ * The routing fields must therefore also be readable from the envelope's
+ * nested `data`, so a JSON-shaped body can never erase the destination. A
+ * plain payload is returned unchanged.
+ */
+function unwrapNotificationEnvelope(data: unknown): unknown {
+  const nested = getObjectValue(data, 'data');
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return data;
+  const carriesRouting = ['type', 'channelId', 'roomId', 'workspaceId', 'target'].some(
+    (key) => nonEmptyString(getObjectValue(nested, key)) !== undefined,
+  );
+  return carriesRouting ? nested : data;
+}
+
 type BuzzNotificationTargetBase = {
   type: string;
   eventId?: string;
@@ -64,7 +83,7 @@ export type BuzzNotificationResolver = {
 
 /** Parse the FCM string-only data contract without trusting arbitrary route input. */
 export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificationTarget | null {
-  const normalizedData = normalizeNotificationData(data);
+  const normalizedData = unwrapNotificationEnvelope(normalizeNotificationData(data));
   if (!normalizedData || typeof normalizedData !== 'object' || Array.isArray(normalizedData)) {
     return null;
   }

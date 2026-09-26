@@ -60,6 +60,7 @@ export const COMPAT_RUNTIMES = [
   { platform: 'ios', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '26' },
   { platform: 'ios', runtimeVersion: '27' },
+  { platform: 'ios', runtimeVersion: '29' },
 ];
 
 // Every (platform, runtimeVersion) a shipped or submitted native store binary
@@ -103,7 +104,7 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     platform: 'android',
     runtimeVersion: '29',
     evidence:
-      'store binaries shipped on the android@29 pin introduced by #1540 (fa8b3b9e4) before the runtime-30 notification-routing binary',
+      'store binaries shipped on the android@29 pin (c095ca34, v0.2.20) and uploaded to the Play production track by successful unified release run 35802330273 (mobile_native_android step "Upload Android to the selected Play track")',
   },
   {
     platform: 'ios',
@@ -134,6 +135,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     runtimeVersion: '27',
     evidence:
       'store binaries shipped on the ios@27 pin contemporaneous with android@26 (v0.0.118, head 227b74c95dbc)',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '29',
+    evidence:
+      'store binaries submitted on the ios@29 pin (c095ca34, v0.2.20) by successful unified release run 35802330273 (mobile_native_ios step "Submit iOS build to TestFlight for a selected store track")',
   },
 ];
 

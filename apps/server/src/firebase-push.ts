@@ -12,8 +12,6 @@ import type { PushSender } from './background.js';
 
 export type PushDeliveryMessage = Parameters<PushSender['send']>[1];
 
-export const ANDROID_PUSH_CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
-
 interface FirebaseCredentialEnvironment {
   GOOGLE_APPLICATION_CREDENTIALS_JSON?: string;
   GOOGLE_CLOUD_PROJECT?: string;
@@ -100,12 +98,7 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
     token,
     notification: { title: 'Beeline', body: message.text.slice(0, 200) },
     data,
-    android: {
-      notification: {
-        clickAction: ANDROID_PUSH_CLICK_ACTION,
-        ...(data.roomId ? { tag: data.roomId } : {}),
-      },
-    },
+    ...(data.roomId ? { android: { notification: { tag: data.roomId } } } : {}),
     apns: {
       payload: {
         aps: { sound: 'default', ...(data.roomId ? { threadId: data.roomId } : {}) },

@@ -1,0 +1,25 @@
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt
+index 2e51957..487e4ec 100644
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt
+@@ -111,11 +111,15 @@ object NotificationManager {
+       }
+     } else {
+       // Otherwise, the app has been launched from a killed state, and our listeners
+-      // haven't yet been setup. We'll add this to a list of pending notifications
+-      // for them to process once they've been initialized.
+-      if (pendingNotificationResponsesFromExtras.isEmpty()) {
+-        pendingNotificationResponsesFromExtras.add(extras)
+-      }
++      // haven't yet been setup. Hold the extras for them to process once initialized.
++      //
++      // A killed process can be relaunched from its retained task, whose recorded
++      // intent is an OLDER notification tap; Android then delivers the FRESH tap as
++      // onNewIntent. Both arrive before the JS bundle registers a listener, so a
++      // single-slot queue that kept only the FIRST parks the stale extras and drops
++      // the tap the person actually made. Keep the newest intent's extras instead.
++      pendingNotificationResponsesFromExtras.clear()
++      pendingNotificationResponsesFromExtras.add(extras)
+     }
+   }
+ }

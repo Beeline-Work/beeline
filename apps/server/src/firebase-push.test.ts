@@ -1,18 +1,12 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Credential, ServiceAccount } from 'firebase-admin/app';
 import {
-  ANDROID_PUSH_CLICK_ACTION,
   firebaseAppOptions,
   firebasePushMessage,
   requirePushDeliveryCredentials,
 } from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
-const androidPushRoutingPlugin = readFileSync(
-  new URL('../../mobile/plugins/withAndroidPushRouting.js', import.meta.url),
-  'utf8',
-);
 
 describe('Firebase push credentials', () => {
   it('uses an inline service account with cert and its project id', () => {
@@ -92,11 +86,6 @@ describe('Firebase push credentials', () => {
 });
 
 describe('Firebase push routing payload', () => {
-  it('targets the Android Activity that replaces a retained notification task', () => {
-    expect(androidPushRoutingPlugin).toContain(`'${ANDROID_PUSH_CLICK_ACTION}'`);
-    expect(androidPushRoutingPlugin).toContain('Intent.FLAG_ACTIVITY_CLEAR_TASK');
-  });
-
   it.each([
     ['Room mention', 'room-1', 'room-1', undefined, 'message'],
     ['corner mention', 'parent-1', 'corner-1', 'corner-1', 'message'],
@@ -125,11 +114,28 @@ describe('Firebase push routing payload', () => {
       ...(cornerId ? { cornerId } : {}),
       messageId: 'message-1',
     });
-    expect(payload.android).toEqual({
-      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION, tag: roomId },
-    });
+    expect(payload.android).toEqual({ notification: { tag: roomId } });
     expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
     expect(payload.android).not.toHaveProperty('collapseKey');
+  });
+
+  it('never puts a JSON body in data, because Expo Android would rewrite it over the routing fields', () => {
+    // expo-notifications' NotificationSerializer checks the data `body` for a
+    // JSON object and, when it finds one, replaces `content.data` with the
+    // parsed envelope — dropping workspaceId/roomId/channelId/messageId. A
+    // JSON-shaped MESSAGE is fine; a JSON-shaped data `body` is not, so the
+    // routing contract must never publish one.
+    const payload = firebasePushMessage('device-token', {
+      messageId: 'message-json',
+      workspaceId: 'workspace-1',
+      roomId: 'room-1',
+      channelId: 'room-1',
+      target: 'message',
+      type: 'message',
+      text: '{"note":"an agent posted JSON"}',
+    });
+    expect(payload.data).not.toHaveProperty('body');
+    expect(payload.notification?.body).toBe('{"note":"an agent posted JSON"}');
   });
 
   it('carries a workspace join to its exact Workspace and Room', () => {
@@ -143,12 +149,7 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
-      android: {
-        notification: {
-          clickAction: ANDROID_PUSH_CLICK_ACTION,
-          tag: 'room-welcome',
-        },
-      },
+      android: { notification: { tag: 'room-welcome' } },
       apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
@@ -162,19 +163,17 @@ describe('Firebase push routing payload', () => {
   });
 
   it('routes a Workspace-only join to the exact Workspace without inventing a Room', () => {
-    const payload = firebasePushMessage('device-token', {
-      messageId: 'workspace-join:notification-id',
-      workspaceId: 'workspace-default',
-      type: 'workspace-join',
-      text: 'alice joined Beeline',
-    });
-    expect(payload.data).toEqual({
+    expect(
+      firebasePushMessage('device-token', {
+        messageId: 'workspace-join:notification-id',
+        workspaceId: 'workspace-default',
+        type: 'workspace-join',
+        text: 'alice joined Beeline',
+      }).data,
+    ).toEqual({
       type: 'workspace-join',
       target: 'workspace',
       workspaceId: 'workspace-default',
-    });
-    expect(payload.android).toEqual({
-      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION },
     });
   });
 });

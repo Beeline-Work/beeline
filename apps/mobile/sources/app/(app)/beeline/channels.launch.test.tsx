@@ -13,25 +13,12 @@ const BEELINE_ROOM_ID = 'room-beeline';
 const WORKSPACE_ID = 'workspace-mine';
 const deckSource = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
 const rootSource = readFileSync(path.join(__dirname, '..', 'index.tsx'), 'utf8');
-const appConfigSource = readFileSync(path.join(__dirname, '../../../../app.config.js'), 'utf8');
-const androidPushRoutingSource = readFileSync(
-  path.join(__dirname, '../../../../plugins/withAndroidPushRouting.js'),
-  'utf8',
-);
 
 beforeEach(() => {
   resetInitialLandingForTests();
 });
 
 describe('phone cold launch after the deck replace', () => {
-  it('gives every Android push tap a fresh MainActivity intent with the tapped extras', () => {
-    expect(appConfigSource).toContain('require("./plugins/withAndroidPushRouting.js")');
-    expect(androidPushRoutingSource).toContain("'app.usebeeline.NOTIFICATION'");
-    expect(androidPushRoutingSource).toContain('Intent.FLAG_ACTIVITY_CLEAR_TASK');
-    expect(androidPushRoutingSource).toContain('putExtras(sourceExtras)');
-    expect(androidPushRoutingSource).toContain("'android:noHistory': 'true'");
-  });
-
   it('lands on the Room deck and does not restore last-viewed or first-Room', () => {
     expect(rootSource).toContain("router.replace('/beeline/channels')");
     expect(deckSource).not.toContain('loadLastViewedChannel');

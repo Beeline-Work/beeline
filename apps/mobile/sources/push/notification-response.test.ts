@@ -259,6 +259,25 @@ describe('routeBuzzNotificationResponse', () => {
 });
 
 describe('notification response wiring', () => {
+  // A killed process can be relaunched from its retained task, whose recorded
+  // intent is an OLDER notification tap; Android then delivers the fresh tap as
+  // onNewIntent. Both reach the native queue before the JS bundle registers a
+  // listener. The installed expo-notifications build must therefore keep the
+  // NEWEST extras, or the tap the person actually made is silently dropped and
+  // they land back on the Room list (patch-package: apps/mobile/patches).
+  it('keeps the newest cold-start extras in the installed android notification queue', () => {
+    const notificationManager = readFileSync(
+      new URL(
+        '../../node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationManager.kt',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    expect(notificationManager).toContain('pendingNotificationResponsesFromExtras.clear()');
+    expect(notificationManager).toContain('pendingNotificationResponsesFromExtras.add(extras)');
+    expect(notificationManager).not.toContain('pendingNotificationResponsesFromExtras.isEmpty()');
+  });
+
   it.each(
     (['channel', 'personal'] as const).flatMap((tagKind) =>
       (['room', 'corner'] as const).flatMap((surface) =>

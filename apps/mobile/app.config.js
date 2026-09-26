@@ -61,13 +61,17 @@ export default {
         // that). Each platform pins its own runtime below. A bump says
         // "a new native build is shipping for this platform". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
-        // without bumping it.
+        // without bumping it. The gate hashes the installed native dependency
+        // tree for both platforms, so a patch to one platform's native source
+        // (apps/mobile/patches) moves the other platform's stamp too; both pins
+        // move together and the old runtime stays in `COMPAT_RUNTIMES` so
+        // installed binaries keep receiving OTA.
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "29",
+            runtimeVersion: runtimeVersionOverride || "30",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -172,7 +176,6 @@ export default {
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidBuildTooling.js"),
-            require("./plugins/withAndroidPushRouting.js"),
             [
                 "expo-router",
                 {

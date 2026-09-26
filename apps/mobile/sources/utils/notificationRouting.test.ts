@@ -90,6 +90,37 @@ describe('getBuzzNotificationTargetFromData', () => {
       messageId: 'event-456',
     });
   });
+
+  it('reads routing back out of a JSON-shaped body Expo rewrote into an envelope', () => {
+    // Expo's Android bridge JSON-parses a data `body` and replaces
+    // `content.data` with the parsed envelope; the destination must survive
+    // that rewrite rather than landing the person on the Room list.
+    expect(
+      getBuzzNotificationTargetFromData({
+        title: 'Beeline',
+        body: '["a","b"]',
+        data: {
+          type: 'channel-activity',
+          target: 'message',
+          workspaceId: 'workspace-other',
+          roomId: 'room-other',
+          channelId: 'room-other',
+          messageId: 'message-other',
+        },
+      }),
+    ).toMatchObject({
+      type: 'channel-activity',
+      target: 'message',
+      workspaceId: 'workspace-other',
+      roomId: 'room-other',
+      channelId: 'room-other',
+      messageId: 'message-other',
+    });
+  });
+
+  it('ignores a nested payload that carries no routing contract', () => {
+    expect(getBuzzNotificationTargetFromData({ type: 'test', data: { answer: 42 } })).toBeNull();
+  });
 });
 
 describe('navigateToBuzzNotificationResponse', () => {

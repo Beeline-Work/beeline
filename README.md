@@ -176,7 +176,7 @@ Sign in with GitHub, and the app hands you the pairing code that `npx usebeeline
 
 ## Beta
 
-Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 only; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
+Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 and macOS, not Windows; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
 
 ## One README for GitHub and npm
 

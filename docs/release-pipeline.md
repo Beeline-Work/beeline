@@ -136,10 +136,14 @@ Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
-Normal selective attempts have a 20-minute dispatch-to-result budget. Component
-jobs have shorter explicit timeouts and network smoke checks have second-scale
-limits. The final index records outcome, duration, selected/carried components,
-and a failure class (`budget` or the unfinished component list).
+Normal selective attempts have a 20-minute dispatch-to-result budget. An attempt
+that built a store binary or ran the emulator proof is allowed 60 minutes, and
+one that built the macOS helper bundles 150 - a cold `cargo build --release` on
+the one self-hosted Intel Mac that the iOS leg also holds is queue time, not a
+missed budget. Component jobs otherwise have shorter explicit timeouts and
+network smoke checks have second-scale limits. The final index records outcome,
+duration, selected/carried components, and a failure class (`budget` or the
+unfinished component list).
 
 ## Reliability measurement
 

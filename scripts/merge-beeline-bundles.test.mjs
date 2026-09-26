@@ -52,7 +52,10 @@ test('merges verified native bundles into one release manifest', async () => {
       'linux-x64',
     ]);
     for (const bundle of Object.values(manifest.bundles)) {
-      assert.deepEqual(await readFile(join(output, bundle.file)), Buffer.from(`bundle:${bundle.file.replace(/^beeline-|\.tar\.gz$/g, '')}`));
+      assert.deepEqual(
+        await readFile(join(output, bundle.file)),
+        Buffer.from(`bundle:${bundle.file.replace(/^beeline-|\.tar\.gz$/g, '')}`),
+      );
     }
   } finally {
     await rm(root, { recursive: true, force: true });

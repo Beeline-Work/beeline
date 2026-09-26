@@ -17,8 +17,9 @@ When helper code or a shared helper contract is selected,
 `.github/actions/daemon-leg/action.yml` combines install-verified native
 `linux-x64`, `darwin-arm64`, and `darwin-x64` bundles under the release's exact
 version and source SHA. The macOS builds run natively: Apple silicon on GitHub's
-hosted macOS runner and Intel on the repository's self-hosted macOS runner. Other selective
-releases carry the last successful helper version, SHA, and artifact reference.
+hosted macOS runner and Intel on the repository's self-hosted macOS runner.
+Other selective releases carry the last successful helper version, SHA, and
+artifact reference.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to
 `.github/actions/pages-leg/action.yml`. The Pages leg:
 
@@ -61,23 +62,24 @@ The verifier requires the exact expected manifest, checks every SHA sidecar,
 and executes the production `SelfUpdateManager` in a disposable prefix seeded
 with an older identity. It fetches and hashes the actual tarball, extracts it,
 smoke-tests the CLI, activates the stable anchor, checks the installed identity,
-and runs the installed `beeline --version`. Release bundle verification does
-not pair, start a production daemon, or touch an existing helper. The older identity is a fixture that forces a
-same-release redeploy through the real updater path, not a claim of fleet
-restart. Release-time smoke proves the published package and manifest. Fleet
-uptake is asynchronous post-release observability and never blocks delivery.
+and runs the installed `beeline --version`. Release bundle verification does not
+pair, start a production daemon, or touch an existing helper. The older identity
+is a fixture that forces a same-release redeploy through the real updater path,
+not a claim of fleet restart. Release-time smoke proves the published package
+and manifest. Fleet uptake is asynchronous post-release observability and never
+blocks delivery.
 
 The PR gate `MAC HELPER ACCEPTANCE` runs on the repository's self-hosted Intel
-Mac, on its own path filter alone (a shared-package or unmapped-path change
-does not widen onto that one machine). It performs a fresh installer run, exercises launchd crash restart and a
-bootout/bootstrap cycle (the closest non-destructive CI equivalent to a
-logout/login), verifies the terminal exit-status contract, pairs against the
-in-process monolith, observes a Room answer, and exercises `open_corner` with
-the deterministic ACP fixture. The native Apple-silicon release build runs its
-same installer/ACP/CodeGraph bundle proof on GitHub's hosted arm64 Mac runner,
-which is where the Apple-silicon bundle is proven — no pull-request gate rebuilds
-it. The gate's path filter is the macOS-specific sources alone, so an ordinary
-`apps/body` or shared-package change never queues behind that one Mac.
+Mac. Its filter is the macOS-specific sources alone — never the run-everything
+fallback — so an ordinary `apps/body`, shared-package, or unmapped-path change
+never queues behind that one machine. It performs a fresh installer run,
+exercises launchd crash restart and a bootout/bootstrap cycle
+(the closest non-destructive CI equivalent to a logout/login), verifies the
+terminal exit-status contract, pairs against the in-process monolith, observes a
+Room answer, and exercises `open_corner` with the deterministic ACP fixture. The
+native Apple-silicon bundle is proven only by the release's own `helper_macos`
+leg, which runs the same installer/ACP/CodeGraph bundle proof on GitHub's hosted
+arm64 Mac runner; no pull-request gate rebuilds it.
 
 macOS has no bubblewrap namespaces. The helper therefore uses the existing
 `bwrap`-unavailable fallback: it logs `harness OS sandbox UNAVAILABLE`, runs ACP

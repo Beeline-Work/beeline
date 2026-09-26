@@ -88,7 +88,11 @@ while :; do sleep 1; done
 
     const afterCrash = await count();
     await run('launchctl', ['bootout', target]);
-    await run('launchctl', ['bootstrap', launchdUserDomain(), launchdAgentPlistPath(publicKey, env)]);
+    await run('launchctl', [
+      'bootstrap',
+      launchdUserDomain(),
+      launchdAgentPlistPath(publicKey, env),
+    ]);
     await vi.waitFor(async () => expect(await count()).toBeGreaterThan(afterCrash), {
       timeout: 20_000,
       interval: 250,

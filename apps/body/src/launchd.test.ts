@@ -87,7 +87,8 @@ function parsePlist(source: string): Record<string, PlistValue> {
     else if (name === 'true' || name === 'false') put(name === 'true');
     else if (!selfClosing) throw new Error(`unsupported plist element: ${name}`);
   }
-  if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('plist has no root dict');
+  if (!root || typeof root !== 'object' || Array.isArray(root))
+    throw new Error('plist has no root dict');
   return root as Record<string, PlistValue>;
 }
 
@@ -205,9 +206,7 @@ describe('launchd supervision contract', () => {
     const environment = job.EnvironmentVariables as Record<string, PlistValue>;
     expect(environment.HOME).toBe('/Users/operator');
     expect(String(environment.PATH).split(':')).toContain('/Users/operator/.local/bin');
-    expect(job.StandardOutPath).toBe(
-      `/Users/operator/Library/Logs/Beeline/agent-${publicKey}.log`,
-    );
+    expect(job.StandardOutPath).toBe(`/Users/operator/Library/Logs/Beeline/agent-${publicKey}.log`);
     expect(job.StandardErrorPath).toBe(job.StandardOutPath);
   });
 
@@ -463,10 +462,10 @@ describe('launchd supervision contract', () => {
 
     await expect(cleanupLaunchdAgentService(publicKey, { env, run })).resolves.toBe(true);
 
-    expect(calls).toEqual([
-      ['disable', `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`],
-    ]);
-    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(calls).toEqual([['disable', `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`]]);
+    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('reconciles only exact orphan agent plists without stopping a running one', async () => {
@@ -506,10 +505,10 @@ describe('launchd supervision contract', () => {
     // This pass runs inside a starting daemon: a bootout here would wait out the
     // orphan's whole drain (up to ExitTimeOut) before that daemon could run, and
     // on a single-agent host the job being booted out is its own.
-    expect(calls).toEqual([
-      ['disable', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`],
-    ]);
-    await expect(stat(launchdAgentPlistPath(orphan, env))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(calls).toEqual([['disable', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`]]);
+    await expect(stat(launchdAgentPlistPath(orphan, env))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
     await expect(stat(launchdAgentPlistPath(live, env))).resolves.toMatchObject({});
 
     await expect(cleanupLaunchdAgentService(orphan, { env, run })).resolves.toBe(false);

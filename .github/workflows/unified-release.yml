@@ -1191,7 +1191,7 @@ jobs:
           # binary built in this attempt (local iOS archive+export ~30 min on the Mac
           # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
           # every component yet was classified "budget" and never published its
-          # release record. When a native build ran, allow 60 minutes instead. The
+          # release record. When a native build ran, allow 60 minutes instead.
           # A macOS helper release pays the same shape twice over: a cold
           # `cargo build --release` of buzz-agent/buzz-dev-mcp, serial ahead of the
           # helper leg, on the ONE self-hosted Intel Mac that the iOS leg (90-minute

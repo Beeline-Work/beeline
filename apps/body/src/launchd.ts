@@ -6,11 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { defaultSupervisorRoot, runtimeConfigPath } from './runtime.js';
-import {
-  ensureSquireHostDir,
-  SQUIRE_BROKER_FLAG,
-  squireHostRewriteEnv,
-} from './squire-host.js';
+import { ensureSquireHostDir, SQUIRE_BROKER_FLAG, squireHostRewriteEnv } from './squire-host.js';
 import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
@@ -71,7 +67,12 @@ export function launchdAgentPlistPath(
   publicKey: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return resolve(launchdHome(env), 'Library', 'LaunchAgents', `${launchdAgentLabel(publicKey)}.plist`);
+  return resolve(
+    launchdHome(env),
+    'Library',
+    'LaunchAgents',
+    `${launchdAgentLabel(publicKey)}.plist`,
+  );
 }
 
 export function launchdBrokerPlistPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -143,10 +144,7 @@ function environmentXml(environment: Readonly<Record<string, string>>): string {
     .join('\n');
 }
 
-export function launchdAgentPlist(
-  publicKey: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function launchdAgentPlist(publicKey: string, env: NodeJS.ProcessEnv = process.env): string {
   const home = launchdHome(env);
   const label = launchdAgentLabel(publicKey);
   const logDir = resolve(home, 'Library', 'Logs', 'Beeline');
@@ -336,11 +334,7 @@ export async function installLaunchdAgentService(
   const label = launchdAgentLabel(publicKey);
   const plistPath = launchdAgentPlistPath(publicKey, env);
   await mkdir(resolve(home, 'Library', 'Logs', 'Beeline'), { recursive: true, mode: 0o700 });
-  await writeManagedFile(
-    launchdAgentSupervisorPath(env),
-    launchdAgentSupervisorScript(),
-    0o700,
-  );
+  await writeManagedFile(launchdAgentSupervisorPath(env), launchdAgentSupervisorScript(), 0o700);
   await writeManagedFile(plistPath, launchdAgentPlist(publicKey, env), 0o600);
   const run = options.run ?? runLaunchctl;
   const domain = launchdUserDomain();

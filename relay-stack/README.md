@@ -58,10 +58,10 @@ and packages it with `buzz-agent` and `buzz-dev-mcp` into
 `BUZZ_AGENT_BIN` and `BUZZ_DEV_MCP_BIN`, then `PATH`, and otherwise builds the
 pinned upstream source for the host platform.
 
-`darwin-arm64` and `darwin-x64` are also declared targets for local builds (CI builds
-both — see `docs/cli-bundle-channel.md`; a cross-built darwin bundle carries
-`verified: false` and cannot be published). On a non-macOS build host, supply
-both matching binaries:
+`darwin-arm64` and `darwin-x64` are also declared targets for local builds (CI
+builds both — see `docs/cli-bundle-channel.md`; a cross-built darwin bundle
+carries `verified: false` and cannot be published). On a non-macOS build host,
+supply both matching binaries:
 
 ```sh
 BUZZ_AGENT_BIN=/path/to/darwin-arm64/buzz-agent \

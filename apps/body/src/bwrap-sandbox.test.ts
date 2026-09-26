@@ -595,6 +595,17 @@ describe('feature detection falls back rather than failing the daemon', () => {
     const usable = { path: '/usr/bin/bwrap', advisory: 'ENABLED' };
 
     /**
+     * `apt-get update` losing the lists lock, verbatim: three lines whose LAST
+     * one never says "could not get lock", which is why the verdict is read from
+     * the whole output.
+     */
+    const APT_LISTS_LOCK_HELD = [
+      'E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4711 (apt-get)',
+      'N: Be aware that removing the lock file is not a solution and may break your system.',
+      'E: Unable to lock directory /var/lib/apt/lists/',
+    ].join('\n');
+
+    /**
      * Hermetic: a PATH holding an `apt-get` and no `bwrap`, so the verdict does
      * not depend on what this host happens to have installed. The runner is
      * always stubbed, so nothing on this PATH is ever executed.
@@ -753,16 +764,22 @@ describe('feature detection falls back rather than failing the daemon', () => {
       const host = hostPath([]);
       try {
         let ran = false;
+        let extended = 0;
         const result = await ensureBwrapSandbox({
           env: host.env,
           platform: 'linux',
           detect: () => missing,
+          beforeInstall: () => {
+            extended += 1;
+          },
           run: async () => {
             ran = true;
             return { code: 0, output: '' };
           },
         });
         expect(ran).toBe(false);
+        // Nothing is going to run, so the caller is not asked for more deadline.
+        expect(extended).toBe(0);
         expect(result.advisory).toContain('no apt-get');
         // Naming the absent package manager and then prescribing it is the one
         // thing this branch exists to avoid.
@@ -823,13 +840,18 @@ describe('feature detection falls back rather than failing the daemon', () => {
     it('skips the install on a platform the package does not serve', async () => {
       const host = hostPath(['apt-get']);
       try {
+        let extended = 0;
         const result = await ensureBwrapSandbox({
           env: host.env,
           platform: 'darwin',
           detect: () => missing,
+          beforeInstall: () => {
+            extended += 1;
+          },
           run: async () => ({ code: 0, output: '' }),
         });
         expect(result.path).toBeUndefined();
+        expect(extended).toBe(0);
         expect(result.advisory).toContain('Linux only');
       } finally {
         host.cleanup();
@@ -967,7 +989,7 @@ describe('feature detection falls back rather than failing the daemon', () => {
           detect: () => (existsSync(resolve(host.dir, 'bwrap')) ? usable : missing),
           run: async (command, args) =>
             args.includes('update')
-              ? { code: 100, output: 'E: Could not get lock /var/lib/apt/lists/lock' }
+              ? { code: 100, output: APT_LISTS_LOCK_HELD }
               : { code: 0, output: '' },
         });
         expect(sleeps).toBe(3);
@@ -993,11 +1015,13 @@ describe('feature detection falls back rather than failing the daemon', () => {
             clock += ms;
           },
           detect: () => missing,
-          run: async () => ({ code: 100, output: 'E: Could not get lock /var/lib/apt/lists/lock' }),
+          run: async () => ({ code: 100, output: APT_LISTS_LOCK_HELD }),
         });
         expect(result.path).toBeUndefined();
-        expect(result.advisory).toContain('Could not get lock');
-        expect(state.markedAt()).toBe(clock);
+        expect(result.advisory).toContain('Unable to lock directory');
+        // A lost lock is a fact about the sibling, not this host, so the next
+        // start still retries rather than sitting out a day on its word.
+        expect(state.markedAt()).toBeUndefined();
       } finally {
         state.cleanup();
         host.cleanup();

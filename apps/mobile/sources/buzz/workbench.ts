@@ -19,8 +19,7 @@ export type WorkbenchConnectorId =
   | 'google-gmail'
   | 'google-calendar'
   | 'google-drive'
-  | 'google-youtube'
-  | 'composio';
+  | 'google-youtube';
 /**
  * A catalog row is keyed by its fixed connector id; a dynamically connected
  * Registry MCP row is keyed by its own connector uuid instead.
@@ -86,9 +85,33 @@ export type WorkbenchConnection = {
   grantCount?: number;
 };
 
+/**
+ * One connected app — ONE row whatever serves it (`connect_app`, the one
+ * front door). The server chose the route; the row states which, in words.
+ */
+export type WorkbenchApp = {
+  id: string;
+  key: string;
+  name: string;
+  /** Brand domain for the row's mark; absent draws the lettermark. */
+  domain?: string;
+  transport: 'registry-mcp' | 'squire-api' | 'squire-browser';
+  status: 'connecting' | 'connected' | 'error';
+  errorMessage?: string;
+  helperName?: string;
+  /** The machine that serves it, for a Reconnect. */
+  helperId?: string;
+  /** The vault key a Squire route holds — folded into this row, not Keys. */
+  connectionReference?: string;
+  useCount: number;
+  lastUsedAt?: number;
+};
+
 export type WorkbenchView = {
   connectors: readonly WorkbenchConnector[];
   connections: readonly WorkbenchConnection[];
+  /** The viewer's apps, one row each. */
+  apps: readonly WorkbenchApp[];
   /** The viewer's own connected machines — the Workbench's helper candidates. */
   helpers: readonly WorkbenchHelper[];
 };
@@ -113,7 +136,6 @@ export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
   'google-calendar': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-drive': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-youtube': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
-  composio: 'Connect supported apps to let your agents use selected tools through Composio.',
 };
 
 /** How a tool row's trailing instrument reads (board revision 2): a state
@@ -640,4 +662,53 @@ export function ledgerBytes(bytes: number): string | undefined {
   if (!Number.isFinite(bytes) || bytes <= 0) return undefined;
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} kB`;
+}
+
+/** How an app row's trailing state reads: the word beside its dot. */
+export function appInstrument(status: WorkbenchApp['status']): {
+  value: 'connected' | 'connecting' | 'error';
+  glyph: 'live' | 'pulse' | 'failed';
+  valueTone?: 'danger' | 'accent';
+} {
+  if (status === 'connected') return { value: 'connected', glyph: 'live' };
+  if (status === 'connecting') return { value: 'connecting', glyph: 'pulse', valueTone: 'accent' };
+  return { value: 'error', glyph: 'failed', valueTone: 'danger' };
+}
+
+/** What serves the app, in the words the row states it. */
+export function appRouteLabel(transport: WorkbenchApp['transport']): string {
+  switch (transport) {
+    case 'registry-mcp':
+      return 'Official MCP server';
+    case 'squire-api':
+      return 'Trusty Squire · API key';
+    case 'squire-browser':
+      return 'Trusty Squire · browser';
+  }
+}
+
+/** The app row's one detail line: route, machine, and how much it was used. */
+export function appDetailLine(app: WorkbenchApp): string {
+  return [
+    appRouteLabel(app.transport),
+    app.helperName ? `on ${app.helperName}` : undefined,
+    app.useCount === 0
+      ? 'not used yet'
+      : app.useCount === 1
+        ? 'used once'
+        : `used ${app.useCount} times`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Keys an app row already holds are shown on that row, never listed twice. */
+export function keysOutsideApps(
+  view: Pick<WorkbenchView, 'apps'>,
+  connections: readonly WorkbenchConnection[],
+): readonly WorkbenchConnection[] {
+  const held = new Set(
+    view.apps.flatMap((app) => (app.connectionReference ? [app.connectionReference] : [])),
+  );
+  return connections.filter((connection) => !held.has(connection.ref));
 }

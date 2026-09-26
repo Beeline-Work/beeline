@@ -5,6 +5,7 @@ import {
   resolveGoogleConnectTarget,
   type ConnectionDetailView,
   type ConnectorInstallState,
+  type WorkbenchApp,
   type WorkbenchConnector,
   type WorkbenchHelper,
   type WorkbenchView,
@@ -150,6 +151,9 @@ export class MockWorkbenchSource implements WorkbenchSource {
   private readonly installs = new Map<string, MockInstall>();
   private failedConnectors = new Set<string>();
   private signInMethod: 'streamed' | 'oauth' | undefined;
+  private apps: WorkbenchApp[] = [];
+  /** Every connectApp call, so a test can read what the screen asked for. */
+  readonly appRequests: { app: string; helperId: string; reconnect?: boolean }[] = [];
 
   async readWorkbench(input: {
     workspaceId: string;
@@ -230,6 +234,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
         },
       ],
       connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],
+      apps: viewer ? this.apps : [],
     };
   }
 
@@ -346,6 +351,46 @@ export class MockWorkbenchSource implements WorkbenchSource {
 
   async disconnectConnector(): Promise<void> {
     this.installs.clear();
+  }
+
+  async connectApp(input: {
+    workspaceId: string;
+    app: string;
+    helperId: string;
+    reconnect?: boolean;
+  }): Promise<{ appId: string }> {
+    this.appRequests.push({
+      app: input.app,
+      helperId: input.helperId,
+      ...(input.reconnect ? { reconnect: true } : {}),
+    });
+    const key = input.app.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const existing = this.apps.find((app) => app.key === key);
+    if (existing) {
+      existing.status = 'connecting';
+      return { appId: existing.id };
+    }
+    const id = `app-${key}`;
+    this.apps.push({
+      id,
+      key,
+      name: input.app,
+      transport: 'squire-api',
+      status: 'connecting',
+      helperName: 'squire-box',
+      helperId: input.helperId,
+      useCount: 0,
+    });
+    return { appId: id };
+  }
+
+  async disconnectApp(input: { workspaceId: string; appId: string }): Promise<void> {
+    this.apps = this.apps.filter((app) => app.id !== input.appId);
+  }
+
+  /** Test hook: seed the viewer's apps. */
+  setApps(apps: readonly WorkbenchApp[]): void {
+    this.apps = apps.map((app) => ({ ...app }));
   }
 
   /** Test hook: make the next pairing of this connector fail at a step. */

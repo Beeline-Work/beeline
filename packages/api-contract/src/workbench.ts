@@ -165,8 +165,9 @@ export type WorkbenchAppView = {
   readonly route: AppRoute;
   readonly status: AppConnectionStatus;
   readonly errorMessage?: string;
-  /** The machine that serves it. */
+  /** The machine that serves it, named and by id (for a reconnect). */
   readonly helperName?: string;
+  readonly helperId?: string;
   /** The vault key a Squire route holds, when one is bound. */
   readonly connectionReference?: string;
   readonly useCount: number;

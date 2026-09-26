@@ -41,14 +41,14 @@ describe('desktop layout mode', () => {
     const channels = source('app/(app)/beeline/channels.tsx');
 
     expect(sidebar).toContain('roomListSections(filteredChats)');
-    expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Messages'");
+    expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
     expect(sidebar).toContain('<RoomListSectionHeader');
     expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
   });
 
   it('keeps section-head creation controls above the conversation sections', () => {
     const sidebar = source('components/SidebarView.tsx');
-    const actions = sidebar.indexOf("section.kind === 'rooms' ? ROOMS_LABEL : 'Messages'");
+    const actions = sidebar.indexOf("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
     const sections = sidebar.indexOf('<RoomListSectionHeader');
 
     // The retired primary-action block must stay retired.

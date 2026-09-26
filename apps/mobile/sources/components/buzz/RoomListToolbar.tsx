@@ -69,51 +69,57 @@ export function RoomListToolbar({
       )}
     </>
   );
+  const filters = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={[styles.filters, desktop && styles.desktopFilters]}
+    >
+      {(['all', 'unread', 'pinned'] as const).map((value) => (
+        <Pressable
+          key={value}
+          accessibilityRole="button"
+          accessibilityLabel={`${value} conversations`}
+          accessibilityState={{ selected: value === filter }}
+          onPress={() => onFilter(value)}
+          style={[styles.filter, !desktop && styles.mobileFilter, desktop && styles.desktopFilter]}
+          testID={`room-filter-${value}`}
+        >
+          <Text style={[styles.label, value === filter && styles.selected]}>
+            {value === 'pinned' ? 'Pinned' : value === 'all' ? 'All' : 'Unread'}
+            {counts ? <Text style={styles.count}> {counts[value]}</Text> : null}
+          </Text>
+          {desktop && value === filter && <View style={styles.selectedRule} />}
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+  const search = (
+    <View style={desktop && styles.desktopSearchWrap}>
+      <TextInput
+        ref={searchRef ?? localSearchRef}
+        value={query}
+        onChangeText={onQuery}
+        accessibilityLabel="Search Rooms and direct messages"
+        placeholder="Search Rooms and direct messages"
+        placeholderTextColor={styles.label.color}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[styles.search, desktop && styles.desktopSearch, focused && styles.searchFocused]}
+        testID={desktop ? 'desktop-room-search' : 'room-search'}
+      />
+    </View>
+  );
   return (
     <View>
-      <View style={[styles.toolbar, !desktop && styles.mobileToolbar]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filters}
-        >
-          {(['all', 'unread', 'pinned'] as const).map((value) => (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityLabel={`${value} conversations`}
-              accessibilityState={{ selected: value === filter }}
-              onPress={() => onFilter(value)}
-              style={[styles.filter, !desktop && styles.mobileFilter]}
-              testID={`room-filter-${value}`}
-            >
-              <Text style={[styles.label, value === filter && styles.selected]}>
-                {value === 'pinned' ? 'Pinned' : value === 'all' ? 'All' : 'Unread'}
-                {counts && (value !== 'all' || !desktop) ? (
-                  <Text style={styles.count}> {counts[value]}</Text>
-                ) : null}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-        {actions}
+      {desktop && search}
+      <View
+        style={[styles.toolbar, !desktop && styles.mobileToolbar, desktop && styles.desktopToolbar]}
+      >
+        {filters}
+        {!desktop && actions}
       </View>
-      {(desktop || mobileSearchOpen) && (
-        <View>
-          <TextInput
-            ref={searchRef ?? localSearchRef}
-            value={query}
-            onChangeText={onQuery}
-            accessibilityLabel="Search Rooms and direct messages"
-            placeholder="Search conversations"
-            placeholderTextColor={styles.label.color}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            style={[styles.search, focused && styles.searchFocused]}
-            testID={desktop ? 'desktop-room-search' : 'room-search'}
-          />
-        </View>
-      )}
+      {!desktop && mobileSearchOpen && search}
     </View>
   );
 }
@@ -127,12 +133,28 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileToolbar: { paddingLeft: theme.buzz.space.md },
   filters: { flexDirection: 'row', gap: theme.buzz.space.sm, alignItems: 'center' },
+  desktopToolbar: { paddingHorizontal: theme.buzz.space.md, borderBottomWidth: 0 },
+  desktopFilters: {
+    flex: 1,
+    gap: 20,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.buzz.border,
+  },
   filter: { minHeight: 44, minWidth: 32, alignItems: 'center', justifyContent: 'center' },
+  desktopFilter: { minHeight: 30, position: 'relative' },
   mobileFilter: { alignItems: 'flex-start' },
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   label: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   count: { color: theme.buzz.ledgerQuiet },
   selected: { color: theme.buzz.textPrimary },
+  selectedRule: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: -StyleSheet.hairlineWidth,
+    height: 1,
+    backgroundColor: theme.buzz.accent,
+  },
   bookmark: { color: theme.buzz.accent },
   searchFocused: { borderBottomColor: theme.buzz.accent },
   search: {
@@ -142,5 +164,13 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
     minHeight: 44,
+  },
+  desktopSearchWrap: { paddingHorizontal: theme.buzz.space.md, paddingTop: 12, paddingBottom: 8 },
+  desktopSearch: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: theme.buzz.radius,
   },
 }));

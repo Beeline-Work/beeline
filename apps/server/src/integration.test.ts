@@ -2651,6 +2651,45 @@ describe('monolith integration', () => {
     });
   });
 
+  it('projects exact mention and approval reasons onto Room-list rows', async () => {
+    const mentionId = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner please review')`,
+      [mentionId, ROOM, AGENT],
+    );
+    const readRoomItem = async () => {
+      const response = await request(`/v1/phone/workspaces/${WORKSPACE}/chats`);
+      expect(response.status).toBe(200);
+      return (
+        (await response.json()) as {
+          chats: Array<{
+            room: { id: string };
+            latestMessage?: { mentionsViewer?: true };
+            agentState?: string;
+            attentionReason?: { kind: string; actor?: string };
+          }>;
+        }
+      ).chats.find((item) => item.room.id === ROOM);
+    };
+    expect((await readRoomItem())?.latestMessage?.mentionsViewer).toBe(true);
+
+    const permissionId = 'room-list-permission';
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES($1,$2,$3,'request','{"type":"operation.execute"}'::jsonb,'pending')`,
+      [permissionId, ROOM, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,'Bee needs your approval','card','permission',$4::jsonb)`,
+      ['e'.repeat(64), ROOM, AGENT, JSON.stringify({ permissionId, agent: { pubkey: AGENT } })],
+    );
+    expect(await readRoomItem()).toMatchObject({
+      agentState: 'needs-you',
+      attentionReason: { kind: 'approval', actor: 'Bee' },
+    });
+  });
+
   it('carries the resolved all-offline Room footer state on the deck item', async () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)

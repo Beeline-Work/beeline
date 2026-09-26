@@ -1069,6 +1069,8 @@ export class PhoneService {
         latest_author_handle: string | null;
         latest_author_avatar: string | null;
         latest_author_face: string | null;
+        latest_tags_viewer: boolean;
+        attention_actor_name: string | null;
         peer_id: string | null;
         peer_kind: 'human' | 'agent' | null;
         peer_name: string | null;
@@ -1089,7 +1091,9 @@ export class PhoneService {
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
+        $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
+        attention_actor.name attention_actor_name,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
         NULL::timestamptz peer_activity_at,false unread,
@@ -1116,6 +1120,22 @@ export class PhoneService {
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
+      LEFT JOIN LATERAL (
+        SELECT agent.name
+        FROM permission_authority permission
+        LEFT JOIN LATERAL (
+          SELECT message.card FROM messages message
+          WHERE message.room_id=permission.room_id AND message.card_type='permission'
+            AND message.card->>'permissionId'=permission.permission_id
+          ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+        ) permission_card ON true
+        LEFT JOIN identities agent ON agent.id=permission_card.card->'agent'->>'pubkey'
+        WHERE permission.status='pending'
+          AND (permission.room_id=r.id OR permission.room_id IN (
+            SELECT id FROM rooms WHERE parent_id=r.id
+          ))
+        ORDER BY permission.updated_at DESC LIMIT 1
+      ) attention_actor ON true
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
@@ -1296,6 +1316,7 @@ export class PhoneService {
                   },
                   this.publicOrigin,
                 ),
+                ...(row.latest_tags_viewer ? { mentionsViewer: true as const } : {}),
               },
             }
           : {}),
@@ -1331,6 +1352,14 @@ export class PhoneService {
           : row.working
             ? { agentState: 'working' as const }
             : {}),
+        ...(row.needs_you
+          ? {
+              attentionReason: {
+                kind: 'approval' as const,
+                ...(row.attention_actor_name ? { actor: row.attention_actor_name } : {}),
+              },
+            }
+          : {}),
       })),
       viewer: await this.requireIdentity(viewerId),
       truncated: rooms.rows.length > 200,

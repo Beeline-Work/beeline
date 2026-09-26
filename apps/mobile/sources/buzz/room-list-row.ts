@@ -25,7 +25,7 @@ export type ExpandedCornerRefreshAction =
 
 export type RoomListSection = {
   kind: 'rooms' | 'messages';
-  title?: 'Messages';
+  title: 'Rooms' | 'Direct messages';
   data: ChatListItem[];
 };
 
@@ -41,9 +41,9 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
         (left.latestMessage?.createdAt ?? left.room.updatedAt ?? 0),
     );
   return [
-    ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),
+    ...(rooms.length ? [{ kind: 'rooms' as const, title: 'Rooms' as const, data: rooms }] : []),
     ...(messages.length
-      ? [{ kind: 'messages' as const, title: 'Messages' as const, data: messages }]
+      ? [{ kind: 'messages' as const, title: 'Direct messages' as const, data: messages }]
       : []),
   ];
 }
@@ -333,8 +333,26 @@ function attachmentPreview(
  * hidden behind agent state: an unread Room lights the square whatever its
  * agents are doing.
  */
-export function roomRowNeedsAttention(item: Pick<ChatListItem, 'unread' | 'agentState'>): boolean {
-  return item.unread || item.agentState === 'needs-you';
+export function roomRowNeedsAttention(
+  item: Pick<ChatListItem, 'unread' | 'agentState' | 'latestMessage'>,
+): boolean {
+  return (
+    item.unread || item.agentState === 'needs-you' || item.latestMessage?.mentionsViewer === true
+  );
+}
+
+/** The one gold replacement line for a Room that asks the viewer to act. */
+export function roomRowAttentionReason(
+  item: Pick<ChatListItem, 'agentState' | 'attentionReason' | 'latestMessage'>,
+): string | null {
+  if (item.agentState === 'needs-you') {
+    const actor = item.attentionReason?.actor?.trim();
+    return actor ? `approval \u00b7 ${actor}` : 'approval';
+  }
+  if (item.latestMessage?.mentionsViewer) {
+    return `mention \u00b7 @${previewHandle(item.latestMessage.author)}`;
+  }
+  return null;
 }
 
 /** Highest count shown exactly; anything more compacts so the chip stays one

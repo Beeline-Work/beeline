@@ -11,8 +11,8 @@ import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
  * tracker), so the whole rule is unit-testable without React Native.
  *
  * Contracts:
- * - Suppress whenever React Native AppState is 'active' — the person is
- *   already looking at the app; a heads-up banner over it is noise.
+ * - Suppress the OS heads-up whenever React Native AppState is 'active'; the
+ *   app's own bounded banner owns that state so it can sit below app chrome.
  * - Always suppress when the notification's channel/Room id is the currently
  *   open Room, regardless of app state — even mid-transition they are already
  *   reading exactly that conversation.

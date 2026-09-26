@@ -357,6 +357,31 @@ describe('phone contract', () => {
     ).toBeUndefined();
   });
 
+  it('reads the inviter and Workspace size on invite previews, dropping unreadable parts', () => {
+    const invite = { name: 'Builders', expiresAt: 2_000_000_000 };
+    expect(
+      readInviteView({
+        ...invite,
+        inviter: { name: 'Mara', handle: 'mara', face: 'fox', role: 'owner' },
+        memberCount: 8,
+        agentCount: 4,
+      }),
+    ).toEqual({
+      ...invite,
+      inviter: { name: 'Mara', handle: 'mara', face: 'fox', role: 'owner' },
+      memberCount: 8,
+      agentCount: 4,
+    });
+    expect(
+      readInviteView({
+        ...invite,
+        inviter: { name: 'Mara', role: 'emperor', handle: 7 },
+        memberCount: 'many',
+      }),
+    ).toEqual({ ...invite, inviter: { name: 'Mara' } });
+    expect(readInviteView({ ...invite, inviter: { handle: 'mara' } })).toEqual(invite);
+  });
+
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {
     const code = createAgentPairingCode(Uint8Array.from({ length: 8 }, (_, index) => index));
     expect(code).toBe('00010203-04050607');

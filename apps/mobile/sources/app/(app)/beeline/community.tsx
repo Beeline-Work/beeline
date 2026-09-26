@@ -1,63 +1,50 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  SurfaceRefreshScheduler,
-  isWorkspaceListView,
-  type Identity,
-  type WorkspaceListView,
-} from '@beeline/buzz-client';
+import { isWorkspaceListView, type Identity, type WorkspaceListView } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  createCommunityInviteUrl,
-  parseCommunityInviteToken,
-  resolveCommunityInvitePublicOrigin,
-} from '@/buzz/community-invite';
-import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
-import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { BuzzRigTransport } from '@/sync/transport';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
-import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { BrassButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { RoomGlyph } from '@/components/buzz/RoomGlyph';
+import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export default function BuzzCommunityCreateOrJoin() {
+/**
+ * Where a person arrives with no Workspace — and where the rail's "+" leads
+ * everyone else: two equal paths, Create a Workspace or Join with an invite
+ * link. Neither is emphasized over the other. An invite deep link never
+ * reaches this screen: it goes straight to its own confirmation.
+ */
+export default function WorkspaceChoice() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const requestedMode = first(useLocalSearchParams<{ mode?: string | string[] }>().mode);
   const [identity, setIdentity] = useState<Identity | null>(null);
-  const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'create' | 'join'>(requestedMode === 'join' ? 'join' : 'create');
-  const [communityName, setCommunityName] = useState('');
+  const [joinOpen, setJoinOpen] = useState(requestedMode === 'join');
   const [inviteInput, setInviteInput] = useState('');
-  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
     [workspaceList],
   );
-  const viewerAvatarUrl = workspaceList?.viewer.avatar;
-  const viewerFace = workspaceList?.viewer.face;
+  const hasWorkspaces = communities.length > 0;
 
   useEffect(() => {
     let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<WorkspaceListView> | undefined;
     void (async () => {
       try {
         const currentIdentity = await loadBuzzIdentity();
@@ -66,99 +53,39 @@ export default function BuzzCommunityCreateOrJoin() {
           return;
         }
         const relayUrl = await getEffectiveRelayUrl();
-        const nextTransport = new BuzzRigTransport(currentIdentity);
-        const relay = await nextTransport.ensureClient();
-        const http = new RoomViewClient({ baseUrl: relayUrl, identity: currentIdentity });
         const address = surfaceAddress(relayUrl, currentIdentity.publicKey, '/workspaces');
         const cached = await mobileSurfaceCache.read(address, isWorkspaceListView);
-        const stored = await loadActiveCommunityId(currentIdentity.publicKey);
         if (cancelled) return;
         setIdentity(currentIdentity);
-        setTransport(nextTransport);
-        setRelayUrl(relayUrl);
-        if (cached) {
-          setWorkspaceList(cached);
-          setActiveCommunityId(
-            cached.workspaces.some((workspace) => workspace.id === stored)
-              ? stored
-              : (cached.workspaces[0]?.id ?? null),
-          );
-        }
-        scheduler = new SurfaceRefreshScheduler({
-          fetch: () => http.workspaces(),
-          apply: (value) => {
-            setWorkspaceList(value);
-            setActiveCommunityId((current) =>
-              value.workspaces.some((workspace) => workspace.id === current)
-                ? current
-                : (value.workspaces[0]?.id ?? null),
-            );
-            setError(null);
-            void mobileSurfaceCache.write(address, value, isWorkspaceListView);
-          },
-          onError: (reason) => setError(String(reason)),
-        });
-        unsubscribe = await relay.surfaceSubscribe(
-          cached?.watchFilters ?? [
-            { kinds: [9000, 9001, 9007], '#p': [currentIdentity.publicKey] },
-          ],
-          () => scheduler?.signal(),
-        );
-        if (cancelled) return unsubscribe();
-        await scheduler.startAfter(Promise.resolve());
+        if (cached) setWorkspaceList(cached);
+        const fresh = await new RoomViewClient({ baseUrl: relayUrl, identity: currentIdentity })
+          .workspaces()
+          .catch(() => null);
+        if (cancelled || !fresh) return;
+        setWorkspaceList(fresh);
+        void mobileSurfaceCache.write(address, fresh, isWorkspaceListView);
       } catch (err) {
         if (!cancelled) setError(String(err));
       }
     })();
     return () => {
       cancelled = true;
-      unsubscribe?.();
-      scheduler?.dispose();
     };
   }, []);
-
-  const handleCreate = useCallback(async () => {
-    const name = communityName.trim();
-    if (!name || !transport || !identity || !relayUrl) return;
-    setWorking(true);
-    setError(null);
-    try {
-      const client = await transport.ensureClient();
-      const communityId = await client.createCommunity(name);
-      await client.waitUntilMember(communityId, identity.publicKey);
-      await ensurePersonNameForWorkspace(client, communityId, identity.publicKey);
-      const inviteUrl = await createCommunityInviteUrl(
-        client,
-        communityId,
-        resolveCommunityInvitePublicOrigin(relayUrl, getBuzzRuntimeConfig()),
-      );
-      await saveActiveCommunityId(identity.publicKey, communityId);
-      router.replace({
-        pathname: '/beeline/channels',
-        params: { communityId, inviteUrl },
-      });
-    } catch (err) {
-      setError(`Could not create ${WORKSPACE_LABEL}: ${String(err)}`);
-    } finally {
-      setWorking(false);
-    }
-  }, [communityName, identity, relayUrl, transport]);
 
   const handleJoin = useCallback(() => {
     const token = parseCommunityInviteToken(inviteInput);
     if (!token) {
-      setError('Paste a valid Workspace invite link.');
+      setError('That is not a Beeline invite link. Paste the whole link you were sent.');
       return;
     }
-    router.push(`/join/${encodeURIComponent(token)}` as Href);
+    setError(null);
+    router.push({ pathname: '/join/[token]', params: { token } });
   }, [inviteInput]);
 
   const selectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
-    router.replace({
-      pathname: '/beeline/channels',
-      params: { communityId },
-    });
+    router.replace({ pathname: '/beeline/channels', params: { communityId } });
   }, []);
 
   if (!identity && !error) {
@@ -172,225 +99,241 @@ export default function BuzzCommunityCreateOrJoin() {
   return (
     <BuzzCommunityShell
       communities={communities}
-      activeCommunityId={activeCommunityId}
+      activeCommunityId={null}
       onSelect={selectCommunity}
       onAdd={() => undefined}
       onSettings={() => router.push('/beeline/settings' as Href)}
       viewerPubkey={identity?.publicKey}
-      viewerAvatarUrl={viewerAvatarUrl}
-      viewerFace={viewerFace}
+      viewerAvatarUrl={workspaceList?.viewer.avatar}
+      viewerFace={workspaceList?.viewer.face}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
-          <TouchableOpacity
-            accessibilityLabel="Back"
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
-          </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text style={styles.title}>{WORKSPACE_LABEL}s</Text>
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + theme.buzz.space.lg }]}
+        keyboardShouldPersistTaps="handled"
+        style={styles.container}
+        testID="workspace-choice"
+      >
+        <View style={styles.column}>
+          {hasWorkspaces ? (
+            <TouchableOpacity
+              accessibilityLabel="Back"
+              accessibilityRole="button"
+              onPress={() =>
+                router.canGoBack() ? router.back() : router.replace('/beeline/channels')
+              }
+              style={styles.backButton}
+            >
+              <ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />
+            </TouchableOpacity>
+          ) : null}
+          <Text style={styles.eyebrow}>Welcome to Beeline</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Where are you headed?
+          </Text>
+          <Text style={styles.copy}>
+            Start a {WORKSPACE_LABEL.toLowerCase()} for your team, or use an invite you already
+            have.
+          </Text>
+
+          <View style={styles.choices}>
+            <ChoiceCard
+              description="Name it, invite your people, connect an agent."
+              glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
+              onPress={() => router.push('/beeline/create-workspace' as Href)}
+              testID="choice-create"
+              title={`Create a ${WORKSPACE_LABEL}`}
+            />
+            <ChoiceCard
+              description="Paste the link someone sent you."
+              expanded={joinOpen}
+              glyph={<MembersGlyph color={theme.buzz.accent} size={20} />}
+              onPress={() => {
+                setJoinOpen((open) => !open);
+                setError(null);
+              }}
+              testID="choice-join"
+              title="Join with an invite link"
+            />
+            {joinOpen ? (
+              <View style={styles.joinForm} testID="choice-join-form">
+                <TextInput
+                  accessibilityLabel="Invite link"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoFocus
+                  keyboardType="url"
+                  onChangeText={setInviteInput}
+                  onSubmitEditing={handleJoin}
+                  placeholder="https://usebeeline.app/join/…"
+                  placeholderTextColor={theme.buzz.textDisabled}
+                  style={styles.input}
+                  testID="choice-join-input"
+                  value={inviteInput}
+                />
+                <BrassButton
+                  disabled={!inviteInput.trim()}
+                  label="Preview invite"
+                  onPress={handleJoin}
+                  testID="choice-join-preview"
+                />
+              </View>
+            ) : null}
           </View>
-        </HullSurface>
 
-        <View style={styles.modeSwitch}>
-          <TouchableOpacity
-            style={[styles.modeButton, mode === 'create' && styles.modeButtonActive]}
-            onPress={() => {
-              setMode('create');
-              setError(null);
-            }}
-          >
-            <Text style={[styles.modeText, mode === 'create' && styles.modeTextActive]}>
-              Create
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="choice-error">
+              {error}
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.modeButton, mode === 'join' && styles.modeButtonActive]}
-            onPress={() => {
-              setMode('join');
-              setError(null);
-            }}
-          >
-            <Text style={[styles.modeText, mode === 'join' && styles.modeTextActive]}>Join</Text>
-          </TouchableOpacity>
+          ) : null}
+          {!hasWorkspaces ? (
+            <>
+              <Text style={styles.footnote}>
+                Already use Beeline? {WORKSPACE_LABEL}s you belong to appear here as soon as someone
+                adds you.
+              </Text>
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => router.push('/beeline/settings' as Href)}
+                style={styles.settingsLink}
+                testID="choice-settings"
+              >
+                <Text style={styles.settingsLinkText}>Account settings</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
-
-        <PixelGateReveal style={styles.form}>
-          {mode === 'create' ? (
-            <>
-              <Text style={styles.formTitle}>Name the new {WORKSPACE_LABEL}</Text>
-              <Text style={styles.formHint}>
-                A private invite is ready as soon as you create it.
-              </Text>
-              <TextInput
-                autoFocus
-                style={styles.input}
-                value={communityName}
-                onChangeText={setCommunityName}
-                onSubmitEditing={() => void handleCreate()}
-                editable={!working}
-                maxLength={80}
-                placeholder="Night shift"
-                placeholderTextColor={theme.buzz.dim}
-              />
-              <MonoButton
-                label={working ? `Creating ${WORKSPACE_LABEL}` : `Create ${WORKSPACE_LABEL}`}
-                loading={working}
-                style={styles.primaryButton}
-                disabled={!communityName.trim() || working}
-                onPress={() => void handleCreate()}
-              />
-            </>
-          ) : (
-            <>
-              <Text style={styles.formTitle}>Open an invite</Text>
-              <Text style={styles.formHint}>
-                Paste an invite to preview the {WORKSPACE_LABEL} before joining.
-              </Text>
-              <TextInput
-                autoFocus
-                style={[styles.input, styles.inviteInput]}
-                value={inviteInput}
-                onChangeText={setInviteInput}
-                onSubmitEditing={handleJoin}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                placeholder="https://usebeeline.app/join/…"
-                placeholderTextColor={theme.buzz.dim}
-              />
-              <MonoButton
-                label="Preview invite"
-                style={styles.primaryButton}
-                disabled={!inviteInput.trim()}
-                onPress={handleJoin}
-              />
-            </>
-          )}
-
-          {error && (
-            <View accessibilityRole="alert" style={styles.errorPanel}>
-              <Text style={styles.errorLabel}>! ERROR</Text>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-        </PixelGateReveal>
-      </View>
+      </ScrollView>
     </BuzzCommunityShell>
   );
 }
 
+function ChoiceCard({
+  title,
+  description,
+  glyph,
+  onPress,
+  expanded,
+  testID,
+}: {
+  title: string;
+  description: string;
+  glyph: React.ReactNode;
+  onPress: () => void;
+  expanded?: boolean;
+  testID: string;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <Pressable
+      accessibilityHint={description}
+      accessibilityRole="button"
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      testID={testID}
+    >
+      <View style={styles.cardGlyph}>{glyph}</View>
+      <View style={styles.cardCopy}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardDescription}>{description}</Text>
+      </View>
+      <ChevronGlyph
+        color={theme.buzz.accent}
+        direction={expanded ? 'down' : 'right'}
+        size={CHEVRON_ROW_SIZE}
+      />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
     loading: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: groknight.bgTerminal,
+      backgroundColor: hull.bgTerminal,
     },
-    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-    header: {
-      minHeight: 58,
-      paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: groknight.bgBase,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
+    container: { flex: 1, minWidth: 0, backgroundColor: hull.bgTerminal },
+    scroll: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      paddingHorizontal: hull.space.md,
+      paddingBottom: hull.space.xxl,
     },
-    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { color: groknight.chrome },
-    headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
-    title: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 20,
-      lineHeight: 24,
-    },
-    modeSwitch: {
-      marginHorizontal: 16,
-      marginTop: 22,
-      flexDirection: 'row',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-    },
-    modeButton: {
-      flex: 1,
-      minHeight: 44,
+    column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+    backButton: {
+      width: 44,
+      height: 44,
+      marginLeft: -hull.space.sm,
+      marginBottom: hull.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    modeButtonActive: {
-      borderBottomWidth: 2,
-      borderBottomColor: groknight.textSecondary,
-    },
-    modeText: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.muted,
-      fontSize: 13,
-      fontWeight: '600',
-    },
-    modeTextActive: { color: groknight.textPrimary },
-    form: { paddingHorizontal: 18, paddingTop: 32 },
-    formTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 20,
-    },
-    formHint: {
+    eyebrow: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 8,
-      maxWidth: 460,
-      color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...hull.type.sectionHead,
+      color: hull.accent,
+      marginBottom: hull.space.sm,
     },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    copy: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textSecondary,
+      marginTop: hull.space.sm,
+    },
+    choices: { marginTop: hull.space.lg, gap: hull.space.sm },
+    card: {
+      minHeight: 76,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.md,
+      padding: hull.space.md,
+      borderRadius: hull.radius,
+      borderWidth: 1,
+      borderColor: hull.borderStrong,
+      backgroundColor: hull.bgRaised,
+    },
+    cardPressed: { backgroundColor: hull.bgPressed },
+    cardGlyph: {
+      width: 42,
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: hull.radius,
+      borderWidth: 1,
+      borderColor: hull.border,
+    },
+    cardCopy: { flex: 1, minWidth: 0, gap: hull.space.xs },
+    cardTitle: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
+    cardDescription: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
+    joinForm: { gap: hull.space.sm, paddingTop: hull.space.xs },
     input: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
+      ...Typography.mono(),
+      ...hull.type.machine,
       minHeight: 48,
-      marginTop: 22,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 3,
+      paddingHorizontal: hull.space.md,
+      borderRadius: hull.radius,
       borderWidth: 1,
-      borderColor: groknight.border,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 14,
+      borderColor: hull.borderStrong,
+      color: hull.textPrimary,
+      backgroundColor: hull.bgBase,
     },
-    inviteInput: { ...Typography.mono(), fontSize: 11 },
-    primaryButton: {
-      marginTop: 12,
-    },
-    errorPanel: {
-      marginTop: 14,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    errorLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
-    },
-    errorText: {
+    error: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...hull.type.meta,
+      color: hull.dialogDanger,
+      marginTop: hull.space.md,
+    },
+    settingsLink: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+    settingsLinkText: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
+    footnote: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.ledgerQuiet,
+      marginTop: hull.space.lg,
     },
   };
 });

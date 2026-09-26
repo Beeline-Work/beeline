@@ -369,6 +369,10 @@ jobs:
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          # Unset = the Welcome Workspace is left alone. The release owner arms
+          # its one-shot retirement (docs/welcome-retirement.md) by setting
+          # this repository variable to the exact Greeter agent id.
+          BEELINE_RETIRE_WELCOME_GREETER_ID: ${{ vars.BEELINE_RETIRE_WELCOME_GREETER_ID }}
           SERVER_CANARY_REVIEW_SECRET: ${{ secrets.SERVER_CANARY_REVIEW_SECRET }}
           SERVER_CANARY_PHONE_TOKEN: ${{ secrets.SERVER_CANARY_PHONE_TOKEN }}
           SERVER_CANARY_ROOM_ID: ${{ secrets.SERVER_CANARY_ROOM_ID }}

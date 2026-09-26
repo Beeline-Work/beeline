@@ -7,9 +7,8 @@ import { createHash } from 'node:crypto';
  * (apps/server/src/review-access.ts) or SCHEDULE_SCHEDULER_ID
  * (scheduled-prompts.ts), distinguished only by this fixed id and
  * `hidden_from_roster=true`. That flag keeps it out of every roster listing
- * AND out of `seedDefaultWorkspace`'s automatic Workspace/#welcome human
- * backfill (default-workspace.ts excludes hidden identities from it), so it
- * is never a member of a shared Room and therefore never taggable there. Its
+ * and out of every public-Room membership projection, so it is never a
+ * member of a shared Room and therefore never taggable there. Its
  * only memberships are one-per-person read-only DM Rooms created by the
  * server's system notification producers.
  */

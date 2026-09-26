@@ -25,6 +25,7 @@ import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabular
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
@@ -196,6 +197,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
+  const refreshedForWorkspaceIds = React.useRef(new Set<string>());
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
   const [attentionWorkspaceIds, setAttentionWorkspaceIds] = React.useState<ReadonlySet<string>>(
     () => new Set(),
@@ -254,7 +256,14 @@ export const SidebarView = React.memo(function SidebarView() {
   React.useEffect(() => {
     if (!identityPubkey) return;
     return subscribeActiveCommunityId(identityPubkey, (nextWorkspaceId) => {
-      if (!nextWorkspaceId || !workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
+      if (!nextWorkspaceId) return;
+      if (!workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
+        // A Workspace just created or joined: read the list again — once per
+        // id, so a stale stored id (a deleted Workspace) cannot loop.
+        if (!refreshedForWorkspaceIds.current.has(nextWorkspaceId)) {
+          refreshedForWorkspaceIds.current.add(nextWorkspaceId);
+          setRefreshNonce((nonce) => nonce + 1);
+        }
         return;
       }
       if (workspaceIdRef.current === nextWorkspaceId) return;
@@ -645,33 +654,35 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : (
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
-                  <RoomListSectionHeader
-                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                    count={section.kind === 'rooms' ? section.data.length : undefined}
-                    actionTestID={
-                      section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
-                    }
-                    actionAccessibilityLabel={
-                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
-                    }
-                    onAction={
-                      !workspaceId || viewerIsAgent
-                        ? undefined
-                        : section.kind === 'rooms' && !canCreateRoom
+                  <MaybeTourTarget enabled={section.kind === 'rooms' && !viewerIsAgent} tip="rooms">
+                    <RoomListSectionHeader
+                      title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                      count={section.kind === 'rooms' ? section.data.length : undefined}
+                      actionTestID={
+                        section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                      }
+                      actionAccessibilityLabel={
+                        section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                      }
+                      onAction={
+                        !workspaceId || viewerIsAgent
                           ? undefined
-                          : () =>
-                              router.push({
-                                pathname: '/beeline/channels',
-                                params:
-                                  section.kind === 'rooms'
-                                    ? { communityId: workspaceId, newRoom: String(Date.now()) }
-                                    : {
-                                        communityId: workspaceId,
-                                        newDirectMessage: String(Date.now()),
-                                      },
-                              } as Href)
-                    }
-                  />
+                          : section.kind === 'rooms' && !canCreateRoom
+                            ? undefined
+                            : () =>
+                                router.push({
+                                  pathname: '/beeline/channels',
+                                  params:
+                                    section.kind === 'rooms'
+                                      ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                      : {
+                                          communityId: workspaceId,
+                                          newDirectMessage: String(Date.now()),
+                                        },
+                                } as Href)
+                      }
+                    />
+                  </MaybeTourTarget>
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (

@@ -62,7 +62,7 @@ export type PhoneOperationMap = {
   createRoomPoll: { input: CreateRoomPollInput; output: CreateRoomPollResult };
   answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
   skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
-  createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
+  createWorkspace: { input: NamedWorkspaceInput; output: CreateWorkspaceResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
   /** Owner-only: a real cascade delete of the workspace and everything in it.
@@ -190,8 +190,14 @@ export type WorkspaceMemberInput = WorkspaceInput & {
 export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };
 export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string };
 export type IdResult = { readonly id: string };
+/** A new Workspace and the public `#general` Room created with it. */
+export type CreateWorkspaceResult = IdResult & { readonly roomId?: string };
 export type MembershipResult = { readonly joined: boolean };
-export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
+export type InviteMembershipResult = MembershipResult & {
+  readonly workspaceId: string;
+  /** The first live top-level Room the viewer can open after joining. */
+  readonly roomId?: string;
+};
 export type MessageWriteResult = { readonly messageId: string };
 /** Active turns that received a server-created command with this human message. */
 export type AgentMessageWriteResult = MessageWriteResult & {

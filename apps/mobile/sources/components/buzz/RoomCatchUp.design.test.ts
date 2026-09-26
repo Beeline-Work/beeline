@@ -73,7 +73,6 @@ describe('the catch-up sheet', () => {
     expect(surface).toContain('boundaryId: catchUpBoundaryId');
     expect(surface).toContain('newestId: newestTranscriptMessageId');
     expect(surface).toContain('onAskAgent={draftCatchUpRequest}');
-    expect(surface).toContain('selectedAgentMentionsRef.current.set(handle, agent.pubkey)');
   });
 
   it('CHEV-10: the disc is 44 and its lift stays derived from the turn line', () => {

@@ -102,6 +102,8 @@ import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
+import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -2512,15 +2514,30 @@ export class PhoneService {
       expires_at: Date;
       workspace_id: string;
       already_joined: boolean;
+      inviter_name: string;
+      inviter_handle: string | null;
+      inviter_face: string | null;
+      inviter_role: 'owner' | 'admin' | 'member' | 'spectator';
+      people: number;
+      agents: number;
     }>(
       `SELECT w.name,w.avatar,i.expires_at,i.workspace_id,
          EXISTS(SELECT 1 FROM memberships joined
            WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
-             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined,
+         inviter.name inviter_name,inviter.handle inviter_handle,inviter.face_id inviter_face,
+         creator.role inviter_role,
+         (SELECT count(*)::int FROM memberships m JOIN identities member ON member.id=m.identity_id
+          WHERE m.workspace_id=i.workspace_id AND m.room_id IS NULL AND m.removed_at IS NULL
+            AND member.kind='human' AND member.hidden_from_roster=false) people,
+         (SELECT count(*)::int FROM memberships m JOIN identities member ON member.id=m.identity_id
+          WHERE m.workspace_id=i.workspace_id AND m.room_id IS NULL AND m.removed_at IS NULL
+            AND member.kind='agent' AND member.hidden_from_roster=false) agents
        FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
+       JOIN identities inviter ON inviter.id=i.created_by
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
       [hash(rawToken), viewerId],
     );
@@ -2531,6 +2548,14 @@ export class PhoneService {
           ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
           expiresAt: unix(row.expires_at),
           ...(row.already_joined ? { joinedWorkspaceId: row.workspace_id } : {}),
+          inviter: {
+            name: row.inviter_name,
+            ...(row.inviter_handle ? { handle: row.inviter_handle } : {}),
+            ...(row.inviter_face ? { face: row.inviter_face } : {}),
+            role: row.inviter_role,
+          },
+          memberCount: row.people,
+          agentCount: row.agents,
         }
       : null;
   }
@@ -2952,8 +2977,8 @@ export class PhoneService {
    * announcement, run once the wizard's one rename window has closed (kept or
    * renamed). `renameConnectedAgent` may have already retitled the identity by
    * the time this runs, so `joinRooms` reads its final name straight off
-   * `identities` — the same order a human already follows, since GitHub
-   * sign-in seals a person's name before `landInWelcomeWorkspace` ever runs.
+   * `identities` — the same order a human follows, whose name is sealed at
+   * GitHub sign-in before they ever join a Workspace.
    */
   async finishAgentConnectPairing(input: {
     code: string;
@@ -4487,9 +4512,15 @@ export class PhoneService {
     });
     return { messageId: id };
   }
+  /**
+   * Creates a Workspace owned by the viewer together with its public
+   * `#general` Room (`ensureFirstRoom`), so the creator lands in a live Room.
+   * A retry with the same client-chosen `workspaceId` by its owner is a no-op
+   * that returns the same Room.
+   */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
-    await this.database.transaction(async (db) => {
+    const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
         [id, input.name],
@@ -4501,14 +4532,15 @@ export class PhoneService {
           [id, viewerId],
         );
         if (!owned.rowCount) throw new Error('workspaceId is invalid');
-        return;
+      } else {
+        await db.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+          [id, viewerId],
+        );
       }
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
-        [id, viewerId],
-      );
+      return ensureFirstRoom(db, id, viewerId);
     });
-    return { id };
+    return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.database.transaction(async (database) => {
@@ -5341,7 +5373,10 @@ export class PhoneService {
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
-    if (row.already_joined) return { joined: false, workspaceId: row.workspace_id };
+    if (row.already_joined) {
+      const roomId = await firstAccessibleRoomId(this.database, row.workspace_id, viewerId);
+      return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
+    }
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
@@ -5368,7 +5403,12 @@ export class PhoneService {
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: joined.rowCount > 0,
       });
-      return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
+      const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+      return {
+        joined: joined.rowCount > 0,
+        workspaceId: row.workspace_id,
+        ...(roomId ? { roomId } : {}),
+      };
     });
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
@@ -5627,7 +5667,7 @@ export class PhoneService {
       );
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
-      await this.settleGrantCard(database, {
+      await settleGrantCard(database, {
         roomId: cardRoomId,
         grantId: input.grantId,
         status,
@@ -5717,50 +5757,6 @@ export class PhoneService {
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
     return this.database.transaction((database) =>
       skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
-    );
-  }
-  /**
-   * Settle one grant's line inside the card the Room already shows. The card
-   * is what the phone renders its ALWAYS/ONCE/NO buttons from, so a rule that
-   * has been decided — or revoked out from under a retired agent — must stop
-   * offering a choice that can no longer be taken. Lines the card has already
-   * settled are left exactly as they are.
-   */
-  private async settleGrantCard(
-    database: SqlDatabase,
-    input: {
-      roomId: string;
-      grantId: string;
-      status: AgentGrantStatus;
-      decidedBy: RoomViewIdentity;
-      decidedAt: Date;
-    },
-  ) {
-    const card = (
-      await database.query<{ id: string; card: { grants: AgentGrantView[] } }>(
-        `SELECT id,card FROM messages
-         WHERE room_id=$1 AND card_type='grant-request'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements(card->'grants') entry WHERE entry->>'grantId'=$2
-           )
-         ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-        [input.roomId, input.grantId],
-      )
-    ).rows[0];
-    if (!card) return;
-    const grants = card.card.grants.map((entry) =>
-      entry.grantId === input.grantId && entry.status === 'pending'
-        ? {
-            ...entry,
-            status: input.status,
-            decidedBy: input.decidedBy,
-            decidedAt: unix(input.decidedAt),
-          }
-        : entry,
-    );
-    await database.query(
-      `UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`,
-      [card.id, JSON.stringify(grants)],
     );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
@@ -6122,62 +6118,14 @@ export class PhoneService {
     await this.requireWorkspaceAgentRemover(input.workspaceId, input.agentId, viewerId);
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.agentId);
-    await this.database.transaction(async (database) => {
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-        [input.workspaceId, input.agentId],
-      );
-      await database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
-        input.agentId,
-      ]);
-      // No surface may draw it as a member again, whatever it reads from.
-      await database.query(
-        `UPDATE identities SET hidden_from_roster=true,updated_at=now()
-         WHERE id=$1 AND kind='agent'`,
-        [input.agentId],
-      );
-      await database.query(
-        `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
-           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-           schedule_ids='[]'::jsonb,
-           yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
-           access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
-         WHERE agent_id=$1`,
-        [input.agentId],
-      );
-      // Nothing may fire for an agent that is gone; occurrences cascade.
-      await database.query(`DELETE FROM agent_schedules WHERE agent_id=$1 AND workspace_id=$2`, [
-        input.agentId,
-        input.workspaceId,
-      ]);
-      const revoked = await database.query<{ id: string; room_id: string; decided_at: Date }>(
-        `UPDATE agent_grants SET status='revoked',decided_by=$3,decided_at=now()
-         WHERE agent_id=$1 AND workspace_id=$2 AND status IN ('pending','approved','once')
-         RETURNING id,room_id,decided_at`,
-        [input.agentId, input.workspaceId, viewerId],
-      );
-      for (const grant of revoked.rows)
-        await this.settleGrantCard(database, {
-          roomId: grant.room_id,
-          grantId: grant.id,
-          status: 'revoked',
-          decidedBy: remover,
-          decidedAt: grant.decided_at,
-        });
-      // Removal retires the helper; it never closes the corners. A corner is
-      // carried by its MEMBERS, and the branch/PR is a shared artifact other
-      // people may still land. The removed agent's `owner_agent_id` stays as
-      // the historical "opened by"; the merge webhook and a human close still
-      // reach the corner, and a later helper can be addressed in it.
-      await workspaceSystemLine(database, {
+    await this.database.transaction((database) =>
+      retireAgentFromWorkspace(database, {
         workspaceId: input.workspaceId,
-        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-        verb: 'removed',
-        object: { text: removed.name, id: removed.pubkey },
-        cardType: 'member-removed',
-        card: { identityId: input.agentId },
-      });
-    });
+        agentId: input.agentId,
+        remover,
+        removed,
+      }),
+    );
   }
   /**
    * Deletes the signed-in person's account and personal data — a real

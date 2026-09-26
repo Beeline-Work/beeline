@@ -29,17 +29,6 @@ describe('Room deck bootstrap', () => {
     expect(source).not.toContain('suppressPaint=');
   });
 
-  it('renders a terminal state when the server returns zero Workspaces', () => {
-    const emptyState = source.slice(
-      source.indexOf('if (workspaceList?.workspaces.length === 0)'),
-      source.indexOf('if (!chatList && !error)'),
-    );
-    expect(emptyState).toContain('testID="workspace-list-empty"');
-    expect(emptyState).toContain('No Rooms yet');
-    expect(emptyState).toContain('label="CREATE WORKSPACE"');
-    expect(emptyState).not.toContain('LOADING ROOMS');
-  });
-
   it('puts start-Room and connect-Agent buttons directly on the empty Room deck', () => {
     const emptyDeck = source.slice(
       source.indexOf('function EmptyRoomActions'),

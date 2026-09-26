@@ -35,6 +35,7 @@ import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
+import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -47,6 +48,13 @@ async function runReleaseMigration(): Promise<void> {
   try {
     await migrate(database);
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    // Armed only by the release owner, once the create-or-join onboarding is
+    // live on every supported client (docs/welcome-retirement.md).
+    const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
+    if (greeterAgentId) {
+      const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
+      console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+    }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
     await markSchemaCurrent(database);
@@ -367,8 +375,23 @@ async function main() {
   process.once('SIGTERM', () => void stop());
 }
 
-const migrationMode = process.argv[2] === '--migrate';
-(migrationMode ? runReleaseMigration() : main()).catch((error) => {
+async function runWelcomeRetirementPreflight(): Promise<void> {
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  try {
+    console.log(JSON.stringify(await welcomeRetirementPreflight(database), null, 2));
+  } finally {
+    await database.close();
+  }
+}
+
+const migrationMode =
+  process.argv[2] === '--migrate' || process.argv[2] === '--welcome-retirement-preflight';
+(process.argv[2] === '--welcome-retirement-preflight'
+  ? runWelcomeRetirementPreflight()
+  : migrationMode
+    ? runReleaseMigration()
+    : main()
+).catch((error) => {
   console.error(
     migrationMode ? '[migration] failed:' : '[server] startup failed:',
     error instanceof Error ? error.message : String(error),

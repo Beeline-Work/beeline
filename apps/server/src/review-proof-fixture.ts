@@ -1,4 +1,6 @@
 import type { SqlDatabase } from './database.js';
+import { ensureFirstRoom } from './first-room.js';
+import { joinRooms } from './membership-join.js';
 
 /**
  * The release proof's corner fixture.
@@ -18,13 +20,59 @@ import type { SqlDatabase } from './database.js';
  * ON CONFLICT DO NOTHING make re-running the sign-in a no-op.
  */
 
-/** Reserved fixed ids, in the default-Workspace idiom (`default-workspace.ts`). */
+/** Reserved fixed ids; the `bee11e00-…` range is Beeline's own. */
+export const REVIEW_WORKSPACE_ID = 'bee11e00-0000-4000-8000-000000000105';
+export const REVIEW_WORKSPACE_NAME = 'Beeline Review';
 export const REVIEW_PROOF_ROOM_ID = 'bee11e00-0000-4000-8000-000000000103';
 export const REVIEW_PROOF_ROOM_NAME = 'proof';
 export const REVIEW_PROOF_CORNER_ID = 'bee11e00-0000-4000-8000-000000000104';
 export const REVIEW_PROOF_CORNER_NAME = 'release proof';
 export const REVIEW_PROOF_OBJECTIVE =
   'Hold the corner surface open so the release proof can open it.';
+
+/**
+ * The reviewer's own Workspace: it owns it, it has the `#general` every new
+ * Workspace gets, and it holds the proof fixture. Idempotent, and a
+ * membership the reviewer ended is never resurrected.
+ */
+export async function ensureReviewWorkspace(
+  database: SqlDatabase,
+  reviewerId: string,
+): Promise<void> {
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, [
+    REVIEW_WORKSPACE_ID,
+    REVIEW_WORKSPACE_NAME,
+  ]);
+  const joined = await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     VALUES($1,NULL,$2,'owner')
+     ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL DO NOTHING`,
+    [REVIEW_WORKSPACE_ID, reviewerId],
+  );
+  // A reviewer restored after account deletion rejoins the Rooms still there.
+  if (joined.rowCount)
+    await joinRooms(database, {
+      workspaceId: REVIEW_WORKSPACE_ID,
+      identityId: reviewerId,
+      rooms: { type: 'all-live-top-level' },
+      workspaceJoined: true,
+    });
+  await ensureFirstRoom(database, REVIEW_WORKSPACE_ID, reviewerId);
+  // A fixture seeded before this Workspace existed lives in the retired
+  // Welcome Workspace. It is the reviewer's alone (invite-only, no agent), so
+  // it moves here: the release proof opens this Workspace's deck and must
+  // find the corner on it, and the Welcome retirement must not take it.
+  const fixtureIds = [REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID];
+  await database.query(
+    `UPDATE rooms SET workspace_id=$2 WHERE id=ANY($1::uuid[]) AND workspace_id<>$2`,
+    [fixtureIds, REVIEW_WORKSPACE_ID],
+  );
+  await database.query(
+    `UPDATE memberships SET workspace_id=$2 WHERE room_id=ANY($1::uuid[]) AND workspace_id<>$2`,
+    [fixtureIds, REVIEW_WORKSPACE_ID],
+  );
+  await ensureReviewProofFixture(database, reviewerId, REVIEW_WORKSPACE_ID);
+}
 
 export async function ensureReviewProofFixture(
   database: SqlDatabase,
@@ -37,19 +85,19 @@ export async function ensureReviewProofFixture(
      ON CONFLICT(id) DO NOTHING`,
     [REVIEW_PROOF_ROOM_ID, workspaceId, reviewerId, REVIEW_PROOF_ROOM_NAME],
   );
+  // Memberships follow the Room's own workspace_id.
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     VALUES($1,$2,$3,'member')
+     SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1
      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
-    [workspaceId, REVIEW_PROOF_ROOM_ID, reviewerId],
+    [REVIEW_PROOF_ROOM_ID, reviewerId],
   );
   await database.query(
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,about,visibility,repository_resolution)
-     VALUES($1,$2,$3,$4,$5,$6,'invite-only','none')
+     SELECT $1,workspace_id,id,$3,$4,$5,'invite-only','none' FROM rooms WHERE id=$2
      ON CONFLICT(id) DO NOTHING`,
     [
       REVIEW_PROOF_CORNER_ID,
-      workspaceId,
       REVIEW_PROOF_ROOM_ID,
       reviewerId,
       REVIEW_PROOF_CORNER_NAME,
@@ -66,8 +114,8 @@ export async function ensureReviewProofFixture(
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     VALUES($1,$2,$3,'member')
+     SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1
      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
-    [workspaceId, REVIEW_PROOF_CORNER_ID, reviewerId],
+    [REVIEW_PROOF_CORNER_ID, reviewerId],
   );
 }

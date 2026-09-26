@@ -88,6 +88,9 @@ import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-roo
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { planComposerFill, type ComposerMention } from '@/buzz/composer-fill';
+import { roomStarterPrompts } from '@/buzz/starter-prompts';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
@@ -351,6 +354,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
+import { ProductTourRoomCue } from '@/components/buzz/tour/TourTarget';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -714,6 +718,10 @@ export function BuzzChatSurface({
   );
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [memberInviteBusy, setMemberInviteBusy] = useState(false);
+  const [agentConnectVisible, setAgentConnectVisible] = useState(false);
+  const [agentPairCommand, setAgentPairCommand] = useState<string | null>(null);
+  const [agentPairBusy, setAgentPairBusy] = useState(false);
+  const [agentPairError, setAgentPairError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
@@ -1965,6 +1973,111 @@ export function BuzzChatSurface({
   const focusComposer = useCallback(() => {
     scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
+  // The first Room teaches by doing: each starter fills the live composer
+  // (tagging the Room's first agent when there is one) or opens the invite.
+  const firstRoomAgent = useMemo(
+    () =>
+      roomSurface?.members.find(
+        (member) => member.identity.kind === 'agent' && Boolean(member.identity.handle),
+      )?.identity,
+    [roomSurface?.members],
+  );
+  // The one way anything but typing puts words in the composer: a starter
+  // prompt and a catch-up request both go through here, and `planComposerFill`
+  // owns what that does to a draft somebody already started.
+  const fillComposer = useCallback(
+    (text: string, options: { mention?: ComposerMention; focusOnRefusal?: boolean } = {}) => {
+      const plan = planComposerFill({ draft: inputTextRef.current, text, ...options });
+      if (plan.focus) scheduleAnimationFrame(() => composerRef.current?.focus());
+      if (!plan.fill) return false;
+      if (plan.fill.mention) {
+        selectedAgentMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+        selectedMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+      }
+      inputTextRef.current = plan.fill.text;
+      setInputText(plan.fill.text);
+      setInputSelection(plan.fill.selection);
+      return true;
+    },
+    [],
+  );
+  // The same minted pairing command the Room deck and the create wizard show,
+  // in the same sheet: a Room with no agent has nobody to ask yet.
+  const connectAgent = useCallback(async () => {
+    if (!activeCommunityId || agentPairBusy || viewerIsAgent) return;
+    setAgentConnectVisible(true);
+    setAgentPairCommand(null);
+    setAgentPairError(null);
+    setAgentPairBusy(true);
+    try {
+      let pairingTransport = transport;
+      if (!pairingTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        pairingTransport = new BuzzRigTransport(identity);
+        setSessionTransport(pairingTransport);
+      }
+      const pairing = await (
+        await pairingTransport.ensureClient()
+      ).createAgentPairingCode(activeCommunityId);
+      setAgentPairCommand(agentPairingCommand(pairing.code));
+    } catch (reason) {
+      setAgentPairError(`Could not create agent invite: ${String(reason)}`);
+    } finally {
+      setAgentPairBusy(false);
+    }
+  }, [activeCommunityId, agentPairBusy, setSessionTransport, transport, viewerIsAgent]);
+  const closeAgentConnect = useCallback(() => {
+    setAgentConnectVisible(false);
+    setAgentPairCommand(null);
+    setAgentPairError(null);
+  }, []);
+  const copyPairCommand = useCallback(async (command: string) => {
+    await Clipboard.setStringAsync(command);
+  }, []);
+  const starterPrompts = useMemo(() => {
+    if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
+      return undefined;
+    return roomStarterPrompts({
+      roomAgent: firstRoomAgent,
+      workspaceAgentCount: workspaceRoster ? workspaceRoster.agents.length : null,
+      canManageWorkspace,
+    }).map((prompt) => ({
+      lead: prompt.lead,
+      detail: prompt.detail,
+      testID: prompt.testID,
+      onPress: () => {
+        if (prompt.action.kind === 'fill')
+          fillComposer(prompt.action.text, {
+            mention: prompt.action.mention,
+            focusOnRefusal: true,
+          });
+        else if (prompt.action.kind === 'add-room-agent') {
+          setMembershipError(null);
+          setParticipantPickerKind('agent');
+          setParticipantPickerVisible(true);
+        } else if (prompt.action.kind === 'connect-agent') void connectAgent();
+        else
+          router.push({
+            pathname: '/beeline/members',
+            params: {
+              ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+              action: 'invite',
+            },
+          } as never);
+      },
+    }));
+  }, [
+    activeCommunityId,
+    canManageWorkspace,
+    connectAgent,
+    emptyLedgerVariant,
+    fillComposer,
+    firstRoomAgent,
+    roomSurface?.viewer.permissions.send,
+    viewerIsAgent,
+    workspaceRoster,
+  ]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
   // dependency-free so it never re-creates renderItem — see the memo note on
@@ -2150,20 +2263,14 @@ export function BuzzChatSurface({
     if (
       isCorner ||
       !catchUpBoundaryId ||
-      inputTextRef.current.trim() ||
       pendingAttachments.length > 0 ||
       !roomSurface?.viewer.permissions.send
     ) return;
     const handle = agent.handle.replace(/^@/, '');
     const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-    selectedAgentMentionsRef.current.set(handle, agent.pubkey);
-    selectedMentionsRef.current.set(handle, agent.pubkey);
-    inputTextRef.current = prompt;
-    setInputText(prompt);
-    setInputSelection({ start: prompt.length, end: prompt.length });
-    setCatchUpSheetVisible(false);
-    scheduleAnimationFrame(() => composerRef.current?.focus());
-  }, [catchUpBoundaryId, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
+    if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
+      setCatchUpSheetVisible(false);
+  }, [catchUpBoundaryId, fillComposer, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
   const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
   const slashVerbs = useMemo(
@@ -5313,6 +5420,9 @@ export function BuzzChatSurface({
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
+        <ProductTourRoomCue
+          ready={Boolean(roomSurface) && !isCorner && !isDirectMessage && !viewerIsAgent}
+        />
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -5564,6 +5674,7 @@ export function BuzzChatSurface({
                       name={isDirectMessage ? displayRoomName : undefined}
                       objective={isCorner ? cornerObjectiveText : undefined}
                       onPress={focusComposer}
+                      starterPrompts={starterPrompts}
                     />
                   </View>
                 ) : (
@@ -5693,6 +5804,7 @@ export function BuzzChatSurface({
                   name={isDirectMessage ? displayRoomName : undefined}
                   objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
+                  starterPrompts={starterPrompts}
                 />
               </View>
             }
@@ -6610,6 +6722,22 @@ export function BuzzChatSurface({
         onConnectAgent={handleConnectAgent}
         onInvitePerson={() => void handleInvitePerson()}
         visible={memberManagement.pickerVisible}
+      />
+      <MemberPickerSheet
+        agentConnectOnly
+        busy={agentPairBusy}
+        canManage={canManageWorkspace}
+        canConnectAgent={!viewerIsAgent}
+        candidates={undefined}
+        error={agentConnectVisible ? agentPairError : null}
+        onAdd={() => undefined}
+        onClose={closeAgentConnect}
+        onConnectAgent={() => void connectAgent()}
+        onCopyPairCommand={(command) => void copyPairCommand(command)}
+        onInvitePerson={() => undefined}
+        pairCommand={agentPairCommand}
+        testID="room-agent-connect-sheet"
+        visible={agentConnectVisible}
       />
       <CreatePollSheet
         visible={createPollVisible}

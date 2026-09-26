@@ -43,7 +43,6 @@ type SkillRow = {
   repository: string;
   target_commit: string;
   path: string | null;
-  code_content_hash: string | null;
   markdown: string;
   updated_at: Date;
 };
@@ -170,7 +169,7 @@ export async function applyWorkspaceSkillProposal(
     await database.query(
       `UPDATE workspace_skills
        SET description=$2,state='active',current_version=$3,revision=revision+1,
-           source_room_id=$4,repository=$5,target_commit=$6,path=$7,code_content_hash=$8,
+           source_room_id=$4,repository=$5,target_commit=$6,path=$7,
            updated_at=now()
        WHERE id=$1`,
       [
@@ -181,15 +180,14 @@ export async function applyWorkspaceSkillProposal(
         input.proposal.anchor.repository,
         input.proposal.anchor.targetCommit,
         input.proposal.anchor.path ?? null,
-        input.proposal.anchor.contentHash ?? null,
       ],
     );
   } else {
     await database.query(
       `INSERT INTO workspace_skills
        (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-        repository,target_commit,path,code_content_hash)
-       VALUES($1,$2,$3,$4,'active',$5,1,$6,$7,$8,$9,$10)`,
+        repository,target_commit,path)
+       VALUES($1,$2,$3,$4,'active',$5,1,$6,$7,$8,$9)`,
       [
         skillId,
         input.workspaceId,
@@ -200,15 +198,14 @@ export async function applyWorkspaceSkillProposal(
         input.proposal.anchor.repository,
         input.proposal.anchor.targetCommit,
         input.proposal.anchor.path ?? null,
-        input.proposal.anchor.contentHash ?? null,
       ],
     );
   }
   await database.query(
     `INSERT INTO workspace_skill_versions
      (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-      repository,target_commit,path,code_content_hash,extractor_version,model)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      repository,target_commit,path,extractor_version,model)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       skillId,
       version,
@@ -219,7 +216,6 @@ export async function applyWorkspaceSkillProposal(
       input.proposal.anchor.repository,
       input.proposal.anchor.targetCommit,
       input.proposal.anchor.path ?? null,
-      input.proposal.anchor.contentHash ?? null,
       input.usage.extractorVersion,
       input.usage.model,
     ],
@@ -257,7 +253,7 @@ export async function loadWorkspaceSkill(
       await db.query<SkillRow>(
         `SELECT skill.id,skill.slug,skill.description,skill.current_version,
                 skill.source_room_id,skill.repository,skill.target_commit,skill.path,
-                skill.code_content_hash,version.markdown,skill.updated_at
+                version.markdown,skill.updated_at
          ${AUTHORIZED_SKILLS_SQL} AND skill.slug=$4`,
         [authority.workspace_id, authority.requester_identity_id, command.agent_id, slug],
       )
@@ -297,7 +293,6 @@ export async function loadWorkspaceSkill(
         repository: skill.repository,
         targetCommit: skill.target_commit,
         ...(skill.path ? { path: skill.path } : {}),
-        ...(skill.code_content_hash ? { contentHash: skill.code_content_hash } : {}),
       },
     };
   });

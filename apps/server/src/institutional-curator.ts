@@ -260,12 +260,15 @@ export async function institutionalObjectiveDashboard(
             AND (item.state<>'active' OR item.deleted_at IS NOT NULL)
             AND item.updated_at<=serve.created_at) stale_served_items,
          -- Repeat evidence the criteria name, over ledgers that already have
-         -- writers: a correction repeated on one canonical key for one person,
-         -- and a review finding repeated on one taxonomy and path.
+         -- writers. A repeat is counted at the scope the fact is served at: a
+         -- workspace_fact is shared, so two DIFFERENT people correcting one
+         -- canonical key is the repeat the system exists to reduce, while a
+         -- human_profile_fact only repeats for its own subject.
          (SELECT COALESCE(sum(repeats-1),0) FROM (
             SELECT count(*) repeats FROM institutional_memory_correction_events
             WHERE workspace_id=$1
-            GROUP BY requester_identity_id,memory_kind,canonical_key
+            GROUP BY memory_kind,canonical_key,
+              CASE WHEN memory_kind='workspace_fact' THEN NULL ELSE requester_identity_id END
             HAVING count(*)>1) repeated) repeated_corrections,
          (SELECT COALESCE(sum(repeats-1),0) FROM (
             SELECT count(*) repeats FROM institutional_review_findings
@@ -346,22 +349,6 @@ async function deterministicLifecycle(
     [workspaceId, now, retentionDays],
   );
 
-  // A newer checked content hash for the same code surface supersedes the old
-  // anchor. This pass is the only owner of that rule.
-  const anchorStaleSkills = await database.query(
-    `UPDATE workspace_skills older SET state='stale',updated_at=$2
-     WHERE older.workspace_id=$1 AND older.state='active' AND older.path IS NOT NULL
-       AND older.code_content_hash IS NOT NULL
-       AND EXISTS (
-         SELECT 1 FROM workspace_skills newer
-         WHERE newer.workspace_id=older.workspace_id AND newer.id<>older.id
-           AND newer.state='active' AND newer.repository=older.repository
-           AND newer.path=older.path AND newer.code_content_hash IS NOT NULL
-           AND newer.code_content_hash<>older.code_content_hash
-           AND newer.updated_at>older.updated_at
-       )`,
-    [workspaceId, now],
-  );
   const staleSkills = await database.query(
     `UPDATE workspace_skills skill SET state='stale',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='active'
@@ -392,7 +379,7 @@ async function deterministicLifecycle(
   return {
     staleItems: staleItems.rowCount,
     archivedItems: archivedItems.rowCount,
-    staleSkills: anchorStaleSkills.rowCount + staleSkills.rowCount,
+    staleSkills: staleSkills.rowCount,
     archivedSkills: archivedSkills.rowCount,
   };
 }
@@ -573,6 +560,23 @@ export async function runInstitutionalCuratorCycle(
         await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
           `institutional-memory:${rollout.workspace_id}`,
         ]);
+        // The week's key is spent only by a cycle that can actually do the work.
+        // Claiming it first let a tick that landed after the day's job cap was
+        // already spent mark the week done and queue nothing, losing that
+        // Workspace's consolidation until the next week. A tick with no budget
+        // now leaves the key for the next one, which gets it after midnight
+        // resets the daily count.
+        const jobsToday = Number(
+          (
+            await db.query<{ count: string }>(
+              `SELECT count(*)::text count FROM institutional_memory_jobs
+             WHERE workspace_id=$1 AND created_at>=date_trunc('day',$2::timestamptz)`,
+              [rollout.workspace_id, now],
+            )
+          ).rows[0]?.count ?? 0,
+        );
+        const remainingDailyJobs = Math.max(0, (config.dailyJobLimit ?? 50) - jobsToday);
+        if (remainingDailyJobs === 0) return 0;
         const inserted = await db.query<{ id: string }>(
           `INSERT INTO institutional_curator_cycles(id,workspace_id,cycle_key)
          VALUES($1,$2,$3) ON CONFLICT(workspace_id,cycle_key) DO NOTHING RETURNING id`,
@@ -591,16 +595,6 @@ export async function runInstitutionalCuratorCycle(
                 rollout.retention_days,
               );
         const partitions = await curatorPartitions(db, rollout.workspace_id);
-        const jobsToday = Number(
-          (
-            await db.query<{ count: string }>(
-              `SELECT count(*)::text count FROM institutional_memory_jobs
-             WHERE workspace_id=$1 AND created_at>=date_trunc('day',$2::timestamptz)`,
-              [rollout.workspace_id, now],
-            )
-          ).rows[0]?.count ?? 0,
-        );
-        const remainingDailyJobs = Math.max(0, (config.dailyJobLimit ?? 50) - jobsToday);
         let cycleQueued = 0;
         for (const partition of partitions.slice(
           0,
@@ -915,12 +909,11 @@ export async function applyInstitutionalCuratorProposal(
         repository: string;
         target_commit: string;
         path: string | null;
-        code_content_hash: string | null;
         state: 'active' | 'stale';
         source_message_ids: string[];
       }>(
         `SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.source_room_id,
-                skill.repository,skill.target_commit,skill.path,skill.code_content_hash,skill.state,
+                skill.repository,skill.target_commit,skill.path,skill.state,
                 version.source_message_ids
          FROM workspace_skills skill
          JOIN workspace_skill_versions version
@@ -955,7 +948,6 @@ export async function applyInstitutionalCuratorProposal(
               repository: current.repository,
               targetCommit: current.target_commit,
               ...(current.path ? { path: current.path } : {}),
-              ...(current.code_content_hash ? { contentHash: current.code_content_hash } : {}),
             },
           },
           findings: [],

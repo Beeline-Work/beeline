@@ -251,11 +251,10 @@ export async function enqueueInstitutionalMemoryMergeReview(
       repository: string;
       target_commit: string;
       path: string | null;
-      code_content_hash: string | null;
       source_message_ids: string[];
     }>(
       `SELECT skill.slug,skill.description,skill.current_version,version.markdown,
-              skill.repository,skill.target_commit,skill.path,skill.code_content_hash,
+              skill.repository,skill.target_commit,skill.path,
               version.source_message_ids
        FROM workspace_skills skill
        JOIN workspace_skill_versions version
@@ -305,9 +304,6 @@ export async function enqueueInstitutionalMemoryMergeReview(
               repository: priorSkill.repository,
               targetCommit: priorSkill.target_commit,
               ...(priorSkill.path ? { path: priorSkill.path } : {}),
-              ...(priorSkill.code_content_hash
-                ? { contentHash: priorSkill.code_content_hash }
-                : {}),
             },
           },
         }

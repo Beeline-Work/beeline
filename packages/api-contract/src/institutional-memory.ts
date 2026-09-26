@@ -266,7 +266,6 @@ export interface WorkspaceSkillCodeAnchor {
   readonly repository: string;
   readonly targetCommit: string;
   readonly path?: string;
-  readonly contentHash?: string;
 }
 
 export interface WorkspaceSkillProposal {
@@ -510,11 +509,10 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
  * discard a whole valid procedure and its review findings over metadata the
  * model was told was optional.
  *
- * `anchor.contentHash` is NOT parsed at all. The model is given no file bytes
- * and no digest, so any digest it emits is asserted rather than computed, and
- * the one consumer — the anchor-stale pass — would retire a still-correct
- * procedure on the strength of it. The column stays for a producer that can
- * compute the real digest.
+ * There is no content-digest field: the model is given no file bytes, so any
+ * digest it emitted would be asserted rather than computed. Staling a procedure
+ * on code-anchor mismatch needs a producer that reads the anchored file, which
+ * is not part of this change (see AGENTS.md).
  */
 function repositoryRelativePath(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length === 0 || value.length > 500) return undefined;
@@ -561,6 +559,10 @@ export function parseInstitutionalMergeReviewProposal(
       throw new Error('workspace skill slug is invalid');
     }
     const anchor = record(rawSkill.anchor, 'workspace skill code anchor');
+    // `contentHash` is TOLERATED and dropped, never stored: a host still running
+    // the older prompt would otherwise lose its whole review to an unknown-field
+    // refusal. The model is given no file bytes, so any digest it emits is
+    // asserted rather than computed, and nothing reads one.
     exactKeys(
       anchor,
       ['repository', 'targetCommit', 'path', 'contentHash'],

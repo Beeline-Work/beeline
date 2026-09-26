@@ -968,7 +968,6 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   repository text NOT NULL,
   target_commit text NOT NULL,
   path text,
-  code_content_hash text CHECK (code_content_hash ~ '^[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   last_served_at timestamptz,
@@ -989,7 +988,6 @@ CREATE TABLE IF NOT EXISTS workspace_skill_versions (
   repository text NOT NULL,
   target_commit text NOT NULL,
   path text,
-  code_content_hash text CHECK (code_content_hash ~ '^[0-9a-f]{64}$'),
   extractor_version text NOT NULL,
   model text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -1045,7 +1043,10 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
-  curator_enabled boolean NOT NULL DEFAULT false,
+  -- A kill switch, so it defaults ON: staging a Workspace must not leave it
+  -- serving memory with none of the lifecycle running. Stopping the curator
+  -- without unstaging is what this column is for.
+  curator_enabled boolean NOT NULL DEFAULT true,
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),

@@ -460,9 +460,9 @@ describe('weekly institutional curator', () => {
     ).toBe('pilot');
   });
 
-  it('counts anchor-superseded procedures as the cycle stale-skill metric', async () => {
+  it('counts time-based staling as the cycle stale-skill metric', async () => {
     // Two archived items pass retention, so a metric that counted their
-    // tombstones instead of anchor mismatches would report 2, not 1.
+    // tombstones instead of staled skills would report 2, not 1.
     await database.query(
       `INSERT INTO institutional_memory_items
        (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
@@ -474,27 +474,15 @@ describe('weekly institutional curator', () => {
     await database.query(
       `INSERT INTO workspace_skills
        (id,workspace_id,slug,description,current_version,revision,source_room_id,
-        repository,target_commit,path,code_content_hash,updated_at)
-       VALUES
-        ($1,$3,'older-anchor','Older anchored procedure',1,1,$4,'Beeline-Work/beeline',$5,
-         'apps/server/src/database.ts',$6,$8::timestamptz-interval '1 day'),
-        ($2,$3,'newer-anchor','Newer anchored procedure',1,1,$4,'Beeline-Work/beeline',$5,
-         'apps/server/src/database.ts',$7,$8::timestamptz)`,
-      [
-        SKILL,
-        DUPLICATE_SKILL,
-        WORKSPACE,
-        ROOM,
-        'f'.repeat(40),
-        'a'.repeat(64),
-        'b'.repeat(64),
-        NOW,
-      ],
+        repository,target_commit,path,updated_at)
+       VALUES($1,$2,'idle-anchor','An unserved anchored procedure',1,1,$3,
+              'Beeline-Work/beeline',$4,'apps/server/src/database.ts',
+              $5::timestamptz-interval '60 days')`,
+      [SKILL, WORKSPACE, ROOM, 'f'.repeat(40), NOW],
     );
 
     await runInstitutionalCuratorCycle(database, liveConfig, NOW);
 
-    // The archived item past retention is tombstoned but is not a stale skill.
     expect(
       (
         await database.query<{ deleted_at: Date | null }>(
@@ -510,13 +498,6 @@ describe('weekly institutional curator', () => {
         ])
       ).rows[0]?.state,
     ).toBe('stale');
-    expect(
-      (
-        await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE id=$1`, [
-          DUPLICATE_SKILL,
-        ])
-      ).rows[0]?.state,
-    ).toBe('active');
     expect(
       (
         await database.query<{
@@ -1178,6 +1159,39 @@ describe('weekly institutional curator', () => {
     ).toEqual(['workspace-facts']);
   });
 
+  it('leaves the week unclaimed when the daily job budget is already spent', async () => {
+    // The day's turn reviews have already spent the cap before the first tick
+    // of this week lands.
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key,created_at)
+       SELECT gen_random_uuid(),$1,'turn_review','live',$2,$3,$4,'workspace_candidate',
+              'spent-'||series,$5
+       FROM generate_series(1,$6::integer) series`,
+      [WORKSPACE, ROOM, MESSAGE, HUMAN, NOW, 3],
+    );
+
+    await expect(
+      runInstitutionalCuratorCycle(database, { ...liveConfig, dailyJobLimit: 3 }, NOW),
+    ).resolves.toBe(0);
+    // No cycle row, so the week is still available to a later tick.
+    expect((await database.query(`SELECT 1 FROM institutional_curator_cycles`)).rowCount).toBe(0);
+
+    // A later tick with budget does the week's work.
+    await expect(
+      runInstitutionalCuratorCycle(database, { ...liveConfig, dailyJobLimit: 50 }, NOW),
+    ).resolves.toBeGreaterThan(0);
+    expect(
+      (
+        await database.query<{ queued_jobs: number }>(
+          `SELECT queued_jobs FROM institutional_curator_cycles WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows[0]?.queued_jobs,
+    ).toBeGreaterThan(0);
+  });
+
   it('keeps weekly curator jobs inside the shared daily Workspace cap', async () => {
     await expect(
       runInstitutionalCuratorCycle(database, { ...liveConfig, dailyJobLimit: 1 }, NOW),
@@ -1250,33 +1264,64 @@ describe('weekly institutional curator', () => {
         )
         .then(() => id);
     };
-    // The same person corrects the same canonical key three times: two repeats.
-    for (const [index, key] of ['a', 'b', 'c', 'd'].entries()) {
-      const jobId = await job(`repeat-${key}`);
+    const other = '9'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [
+      other,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, other, ROOM],
+    );
+    // A shared fact corrected by two DIFFERENT people is one repeat: the fact is
+    // served Workspace-wide, so the Workspace paid for the same lesson twice.
+    // A profile fact only repeats for its own subject, and one unrelated key
+    // and one unrelated path never count.
+    const corrections: Array<{ who: string; kind: string; key: string }> = [
+      { who: HUMAN, kind: 'workspace_fact', key: 'shared-key' },
+      { who: other, kind: 'workspace_fact', key: 'shared-key' },
+      { who: HUMAN, kind: 'human_profile_fact', key: 'repeated-key' },
+      { who: HUMAN, kind: 'human_profile_fact', key: 'repeated-key' },
+      { who: other, kind: 'human_profile_fact', key: 'repeated-key' },
+      { who: HUMAN, kind: 'workspace_fact', key: 'other-key' },
+    ];
+    for (const [index, correction] of corrections.entries()) {
+      const jobId = await job(`repeat-${index}`);
       await database.query(
         `INSERT INTO institutional_memory_correction_events
          (id,workspace_id,requester_identity_id,job_id,source_room_id,source_message_id,
           canonical_key,body,memory_kind,classifier_version,confidence)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'A correction.','human_profile_fact','v1',0.9)`,
+         VALUES($1,$2,$3,$4,$5,$6,$7,'A correction.',$8,'v1',0.9)`,
         [
           randomUUID(),
           WORKSPACE,
-          HUMAN,
+          correction.who,
           jobId,
           ROOM,
           MESSAGE,
-          index === 3 ? 'other-key' : 'repeated-key',
+          correction.key,
+          correction.kind,
         ],
       );
+    }
+    for (const [index, path] of [
+      'apps/server/src/database.ts',
+      'apps/server/src/database.ts',
+      'apps/server/src/database.ts',
+      null,
+    ].entries()) {
+      const jobId = await job(`finding-${index}`);
       await database.query(
         `INSERT INTO institutional_review_findings
          (id,workspace_id,job_id,source_corner_id,taxonomy,summary,severity,path,
           classifier_version,confidence)
          VALUES($1,$2,$3,$4,'database.release-order','Marker last.','warning',$5,'v1',0.9)`,
-        [randomUUID(), WORKSPACE, jobId, ROOM, index === 3 ? null : 'apps/server/src/database.ts'],
+        [randomUUID(), WORKSPACE, jobId, ROOM, path],
       );
     }
 
+    // shared-key: 2 events, 1 repeat. repeated-key for HUMAN: 2 events, 1
+    // repeat. repeated-key for `other`: 1 event, no repeat. other-key: none.
     expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
       repeatedCorrections: 2,
       repeatedReviewFindings: 2,

@@ -12,7 +12,16 @@ import {
   GROK_USE_TOOL_OPEN_CORNER_PERMISSION,
   GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE,
 } from './fixtures/grok-use-tool-permissions.js';
-import { MonolithRoomTurnLoop, roomMcpPermissionDecision } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, roomPermissionDecision } from './monolith-room-turn.js';
+import {
+  CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
+  CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
+  CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
+  CLAUDE_ACP_NATIVE_BASH_PERMISSION,
+  CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+  CLAUDE_ACP_NATIVE_WRITE_PERMISSION,
+  CODEX_ACP_MCP_READ_FILE_PERMISSION,
+} from './fixtures/claude-agent-acp-permissions.js';
 import {
   isMountedMcpToolPermissionRequest,
   resolveMountedMcpToolCall,
@@ -20,10 +29,24 @@ import {
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
+/**
+ * The decision the Room ACP client actually installs, with the shell branch
+ * live: every MCP expectation below has to hold while a sandboxed session is
+ * free to run commands, or the shell branch has widened the allowlist.
+ */
+const decide = (
+  request: AcpPermissionRequest,
+  options: {
+    mountedServers?: readonly string[];
+    hostServers?: readonly string[];
+    shellSandboxed?: boolean;
+  } = {},
+): 'allow' | 'reject' => roomPermissionDecision(request, { shellSandboxed: true, ...options });
+
 describe('top-level Room MCP permission policy', () => {
   it('allows every mounted MCP tool call, host or operator', () => {
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.beeline-readonly-mcp.search_text',
@@ -36,7 +59,7 @@ describe('top-level Room MCP permission policy', () => {
       }),
     ).toBe('allow');
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.beeline-agent.open_corner',
@@ -50,7 +73,7 @@ describe('top-level Room MCP permission policy', () => {
     ).toBe('allow');
     // An ordinary operator MCP server copied into the isolated home: same rule.
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.files-mcp.read_file',
@@ -60,13 +83,13 @@ describe('top-level Room MCP permission policy', () => {
     ).toBe('allow');
     // claude-agent-acp's title-only spelling of a non-Beeline MCP call.
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: { kind: 'other', title: 'mcp__files-mcp__read_file', rawInput: {} },
       }),
     ).toBe('allow');
     // CodeGraph follows the same mounted-MCP policy through codex and Claude.
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.codegraph.codegraph_explore',
@@ -75,15 +98,15 @@ describe('top-level Room MCP permission policy', () => {
       }),
     ).toBe('allow');
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: { kind: 'other', title: 'mcp__codegraph__codegraph_explore', rawInput: {} },
       }),
     ).toBe('allow');
   });
 
-  it('rejects anything that is not an MCP tool call', () => {
+  it('rejects anything that is neither an MCP tool call nor a shell command', () => {
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.beeline-readonly-mcp.search_text',
@@ -91,19 +114,10 @@ describe('top-level Room MCP permission policy', () => {
         },
       }),
     ).toBe('reject');
+    expect(decide({ toolCall: { kind: 'read', title: 'Read /etc/passwd' } })).toBe('reject');
+    expect(decide({ toolCall: { kind: 'other', title: 'WebSearch' } })).toBe('reject');
     expect(
-      roomMcpPermissionDecision({ toolCall: { kind: 'read', title: 'Read /etc/passwd' } }),
-    ).toBe('reject');
-    expect(
-      roomMcpPermissionDecision({
-        toolCall: { kind: 'execute', title: 'Bash', rawInput: { command: 'ls' } },
-      }),
-    ).toBe('reject');
-    expect(roomMcpPermissionDecision({ toolCall: { kind: 'other', title: 'WebSearch' } })).toBe(
-      'reject',
-    );
-    expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'other',
           title: 'WebFetch(https://example.com)',
@@ -115,7 +129,7 @@ describe('top-level Room MCP permission policy', () => {
 
   it('still refuses the host-brokered Trusty Squire surface', () => {
     expect(
-      roomMcpPermissionDecision({
+      decide({
         toolCall: {
           kind: 'execute',
           title: 'mcp.squire.use_credential',
@@ -152,7 +166,7 @@ describe('top-level Room MCP permission policy', () => {
    */
   describe("grok's use_tool envelope", () => {
     it('allows a mounted server named inside the envelope, captured verbatim', () => {
-      expect(roomMcpPermissionDecision(GROK_USE_TOOL_OPEN_CORNER_PERMISSION)).toBe('allow');
+      expect(decide(GROK_USE_TOOL_OPEN_CORNER_PERMISSION)).toBe('allow');
       expect(
         resolveMountedMcpToolCall(GROK_USE_TOOL_OPEN_CORNER_PERMISSION, [
           'beeline-readonly-mcp',
@@ -163,7 +177,7 @@ describe('top-level Room MCP permission policy', () => {
 
     it('allows the relabelled follow-up title for the same call', () => {
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             kind: GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE.kind,
             title: GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE.title,
@@ -176,7 +190,7 @@ describe('top-level Room MCP permission policy', () => {
     it('allows every other tool on a mounted server, not just the corner opener', () => {
       for (const tool of ['post_artifact', 'pr_checks_status', 'request_grant']) {
         expect(
-          roomMcpPermissionDecision({
+          decide({
             toolCall: {
               title: 'use_tool',
               rawInput: { tool_name: `beeline-agent__${tool}`, tool_input: {} },
@@ -185,7 +199,7 @@ describe('top-level Room MCP permission policy', () => {
         ).toBe('allow');
       }
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             title: 'use_tool',
             rawInput: { tool_name: 'beeline-readonly-mcp__read_file', tool_input: { path: 'a' } },
@@ -193,7 +207,7 @@ describe('top-level Room MCP permission policy', () => {
         }),
       ).toBe('allow');
       expect(
-        roomMcpPermissionDecision(
+        decide(
           {
             toolCall: {
               title: 'use_tool',
@@ -203,14 +217,14 @@ describe('top-level Room MCP permission policy', () => {
               },
             },
           },
-          ['beeline-readonly-mcp', 'beeline-agent', 'codegraph'],
+          { mountedServers: ['beeline-readonly-mcp', 'beeline-agent', 'codegraph'] },
         ),
       ).toBe('allow');
     });
 
     it('refuses the same envelope naming a server this session never mounted', () => {
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             title: 'use_tool',
             rawInput: { tool_name: 'files-mcp__read_file', tool_input: { path: 'README.md' } },
@@ -220,21 +234,21 @@ describe('top-level Room MCP permission policy', () => {
       // …and it is the mounted list that decides, not the name: mount it and
       // the identical request resolves.
       expect(
-        roomMcpPermissionDecision(
+        decide(
           {
             toolCall: {
               title: 'use_tool',
               rawInput: { tool_name: 'files-mcp__read_file', tool_input: { path: 'README.md' } },
             },
           },
-          ['beeline-agent', 'files-mcp'],
+          { mountedServers: ['beeline-agent', 'files-mcp'] },
         ),
       ).toBe('allow');
     });
 
     it('refuses a shell payload smuggled inside the envelope', () => {
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             title: 'use_tool',
             rawInput: {
@@ -245,7 +259,7 @@ describe('top-level Room MCP permission policy', () => {
         }),
       ).toBe('reject');
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             title: 'beeline-agent__open_corner',
             rawInput: { tool_name: 'beeline-agent__open_corner', tool_input: 'rm -rf /' },
@@ -256,18 +270,16 @@ describe('top-level Room MCP permission policy', () => {
 
     it('refuses a host-classified server, not only the literal name squire', () => {
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             title: 'use_tool',
             rawInput: { tool_name: 'squire__use_credential', tool_input: {} },
           },
         }),
       ).toBe('reject');
-      expect(roomMcpPermissionDecision({ toolCall: { title: 'squire__use_credential' } })).toBe(
-        'reject',
-      );
+      expect(decide({ toolCall: { title: 'squire__use_credential' } })).toBe('reject');
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: {
             kind: 'execute',
             title: 'mcp.browser.read',
@@ -276,7 +288,7 @@ describe('top-level Room MCP permission policy', () => {
         }),
       ).toBe('allow');
       expect(
-        roomMcpPermissionDecision(
+        decide(
           {
             toolCall: {
               kind: 'execute',
@@ -284,12 +296,11 @@ describe('top-level Room MCP permission policy', () => {
               rawInput: { server: 'browser', tool: 'read', arguments: {} },
             },
           },
-          undefined,
-          ['browser'],
+          { hostServers: ['browser'] },
         ),
       ).toBe('reject');
       expect(
-        roomMcpPermissionDecision(
+        decide(
           {
             toolCall: {
               kind: 'execute',
@@ -297,31 +308,135 @@ describe('top-level Room MCP permission policy', () => {
               rawInput: { server: 'squire', tool: 'use_credential', arguments: {} },
             },
           },
-          undefined,
-          [],
+          { hostServers: [] },
         ),
       ).toBe('allow');
     });
 
     it("refuses grok's own native tools, captured from the same turn", () => {
-      expect(roomMcpPermissionDecision(GROK_NATIVE_SEARCH_TOOL_PERMISSION)).toBe('reject');
+      expect(decide(GROK_NATIVE_SEARCH_TOOL_PERMISSION)).toBe('reject');
     });
 
     it('refuses a request it cannot positively resolve to a mounted tool', () => {
       // A qualified-looking name whose tool half is a command line, not a name.
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: { title: 'beeline-agent open_corner; rm -rf /' },
         }),
       ).toBe('reject');
       expect(
-        roomMcpPermissionDecision({
+        decide({
           toolCall: { title: 'use_tool', rawInput: { tool_name: 'open_corner', tool_input: {} } },
         }),
       ).toBe('reject');
-      expect(roomMcpPermissionDecision({ toolCall: { title: 'use_tool' } })).toBe('reject');
-      expect(roomMcpPermissionDecision({})).toBe('reject');
+      expect(decide({ toolCall: { title: 'use_tool' } })).toBe('reject');
+      expect(decide({})).toBe('reject');
     });
+  });
+});
+
+describe('top-level Room native permission policy', () => {
+  it('allows a Claude shell request while the OS sandbox wraps the session', () => {
+    expect(
+      roomPermissionDecision(CLAUDE_ACP_NATIVE_BASH_PERMISSION, { shellSandboxed: true }),
+    ).toBe('allow');
+    expect(
+      decide({
+        toolCall: { kind: 'execute', title: 'curl', rawInput: { command: 'curl -I localhost' } },
+      }),
+    ).toBe('allow');
+  });
+
+  /**
+   * The sandbox IS the Room's read-only filesystem: unwrapped, an approved
+   * command writes anywhere the daemon account can and no credential path is
+   * masked, which is strictly more than Codex has on the same host.
+   */
+  it('refuses the same shell request when no OS sandbox wraps the session', () => {
+    expect(roomPermissionDecision(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe('reject');
+    expect(
+      roomPermissionDecision(CLAUDE_ACP_NATIVE_BASH_PERMISSION, { shellSandboxed: false }),
+    ).toBe('reject');
+  });
+
+  /**
+   * A shell is identified by the `execute` kind the harness declares, never by
+   * words in a title or a command line: classifying on prose let a request in
+   * or out on the user's wording.
+   */
+  it('reads the declared kind, not shell vocabulary in the title or payload', () => {
+    expect(
+      decide({
+        toolCall: {
+          kind: 'other',
+          title: 'execute_command',
+          rawInput: { command: 'curl -I localhost' },
+        },
+      }),
+    ).toBe('reject');
+    expect(
+      decide({
+        toolCall: { kind: 'other', title: 'Task', rawInput: { prompt: 'write a bash wrapper' } },
+      }),
+    ).toBe('reject');
+    expect(decide(GROK_NATIVE_SEARCH_TOOL_PERMISSION)).toBe('reject');
+  });
+
+  /**
+   * An MCP-shaped request is decided by the MCP allowlist alone. Both of these
+   * carry `kind: 'execute'` and would otherwise cross as shell commands: a
+   * command line wearing an inspection tool's title, and the host-brokered
+   * Squire surface.
+   */
+  it('never re-reads a refused MCP request as a shell command', () => {
+    expect(
+      decide({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.beeline-readonly-mcp.search_text',
+          rawInput: { command: 'rm -rf /tmp' },
+        },
+      }),
+    ).toBe('reject');
+    expect(
+      decide({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.squire.use_credential',
+          rawInput: { server: 'squire', tool: 'use_credential' },
+        },
+      }),
+    ).toBe('reject');
+    expect(decide({ toolCall: { kind: 'execute', title: 'squire__use_credential' } })).toBe(
+      'reject',
+    );
+  });
+
+  it('leaves Codex MCP permissions on the existing allowlist path', () => {
+    expect(decide(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe('allow');
+  });
+
+  it('allows the claude-agent-acp MCP spelling on the same path', () => {
+    // Captured wire payloads: no MCP envelope at all, the fully-qualified
+    // double-underscore name as `title`, kind `other`, the tool's own
+    // arguments as `rawInput`. Same allowlist, same verdict as Codex's.
+    expect(decide(CLAUDE_ACP_MCP_READ_FILE_PERMISSION)).toBe('allow');
+    expect(decide(CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION)).toBe('allow');
+    expect(decide(CLAUDE_ACP_MCP_GIT_LOG_PERMISSION)).toBe('allow');
+  });
+
+  it('still rejects native reads, writes, edits, deletes, moves, and unstructured requests', () => {
+    const refused = [
+      CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+      CLAUDE_ACP_NATIVE_WRITE_PERMISSION.toolCall,
+      { kind: 'delete', title: 'Delete README.md' },
+      { kind: 'move', title: 'Move README.md' },
+      { kind: 'edit', title: 'Bash script edit' },
+    ];
+    for (const toolCall of refused) {
+      expect(decide({ toolCall })).toBe('reject');
+    }
+    expect(decide({})).toBe('reject');
   });
 });
 
@@ -330,7 +445,7 @@ describe('top-level Room MCP permission policy', () => {
  * the turn loop hands the matcher the names this session actually mounted.
  * grok is the harness that proves it — it routes every MCP call through its
  * own `use_tool` dispatcher, so the qualified name resolves against the
- * mounted list alone (C90). A unit case over `roomMcpPermissionDecision` with
+ * mounted list alone (C90). A unit case over `roomPermissionDecision` with
  * the name supplied by hand passes whether or not the loop supplies it.
  */
 describe('a granted host route reaches the permission matcher', () => {
@@ -345,6 +460,7 @@ describe('a granted host route reaches the permission matcher', () => {
   async function capturedHandler(
     grants: Array<{ kind: string; target: string; status?: string }>,
     authorizeAllowed = true,
+    bwrapPath?: string,
   ): Promise<(request: AcpPermissionRequest) => Promise<boolean>> {
     const root = await mkdtemp(join(tmpdir(), 'beeline-granted-route-'));
     roots.push(root);
@@ -398,6 +514,7 @@ describe('a granted host route reaches the permission matcher', () => {
       accessPolicy: 'everyone',
       agentHomeRoot: join(root, 'agent-home'),
       operatorHome,
+      ...(bwrapPath ? { bwrapPath } : {}),
     } as BodyConfig;
 
     let inboxReads = 0;
@@ -530,6 +647,18 @@ describe('a granted host route reaches the permission matcher', () => {
     expect(await allow(aliasCall)).toBe(true);
     const approved = await capturedHandler([{ kind: 'mcp', target: 'vault', status: 'approved' }]);
     expect(await approved(aliasCall)).toBe(true);
+  });
+
+  /**
+   * The same wiring for the shell branch: the handler the client installs has to
+   * carry this session's sandbox state, or the unit decision above is enforcing
+   * something the Room never asked.
+   */
+  it('gives a wrapped session a shell and an unwrapped one none', async () => {
+    const wrapped = await capturedHandler([], true, '/usr/bin/bwrap');
+    expect(await wrapped(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe(true);
+    const unwrapped = await capturedHandler([]);
+    expect(await unwrapped(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe(false);
   });
 
   it('gates an alias identified by its broker environment', async () => {

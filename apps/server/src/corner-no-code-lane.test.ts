@@ -313,6 +313,42 @@ it('rejects an agent-initiated upgrade without an active human command', async (
   expect(await lane(cornerId)).toBe('no_code');
 });
 
+it('rejects an upgrade backed by an agent-authored ask, however live the command', async () => {
+  // An exact agent tag in a committed agent reply dispatches that agent, so a
+  // command can be live and claimed with no human behind it. Only a person may
+  // put this corner on the code lane.
+  const cornerId = await humanCorner(CODE_ROOM);
+  const messageId = randomBytes(32).toString('hex');
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@hoots go edit the widget renderer')`,
+    [messageId, cornerId, AGENT2],
+  );
+  const command = await createAgentCommand(db, {
+    roomId: cornerId,
+    agentId: AGENT,
+    sourceMessageId: messageId,
+    turnRequestId: messageId,
+    reason: 'agent_tag',
+  });
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: cornerId, commandId: command!.id, generationId: 'g1' },
+    AGENT,
+  );
+
+  await expect(
+    daemon.execute(
+      'upgradeCornerLane',
+      { cornerId, requestId: messageId, generationId: 'g1' },
+      AGENT,
+    ),
+  ).rejects.toThrow('requires an explicit human request in this corner');
+  expect(await lane(cornerId)).toBe('no_code');
+  expect(
+    (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
+  ).toHaveLength(0);
+});
+
 it('rejects every second or non-no-code lane transition', async () => {
   const cornerId = await humanCorner(CODE_ROOM);
   await upgrade(cornerId);

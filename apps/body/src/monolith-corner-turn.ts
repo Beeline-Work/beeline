@@ -41,7 +41,7 @@ import {
 import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { toolCallFailureLine } from './tool-call-failure.js';
+import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
@@ -421,14 +421,17 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
 }
 
 /**
- * The lane upgrade keeps no durable activity row: by the time the harness
- * reports the call settled, `upgradeCornerLane` has already completed this
- * turn's command, so the write is refused and only logs a failure over work
- * that succeeded. Whether the upgrade HAPPENED is read from the corner's own
- * lane, never from this title.
+ * A lane upgrade the harness reports COMPLETED keeps no durable activity row:
+ * that call spent this turn's command inside `upgradeCornerLane`, so the write
+ * is refused and only logs a failure over work that succeeded. A refused
+ * upgrade committed nothing, so it keeps its row and its reason like every
+ * other failed call. Whether the upgrade HAPPENED is read from the corner's
+ * own lane, never from this title.
  */
-function isCornerLaneUpgradeCall(call: ToolCallEntry): boolean {
-  return /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '');
+function spentAuthorityOnLaneUpgrade(call: ToolCallEntry): boolean {
+  return (
+    /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '') && isCompletedToolCall(call)
+  );
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
@@ -1534,7 +1537,7 @@ export class MonolithCornerTurnLoop {
                 exceptKey?: string,
               ) => {
                 calls.forEach((call, index) => {
-                  if (isCornerLaneUpgradeCall(call)) return;
+                  if (spentAuthorityOnLaneUpgrade(call)) return;
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
                     observedToolCalls.add(key);

@@ -476,6 +476,7 @@ it('retires a no-code session on the timed restore read when the server already 
 async function upgradeTurn(
   answer: (input: {
     commitUpgrade: () => void;
+    requestClose: () => void;
     onChunk?: (delta: string, full: string, currentRun?: string) => void;
     onToolCalls?: (calls: ToolCallEntry[]) => void;
   }) => Promise<PromptResult>,
@@ -532,6 +533,7 @@ async function upgradeTurn(
     source,
   };
   let lane = 'no_code';
+  let closeRequested = false;
   let delivered = false;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
@@ -547,7 +549,7 @@ async function upgradeTurn(
         cornerId: 'corner-id',
         objective: 'Fix the widget renderer',
         lane,
-        closeRequested: false,
+        closeRequested,
       };
     if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
     if (name === 'getWorkspaceRoster')
@@ -576,6 +578,9 @@ async function upgradeTurn(
       answer({
         commitUpgrade: () => {
           lane = 'code';
+        },
+        requestClose: () => {
+          closeRequested = true;
         },
         onChunk,
         onToolCalls,
@@ -660,4 +665,33 @@ it('ends the same way for a harness that reports no tool calls at all', async ()
 
   expectTextlessUpgradeEnding(result);
   expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the ledger row for an upgrade the server refused', async () => {
+  // Nothing was committed, so this turn still owns its authority: the refusal
+  // belongs in the corner beside every other failed call, not only in the log.
+  const result = await upgradeTurn(async ({ requestClose, onToolCalls, onChunk }) => {
+    const calls = [
+      {
+        id: 'call-1',
+        title: 'upgrade_corner_to_code',
+        status: 'failed',
+        content: 'corner lane upgrade requires an explicit human request in this corner',
+      },
+    ];
+    onToolCalls?.(calls);
+    const text = 'I cannot start code work here without your explicit ask.';
+    onChunk?.(text, text, text);
+    requestClose();
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+  });
+
+  expect(result.written).toContain('postAgentActivity');
+  // The turn is ordinary from here: it answers and settles.
+  expect(result.written).toContain('postRoomMessage');
+  expect(result.execute).toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'complete' }),
+  );
+  expect(result.onLaneChanged).not.toHaveBeenCalled();
 });

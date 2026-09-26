@@ -24,6 +24,10 @@ disposable local PostgreSQL database. They are not mocks. Every account is a dev
    - mobile at 390×844 (DPR 2), desktop at 1440×900;
    - dark scheme;
    - one account per viewport, because changing the viewport reloads the page.
+6. The final starter-prompt and invite-retry frames come from a second session on the final
+   branch head, with the server on `:19291` and Expo web on `:19206`. For the agent state,
+   `@owl` was inserted into `#general` directly in that disposable database, standing in for a
+   completed pairing. The offline state used Chrome's network emulation.
 
 ## Welcome / Greeter retirement (local)
 
@@ -54,7 +58,9 @@ disposable local PostgreSQL database. They are not mocks. Every account is a dev
 | Create 3 — invite link + agent command | `04-create-step3-crew-mobile.png` | `24-create-step3-desktop.png` |
 | First Room `#general` + tour card 1/4 | `05-first-room-tour-card1-mobile.png` | `25-first-room-tour-desktop.png` |
 | Tour cards 2–4 | `05-tour-card{2,3,4}-mobile.png` | — |
-| Starter prompts, live composer | `06-first-room-starter-prompts-mobile.png`, `06-first-room-starter-filled-mobile.png` | `26-first-room-starter-desktop.png` |
+| Starters, Workspace with no agent (Connect an agent + Invite someone) | `06-first-room-starter-prompts-mobile.png` | `26-first-room-starter-desktop.png` |
+| Connect an agent → pairing command | `06-first-room-connect-agent-mobile.png` | — |
+| Starters once an agent (`@owl`) is in the Room; tap fills the live composer | `06-first-room-starter-filled-mobile.png` | — |
 | Spotlight 1/3 — Room list | `07-tip-rooms-mobile.png` | `27-tip-rooms-desktop.png` |
 | Spotlight 2/3 — corner | `08-tip-corner-mobile.png` | — |
 | Spotlight 3/3 — Workbench | `09-tip-workbench-mobile.png` | — |
@@ -63,6 +69,8 @@ disposable local PostgreSQL database. They are not mocks. Every account is a dev
 | Invite confirmation after sign-in | `12-invite-confirm-mobile.png` | `28-invite-confirm-desktop.png` |
 | Joined → first Room + tour | `13-invite-joined-first-room-mobile.png` | — |
 | Dead invite repair state | `14-invite-unavailable-mobile.png` | — |
+| Invite opened offline → "Couldn't reach Beeline" (invite kept) | `15-invite-unreachable-mobile.png` | — |
+| Back online → Retry → confirmation | `15-invite-retry-confirm-mobile.png` | — |
 
 ## Tour library spike
 

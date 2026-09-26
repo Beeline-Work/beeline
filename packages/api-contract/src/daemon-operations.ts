@@ -315,6 +315,10 @@ export type DaemonOperationMap = {
     }
   >;
   createCorner: Operation<CreateCornerInput, CornerResult>;
+  upgradeCornerLane: Operation<
+    CornerInput,
+    { readonly cornerId: string; readonly lane: 'code'; readonly featureBranch: string }
+  >;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
   getWalletToolState: Operation<

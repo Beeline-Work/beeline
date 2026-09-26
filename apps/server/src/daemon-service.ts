@@ -251,6 +251,7 @@ export class DaemonService {
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
+      'upgradeCornerLane',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -1085,6 +1086,11 @@ export class DaemonService {
       case 'createCorner':
         return (await this.createCorner(
           input as Input<'createCorner'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'upgradeCornerLane':
+        return (await this.upgradeCornerLane(
+          (input as Input<'upgradeCornerLane'>).cornerId,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'archiveCorner':
@@ -5652,6 +5658,84 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
   }
+  /**
+   * The sole legal lane mutation: one human-authored command may promote one
+   * repository Room's no-code corner. The command transaction is the proof
+   * that the agent did not decide to acquire a checkout on its own.
+   */
+  private async upgradeCornerLane(cornerId: string, agentId: string) {
+    const command = this.authorizedCommand;
+    if (!this.commandTransaction || !command)
+      throw new Error('corner lane upgrade requires an active human request');
+    const requester = (
+      await this.database.query<{ id: string; kind: string }>(
+        `SELECT identity.id,identity.kind
+         FROM messages message JOIN identities identity ON identity.id=message.author_id
+         WHERE message.id=$1 AND message.room_id=$2`,
+        [command.source_message_id, cornerId],
+      )
+    ).rows[0];
+    if (requester?.kind !== 'human')
+      throw new Error('corner lane upgrade requires an explicit human request in this corner');
+
+    const target = (
+      await this.database.query<{
+        lane: string;
+        repository_key: string | null;
+        repository_remote: string | null;
+        repository_resolution: string;
+      }>(
+        `SELECT fact.lane,parent.repository_key,parent.repository_remote,parent.repository_resolution
+         FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+         JOIN rooms parent ON parent.id=corner.parent_id
+         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+         FOR UPDATE OF fact,corner,parent`,
+        [cornerId],
+      )
+    ).rows[0];
+    if (!target) throw new Error('corner not found');
+    if (target.lane !== 'no_code')
+      throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
+    if (
+      target.repository_resolution !== 'repository' ||
+      !target.repository_key ||
+      !target.repository_remote
+    )
+      throw new Error('corner lane upgrade requires a repository-backed parent Room');
+
+    const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+    await this.database.query(
+      `UPDATE corner_facts
+       SET lane='code',owner_agent_id=$2,lane_upgraded_by=$3,
+           lane_upgrade_message_id=$4,lane_upgraded_at=now(),updated_at=now()
+       WHERE corner_id=$1 AND lane='no_code'`,
+      [cornerId, agentId, requester.id, command.source_message_id],
+    );
+    const resumed = await createAgentCommand(this.database, {
+      roomId: cornerId,
+      agentId,
+      sourceMessageId: command.source_message_id,
+      turnRequestId: `lane-upgrade:${command.turn_request_id}`,
+      action: 'resume',
+      reason: 'corner_lane_upgrade',
+      parent: command,
+      retainDepth: true,
+    });
+    if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
+    await this.database.query(
+      `UPDATE agent_commands SET state='complete',completed_at=now()
+       WHERE id=$1 AND state='claimed'`,
+      [command.id],
+    );
+    await this.database.query(
+      `UPDATE agent_turns SET status='complete',created_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+      [cornerId, agentId, command.turn_request_id],
+    );
+    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
+    return { cornerId, lane: 'code' as const, featureBranch };
+  }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (
       await this.database.query<{ workspace_id: string }>(
@@ -6005,6 +6089,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   readAgentWorkbench: true,
   offerConnector: true,
   createCorner: true,
+  upgradeCornerLane: true,
   archiveCorner: true,
   ensureAgentMembership: true,
   getWalletToolState: true,

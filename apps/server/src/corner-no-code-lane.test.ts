@@ -71,7 +71,7 @@ async function commissioned(roomId: string): Promise<AgentCommand> {
     { roomId, messageId: randomBytes(32).toString('hex'), text: '@hoots please do this' },
     HUMAN,
   );
-  const [command] = (await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands;
+  const command = (await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands.at(-1);
   await daemon.execute(
     'claimAgentCommand',
     { roomId, commandId: command!.id, generationId: 'g1' },
@@ -100,6 +100,24 @@ async function open(
     AGENT,
   );
   return cornerId;
+}
+
+async function humanCorner(roomId: string, title = 'Release notes'): Promise<string> {
+  return ((await phone.execute('createHumanCorner', { roomId, title }, HUMAN)) as { id: string })
+    .id;
+}
+
+async function upgrade(cornerId: string) {
+  const command = await commissioned(cornerId);
+  return daemon.execute(
+    'upgradeCornerLane',
+    {
+      cornerId,
+      requestId: command.turnRequestId,
+      generationId: 'g1',
+    } as never,
+    AGENT,
+  );
 }
 
 const lane = (cornerId: string) =>
@@ -176,4 +194,112 @@ it('refuses a lane the constraint does not name', async () => {
   await expect(
     db.query(`UPDATE corner_facts SET lane='artifacts' WHERE corner_id=$1`, [cornerId]),
   ).rejects.toThrow();
+});
+
+it('upgrades one repository-backed human corner on its explicit human code request', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  const beforeMessages = await db.query<{ id: string; text: string }>(
+    `SELECT id,text FROM messages WHERE room_id=$1 ORDER BY created_at,id`,
+    [cornerId],
+  );
+  const beforeMembers = await db.query<{ identity_id: string }>(
+    `SELECT identity_id FROM memberships WHERE room_id=$1 ORDER BY identity_id`,
+    [cornerId],
+  );
+
+  const result = await upgrade(cornerId);
+
+  expect(result).toEqual({
+    cornerId,
+    lane: 'code',
+    featureBranch: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`,
+  });
+  expect(
+    (
+      await db.query<{
+        lane: string;
+        owner_agent_id: string;
+        commissioned_by: string;
+        lane_upgraded_by: string;
+        lane_upgrade_message_id: string;
+        feature_branch: string | null;
+      }>(
+        `SELECT lane,owner_agent_id,commissioned_by,lane_upgraded_by,lane_upgrade_message_id,feature_branch
+         FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    lane: 'code',
+    owner_agent_id: AGENT,
+    commissioned_by: HUMAN,
+    lane_upgraded_by: HUMAN,
+    feature_branch: null,
+  });
+  const afterMessages = await db.query<{ id: string; text: string }>(
+    `SELECT id,text FROM messages WHERE room_id=$1 ORDER BY created_at,id`,
+    [cornerId],
+  );
+  expect(afterMessages.rows.slice(0, beforeMessages.rows.length)).toEqual(beforeMessages.rows);
+  expect(afterMessages.rows.at(-1)?.text).toBe('@hoots please do this');
+  expect(
+    (
+      await db.query<{
+        action: string;
+        reason: string;
+        state: string;
+        source_message_id: string;
+        turn_request_id: string;
+      }>(
+        `SELECT action,reason,state,source_message_id,turn_request_id FROM agent_commands
+         WHERE room_id=$1 AND action='resume' ORDER BY created_at DESC LIMIT 1`,
+        [cornerId],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    action: 'resume',
+    reason: 'corner_lane_upgrade',
+    state: 'pending',
+    source_message_id: afterMessages.rows.at(-1)?.id,
+  });
+  expect(
+    (
+      await db.query<{ state: string }>(
+        `SELECT state FROM agent_commands WHERE room_id=$1 AND action='input'
+         ORDER BY created_at DESC LIMIT 1`,
+        [cornerId],
+      )
+    ).rows[0]?.state,
+  ).toBe('complete');
+  expect(
+    (
+      await db.query<{ identity_id: string }>(
+        `SELECT identity_id FROM memberships WHERE room_id=$1 ORDER BY identity_id`,
+        [cornerId],
+      )
+    ).rows,
+  ).toEqual(beforeMembers.rows);
+});
+
+it('rejects an agent-initiated upgrade without an active human command', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+
+  await expect(daemon.execute('upgradeCornerLane', { cornerId }, AGENT)).rejects.toThrow();
+  expect(await lane(cornerId)).toBe('no_code');
+});
+
+it('rejects every second or non-no-code lane transition', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  await upgrade(cornerId);
+  await expect(upgrade(cornerId)).rejects.toThrow('requires no_code, found code');
+
+  const research = await open(CODE_ROOM, 'research', 'owner/widgets');
+  await expect(upgrade(research)).rejects.toThrow('requires no_code, found research');
+});
+
+it('rejects a no-code corner whose parent Room has no repository', async () => {
+  const cornerId = await humanCorner(CHAT_ROOM);
+
+  await expect(upgrade(cornerId)).rejects.toThrow('requires a repository-backed parent Room');
+  expect(await lane(cornerId)).toBe('no_code');
 });

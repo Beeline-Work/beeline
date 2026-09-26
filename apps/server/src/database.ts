@@ -1014,6 +1014,12 @@ CREATE TABLE IF NOT EXISTS corner_facts (
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
+-- A no-code corner may enter the code lane once, but only on a human-authored
+-- command. Keep that request separate from the person who originally created
+-- the corner so upgrading never rewrites its historical commissioning fact.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane_upgraded_by text REFERENCES identities(id);
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane_upgrade_message_id text REFERENCES messages(id);
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane_upgraded_at timestamptz;
 -- Every corner that existed before the lane did was a commit-and-merge corner,
 -- so the default backfills them truthfully. The CHECK rides the same pattern
 -- as agent_turns_status_check: drop by generated name, re-add, idempotent.
@@ -1027,6 +1033,7 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
+CREATE INDEX IF NOT EXISTS corner_facts_lane_upgraded_by_idx ON corner_facts(lane_upgraded_by);
 
 -- Assignment revisions are immutable; the current revision is the greatest
 -- committed row. Opening and revising insert the row in the command transaction.

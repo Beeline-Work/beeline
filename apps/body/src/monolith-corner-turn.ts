@@ -490,6 +490,8 @@ export interface MonolithCornerTurnOptions {
   worktreePath: string;
   /** Immutable server lane; research has a worktree but no automatic delivery or agent close. */
   lane?: 'code' | 'no_code' | 'research';
+  /** The parent is repository-backed while this corner is still no-code. */
+  agentMayUpgradeCorner?: boolean;
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
   requesterHandle?: string;
   /** Present only when the parent Room is bound to a repository AND the corner is on the code lane. */
@@ -1019,6 +1021,7 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
+        agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
         reviewer: Boolean(reviewerInstruction),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see

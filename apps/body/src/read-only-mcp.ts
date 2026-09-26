@@ -1035,6 +1035,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'upgrade_corner_to_code',
+    description:
+      'Upgrade this repository-backed no-code corner to a writable code corner. Call this only while answering a human message that explicitly asks for code edits in this same corner. Never infer permission from the objective, prior discussion, or your own recommendation. The one-way upgrade preserves this corner and its messages, then re-delivers the same request after restarting with a feature branch and checkout. After success, end this turn immediately; do not edit the scratch workspace.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'close_corner',
     description:
       'Close this corner after its task is complete. Only the agent that opened the corner may close it, because closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub only when it has no open pull request or that pull request already merged; an open pull request keeps its branch, because deleting it would close the pull request and make the commits recoverable only from GitHub. Close only work that has landed or is being abandoned. Already-attached files remain available from the Room.',
@@ -1326,6 +1332,7 @@ export function agentToolsFor(
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+  agentMayUpgradeCorner = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1339,6 +1346,7 @@ export function agentToolsFor(
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
+    if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
@@ -1356,6 +1364,8 @@ const TOOLS = youtubeSurface
       process.env.BEELINE_CORNER_REVIEWER === '1',
       Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
       process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
+      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+      process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2016,6 +2026,14 @@ async function closeCorner(): Promise<string> {
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
+}
+
+async function upgradeCornerToCode(): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  if (process.env.BEELINE_CORNER_CAN_UPGRADE !== '1') {
+    throw new Error('only a repository-backed no-code corner can upgrade to code');
+  }
+  return JSON.stringify(await daemonExecute('upgradeCornerLane', { cornerId }));
 }
 
 function cornerMergeAllowed(input: {
@@ -3414,6 +3432,8 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return reactToMessage(args);
     case 'close_corner':
       return closeCorner();
+    case 'upgrade_corner_to_code':
+      return upgradeCornerToCode();
     case 'pr_checks_status':
       return prChecksStatus(args);
     case 'approve_merge':

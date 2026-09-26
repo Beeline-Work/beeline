@@ -75,7 +75,8 @@ export interface RepositoryPrimerInfo {
  * and the sandbox together, because a model told nothing keeps asking for a
  * shell it cannot have — and a model told the wrong thing stops using one it
  * has. An unmeasured harness passes no state at all and the standing
- * "if shell access is blocked, say so plainly" line carries the case.
+ * "if a shell command is refused, say so plainly rather than retrying it"
+ * line carries the case.
  *
  * `detail` is the ONE bounded sentence from `BwrapAvailability.shellDetail`,
  * carrying the operator's one-line fix and nothing else: the model is told to

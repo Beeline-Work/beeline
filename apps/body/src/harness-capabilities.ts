@@ -277,7 +277,8 @@ export function roomModeCandidates(
  *    refuses because no OS sandbox holds the read-only rule
  *    (`roomPermissionDecision`).
  *  - `unknown`: nothing measured says which. The prompt then states nothing and
- *    the standing "if shell access is blocked, say so plainly" guidance stands —
+ *    the standing "if a shell command is refused, say so plainly rather than
+ *    retrying it" guidance stands —
  *    claiming either way would tell the model to stop using a capability it has,
  *    or to retry one it does not.
  */

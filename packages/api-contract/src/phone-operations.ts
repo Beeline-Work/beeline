@@ -10,6 +10,7 @@ import type {
   InviteView,
   MessageBookmarkView,
   MessageReactionEmoji,
+  NeedsYouItemView,
 } from './phone-types.js';
 import type {
   CreateWalletInput,
@@ -41,6 +42,12 @@ export type PhoneOperationMap = {
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
+  /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
+  readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
+  /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
+  countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
+  /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
+  clearNeedsYou: { input: ClearNeedsYouInput; output: void };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -234,6 +241,9 @@ export type SetMessageBookmarkInput = RoomInput & {
 };
 export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
+export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
+export type NeedsYouCountResult = { readonly count: number };
+export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string };
 /**
  * Stop one turn in progress.
  *

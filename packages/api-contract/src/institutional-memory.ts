@@ -505,16 +505,17 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
 
 /** Strict parser for one merge-derived, restricted procedure proposal. */
 /**
- * The two optional anchor fields are stored provenance, so an unverifiable value
- * is DROPPED rather than kept or treated as fatal: keeping it would record a
- * digest nobody can check, and rejecting the proposal would discard a whole
- * valid procedure and its review findings over metadata the model was told was
- * optional.
+ * A path the model can name from its own evidence is kept; an unverifiable value
+ * is DROPPED rather than kept or treated as fatal, because rejecting would
+ * discard a whole valid procedure and its review findings over metadata the
+ * model was told was optional.
+ *
+ * `anchor.contentHash` is NOT parsed at all. The model is given no file bytes
+ * and no digest, so any digest it emits is asserted rather than computed, and
+ * the one consumer — the anchor-stale pass — would retire a still-correct
+ * procedure on the strength of it. The column stays for a producer that can
+ * compute the real digest.
  */
-function codeContentDigest(value: unknown): string | undefined {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? value : undefined;
-}
-
 function repositoryRelativePath(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length === 0 || value.length > 500) return undefined;
   if (
@@ -527,7 +528,7 @@ function repositoryRelativePath(value: unknown): string | undefined {
   return value;
 }
 
-function optionalAnchorField(key: 'path' | 'contentHash', value: string | undefined) {
+function optionalAnchorField(key: 'path', value: string | undefined) {
   return value === undefined ? {} : { [key]: value };
 }
 
@@ -589,7 +590,6 @@ export function parseInstitutionalMergeReviewProposal(
         repository: boundedText(anchor.repository, 'workspace skill repository', 300),
         targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
         ...optionalAnchorField('path', repositoryRelativePath(anchor.path)),
-        ...optionalAnchorField('contentHash', codeContentDigest(anchor.contentHash)),
       },
     };
   }

@@ -111,38 +111,34 @@ describe('institutional merge review contract', () => {
     expect(parseInstitutionalMergeReviewProposal(proposal)).toEqual(proposal);
   });
 
-  it('drops an unverifiable code anchor without discarding the procedure', () => {
+  it('never stores a code digest the model could not have computed', () => {
     const withAnchor = (anchor: Record<string, unknown>) => ({
       ...proposal,
       skill: { ...proposal.skill, anchor: { ...proposal.skill.anchor, ...anchor } },
     });
-    // A value nobody can check is not provenance, but the procedure and its
-    // review findings are still valid work: keep them and forget the field.
-    for (const anchor of [
-      { contentHash: 'looks-about-right' },
-      { contentHash: 'A'.repeat(64) },
-      { contentHash: 'a'.repeat(40) },
-      { contentHash: null },
-      { path: '/etc/passwd' },
-      { path: '../secrets.txt' },
-      { path: 'apps/../../outside.ts' },
-      { path: 'a//b.ts' },
-      { path: 42 },
-    ]) {
-      const parsed = parseInstitutionalMergeReviewProposal(withAnchor(anchor));
+    // The model is given no file bytes, so any digest it emits is asserted, not
+    // computed — and the anchor-stale pass would retire a correct procedure on
+    // the strength of it. The field never survives parsing, valid-looking or not.
+    for (const contentHash of ['b'.repeat(64), 'looks-about-right', 'A'.repeat(64), null]) {
+      const parsed = parseInstitutionalMergeReviewProposal(withAnchor({ contentHash }));
+      expect(parsed.skill?.anchor).not.toHaveProperty('contentHash');
       expect(parsed.skill?.markdown).toBe(proposal.skill.markdown);
       expect(parsed.findings).toHaveLength(1);
+    }
+    // An unverifiable path is dropped too, without discarding valid work.
+    for (const path of ['/etc/passwd', '../secrets.txt', 'apps/../../outside.ts', 'a//b.ts', 42]) {
+      const parsed = parseInstitutionalMergeReviewProposal(withAnchor({ path }));
       expect(parsed.skill?.anchor).toEqual({
         repository: proposal.skill.anchor.repository,
         targetCommit: proposal.skill.anchor.targetCommit,
       });
+      expect(parsed.findings).toHaveLength(1);
     }
-    // A verifiable anchor is kept exactly.
+    // A path the model can name from its own evidence is kept exactly.
     expect(
-      parseInstitutionalMergeReviewProposal(
-        withAnchor({ path: 'apps/server/src/database.ts', contentHash: 'b'.repeat(64) }),
-      ).skill?.anchor,
-    ).toMatchObject({ path: 'apps/server/src/database.ts', contentHash: 'b'.repeat(64) });
+      parseInstitutionalMergeReviewProposal(withAnchor({ path: 'apps/server/src/database.ts' }))
+        .skill?.anchor,
+    ).toMatchObject({ path: 'apps/server/src/database.ts' });
   });
 
   it('rejects unknown fields, invalid slugs, and descriptions over 60 characters', () => {

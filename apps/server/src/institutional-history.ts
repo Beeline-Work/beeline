@@ -13,7 +13,7 @@ import type { SqlDatabase } from './database.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 
 type SearchRow = {
-  message_id: string;
+  message_id: string | null;
   room_id: string;
   room_name: string;
   author_id: string;
@@ -21,6 +21,7 @@ type SearchRow = {
   created_at: Date;
   rank: number;
   matched_count: string;
+  authorized_room_count: string;
 };
 
 /**
@@ -136,20 +137,6 @@ export async function searchInstitutionalHistory(
       throw new Error('institutional history is not enabled for this Workspace');
     }
 
-    const authorizedRoomCount = Number(
-      (
-        await db.query<{ count: string }>(
-          `WITH ${AUTHORIZED_ROOMS_CTE} SELECT count(*)::text count FROM authorized_rooms`,
-          [
-            command.room_id,
-            authority.requester_identity_id,
-            authority.workspace_id,
-            command.agent_id,
-          ],
-        )
-      ).rows[0]?.count ?? 0,
-    );
-
     const rows = await db.query<SearchRow>(
       `WITH ${AUTHORIZED_ROOMS_CTE}, search_query AS (
          SELECT websearch_to_tsquery('simple',$5) query
@@ -163,17 +150,26 @@ export async function searchInstitutionalHistory(
            AND message.created_at>=now()-$8*interval '1 day'
          ORDER BY message.created_at DESC,message.id DESC
          LIMIT $6
+       ), ranked AS (
+         SELECT message.id message_id,message.room_id,room.name room_name,
+                message.author_id,message.text,message.created_at,
+                ts_rank_cd(message.search_document,search_query.query)::double precision rank,
+                count(*) OVER() matched_count
+         FROM matches
+         JOIN messages message ON message.id=matches.id
+         JOIN rooms room ON room.id=message.room_id
+         CROSS JOIN search_query
+         ORDER BY rank DESC,message.created_at DESC,message.id DESC
+         LIMIT $7
+       ), authorized_room_count AS (
+         SELECT count(*)::text count FROM authorized_rooms
        )
-       SELECT message.id message_id,message.room_id,room.name room_name,
-              message.author_id,message.text,message.created_at,
-              ts_rank_cd(message.search_document,search_query.query)::double precision rank,
-              count(*) OVER() matched_count
-       FROM matches
-       JOIN messages message ON message.id=matches.id
-       JOIN rooms room ON room.id=message.room_id
-       CROSS JOIN search_query
-       ORDER BY rank DESC,message.created_at DESC,message.id DESC
-       LIMIT $7`,
+       -- The authorization CTE is evaluated once and its count rides the same
+       -- statement. The LEFT JOIN keeps that count when nothing matched, so an
+       -- empty result still records how many Rooms were readable.
+       SELECT authorized_room_count.count authorized_room_count,ranked.*
+       FROM authorized_room_count LEFT JOIN ranked ON true
+       ORDER BY ranked.rank DESC,ranked.created_at DESC,ranked.message_id DESC`,
       [
         command.room_id,
         authority.requester_identity_id,
@@ -185,17 +181,20 @@ export async function searchInstitutionalHistory(
         INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
       ],
     );
+    const authorizedRoomCount = Number(rows.rows[0]?.authorized_room_count ?? 0);
     const matched = Number(rows.rows[0]?.matched_count ?? 0);
     const capped = matched >= INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX;
-    const result = rows.rows.map((row) => ({
-      messageId: row.message_id,
-      roomId: row.room_id,
-      roomName: row.room_name,
-      authorId: row.author_id,
-      createdAt: Math.floor(row.created_at.getTime() / 1_000),
-      snippet: snippet(row.text, query),
-      rank: row.rank,
-    }));
+    const result = rows.rows
+      .filter((row): row is SearchRow & { message_id: string } => row.message_id !== null)
+      .map((row) => ({
+        messageId: row.message_id,
+        roomId: row.room_id,
+        roomName: row.room_name,
+        authorId: row.author_id,
+        createdAt: Math.floor(row.created_at.getTime() / 1_000),
+        snippet: snippet(row.text, query),
+        rank: row.rank,
+      }));
     await db.query(
       `INSERT INTO institutional_history_searches
        (id,workspace_id,output_room_id,request_id,requester_identity_id,agent_id,

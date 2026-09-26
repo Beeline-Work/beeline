@@ -172,10 +172,17 @@ export interface InstitutionalObjectiveDashboard {
   readonly skillsLoaded: number;
   readonly searches: number;
   readonly deadJobs: number;
-  /** Items this Workspace actually served, and how many have since stopped being active. */
+  /**
+   * Served items still on record, and how many of those were ALREADY not
+   * current at the moment they were served. Normal aging after a serve is not a
+   * stale serve.
+   */
   readonly servedItems: number;
   readonly staleServedItems: number;
   readonly staleServeRate: number;
+  /** Repeats beyond the first, over the correction and review-finding ledgers. */
+  readonly repeatedCorrections: number;
+  readonly repeatedReviewFindings: number;
   /**
    * False leaves a staged Workspace serving memory with no lifecycle pass at
    * all, so the dashboard names it rather than leaving the half state silent.
@@ -210,6 +217,8 @@ export async function institutionalObjectiveDashboard(
       dead_jobs: string;
       served_items: string;
       stale_served_items: string;
+      repeated_corrections: string;
+      repeated_review_findings: string;
       curator_enabled: boolean | null;
     }>(
       `SELECT
@@ -233,16 +242,36 @@ export async function institutionalObjectiveDashboard(
          (SELECT count(*) FROM institutional_memory_jobs
           WHERE workspace_id=$1 AND status='dead'
             AND updated_at>=now()-interval '24 hours') dead_jobs,
-         -- Stale serve rate: of every item this Workspace actually served, how
-         -- many have since been staled, archived or tombstoned.
+         -- Stale serve rate is "was this item ALREADY not current when we served
+         -- it", never "has it aged since". A state transition is the only thing
+         -- that moves updated_at, so a non-active item whose last transition
+         -- predates the serve was stale at serve time; one that transitioned
+         -- afterwards is the curator working exactly as specified. Both sides
+         -- join the item, so a row later hard-deleted is unmeasurable rather
+         -- than silently counted as current.
          (SELECT count(*) FROM institutional_context_serves serve
           CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
+          JOIN institutional_memory_items item ON item.id=served.item_id
           WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served) served_items,
          (SELECT count(*) FROM institutional_context_serves serve
           CROSS JOIN LATERAL unnest(serve.item_ids) served(item_id)
           JOIN institutional_memory_items item ON item.id=served.item_id
           WHERE serve.workspace_id=$1 AND serve.mode='live' AND serve.served
-            AND (item.state<>'active' OR item.deleted_at IS NOT NULL)) stale_served_items,
+            AND (item.state<>'active' OR item.deleted_at IS NOT NULL)
+            AND item.updated_at<=serve.created_at) stale_served_items,
+         -- Repeat evidence the criteria name, over ledgers that already have
+         -- writers: a correction repeated on one canonical key for one person,
+         -- and a review finding repeated on one taxonomy and path.
+         (SELECT COALESCE(sum(repeats-1),0) FROM (
+            SELECT count(*) repeats FROM institutional_memory_correction_events
+            WHERE workspace_id=$1
+            GROUP BY requester_identity_id,memory_kind,canonical_key
+            HAVING count(*)>1) repeated) repeated_corrections,
+         (SELECT COALESCE(sum(repeats-1),0) FROM (
+            SELECT count(*) repeats FROM institutional_review_findings
+            WHERE workspace_id=$1 AND path IS NOT NULL
+            GROUP BY taxonomy,path
+            HAVING count(*)>1) repeated) repeated_review_findings,
          (SELECT curator_enabled FROM institutional_memory_workspace_rollouts
           WHERE workspace_id=$1) curator_enabled`,
       [workspaceId],
@@ -272,6 +301,8 @@ export async function institutionalObjectiveDashboard(
     servedItems,
     staleServedItems,
     staleServeRate: servedItems ? staleServedItems / servedItems : 0,
+    repeatedCorrections: Number(row?.repeated_corrections ?? 0),
+    repeatedReviewFindings: Number(row?.repeated_review_findings ?? 0),
     curatorEnabled: row?.curator_enabled === true,
     shadowReady: completedJobs >= 20 && deadJobs === 0,
     rolloutReady:

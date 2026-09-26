@@ -8,6 +8,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { PgliteDatabase } from './test-support.js';
+import type { QueryResult, SqlDatabase } from './database.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';
 const OTHER_WORKSPACE = '10000000-0000-4000-8000-000000000102';
@@ -161,6 +162,29 @@ describe('authorized institutional history search', () => {
     ).rows[0];
     expect(telemetry?.result_count).toBe(0);
     expect(telemetry?.authorized_room_count).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pays the audience-authorization cost once per search', async () => {
+    const statements: string[] = [];
+    const recorded = (inner: SqlDatabase): SqlDatabase => ({
+      query: <Row extends Record<string, unknown>>(sql: string, values?: unknown[]) => {
+        statements.push(sql);
+        return inner.query(sql, values) as Promise<QueryResult<Row>>;
+      },
+      transaction: (work) => inner.transaction((db) => work(recorded(db))),
+    });
+
+    const searched = await searchInstitutionalHistory(recorded(database), command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    expect(searched.results).not.toHaveLength(0);
+    // The authorization CTE scans every Room with a correlated EXISTS per human
+    // of the output Room, so its telemetry count must ride the ranking
+    // statement rather than buying a second pass.
+    expect(statements.filter((sql) => sql.includes('authorized_rooms AS'))).toHaveLength(1);
   });
 
   it('caps matching work and reports omitted against that bound', async () => {

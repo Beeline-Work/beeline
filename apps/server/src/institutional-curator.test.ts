@@ -1192,25 +1192,39 @@ describe('weekly institutional curator', () => {
     ).toBe(1);
   });
 
-  it('reports the stale serve rate and whether the curator gate is open', async () => {
-    const serve = randomUUID();
+  it('counts only a serve that happened after the item stopped being current', async () => {
+    // STALE transitioned long ago, so serving it NOW is a genuine stale serve.
+    // TARGET is active. DUPLICATE is served now and staled afterwards, which is
+    // the curator working correctly, not a stale serve.
+    const servedNow = randomUUID();
     await database.query(
       `INSERT INTO institutional_context_serves
        (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,
-        mode,served,total_bytes,estimated_tokens,item_ids)
+        mode,served,total_bytes,estimated_tokens,item_ids,created_at)
        VALUES($1,$2,$3,'stale-serve-proof',$4,1,'live',true,900,225,
-              ARRAY[$5,$6]::uuid[])`,
-      [serve, WORKSPACE, ROOM, HUMAN, TARGET, STALE],
+              ARRAY[$5,$6,$7]::uuid[],$8)`,
+      [servedNow, WORKSPACE, ROOM, HUMAN, TARGET, STALE, DUPLICATE, NOW],
     );
 
-    // TARGET is active; STALE is not, so exactly half of what was served has
-    // since stopped being current.
-    const dashboard = await institutionalObjectiveDashboard(database, WORKSPACE);
-    expect(dashboard).toMatchObject({
-      servedItems: 2,
+    const before = await institutionalObjectiveDashboard(database, WORKSPACE);
+    expect(before).toMatchObject({
+      servedItems: 3,
       staleServedItems: 1,
-      staleServeRate: 0.5,
+      staleServeRate: 1 / 3,
       curatorEnabled: true,
+    });
+
+    // Aging DUPLICATE after the serve must not turn that serve retroactively
+    // stale: the rate is a measure of what we served, not of what has aged.
+    await database.query(
+      `UPDATE institutional_memory_items SET state='stale',updated_at=$2
+       WHERE id=$1`,
+      [DUPLICATE, new Date(NOW.getTime() + 86_400_000)],
+    );
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      servedItems: 3,
+      staleServedItems: 1,
+      staleServeRate: 1 / 3,
     });
 
     // A Workspace staged live with the curator gate shut says so, rather than
@@ -1221,6 +1235,52 @@ describe('weekly institutional curator', () => {
       [WORKSPACE],
     );
     expect((await institutionalObjectiveDashboard(database, WORKSPACE)).curatorEnabled).toBe(false);
+  });
+
+  it('counts repeats beyond the first in the correction and review ledgers', async () => {
+    const job = (key: string) => {
+      const id = randomUUID();
+      return database
+        .query(
+          `INSERT INTO institutional_memory_jobs
+           (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+            requester_identity_id,source_audience_kind,idempotency_key)
+           VALUES($1,$2,'turn_review','live',$3,$4,$5,'workspace_candidate',$6)`,
+          [id, WORKSPACE, ROOM, MESSAGE, HUMAN, key],
+        )
+        .then(() => id);
+    };
+    // The same person corrects the same canonical key three times: two repeats.
+    for (const [index, key] of ['a', 'b', 'c', 'd'].entries()) {
+      const jobId = await job(`repeat-${key}`);
+      await database.query(
+        `INSERT INTO institutional_memory_correction_events
+         (id,workspace_id,requester_identity_id,job_id,source_room_id,source_message_id,
+          canonical_key,body,memory_kind,classifier_version,confidence)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'A correction.','human_profile_fact','v1',0.9)`,
+        [
+          randomUUID(),
+          WORKSPACE,
+          HUMAN,
+          jobId,
+          ROOM,
+          MESSAGE,
+          index === 3 ? 'other-key' : 'repeated-key',
+        ],
+      );
+      await database.query(
+        `INSERT INTO institutional_review_findings
+         (id,workspace_id,job_id,source_corner_id,taxonomy,summary,severity,path,
+          classifier_version,confidence)
+         VALUES($1,$2,$3,$4,'database.release-order','Marker last.','warning',$5,'v1',0.9)`,
+        [randomUUID(), WORKSPACE, jobId, ROOM, index === 3 ? null : 'apps/server/src/database.ts'],
+      );
+    }
+
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      repeatedCorrections: 2,
+      repeatedReviewFindings: 2,
+    });
   });
 
   it('advances a pilot cohort only after successful bounded live outcomes', async () => {

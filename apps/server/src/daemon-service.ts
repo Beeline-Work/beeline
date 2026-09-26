@@ -4752,14 +4752,16 @@ export class DaemonService {
       await this.database.query<{
         owner_id: string;
         owner_handle: string | null;
+        agent_name: string;
         yolo_mode: boolean;
         owner_present: boolean;
       }>(
-        `SELECT a.owner_id,owner.handle owner_handle,
+        `SELECT a.owner_id,owner.handle owner_handle,agent.name agent_name,
        EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
        FROM agents a JOIN identities owner ON owner.id=a.owner_id
+       JOIN identities agent ON agent.id=a.agent_id
        JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
        WHERE a.agent_id=$2`,
         [input.roomId, agentId],
@@ -4805,13 +4807,23 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending)
+    if (pending) {
+      if (kind !== 'mcp')
+        await this.noteBlockedTurnGate({
+          roomId: input.roomId,
+          agentId,
+          agentName: context.agent_name,
+          kind,
+          ownerHandle: context.owner_handle,
+          grantId: pending.id,
+        });
       return {
         allowed: false,
         grantId: pending.id,
         status: 'pending' as const,
         ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
       };
+    }
     const asked = await this.requestAgentGrant(
       {
         ...input,
@@ -4826,6 +4838,15 @@ export class DaemonService {
       },
       agentId,
     );
+    if (kind !== 'mcp')
+      await this.noteBlockedTurnGate({
+        roomId: input.roomId,
+        agentId,
+        agentName: context.agent_name,
+        kind,
+        ownerHandle: context.owner_handle,
+        grantId: asked.grantId,
+      });
     return {
       allowed: false,
       grantId: asked.grantId,
@@ -4833,6 +4854,51 @@ export class DaemonService {
       ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
+  }
+
+  /**
+   * A gate that stopped a corner turn before its harness could start is a fact
+   * the SERVER states, not prose the agent wrote. Inscribing it here, once per
+   * pending grant (the derived id makes a retried turn collide instead of
+   * repeating), is what keeps it out of `postRoomMessage`: a system line is
+   * never an agent reply, so it never reaches `routeAgentResult`,
+   * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
+   * writes no message and records a plain `complete` receipt, so neither gate
+   * can settle as the calm `had nothing to add` line.
+   *
+   * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
+   * already reaches the agent as its tool error, not a turn that never started.
+   */
+  private async noteBlockedTurnGate(input: {
+    readonly roomId: string;
+    readonly agentId: string;
+    readonly agentName: string;
+    readonly kind: 'repository' | 'host';
+    readonly ownerHandle: string | null;
+    readonly grantId: string;
+  }) {
+    const id = createHash('sha256')
+      .update(`blocked-corner-gate:v1:${input.grantId}`)
+      .digest('hex');
+    const line = await systemLine(this.database, {
+      id,
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: input.agentId, name: input.agentName },
+      verb: 'is waiting for',
+      object: {
+        text:
+          input.kind === 'host'
+            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
+            : 'a Workspace admin to approve repository access',
+      },
+    });
+    if (line.inserted)
+      this.live.publish({
+        type: 'invalidate',
+        roomId: input.roomId,
+        reason: 'grant',
+        agentId: input.agentId,
+      });
   }
 
   // --- R5: connector offers -------------------------------------------------

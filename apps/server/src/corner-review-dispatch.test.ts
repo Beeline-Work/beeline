@@ -321,6 +321,66 @@ describe('corner message attribution', () => {
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
   });
 
+  // A corner turn blocked by an unapproved gate never parses as the agent's
+  // own verdict. The server inscribes the wait as a system line and the turn
+  // settles with no reply; because a line is not a reply, a configured
+  // reviewer's blocked turn neither hands the branch back nor spends the
+  // handback budget.
+  it.each(['authorizeRepositoryCall', 'authorizeHostCall'] as const)(
+    'inscribes a pending %s gate as a system line and hands nothing back',
+    async (gate) => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [B]);
+      await greenHead(21, '1'.repeat(40));
+      const [review] = await commands(B, C);
+      await claim(review!);
+      const blocked = await daemon.execute(
+        gate,
+        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1' },
+        B,
+      );
+      expect(blocked.allowed).toBe(false);
+      // The server states the wait in the corner, authored by the agent whose
+      // turn stopped, and names the approver for the host gate.
+      const line = (
+        await db.query<{ text: string; author_id: string; presentation: string }>(
+          `SELECT text,author_id,presentation FROM messages
+           WHERE room_id=$1 AND presentation='system' AND text LIKE '%is waiting for%'`,
+          [C],
+        )
+      ).rows[0]!;
+      expect(line.author_id).toBe(B);
+      expect(line.text).toBe(
+        gate === 'authorizeHostCall'
+          ? '@goosy is waiting for @human to approve host access'
+          : '@goosy is waiting for a Workspace admin to approve repository access',
+      );
+      // The body posts no reply on this path; the turn settles as a plain
+      // complete receipt. A system line is never a reviewer verdict, so the
+      // worker is not woken and the handback budget is untouched.
+      await daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: C,
+          agentId: B,
+          requestId: review!.turnRequestId,
+          generationId: 'g1',
+          status: 'complete',
+        },
+        B,
+      );
+      expect(await commands(A, C)).toEqual([]);
+      expect(
+        (
+          await db.query<{ review_handback_count: number }>(
+            `SELECT review_handback_count FROM corner_facts WHERE corner_id=$1`,
+            [C],
+          )
+        ).rows[0]?.review_handback_count,
+      ).toBe(0);
+    },
+  );
+
   it('commits the verdict and the handoff together, or neither', async () => {
     // The stall this whole corner removes is a durable verdict nobody was
     // woken for. A handoff written AFTER the verdict commits can produce

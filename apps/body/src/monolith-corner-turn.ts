@@ -1359,29 +1359,20 @@ export class MonolithCornerTurnLoop {
         async () => {
           // Gate the whole turn before any harness can mutate the checkout,
           // including harnesses whose autonomous mode omits ACP callbacks.
+          // A denied gate is the SERVER's fact, not the agent's prose: the
+          // server inscribes the pending-approval system line (both gates are
+          // `status:'pending'`) and this turn settles as a plain `complete`
+          // receipt. Writing a reply here would both re-phrase a line the
+          // server owns and, for a configured reviewer, trigger the review
+          // handoff on an approval wait rather than a verdict.
           const repositoryPermission = await api.execute('authorizeRepositoryCall', {
             roomId: cornerId,
           });
-          if (!repositoryPermission.allowed) {
-            deliberateNoReply = true;
-            return;
-          }
+          if (!repositoryPermission.allowed) return;
           // A corner harness has host shell access. Repository permission alone
           // cannot authorize that personal resource, including on a reused session.
           const hostPermission = await api.execute('authorizeHostCall', { roomId: cornerId });
-          if (!hostPermission.allowed) {
-            await api.execute('postRoomMessage', {
-              roomId: cornerId,
-              requestId,
-              text:
-                hostPermission.status === 'pending'
-                  ? `I'm waiting for ${hostPermission.ownerHandle ? `@${hostPermission.ownerHandle}` : 'my owner'} to approve the pending host-access request, so I haven't started this corner yet.`
-                  : "Host access was not authorized, so I couldn't start this corner.",
-              presentation: 'message',
-              ...(requestedById ? { triggerMessageId: requestId } : {}),
-            });
-            return;
-          }
+          if (!hostPermission.allowed) return;
           trace.noteScheduler('queue', this.options.scheduler.snapshot());
           trace.start('queue-wait');
           return this.options.scheduler.run(

@@ -31,8 +31,9 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION isolates the large PGlite-backed
-# integration file on a memory-capable runner; SERVER SUITE runs the rest.
+# the tiny suite tables. SERVER INTEGRATION takes the verdict from hosted,
+# bounded shards of the large PGlite-backed integration file; SERVER SUITE
+# runs the rest.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -535,17 +536,21 @@ jobs:
       - name: Run the server suite
         run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2
 
-  server-integration:
-    name: SERVER INTEGRATION
+  server-integration-shard:
+    name: SERVER INTEGRATION SHARD ${{ matrix.shard }}
     needs: changes
     if: >-
       !cancelled() && (
         (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    # This large PGlite file reached more than 15 GiB RSS in a local run;
-    # the standard hosted runner cannot hold it. The suite above stays hosted.
-    runs-on: [self-hosted, Linux, X64, beeline-prod-host]
+    # One process running all 175 cases exceeded 34 GiB RSS locally. Split
+    # by exact test name so each hosted runner executes at most 22 cases.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -555,8 +560,28 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
-      - name: Run the server integration contract
-        run: npm test -w @beeline/server -- --run src/integration.test.ts --maxWorkers=1 --minWorkers=1
+      - name: Run the server integration shard
+        working-directory: apps/server
+        run: node scripts/run-integration-shard.mjs ${{ matrix.shard }}/8
+
+  server-integration:
+    name: SERVER INTEGRATION
+    needs: [changes, server-integration-shard]
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every hosted shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.server-integration-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "SERVER INTEGRATION SHARD: $SHARDS_RESULT"
+          test "$SHARDS_RESULT" = success
 
   mobile-suite:
     name: MOBILE SUITE

@@ -162,7 +162,6 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
-import { RoomCornerSummary } from '@/components/buzz/RoomCornerSummary';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -269,13 +268,15 @@ describe('Room deck live path', () => {
       row = create(
         list.props.renderItem({
           item: { ...paintedRows(renderer)[0], cornerCount: 3, waitingCornerCount: 2 },
+          index: 0,
+          section: { data: [paintedRows(renderer)[0]] },
         }),
       );
     });
     expect(row!.root.findByType(ConversationRow).props.selected).toBeUndefined();
-    const summary = row!.root.findByType(RoomCornerSummary);
-    expect(summary.props).toMatchObject({ count: 3, waiting: 2 });
-    act(() => summary.props.onPress());
+    const conversation = row!.root.findByType(ConversationRow);
+    expect(conversation.props.onToggleCorners).toBeTypeOf('function');
+    act(() => conversation.props.onToggleCorners());
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/beeline/corners/[roomId]',
       params: { roomId: 'room-a' },

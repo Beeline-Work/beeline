@@ -35,6 +35,7 @@ import {
   NO_ACTIVITY_PREVIEW,
   previewHandle,
   roomRowName,
+  roomRowAttentionReason,
   roomRowNeedsAttention,
   roomRowPreview,
   roomListSections,
@@ -114,7 +115,7 @@ describe('Room list sections', () => {
     const newer = chat('newer-dm', 20, true, 40);
     const sections = roomListSections([older, chat('room-a', 50), newer, chat('room-b', 5)]);
 
-    expect(sections.map((section) => section.title)).toEqual([undefined, 'Messages']);
+    expect(sections.map((section) => section.title)).toEqual(['Rooms', 'Direct messages']);
     expect(sections[0]?.data.map((item) => item.room.id)).toEqual(['room-a', 'room-b']);
     expect(sections[1]?.data.map((item) => item.room.id)).toEqual(['newer-dm', 'older-dm']);
   });
@@ -150,12 +151,12 @@ describe('Room list sections', () => {
     );
     expect(
       orderedRows.map((node) => (node.type === 'Text' ? node.props.children : node.props.roomId)),
-    ).toEqual(['room', 'MESSAGES', 'dm']);
+    ).toEqual(['ROOMS', 'room', 'DIRECT MESSAGES', 'dm']);
   });
 
   it('omits the Messages heading when there are no direct messages', () => {
     expect(roomListSections([chat('room-a', 1)])).toEqual([
-      { kind: 'rooms', data: [chat('room-a', 1)] },
+      { kind: 'rooms', title: 'Rooms', data: [chat('room-a', 1)] },
     ]);
   });
 
@@ -168,6 +169,37 @@ describe('Room list sections', () => {
 
     expect(roomListSections(source).flatMap((section) => section.data)).toEqual([openRoom, openDm]);
     expect(source).toHaveLength(4);
+  });
+});
+
+describe('Room row attention reason', () => {
+  const author = {
+    pubkey: 'author',
+    kind: 'human' as const,
+    name: 'Chloropine',
+    handle: '@chloropine',
+  };
+
+  it('prefers an approval and names its actor', () => {
+    expect(
+      roomRowAttentionReason({
+        agentState: 'needs-you',
+        attentionReason: { kind: 'approval', actor: 'Hoots' },
+      }),
+    ).toBe('approval · Hoots');
+  });
+
+  it('uses only a server-resolved mention fact', () => {
+    expect(
+      roomRowAttentionReason({
+        latestMessage: { id: 'message', text: 'hello', createdAt: 1, author, mentionsViewer: true },
+      }),
+    ).toBe('mention · @chloropine');
+    expect(
+      roomRowAttentionReason({
+        latestMessage: { id: 'message', text: '@viewer as prose', createdAt: 1, author },
+      }),
+    ).toBeNull();
   });
 });
 

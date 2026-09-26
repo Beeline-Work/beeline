@@ -1,10 +1,22 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
-import { roomRowName, roomRowPreview, NO_ACTIVITY_PREVIEW } from '@/buzz/room-list-row';
+import {
+  roomRowAttentionReason,
+  roomRowName,
+  roomRowPreview,
+  NO_ACTIVITY_PREVIEW,
+} from '@/buzz/room-list-row';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { IdentityMark } from './IdentityMark';
+import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
 
 export function ConversationRow({
@@ -16,6 +28,8 @@ export function ConversationRow({
   pinned = false,
   selected = false,
   desktop = false,
+  cornersExpanded = false,
+  onToggleCorners,
   testID,
 }: {
   item: ChatListItem;
@@ -26,142 +40,213 @@ export function ConversationRow({
   pinned?: boolean;
   selected?: boolean;
   desktop?: boolean;
+  cornersExpanded?: boolean;
+  onToggleCorners?: () => void;
   testID: string;
 }) {
   const name = roomRowName(item);
   const preview = roomRowPreview(item, viewer);
-  const peer = item.directMessage?.peer;
+  const reason = roomRowAttentionReason(item);
+  const needsYou = Boolean(reason);
+  const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
+  const hasCorners = !item.directMessage && (item.cornerCount ?? 0) > 0;
+  const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
+  React.useEffect(() => {
+    cornerRotation.value = withTiming(cornersExpanded ? 1 : 0, {
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [cornerRotation, cornersExpanded]);
+  const cornerRotationStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${cornerRotation.value * 135}deg` }],
+  }));
+
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onPin}
-      accessibilityRole="button"
-      accessibilityHint="Long press to toggle this conversation's pin"
-      accessibilityLabel={`${name.sigil}${name.name}${item.unread ? ', unread messages' : ''}${pinned ? ', pinned' : ''}`}
-      accessibilityState={selected ? { selected: true } : undefined}
-      accessibilityActions={[
-        { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
-      ]}
-      onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'pin') onPin();
-      }}
-      style={({ pressed }) => [
+    <View
+      style={[
         styles.row,
-        desktop && styles.desktopRow,
-        desktop && (item.cornerCount ?? 0) > 0 && styles.desktopRowWithCorners,
-        !desktop && styles.cardRow,
-        !desktop && (peer || !item.cornerCount) && styles.previewCardRow,
-        desktop && item.unread && styles.unread,
         selected && styles.selected,
-        pressed && styles.pressed,
       ]}
-      testID={testID}
     >
-      <View style={styles.heading}>
-        {peer && (
-          <IdentityMark
-            seed={peer.pubkey}
-            name={peer.name}
-            face={peer.face}
-            avatarUrl={peer.avatar}
-            kind={peer.kind === 'agent' ? 'agent' : 'human'}
-            size={28}
-          />
-        )}
-        <Text
-          numberOfLines={1}
-          style={[styles.name, !desktop && styles.cardName, item.unread && styles.unreadName]}
-        >
-          {!peer && <Text style={styles.sigil}>#</Text>}
-          {name.name}
-        </Text>
-        {pinned && (
-          <View testID={`${testID}-pinned`}>
-            <PinGlyph color={styles.sigil.color} size={18} />
-          </View>
-        )}
-        {selected && <Text style={styles.open}>Open</Text>}
-        <Text style={styles.age}>
-          {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
-        </Text>
-        {item.unread && <View style={styles.dot} testID={`${testID}-unread`} />}
-      </View>
-      <Text
-        numberOfLines={2}
-        style={[
-          styles.preview,
-          !desktop && styles.cardPreview,
-          desktop && styles.desktopPreview,
-          item.unread && styles.unreadPreview,
+      <Pressable
+        onPress={onPress}
+        onLongPress={onPin}
+        accessibilityRole="button"
+        accessibilityHint="Long press to toggle this conversation's pin"
+        accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
+        accessibilityState={selected ? { selected: true } : undefined}
+        accessibilityActions={[
+          { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
         ]}
-        testID={`${testID}-preview`}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === 'pin') onPin();
+        }}
+        style={({ pressed }) => [
+          styles.rowPressable,
+          desktop && styles.desktopRow,
+          !desktop && styles.mobileRow,
+          pressed && styles.pressed,
+        ]}
+        testID={testID}
       >
-        {!peer && preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
-          <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
-            {preview.attribution === 'self' ? 'you' : preview.handle}
-            <Text style={styles.quiet}>{'\u00a0·\u00a0'}</Text>
-          </Text>
-        )}
-        {preview.text}
-      </Text>
-    </Pressable>
+        <View style={styles.copy}>
+          <View style={styles.heading}>
+            {pinned && (
+              <View style={styles.pin} testID={`${testID}-pinned`}>
+                <PinGlyph color={styles.sigil.color} size={10} />
+              </View>
+            )}
+            <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+              <Text style={styles.sigil}>{name.sigil}</Text>
+              {name.name}
+            </Text>
+          </View>
+          <View style={styles.previewLine}>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.preview,
+                item.unread && !reason && styles.unreadPreview,
+                reason && styles.reason,
+              ]}
+              testID={`${testID}-preview`}
+            >
+              {reason ? (
+                reason
+              ) : (
+                <>
+                  {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
+                    <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
+                      {preview.attribution === 'self' ? 'you' : `@${preview.handle}`}
+                      <Text style={styles.quiet}>{'\u00a0\u00b7\u00a0'}</Text>
+                    </Text>
+                  )}
+                  {preview.text}
+                </>
+              )}
+            </Text>
+            <Text style={styles.age}>
+              {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.statusCell}>
+          <View style={styles.statusSlot}>
+            {status && (
+              <View
+                accessibilityLabel={status}
+                accessibilityRole="image"
+                style={[styles.statusMark, needsYou && styles.needsRing]}
+                testID={`${testID}-${needsYou ? 'needs-you' : 'unread'}`}
+              >
+                <View style={styles.dot} />
+              </View>
+            )}
+          </View>
+          <View style={styles.statusSlot} />
+        </View>
+      </Pressable>
+      {hasCorners && (
+        <Pressable
+          accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: cornersExpanded }}
+          hitSlop={8}
+          onPress={onToggleCorners}
+          style={[
+            styles.cornerToggle,
+            desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle,
+          ]}
+          testID={`${testID}-corners`}
+        >
+          <Animated.View style={cornerRotationStyle}>
+            <CornerGlyph size={13} />
+          </Animated.View>
+        </Pressable>
+      )}
+    </View>
   );
 }
+
 const styles = StyleSheet.create((theme) => ({
   row: {
+    minHeight: 62,
+    backgroundColor: 'transparent',
+  },
+  rowPressable: {
+    minHeight: 62,
     paddingHorizontal: theme.buzz.space.md,
-    paddingTop: theme.buzz.space.lg,
-    paddingBottom: theme.buzz.space.md,
-    backgroundColor: theme.buzz.bgBase,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    gap: 12,
   },
-  desktopRow: { paddingTop: 18, paddingBottom: 18, minHeight: 98 },
-  desktopRowWithCorners: { paddingBottom: theme.buzz.space.xs, minHeight: 94 },
-  // Mobile rows sit inside the Room list card, which owns the fill and border.
-  cardRow: { padding: theme.buzz.roomCard.padding, backgroundColor: 'transparent' },
-  // Without the corner summary below it, the preview is the card's last line.
-  previewCardRow: { paddingTop: theme.buzz.roomCard.previewCardTop },
-  heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
-  name: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
-  cardName: {
-    fontFamily: theme.buzz.type.hero.fontFamily,
-    fontSize: theme.buzz.roomCard.nameSize,
-    lineHeight: theme.buzz.roomCard.nameLineHeight,
+  desktopRow: { minHeight: 62, paddingLeft: 20 },
+  mobileRow: { minHeight: 68, paddingHorizontal: 14, paddingVertical: 10 },
+  copy: { flex: 1, minWidth: 0 },
+  heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },
+  pin: { width: 14, alignItems: 'flex-start', justifyContent: 'center' },
+  name: {
+    fontFamily: theme.buzz.proseRegular,
+    fontSize: 16,
+    lineHeight: 23,
+    flex: 1,
+    color: theme.buzz.textPrimary,
   },
-  unread: { backgroundColor: theme.buzz.bgUnread },
-  unreadPreview: { color: theme.buzz.textPrimary },
-  unreadName: { fontFamily: theme.buzz.type.bodyStrong.fontFamily },
+  unreadName: { fontFamily: theme.buzz.proseSemibold },
   sigil: { color: theme.buzz.accent },
-  author: { color: theme.buzz.accent },
+  previewLine: {
+    minHeight: 20,
+    marginTop: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
   preview: {
-    ...theme.buzz.type.body,
+    fontFamily: theme.buzz.proseRegular,
+    fontSize: 13,
+    lineHeight: 19,
+    flex: 1,
     color: theme.buzz.textSecondary,
-    marginTop: theme.buzz.space.xs,
   },
-  cardPreview: {
-    fontSize: theme.buzz.roomCard.previewSize,
-    lineHeight: theme.buzz.roomCard.previewLineHeight,
+  unreadPreview: { color: theme.buzz.textPrimary },
+  reason: { color: theme.buzz.accent },
+  author: { color: theme.buzz.accent },
+  quiet: { color: theme.buzz.ledgerQuiet },
+  age: {
+    fontFamily: theme.buzz.proseRegular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.buzz.ledgerQuiet,
+    flexShrink: 0,
   },
-  desktopPreview: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-    lineHeight: 20,
-    marginTop: theme.buzz.space.sm,
+  statusCell: { width: 14, alignItems: 'center', justifyContent: 'space-between' },
+  statusSlot: { width: 14, height: 19, alignItems: 'center', justifyContent: 'center' },
+  statusMark: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  open: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.buzz.accent },
+  needsRing: {
     borderWidth: 1,
-    borderColor: theme.buzz.bgBase,
-    backgroundColor: theme.buzz.accent,
+    borderColor: theme.buzz.accent,
   },
+  cornerToggle: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  desktopCornerToggle: { right: theme.buzz.space.md, bottom: 12 },
+  mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,
     borderLeftWidth: 1,
     borderLeftColor: theme.buzz.accent,
   },
   pressed: { backgroundColor: theme.buzz.bgPressed },
-  quiet: { color: theme.buzz.ledgerQuiet },
 }));

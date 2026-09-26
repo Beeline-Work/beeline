@@ -36,7 +36,6 @@ import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import { RoomCornerSummary } from '@/components/buzz/RoomCornerSummary';
 import {
   RoomDeckComposeMenu,
   type RoomDeckComposeAction,
@@ -998,11 +997,24 @@ export default function BuzzChannels() {
                 />
               )
             }
-            renderItem={({ item }: { item: ChatListItem }) => {
+            renderItem={({ item, index, section }) => {
               const heading = roomRowName(item);
               const title = `${heading.sigil}${heading.name}`;
+              const first = index === 0;
+              const last = index === section.data.length - 1;
+              const openCorners = () =>
+                router.push({
+                  pathname: '/beeline/corners/[roomId]',
+                  params: { roomId: item.room.id },
+                } as never);
               const row = (
-                <View style={[styles.rowSurface, item.unread && styles.unreadSurface]}>
+                <View
+                  style={[
+                    styles.rowSurface,
+                    first && styles.rowSurfaceFirst,
+                    last && styles.rowSurfaceLast,
+                  ]}
+                >
                   <ConversationRow
                     item={item}
                     viewer={chatList.viewer.pubkey}
@@ -1013,25 +1025,13 @@ export default function BuzzChannels() {
                     }}
                     pinned={pinned.includes(item.room.id)}
                     onPin={() => void togglePin(item.room.id)}
+                    onToggleCorners={openCorners}
                     testID={`room-${item.room.id}`}
                   />
-                  {!item.directMessage && (item.cornerCount ?? 0) > 0 && (
-                    <RoomCornerSummary
-                      count={item.cornerCount!}
-                      waiting={item.waitingCornerCount}
-                      onPress={() =>
-                        router.push({
-                          pathname: '/beeline/corners/[roomId]',
-                          params: { roomId: item.room.id },
-                        } as never)
-                      }
-                      testID={`room-corners-toggle-${item.room.id}`}
-                    />
-                  )}
                 </View>
               );
               return (
-                <View style={styles.roomCell}>
+                <View style={[styles.roomCell, last && styles.roomCellLast]}>
                   {!viewerIsAgent ? (
                     <Swipeable
                       ref={(ref) => {
@@ -1197,18 +1197,28 @@ const styles = StyleSheet.create((theme) => {
       fontSize: hull.type.body.fontSize - 1,
       lineHeight: hull.type.body.lineHeight,
     },
-    unreadSurface: { backgroundColor: hull.bgHighlight, borderColor: hull.brassWash },
     rowSurface: {
-      backgroundColor: hull.bgRaised,
-      borderWidth: 1,
+      backgroundColor: hull.bgBase,
+      borderLeftWidth: 1,
+      borderRightWidth: 1,
+      borderTopWidth: StyleSheet.hairlineWidth,
       borderColor: hull.border,
-      borderRadius: hull.roomCard.cornerRadius,
       overflow: 'hidden',
+    },
+    rowSurfaceFirst: {
+      borderTopWidth: 1,
+      borderTopLeftRadius: hull.roomCard.cornerRadius,
+      borderTopRightRadius: hull.roomCard.cornerRadius,
+    },
+    rowSurfaceLast: {
+      borderBottomWidth: 1,
+      borderBottomLeftRadius: hull.roomCard.cornerRadius,
+      borderBottomRightRadius: hull.roomCard.cornerRadius,
     },
     roomCell: {
       paddingHorizontal: hull.roomCard.inset,
-      paddingBottom: hull.roomCard.gap,
     },
+    roomCellLast: { paddingBottom: hull.roomCard.gap },
     chatActions: {
       flexDirection: 'row',
       minHeight: ROW_HEIGHT,

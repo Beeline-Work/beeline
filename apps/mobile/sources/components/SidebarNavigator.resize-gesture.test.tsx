@@ -74,6 +74,9 @@ vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: () => [false, vi.fn()],
 }));
 vi.mock('./SidebarView', () => ({ SidebarView: () => null }));
+vi.mock('./buzz/ForegroundNotificationBanner', () => ({
+  ForegroundNotificationBanner: () => null,
+}));
 
 const loadDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => 280));
 const saveDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => undefined));
@@ -89,8 +92,9 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 beforeEach(() => {

@@ -459,6 +459,32 @@ describe('phone surface readers', () => {
     ]);
   });
 
+  it('keeps exact viewer-attention facts and ignores malformed reasons', () => {
+    const latest = {
+      id: 'a'.repeat(64),
+      text: '@viewer please look',
+      createdAt: 1,
+      author: identity,
+      mentionsViewer: true,
+    };
+    const view = readChatListView({
+      workspace,
+      chats: [
+        {
+          room: header,
+          latestMessage: latest,
+          agentState: 'needs-you',
+          attentionReason: { kind: 'approval', actor: 'Hoots' },
+        },
+      ],
+      viewer: identity,
+      truncated: false,
+      watchFilters: [],
+    });
+    expect(view?.chats[0]?.latestMessage?.mentionsViewer).toBe(true);
+    expect(view?.chats[0]?.attentionReason).toEqual({ kind: 'approval', actor: 'Hoots' });
+  });
+
   it('preserves valid waiting counts without inventing them for older servers', () => {
     for (const count of [undefined, -1, '2', 2, 0]) {
       const view = readChatListView({

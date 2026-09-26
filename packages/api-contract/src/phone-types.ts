@@ -566,6 +566,8 @@ export type ChatListItem = {
     readonly author: RoomViewIdentity;
     /** Present so attachment-only latest messages remain visible in compact previews. */
     readonly attachments?: readonly AttachmentReference[];
+    /** The server resolved the viewer as an exact tag on this message. */
+    readonly mentionsViewer?: true;
   };
   /** Absent when the server omitted it: the count is unknown, never zero. */
   readonly memberCount?: number;
@@ -593,6 +595,11 @@ export type ChatListItem = {
    * separate, independent needs-you signal — the deck combines both.
    */
   readonly agentState?: 'needs-you' | 'working';
+  /** Why the Room currently needs the viewer, when the server can name it. */
+  readonly attentionReason?: {
+    readonly kind: 'approval';
+    readonly actor?: string;
+  };
   /**
    * Present only for a direct Room: the one participant who is not the
    * viewer. The index names a DM row by this identity (`@peer`), never by

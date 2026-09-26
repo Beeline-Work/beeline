@@ -700,6 +700,12 @@ leading option's votes (the leader fills the track). The fill does not animate,
 pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
 nothing moves. This is not a license for progress bars elsewhere.
 
+The foreground-notification banner is the one timed-progress exception. Its
+two-pixel brass bar counts down the banner's fixed four-second lifetime so a
+person can see when this temporary overlay will leave; it never represents the
+progress of an agent, check, or task. The bar disappears with the banner and
+does not pulse or loop.
+
 The one drawn exception is the self-painting glyph: splash (`BootPaint`) paints
 once and holds because that load ends; in-app load gates (`SurfaceGlyphLoader`)
 and the thinking line (`BeelineMarkSpinner`) use the release loop — a brass

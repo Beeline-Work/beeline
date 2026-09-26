@@ -18,14 +18,22 @@ describe('Approved Room list layout', () => {
     expect(source).toMatch(/<RoomDeckComposeMenu\s+header/);
     expect(source).not.toContain('composeOverlay');
     expect(toolbar).toContain('<BookmarksGlyph');
+    expect(toolbar).toContain('{actions}');
+    expect(toolbar).toContain('{searchOpen && search}');
+    expect(toolbar).not.toContain('!desktop && actions');
+    expect(toolbar).not.toContain('desktopSearchWrap');
     expect(toolbar).toContain('width: 44');
     expect(toolbar).toContain('height: 44');
   });
-  it('renders readable previews and separate unread emphasis in both themes', () => {
-    expect(row).toMatch(/numberOfLines=\{2\}/);
-    expect(row).toContain('...theme.buzz.type.body');
-    expect(row).toContain('theme.buzz.type.bodyStrong.fontFamily');
-    expect(row).toContain('item.unread &&');
+  it('renders the approved compact preview, unread title and needs-you treatment', () => {
+    expect(row).toContain('numberOfLines={1}');
+    expect(row).toContain('fontSize: 16');
+    expect(row).toContain('lineHeight: 23');
+    expect(row).toContain('unreadName: { fontFamily: theme.buzz.proseSemibold }');
+    expect(row).toContain('fontSize: 13');
+    expect(row).toContain('lineHeight: 19');
+    expect(row).toContain('roomRowAttentionReason');
+    expect(row).toContain('needsRing');
     expect(row).toContain('backgroundColor: theme.buzz.accent');
     expect(row).not.toContain('roomRowNeedsAttention');
     expect(row).not.toContain('presenceDot');
@@ -53,6 +61,8 @@ describe('Approved Room list layout', () => {
   it('uses visible conversation counts for the phone toolbar and initial pin filter', () => {
     expect(source).toContain('roomListCounts(chatList?.chats ?? [], pinned)');
     expect(source).toContain('counts={counts}');
-    expect(source).toContain('!item.closed && !item.directMessage && pinned.includes(item.room.id)');
+    expect(source).toContain(
+      '!item.closed && !item.directMessage && pinned.includes(item.room.id)',
+    );
   });
 });

@@ -1103,6 +1103,7 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
     createdAt: item.createdAt,
     author,
     ...field('attachments', readList(item.attachments, readAttachment)),
+    ...field('mentionsViewer', item.mentionsViewer === true ? (true as const) : undefined),
   };
 }
 
@@ -1130,6 +1131,19 @@ function readChat(value: unknown): ChatListItem | null {
     presence && presenceStatus && integer(presence.observedAt)
       ? { status: presenceStatus, observedAt: presence.observedAt }
       : undefined;
+  const attentionReason = record(item.attentionReason);
+  const projectedAttentionReason =
+    attentionReason?.kind === 'approval'
+      ? {
+          kind: 'approval' as const,
+          ...field(
+            'actor',
+            typeof attentionReason.actor === 'string' && attentionReason.actor.trim()
+              ? attentionReason.actor
+              : undefined,
+          ),
+        }
+      : undefined;
   return {
     room,
     unread: item.unread === true,
@@ -1153,6 +1167,7 @@ function readChat(value: unknown): ChatListItem | null {
       typeof item.repositoryName === 'string' ? item.repositoryName : undefined,
     ),
     ...field('agentState', oneOf(item.agentState, ['needs-you', 'working'])),
+    ...field('attentionReason', projectedAttentionReason),
     ...field('directMessage', peer ? { peer, ...field('presence', projectedPresence) } : undefined),
   };
 }

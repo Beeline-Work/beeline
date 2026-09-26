@@ -66,9 +66,9 @@ import { useIsDesktop } from '@/utils/responsive';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
-// Foreground banner policy: suppress banners while the app is active, and
-// always for the Room the person currently has open. Background display and
-// response routing are untouched; see push/foreground-policy.ts.
+// Foreground OS-banner policy: the app-active path is rendered by
+// ForegroundNotificationBanner below app chrome. Native background display
+// and response routing are untouched; see push/foreground-policy.ts.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const decision = decideForegroundNotificationDisplay({

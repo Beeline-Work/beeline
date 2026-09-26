@@ -79,6 +79,9 @@ vi.mock('./SidebarView', async () => {
   const ReactModule = await import('react');
   return { SidebarView: () => ReactModule.createElement('SidebarView') };
 });
+vi.mock('./buzz/ForegroundNotificationBanner', () => ({
+  ForegroundNotificationBanner: () => null,
+}));
 
 const loadDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => 280));
 const saveDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => undefined));

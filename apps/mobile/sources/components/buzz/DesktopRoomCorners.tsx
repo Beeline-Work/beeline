@@ -37,7 +37,7 @@ export function DesktopRoomCorners({
                 testID={`desktop-corner-${corner.id}`}
               >
                 <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
-                <Text numberOfLines={2} style={styles.name}>
+                <Text numberOfLines={1} style={styles.name}>
                   {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
                 </Text>
                 <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
@@ -51,13 +51,13 @@ export function DesktopRoomCorners({
 }
 const styles = StyleSheet.create((theme) => ({
   list: {
-    paddingLeft: theme.buzz.space.lg,
+    paddingLeft: 46,
     paddingRight: theme.buzz.space.md,
-    paddingBottom: theme.buzz.space.md,
+    paddingBottom: theme.buzz.space.sm,
   },
   corner: {
-    minHeight: 48,
-    paddingVertical: theme.buzz.space.sm,
+    minHeight: 32,
+    paddingVertical: theme.buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.buzz.space.sm,

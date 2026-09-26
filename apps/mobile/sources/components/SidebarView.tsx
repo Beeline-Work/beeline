@@ -27,7 +27,6 @@ import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { RoomDeckComposeMenu } from '@/components/buzz/RoomDeckComposeMenu';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -120,7 +119,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   workspaceTextSelected: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
-  unreadSurface: { backgroundColor: theme.buzz.bgUnread },
   conversationCell: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
@@ -191,6 +189,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
   const [query, setQuery] = React.useState('');
+  const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
@@ -199,6 +198,9 @@ export const SidebarView = React.memo(function SidebarView() {
   );
   const [workspaceRoomCounts, setWorkspaceRoomCounts] = React.useState<ReadonlyMap<string, number>>(
     () => new Map(),
+  );
+  const [expandedRoomIds, setExpandedRoomIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
   );
 
   React.useEffect(() => {
@@ -320,6 +322,17 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
+  React.useEffect(() => {
+    if (
+      !activeRoomId ||
+      !(surface?.chats.find((item) => item.room.id === activeRoomId)?.cornerCount ?? 0)
+    ) {
+      return;
+    }
+    setExpandedRoomIds((current) =>
+      current.has(activeRoomId) ? current : new Set([...current, activeRoomId]),
+    );
+  }, [activeRoomId, surface?.chats]);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
   // is the same boolean (`role !== 'member'`). Do not invent a second gate.
@@ -365,7 +378,7 @@ export const SidebarView = React.memo(function SidebarView() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        searchRef.current?.focus();
+        setDesktopSearchOpen(true);
         return;
       }
       if (!editing && event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
@@ -450,6 +463,14 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <WorkspaceActionsMenu
+                    bookmarksSelected={bookmarksSelected}
+                    canManageWorkspace={canManageWorkspace}
+                    onBookmarks={() =>
+                      router.push({
+                        pathname: '/beeline/bookmarks',
+                        params: { communityId: workspaceId },
+                      } as Href)
+                    }
                     onMembers={() =>
                       router.push({
                         pathname: '/beeline/members',
@@ -465,35 +486,35 @@ export const SidebarView = React.memo(function SidebarView() {
                             } as Href)
                         : undefined
                     }
-                  />
-                )}
-                {workspaceId && !viewerIsAgent && (
-                  <RoomDeckComposeMenu
-                    header
-                    canManageWorkspace={canManageWorkspace}
-                    onSelect={(action) =>
-                      runRoomDeckComposeAction(action, {
-                        communityId: workspaceId,
-                        openMessagePicker: () =>
-                          router.push({
-                            pathname: '/beeline/channels',
-                            params: {
+                    onCompose={
+                      viewerIsAgent
+                        ? undefined
+                        : (action) =>
+                            runRoomDeckComposeAction(action, {
                               communityId: workspaceId,
-                              newDirectMessage: String(Date.now()),
-                            },
-                          } as Href),
-                        openRoomCreator: () =>
-                          router.push({
-                            pathname: '/beeline/channels',
-                            params: { communityId: workspaceId, newRoom: String(Date.now()) },
-                          } as Href),
-                        invitePerson: () =>
-                          router.push({
-                            pathname: '/beeline/members',
-                            params: { communityId: workspaceId, action: 'invite' },
-                          } as Href),
-                        navigate: (target) => router.push(target as Href),
-                      })
+                              openMessagePicker: () =>
+                                router.push({
+                                  pathname: '/beeline/channels',
+                                  params: {
+                                    communityId: workspaceId,
+                                    newDirectMessage: String(Date.now()),
+                                  },
+                                } as Href),
+                              openRoomCreator: () =>
+                                router.push({
+                                  pathname: '/beeline/channels',
+                                  params: {
+                                    communityId: workspaceId,
+                                    newRoom: String(Date.now()),
+                                  },
+                                } as Href),
+                              invitePerson: () =>
+                                router.push({
+                                  pathname: '/beeline/members',
+                                  params: { communityId: workspaceId, action: 'invite' },
+                                } as Href),
+                              navigate: (target) => router.push(target as Href),
+                            })
                     }
                   />
                 )}
@@ -534,6 +555,8 @@ export const SidebarView = React.memo(function SidebarView() {
           <RoomListToolbar
             desktop
             searchRef={searchRef}
+            searchOpen={desktopSearchOpen}
+            onSearchOpenChange={setDesktopSearchOpen}
             filter={filter}
             onFilter={setFilter}
             query={query}
@@ -586,7 +609,7 @@ export const SidebarView = React.memo(function SidebarView() {
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
                   <RoomListSectionHeader
-                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Messages'}
+                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
                     count={section.kind === 'rooms' ? section.data.length : undefined}
                     actionTestID={
                       section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
@@ -615,36 +638,44 @@ export const SidebarView = React.memo(function SidebarView() {
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (
-                      <View
-                        key={item.room.id}
-                        style={[styles.conversationCell, item.unread && styles.unreadSurface]}
-                      >
+                      <View key={item.room.id} style={styles.conversationCell}>
                         <ConversationRow
                           item={item}
                           viewer={identityPubkey ?? undefined}
                           now={Date.now()}
                           selected={isDesktop && active}
                           desktop
+                          cornersExpanded={expandedRoomIds.has(item.room.id)}
+                          onToggleCorners={() =>
+                            setExpandedRoomIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(item.room.id)) next.delete(item.room.id);
+                              else next.add(item.room.id);
+                              return next;
+                            })
+                          }
                           pinned={pinned.includes(item.room.id)}
                           onPin={() => void togglePin(item.room.id)}
                           onPress={() => openRoom(item.room.id)}
                           testID={`desktop-room-${item.room.id}`}
                         />
-                        {!item.directMessage && (item.cornerCount ?? 0) > 0 && (
-                          <DesktopRoomCorners
-                            key={`${workspaceId}/${item.room.id}`}
-                            item={item}
-                            onOpen={(cornerId) => {
-                              selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
-                              if (activeRoomId !== item.room.id) openRoom(item.room.id);
-                            }}
-                            renderDrag={(cornerId, children) => (
-                              <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
-                                {children}
-                              </DesktopCornerDragSource>
-                            )}
-                          />
-                        )}
+                        {!item.directMessage &&
+                          (item.cornerCount ?? 0) > 0 &&
+                          expandedRoomIds.has(item.room.id) && (
+                            <DesktopRoomCorners
+                              key={`${workspaceId}/${item.room.id}`}
+                              item={item}
+                              onOpen={(cornerId) => {
+                                selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
+                                if (activeRoomId !== item.room.id) openRoom(item.room.id);
+                              }}
+                              renderDrag={(cornerId, children) => (
+                                <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
+                                  {children}
+                                </DesktopCornerDragSource>
+                              )}
+                            />
+                          )}
                       </View>
                     );
                   })}

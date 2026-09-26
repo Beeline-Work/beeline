@@ -3,6 +3,7 @@ import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
+  INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
 } from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
@@ -231,6 +232,24 @@ describe('authorized institutional history search', () => {
     expect(Buffer.byteLength(snippet ?? '', 'utf8')).toBeLessThanOrEqual(
       INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
     );
+  });
+
+  it('bounds matching to the reported recency window', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('ancient-result',$1,$2,'Release marker from the archives.',
+              now()-($3::integer+1)*interval '1 day')`,
+      [SHARED, REQUESTER, INSTITUTIONAL_HISTORY_MAX_AGE_DAYS],
+    );
+    const windowed = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    expect(windowed.windowDays).toBe(INSTITUTIONAL_HISTORY_MAX_AGE_DAYS);
+    expect(windowed.results.map((result) => result.messageId)).not.toContain('ancient-result');
+    expect(windowed.results.map((result) => result.messageId)).toContain('shared-result');
   });
 
   it('bounds input and records content-free telemetry', async () => {

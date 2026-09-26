@@ -15,6 +15,9 @@ import {
 export const DEFAULT_CURATOR_WEEKLY_JOB_LIMIT = 20;
 export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
 export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
+/** Exactly one weekly budget's worth of per-partition candidates, never more. */
+export const CURATOR_CANDIDATE_WINDOW =
+  DEFAULT_CURATOR_WEEKLY_JOB_LIMIT * INSTITUTIONAL_CURATOR_CANDIDATE_MAX;
 /** The per-turn institutional context budget the rollout gate holds p95 to. */
 export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
 /**
@@ -337,17 +340,26 @@ async function curatorPartitions(
     path: string | null;
     curated_at: Date | null;
   }>(
-    `SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,item.version,
-            item.state,item.source_room_id,item.source_message_id,source.author_id requester_identity_id,
-            item.repository,item.path,item.curated_at
-     FROM institutional_memory_items item
-     JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
-     JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
-     WHERE item.workspace_id=$1 AND item.state IN ('active','stale') AND item.deleted_at IS NULL
-     ORDER BY item.curated_at ASC NULLS FIRST,item.kind,item.subject_identity_id,
-              item.source_room_id,item.updated_at DESC,item.id
-     LIMIT 1000`,
-    [workspaceId],
+    `SELECT * FROM (
+       SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,item.version,
+              item.state,item.source_room_id,item.source_message_id,
+              source.author_id requester_identity_id,item.repository,item.path,item.curated_at,
+              item.updated_at,
+              row_number() OVER (
+                PARTITION BY item.kind,COALESCE(item.subject_identity_id,''),
+                  CASE WHEN item.kind='workspace_fact' THEN NULL ELSE item.source_room_id END
+                ORDER BY item.curated_at ASC NULLS FIRST,item.updated_at DESC,item.id
+              ) partition_rank
+       FROM institutional_memory_items item
+       JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
+       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
+       WHERE item.workspace_id=$1 AND item.state IN ('active','stale') AND item.deleted_at IS NULL
+     ) ranked
+     WHERE partition_rank<=$2
+     ORDER BY curated_at ASC NULLS FIRST,partition_rank,kind,subject_identity_id,
+              source_room_id,updated_at DESC,id
+     LIMIT $3`,
+    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
   );
   const skills = await database.query<{
     id: string;
@@ -362,19 +374,26 @@ async function curatorPartitions(
     path: string | null;
     curated_at: Date | null;
   }>(
-    `SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.state,
-            skill.source_room_id,job.source_message_id,job.requester_identity_id,
-            skill.repository,skill.path,skill.curated_at
-     FROM workspace_skills skill
-     JOIN workspace_skill_versions version
-       ON version.skill_id=skill.id AND version.version=skill.current_version
-     JOIN institutional_memory_jobs job ON job.id=version.source_job_id
-     JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
-     WHERE skill.workspace_id=$1 AND skill.state IN ('active','stale')
-       AND version.source_deleted_at IS NULL
-     ORDER BY skill.curated_at ASC NULLS FIRST,skill.source_room_id,skill.updated_at DESC,skill.id
-     LIMIT 1000`,
-    [workspaceId],
+    `SELECT * FROM (
+       SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.state,
+              skill.source_room_id,job.source_message_id,job.requester_identity_id,
+              skill.repository,skill.path,skill.curated_at,skill.updated_at,
+              row_number() OVER (
+                PARTITION BY skill.source_room_id
+                ORDER BY skill.curated_at ASC NULLS FIRST,skill.updated_at DESC,skill.id
+              ) partition_rank
+       FROM workspace_skills skill
+       JOIN workspace_skill_versions version
+         ON version.skill_id=skill.id AND version.version=skill.current_version
+       JOIN institutional_memory_jobs job ON job.id=version.source_job_id
+       JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
+       WHERE skill.workspace_id=$1 AND skill.state IN ('active','stale')
+         AND version.source_deleted_at IS NULL
+     ) ranked
+     WHERE partition_rank<=$2
+     ORDER BY curated_at ASC NULLS FIRST,partition_rank,source_room_id,updated_at DESC,id
+     LIMIT $3`,
+    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
   );
   const groups = new Map<string, CuratorPartition>();
   const absorb = (partition: CuratorPartition, curatedAt: Date | null): void => {
@@ -465,7 +484,7 @@ export async function runInstitutionalCuratorCycle(
     `SELECT workspace_id,stage,auto_advance,stale_after_days,archive_after_days,retention_days
      FROM institutional_memory_workspace_rollouts
      WHERE curator_enabled AND stage IN ('shadow','pilot','live')
-     ORDER BY cohort,workspace_id`,
+     ORDER BY workspace_id`,
   );
   const week = utcWeekKey(now);
   let queued = 0;
@@ -535,7 +554,29 @@ export async function runInstitutionalCuratorCycle(
               }),
             ],
           );
-          cycleQueued += result.rowCount;
+          if (!result.rowCount) continue;
+          cycleQueued += 1;
+          // The rotation cursor means "the curator considered this", not "the
+          // model acted on it": a null answer or a dead job must still let the
+          // next cycle reach a different partition.
+          const consideredMemory = partition.candidates
+            .filter((candidate) => candidate.targetType === 'memory_item')
+            .map((candidate) => candidate.id);
+          const consideredSkills = partition.candidates
+            .filter((candidate) => candidate.targetType === 'workspace_skill')
+            .map((candidate) => candidate.id);
+          if (consideredMemory.length) {
+            await db.query(
+              `UPDATE institutional_memory_items SET curated_at=$2 WHERE id=ANY($1::uuid[])`,
+              [consideredMemory, now],
+            );
+          }
+          if (consideredSkills.length) {
+            await db.query(`UPDATE workspace_skills SET curated_at=$2 WHERE id=ANY($1::uuid[])`, [
+              consideredSkills,
+              now,
+            ]);
+          }
         }
         const dashboard = await institutionalObjectiveDashboard(db, rollout.workspace_id);
         const advanceShadow = rollout.stage === 'shadow' && dashboard.shadowReady;

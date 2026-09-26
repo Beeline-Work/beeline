@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
+  INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
   INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
@@ -102,10 +103,12 @@ function snippet(text: string, query: string): string {
 
 /**
  * Search only messages whose source Room is visible to the requester, the
- * answering agent, and every current human member of the output Room. Matching
- * is bounded to the NEWEST INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX matches, which
- * are then ranked, so a broad query stays cheap and deterministic instead of
- * ranking whatever rows the plan happened to emit first.
+ * answering agent, and every current human member of the output Room. Two bounds
+ * keep the work finite: only the last INSTITUTIONAL_HISTORY_MAX_AGE_DAYS days can
+ * match, and of those only the NEWEST INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX rows
+ * are ranked. The time bound is what makes the row bound cheap — a GIN index
+ * cannot yield recency order, so the match set is sorted before the row bound
+ * applies, and one common term would otherwise sort all of history.
  */
 export async function searchInstitutionalHistory(
   database: SqlDatabase,
@@ -157,6 +160,7 @@ export async function searchInstitutionalHistory(
          JOIN authorized_rooms authorized ON authorized.id=message.room_id
          WHERE message.deleted_at IS NULL AND message.presentation='message'
            AND length(trim(message.text))>0
+           AND message.created_at>=now()-$8*interval '1 day'
          ORDER BY message.created_at DESC,message.id DESC
          LIMIT $6
        )
@@ -178,6 +182,7 @@ export async function searchInstitutionalHistory(
         query,
         INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
         limit,
+        INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
       ],
     );
     const matched = Number(rows.rows[0]?.matched_count ?? 0);
@@ -213,6 +218,11 @@ export async function searchInstitutionalHistory(
         Math.max(0, Math.round(performance.now() - started)),
       ],
     );
-    return { results: result, omitted: Math.max(0, matched - result.length), capped };
+    return {
+      results: result,
+      omitted: Math.max(0, matched - result.length),
+      capped,
+      windowDays: INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
+    };
   });
 }

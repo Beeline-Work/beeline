@@ -118,11 +118,12 @@ export async function applyWorkspaceSkillProposal(
   const current = (
     await database.query<{
       id: string;
+      state: 'active' | 'stale' | 'archived';
       current_version: number;
       current_bytes: number;
       source_deleted_at: Date | null;
     }>(
-      `SELECT skill.id,skill.current_version,version.source_deleted_at,
+      `SELECT skill.id,skill.state,skill.current_version,version.source_deleted_at,
               octet_length(convert_to(version.markdown,'UTF8')) current_bytes
        FROM workspace_skills skill
        JOIN workspace_skill_versions version
@@ -151,11 +152,14 @@ export async function applyWorkspaceSkillProposal(
       [input.workspaceId],
     )
   ).rows[0];
-  if (!current && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
+  // Reviving a stale or source-deleted slug adds to both totals, so only a row
+  // those totals ALREADY counted may skip the count cap or discount its bytes.
+  const counted = current?.state === 'active' && current.source_deleted_at === null;
+  if (!counted && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
     throw new Error('workspace skill active-count cap exceeded');
   }
   const nextBytes =
-    Number(totals?.active_bytes ?? 0) - (current?.current_bytes ?? 0) + markdownBytes;
+    Number(totals?.active_bytes ?? 0) - (counted ? current.current_bytes : 0) + markdownBytes;
   if (nextBytes > WORKSPACE_SKILL_ACTIVE_BYTES_MAX) {
     throw new Error('workspace skill active-byte cap exceeded');
   }

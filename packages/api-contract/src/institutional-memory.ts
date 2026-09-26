@@ -20,6 +20,12 @@ export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
  * Workspace must never rank (or count) every match it could reach.
  */
 export const INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX = 200;
+/**
+ * Matching is bounded to this recency window. A GIN index cannot return rows in
+ * recency order, so without a time bound one common term would sort every match
+ * in history before the row bound above could apply.
+ */
+export const INSTITUTIONAL_HISTORY_MAX_AGE_DAYS = 180;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
@@ -248,6 +254,8 @@ export interface InstitutionalHistoryResult {
 
 export interface SearchInstitutionalHistoryResult {
   readonly results: readonly InstitutionalHistoryResult[];
+  /** The recency window searched, in days. */
+  readonly windowDays: number;
   readonly omitted: number;
   /** True when matching stopped at INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX, so
    * `omitted` counts the bounded match set and not every Workspace match. */

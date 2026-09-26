@@ -39,6 +39,7 @@
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
     "prove:tailscale-connector": "node --import tsx scripts/prove-tailscale-connector.ts",
     "prove:connector-adapters": "node --import tsx scripts/prove-connector-adapters.ts",
+    "prove:institutional-memory": "node scripts/prove-institutional-memory.mjs",
     "smoke": "node --import tsx scripts/smoke.ts",
     "test:deploy": "node --test scripts/unified-release.test.mjs scripts/gh-release-retry.test.mjs scripts/server-release-smoke.test.mjs scripts/landing-page.test.mjs scripts/pages-site.test.mjs scripts/legacy-production-routing.test.mjs",
     "test:pages": "node --test scripts/desktop-download.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs",

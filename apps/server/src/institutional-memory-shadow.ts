@@ -37,7 +37,6 @@ import {
 export const INSTITUTIONAL_MEMORY_SHADOW_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED';
 export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
 export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT = 50;
-export const DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT = 100_000;
 export const DEFAULT_INSTITUTIONAL_MEMORY_LEASE_MS = 5 * 60_000;
 export const INSTITUTIONAL_MEMORY_CONTEXT_MESSAGE_LIMIT = 16;
 export const INSTITUTIONAL_MEMORY_CONTEXT_BYTE_LIMIT = 24_000;
@@ -47,7 +46,6 @@ export interface InstitutionalMemoryShadowConfig {
   readonly enabled: boolean;
   readonly live?: boolean;
   readonly dailyJobLimit?: number;
-  readonly dailyTokenLimit?: number;
   readonly leaseMs?: number;
 }
 
@@ -59,10 +57,6 @@ export function institutionalMemoryShadowConfigFromEnv(
       DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
   );
   const live = env[INSTITUTIONAL_MEMORY_LIVE_FLAG] === 'true';
-  const parsedTokenLimit = Number(
-    env.BEELINE_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT ??
-      DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
-  );
   return {
     enabled: live || env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] === 'true',
     live,
@@ -70,12 +64,6 @@ export function institutionalMemoryShadowConfigFromEnv(
       Number.isSafeInteger(parsedLimit) && parsedLimit > 0 && parsedLimit <= 1_000
         ? parsedLimit
         : DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
-    dailyTokenLimit:
-      Number.isSafeInteger(parsedTokenLimit) &&
-      parsedTokenLimit >= 1_000 &&
-      parsedTokenLimit <= 10_000_000
-        ? parsedTokenLimit
-        : DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
   };
 }
 
@@ -482,7 +470,7 @@ export async function claimInstitutionalMemoryJob(
                FROM institutional_memory_jobs spent
                WHERE spent.workspace_id=job.workspace_id
                  AND spent.completed_at>=date_trunc('day',now())
-             ),0)<COALESCE(rollout.daily_token_budget,$6)
+             ),0)<rollout.daily_token_budget
              AND job.attempts<job.max_attempts
            ORDER BY job.created_at,job.id
            FOR UPDATE OF job SKIP LOCKED
@@ -497,14 +485,7 @@ export async function claimInstitutionalMemoryJob(
          RETURNING job.id,job.lease_token,job.lease_expires_at,job.workspace_id,
                    job.source_room_id,job.source_message_id,job.requester_identity_id,
                    room.direct_participants,job.mode,job.trigger_kind,job.context,job.created_at`,
-        [
-          authenticatedAgentId,
-          hostKey,
-          leaseToken,
-          leaseMs,
-          config.live === true,
-          config.dailyTokenLimit ?? DEFAULT_INSTITUTIONAL_MEMORY_DAILY_TOKEN_LIMIT,
-        ],
+        [authenticatedAgentId, hostKey, leaseToken, leaseMs, config.live === true],
       )
     ).rows[0];
     if (!claimed) return undefined;

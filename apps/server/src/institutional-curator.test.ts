@@ -7,6 +7,8 @@ import {
 } from './institutional-memory-shadow.js';
 import {
   AVAILABILITY_OBSERVATION_MAX_MS,
+  CURATOR_CANDIDATE_WINDOW,
+  INSTITUTIONAL_CURATOR_CANDIDATE_MAX,
   INSTITUTIONAL_CONTEXT_TOKEN_TARGET,
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
   applyInstitutionalCuratorProposal,
@@ -36,7 +38,6 @@ const liveConfig = {
   enabled: true,
   live: true,
   dailyJobLimit: 50,
-  dailyTokenLimit: 100_000,
   leaseMs: 60_000,
 } as const;
 
@@ -672,7 +673,7 @@ describe('weekly institutional curator', () => {
   });
 
   it('fills the candidate window by curation age, not by kind', async () => {
-    // Enough recently-curated profile rows to exhaust the 1000-row window: an
+    // Enough recently-curated profile rows to exhaust the candidate window: an
     // ordering led by kind reads no workspace_fact row at all.
     await database.query(
       `INSERT INTO institutional_memory_items
@@ -694,6 +695,56 @@ describe('weekly institutional curator', () => {
         )
       ).rows.map((job) => job.context.partition),
     ).toContain('workspace-facts');
+  });
+
+  it('never crowds one partition out of the window with another partition volume', async () => {
+    // One partition holding far more than the window: per-partition capping is
+    // what leaves room for every other partition, including the shared one.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+          source_message_id,audience_kind,confidence,version,created_by_command_id,updated_at)
+       SELECT gen_random_uuid(),$1,'human_profile_fact',$2,'flood-'||series,
+              'A flooding preference.','active',$3,$4,'human_profile',0.5,1,'flood-seed',$5
+       FROM generate_series(1,$6::integer) series`,
+      [WORKSPACE, HUMAN, ROOM, MESSAGE, NOW, CURATOR_CANDIDATE_WINDOW + 500],
+    );
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+
+    const jobs = (
+      await database.query<{ context: { partition: string; candidates: unknown[] } }>(
+        `SELECT context FROM institutional_memory_jobs WHERE trigger_kind='curator'`,
+      )
+    ).rows;
+    expect(jobs.map((job) => job.context.partition)).toContain('workspace-facts');
+    expect(Math.max(...jobs.map((job) => job.context.candidates.length))).toBeLessThanOrEqual(
+      INSTITUTIONAL_CURATOR_CANDIDATE_MAX,
+    );
+  });
+
+  it('advances the rotation cursor for a partition the cycle only considered', async () => {
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    // No host model answered, yet the shared partition must not re-win forever.
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text count FROM institutional_memory_items
+           WHERE workspace_id=$1 AND kind='workspace_fact' AND state IN ('active','stale')
+             AND curated_at IS NULL`,
+          [WORKSPACE],
+        )
+      ).rows[0]?.count,
+    ).toBe('0');
+    // Consideration is not a serve: the staleness clock is untouched.
+    expect(
+      (
+        await database.query<{ updated_at: Date }>(
+          `SELECT updated_at FROM institutional_memory_items WHERE id=$1`,
+          [TARGET],
+        )
+      ).rows[0]?.updated_at,
+    ).toEqual(NOW);
   });
 
   it('rotates the weekly job budget across partitions instead of a fixed prefix', async () => {

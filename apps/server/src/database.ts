@@ -1016,7 +1016,6 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
   curator_enabled boolean NOT NULL DEFAULT false,
-  cohort integer NOT NULL DEFAULT 0 CHECK (cohort BETWEEN 0 AND 99),
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),

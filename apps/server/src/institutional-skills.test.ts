@@ -8,7 +8,11 @@ import {
   getInstitutionalContext,
   tombstoneInstitutionalMemoryForMessage,
 } from './institutional-memory-shadow.js';
-import { loadWorkspaceSkill } from './institutional-skills.js';
+import {
+  WORKSPACE_SKILL_ACTIVE_MAX,
+  applyWorkspaceSkillProposal,
+  loadWorkspaceSkill,
+} from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
@@ -304,6 +308,80 @@ describe('merge-derived restricted Workspace procedures', () => {
       ).rows[0],
     ).toMatchObject({ markdown: '', source_deleted_at: expect.any(Date) });
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(0);
+  });
+
+  it('counts a revived stale procedure against the active cap', async () => {
+    const job = '50000000-0000-4000-8000-000000000291';
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'merge_review','live',$3,$4,$5,'workspace_candidate','cap-proof')`,
+      [job, WORKSPACE, CORNER, MERGE_MESSAGE, REQUESTER],
+    );
+    // The Workspace is exactly at the cap, and one slug is stale — so the
+    // totals the caps read do NOT already include it.
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit)
+       SELECT gen_random_uuid(),$1,'filler-'||series,'Filler procedure','active',1,1,$2,
+              'Beeline-Work/beeline',$3
+       FROM generate_series(1,$4::integer) series`,
+      [WORKSPACE, ROOM, TARGET_COMMIT, WORKSPACE_SKILL_ACTIVE_MAX],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,extractor_version,model)
+       SELECT id,1,'Filler body.',$2,$3,ARRAY[$4]::text[],'Beeline-Work/beeline',$5,'test','test'
+       FROM workspace_skills WHERE workspace_id=$1 AND slug LIKE 'filler-%'`,
+      [WORKSPACE, 'b'.repeat(64), job, MERGE_MESSAGE, TARGET_COMMIT],
+    );
+    const stale = '40000000-0000-4000-8000-000000000291';
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit)
+       VALUES($1,$2,'retired-runbook','A retired runbook','stale',1,1,$3,
+              'Beeline-Work/beeline',$4)`,
+      [stale, WORKSPACE, ROOM, TARGET_COMMIT],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,extractor_version,model)
+       VALUES($1,1,'The retired body.',$2,$3,ARRAY[$4]::text[],'Beeline-Work/beeline',$5,
+              'test','test')`,
+      [stale, 'c'.repeat(64), job, MERGE_MESSAGE, TARGET_COMMIT],
+    );
+
+    await expect(
+      database.transaction((db) =>
+        applyWorkspaceSkillProposal(db, {
+          workspaceId: WORKSPACE,
+          sourceRoomId: CORNER,
+          sourceMessageIds: [MERGE_MESSAGE],
+          sourceJobId: job,
+          usage: { extractorVersion: 'test', model: 'test' },
+          proposal: {
+            slug: 'retired-runbook',
+            description: 'A revived runbook',
+            markdown: 'Revived guidance.',
+            baseVersion: 1,
+            anchor: { repository: 'Beeline-Work/beeline', targetCommit: TARGET_COMMIT },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/active-count cap exceeded/);
+
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE id=$1`, [
+          stale,
+        ])
+      ).rows[0]?.state,
+    ).toBe('stale');
   });
 
   it('rejects prompt-boundary injection and exact merge-anchor forgery', async () => {

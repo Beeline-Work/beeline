@@ -46,7 +46,7 @@ function stripAnsi(text) {
   return text.replace(/\u001B\[[0-9;]*m/g, '');
 }
 
-function run(command, args, options = {}) {
+export function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -57,7 +57,30 @@ function run(command, args, options = {}) {
     let stderr = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => (stdout += chunk));
+    let inputClosed = false;
+    const closeInput = () => {
+      if (inputClosed) return;
+      inputClosed = true;
+      child.stdin.end();
+    };
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (options.untilAnswered === undefined) return;
+      const completeLines = stdout.endsWith('\n')
+        ? stdout.split('\n')
+        : stdout.split('\n').slice(0, -1);
+      for (const line of completeLines) {
+        if (!line) continue;
+        try {
+          if (JSON.parse(line).id === options.untilAnswered) {
+            closeInput();
+            break;
+          }
+        } catch {
+          // Ignore non-JSON output here; the caller owns response validation.
+        }
+      }
+    });
     child.stderr.on('data', (chunk) => (stderr += chunk));
     let timedOut = false;
     const timer = options.timeoutMs
@@ -73,7 +96,11 @@ function run(command, args, options = {}) {
     child.once('exit', (code, signal) => {
       if (timer) clearTimeout(timer);
       if (timedOut) {
-        reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
+        reject(
+          new Error(
+            `${command} timed out after ${options.timeoutMs}ms${stderr ? `\n${stderr}` : ''}`,
+          ),
+        );
         return;
       }
       if (code === 0) resolveRun({ stdout, stderr });
@@ -85,7 +112,8 @@ function run(command, args, options = {}) {
         );
       }
     });
-    child.stdin.end(options.input);
+    if (options.input) child.stdin.write(options.input);
+    if (options.untilAnswered === undefined) closeInput();
   });
 }
 
@@ -186,7 +214,15 @@ async function verifySquireProxy(proxyPath, cwd, env) {
 async function main() {
   const platform = requestedPlatform();
   if (!platform) fail('unsupported host platform');
-  const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'beeline-bare-install-'));
+  const retainedRoot = process.env.BEELINE_INSTALL_VERIFY_ROOT?.trim();
+  const temporaryRoot = retainedRoot
+    ? resolve(retainedRoot)
+    : await mkdtemp(resolve(tmpdir(), 'beeline-bare-install-'));
+  if (retainedRoot) {
+    // Acceptance jobs consume the exact installation after this probe. Refuse
+    // an existing target instead of deleting a caller-selected directory.
+    await mkdir(temporaryRoot);
+  }
   const binDir = resolve(temporaryRoot, 'prefix', 'bin');
   const libDir = resolve(temporaryRoot, 'prefix', 'lib', 'beeline');
   const bareCwd = resolve(temporaryRoot, 'no-repository');
@@ -261,6 +297,8 @@ async function main() {
     const probe = await run(resolve(binDir, 'beeline-readonly-mcp'), [], {
       cwd: bareCwd,
       env: { ...runtimeEnv, BEELINE_READONLY_ROOT: bareCwd },
+      untilAnswered: 2,
+      timeoutMs: 30_000,
       input:
         JSON.stringify({
           jsonrpc: '2.0',
@@ -328,6 +366,7 @@ async function main() {
           }) +
           '\n',
         timeoutMs: 60_000,
+        untilAnswered: 3,
       },
     );
     const codegraphTools = parseMcpTools(codegraphProbe.stdout);
@@ -396,7 +435,7 @@ async function main() {
     console.log(`verify-beeline-install: ACP read-only session ${readonlySession.sessionId}`);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
-    await rm(temporaryRoot, { recursive: true, force: true });
+    if (!retainedRoot) await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 

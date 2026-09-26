@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 const storage = vi.hoisted(() => new Map<string, string>());
@@ -10,6 +10,8 @@ const linking = vi.hoisted(() => ({
   listener: null as ((event: { url: string }) => void) | null,
 }));
 const browser = vi.hoisted(() => ({ open: vi.fn() }));
+// The device's network: every auth-server request the sign-in makes goes through it.
+const network = vi.hoisted(() => ({ online: true, fetch: vi.fn() }));
 const runtime = vi.hoisted(() => ({
   current: {
     relayUrl: 'https://relay.test',
@@ -234,6 +236,12 @@ describe('GitHub callback delivery into onboarding', () => {
     clearOnboardingNotice();
     clearOnboardingFaceStep();
     markSignInInFlight(false);
+    network.online = true;
+    network.fetch.mockImplementation(async () => {
+      if (!network.online) throw new TypeError('Network request failed');
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal('fetch', network.fetch);
     linking.initialUrl = null;
     linking.listener = null;
     runtime.current.monolithEnabled = false;
@@ -259,6 +267,10 @@ describe('GitHub callback delivery into onboarding', () => {
     sdk.lookupManagedIdentity.mockResolvedValue(null);
     profileClient.getGlobalPersonProfile.mockResolvedValue(null);
     profileClient.setGlobalPersonProfile.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {
@@ -386,6 +398,91 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(tree.root.findAllByType('FaceCeremonyStep' as never)).toHaveLength(0);
     expect(phoneOperation).not.toHaveBeenCalledWith('updateIdentityFace', expect.anything());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('shows no connection with one Try again, and retries nothing until it is pressed', async () => {
+    runtime.current.monolithEnabled = true;
+    network.online = false;
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+    vi.useFakeTimers();
+    try {
+      const tree = await render();
+      const signIn = () =>
+        tree.root.find(
+          (node: any) =>
+            node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
+        );
+      expect(signIn().props.label).toBe('Continue with GitHub');
+
+      await act(async () => {
+        await signIn().props.onPress();
+      });
+
+      // Offline, no browser opens: it could only show its own error page.
+      expect(browser.open).not.toHaveBeenCalled();
+      expect(noticeText(tree)).toContain('NO CONNECTION');
+      expect(noticeText(tree)).toContain("You're offline.");
+      expect(signIn().props.label).toBe('Try again');
+      expect(signIn().props.loading).toBe(false);
+      expect(signIn().props.disabled).toBe(false);
+
+      // Nothing retries behind the person's back: minutes pass, the screen holds.
+      const requestsAfterPress = network.fetch.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+      });
+      expect(network.fetch).toHaveBeenCalledTimes(requestsAfterPress);
+      expect(browser.open).not.toHaveBeenCalled();
+      expect(signIn().props.label).toBe('Try again');
+      expect(signIn().props.loading).toBe(false);
+
+      // The network returns; only the press signs in.
+      network.online = true;
+      await act(async () => {
+        await signIn().props.onPress();
+      });
+      expect(browser.open).toHaveBeenCalledTimes(1);
+      expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
+      expect(tree.root.findAllByType('FaceCeremonyStep' as never)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a genuine GitHub refusal on its own message, not the no-connection state', async () => {
+    runtime.current.monolithEnabled = true;
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() =>
+        linking.listener?.({
+          url: `beeline://beeline/github-callback?state=${state}&error=github_denied`,
+        }),
+      );
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) =>
+        node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    expect(noticeText(tree)).not.toContain('NO CONNECTION');
+    expect(noticeText(tree)).toContain('SIGN-IN CANCELED');
+    expect(
+      tree.root.find(
+        (node: any) =>
+          node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
+      ).props.label,
+    ).toBe('Continue with GitHub');
   });
 
   it('renders GitHub on the first frame without waiting for auth capabilities', () => {

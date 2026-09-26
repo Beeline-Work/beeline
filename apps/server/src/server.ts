@@ -507,6 +507,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                       client.send(JSON.stringify({ type: 'corner-complete', roomId }));
                     return;
                   }
+                  if (
+                    event.reason === 'postgres:corner_facts' &&
+                    event.laneChanged &&
+                    event.lane === 'code'
+                  ) {
+                    if (client.readyState === client.OPEN)
+                      client.send(JSON.stringify({ type: 'corner-restart', roomId }));
+                    return;
+                  }
                   void replay(trigger);
                 }),
               );

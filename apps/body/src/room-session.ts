@@ -24,6 +24,8 @@ export function beelineAgentMcpServer(
     /** Repository-corner authors may close landed or abandoned work. No-code
      *  corners stay open until a human uses the phone's structured close. */
     agentMayCloseCorner?: boolean;
+    /** A repository-backed no-code corner may take its one-way code upgrade. */
+    agentMayUpgradeCorner?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     attachRoot?: string;
@@ -60,6 +62,9 @@ export function beelineAgentMcpServer(
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
       ...(context.agentMayCloseCorner
         ? [{ name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' }]
+        : []),
+      ...(context.agentMayUpgradeCorner
+        ? [{ name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' }]
         : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),

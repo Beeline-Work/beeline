@@ -9,6 +9,10 @@ import {
   launchRuntimeDaemon,
   stageMonolithAgentRuntime,
 } from './runtime.js';
+import {
+  installLaunchdAgentService,
+  installLaunchdTrustySquireBrokerService,
+} from './launchd.js';
 import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
 
 const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
@@ -150,6 +154,18 @@ async function pairDevice(
             );
           }
           return installAgentService(publicKey);
+        }
+        if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
+          try {
+            await installLaunchdTrustySquireBrokerService();
+          } catch (error) {
+            console.warn(
+              `[beeline] trusty-squire host broker not installed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          return installLaunchdAgentService(publicKey);
         }
         return launchRuntimeDaemon(configPath);
       })

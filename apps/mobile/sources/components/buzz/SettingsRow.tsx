@@ -46,6 +46,11 @@ type SettingsRowProps = {
   /** The quiet line under the title. A full sentence wraps here rather than
    *  ellipsizing beside the title, exactly as the sheet row's does. */
   description?: string;
+  /** A second quiet line under `description`, for a row whose subject needs
+   *  one provenance fact stated beneath it (the profile grant ledger's
+   *  `grantProvenanceLine`). Same quiet tier as `description`; never used for
+   *  a paragraph or a second subject. */
+  descriptionDetail?: string;
   /** A failed row may put its exact error in the subtitle. */
   descriptionTone?: 'danger';
   descriptionAction?: SettingsRowDescriptionAction;
@@ -104,6 +109,7 @@ export function SettingsRow({
   actionControl,
   chevron,
   description,
+  descriptionDetail,
   descriptionTone,
   descriptionAction,
   disabled = false,
@@ -117,7 +123,9 @@ export function SettingsRow({
   value,
   valueTone,
 }: SettingsRowProps) {
-  const spoken = [value ?? action ?? actionControl?.label, description].filter(Boolean).join('. ');
+  const spoken = [value ?? action ?? actionControl?.label, description, descriptionDetail]
+    .filter(Boolean)
+    .join('. ');
   const trailingMark =
     action !== undefined ? (
       <Text numberOfLines={1} style={styles.action}>
@@ -210,6 +218,11 @@ export function SettingsRow({
                 <Text style={styles.descriptionAction}>{descriptionAction.label}</Text>
               </TouchableOpacity>
             ) : null}
+          </View>
+        ) : null}
+        {descriptionDetail ? (
+          <View style={styles.descriptionRow}>
+            <Text style={styles.description}>{descriptionDetail}</Text>
           </View>
         ) : null}
       </View>

@@ -292,7 +292,7 @@ describe('DaemonApiClient', () => {
     vi.useRealTimers();
   });
 
-  it('delivers scoped membership, corner-complete and connector wakes without a catalog', async () => {
+  it('delivers scoped membership, corner lifecycle and connector wakes without a catalog', async () => {
     FakeWebSocket.instances.length = 0;
     const client = new DaemonApiClient(
       'http://127.0.0.1:43123',
@@ -304,10 +304,12 @@ describe('DaemonApiClient', () => {
     const memberships: unknown[] = [];
     const connectors: unknown[] = [];
     const completes: string[] = [];
+    const restarts: string[] = [];
     const inbox: string[] = [];
     client.setRoomsChangedListener((event) => memberships.push(event));
     client.setConnectorAssignmentListener(() => connectors.push(true));
     client.setCornerCompleteListener((roomId) => completes.push(roomId));
+    client.setCornerRestartListener((roomId) => restarts.push(roomId));
     const release = client.liveSubscribe(
       'room-1',
       undefined,
@@ -330,6 +332,7 @@ describe('DaemonApiClient', () => {
     socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
     socket.message({ type: 'rooms-changed' });
     socket.message({ type: 'corner-complete', roomId: 'corner-1' });
+    socket.message({ type: 'corner-restart', roomId: 'corner-2' });
     socket.message({ type: 'connector-assignment' });
     socket.message({
       type: 'inbox',
@@ -364,6 +367,7 @@ describe('DaemonApiClient', () => {
     ]);
     expect(inbox).toEqual(['open']);
     expect(completes).toEqual(['corner-1']);
+    expect(restarts).toEqual(['corner-2']);
     expect(connectors).toEqual([true, true]);
     release();
   });

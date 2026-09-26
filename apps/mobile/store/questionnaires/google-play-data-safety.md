@@ -13,7 +13,7 @@ Developer/publisher: **Moon Rice Limited**. The active Play Console account is
 | --- | --- | --- |
 | Does the app collect or share required data types? | Yes | The service processes account identity, Room content, optional file attachments, and Android push registration tokens. |
 | Is data encrypted in transit? | Yes | App/service calls use HTTPS/NIP-98 authenticated requests; relay traffic is configured for `https://usebeeline.app`. |
-| Can users request deletion? | Yes, contact Moon Rice Limited at `dani@trustysquire.ai` | Privacy policy and deletion contact for the active corporate Play account. |
+| Can users request deletion? | Yes, contact Moon Rice Limited at `hello@usebeeline.app` | Privacy policy and deletion contact for the active corporate Play account. |
 | Is data sold? | No | No sale or advertising SDK appears in the mobile app. |
 
 ## Data types

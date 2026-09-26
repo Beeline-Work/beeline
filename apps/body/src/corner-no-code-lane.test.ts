@@ -1,14 +1,16 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgentCommand } from '../../server/src/agent-command.js';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
-import { AcpClient } from './acp.js';
+import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -39,6 +41,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const CORNER = '33333333-3333-4333-8333-333333333333';
 const REQUEST = 'c'.repeat(64);
+const git = promisify(execFile);
 
 function stored(hex: string, name: string) {
   const identity = identityFromKey(hex, name);
@@ -50,7 +53,10 @@ function stored(hex: string, name: string) {
 }
 
 /** A repository Room whose single corner sits on `lane`, served by the real server. */
-async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
+async function stageRepositoryRoomCorner(
+  lane: 'code' | 'no_code',
+  remote = 'https://github.com/owner/widgets.git',
+) {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-no-code-lane-'));
   roots.push(root);
   const agentIdentity = identityFromKey('11'.repeat(32), 'Candy');
@@ -78,8 +84,8 @@ async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
   await database.query(
     `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_resolution,repository_target_branch)
-     VALUES($1,$2,'Widgets','owner/widgets','https://github.com/owner/widgets.git','repository','main')`,
-    [ROOM, WORKSPACE],
+     VALUES($1,$2,'Widgets','owner/widgets',$3,'repository','main')`,
+    [ROOM, WORKSPACE, remote],
   );
   await database.query(
     `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`,
@@ -107,7 +113,8 @@ async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
     sourceMessageId: REQUEST,
     reason: 'corner_objective',
   });
-  const daemon = new DaemonService(database, new LiveHub());
+  const token = vi.fn(async () => ({ token: 'corner-token', expiresAt: Date.now() + 60_000 }));
+  const daemon = new DaemonService(database, new LiveHub(), token);
   const execute = vi.fn((name: string, input: Record<string, unknown>) =>
     daemon.execute(name as never, input as never, AGENT),
   );
@@ -127,7 +134,11 @@ async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
     },
   );
   const start = coordinator as unknown as {
-    startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
+    startCorner(corner: {
+      cornerId: string;
+      parentRoomId: string;
+      openedBy?: string;
+    }): Promise<void>;
   };
   return {
     execute,
@@ -135,13 +146,18 @@ async function stageRepositoryRoomCorner(lane: 'code' | 'no_code') {
     async run() {
       const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
+      await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM, openedBy: AGENT });
       const lines = log.mock.calls.map((call) => String(call[0]));
       error.mockRestore();
       log.mockRestore();
       await coordinator.shutdown();
       return { lines, scratchPath: join(dirname(staged.configPath), 'rooms', CORNER, 'scratch') };
     },
+    database,
+    token,
+    startCorner: () => start.startCorner({ cornerId: CORNER, parentRoomId: ROOM, openedBy: AGENT }),
+    roomBase: dirname(staged.configPath),
+    supervisorRoot: staged.runtime.supervisorRoot,
   };
 }
 
@@ -167,7 +183,67 @@ it('still takes the repository path for a code-lane corner of the same Room', as
   expect(staged.execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: ROOM });
 });
 
-it('tells a no-code corner to deliver artifacts and tag the requester, never to open a pull request', async () => {
+it('retires a running no-code session and restarts the same corner with a real branch and token', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-remote-'));
+  roots.push(fixture);
+  const seed = join(fixture, 'seed');
+  const remote = join(fixture, 'remote.git');
+  await git('git', ['init', '-b', 'main', seed]);
+  await writeFile(join(seed, 'widget.txt'), 'before\n');
+  await git('git', ['-C', seed, 'add', '.']);
+  await git('git', [
+    '-C',
+    seed,
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '-m',
+    'seed',
+  ]);
+  await git('git', ['clone', '--bare', seed, remote]);
+  const staged = await stageRepositoryRoomCorner('no_code', `file://${remote}`);
+  await staged.database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [CORNER]);
+
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    await staged.startCorner();
+    const scratch = join(staged.roomBase, 'rooms', CORNER, 'scratch');
+    expect(existsSync(scratch)).toBe(true);
+    expect(staged.token).not.toHaveBeenCalled();
+
+    const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
+    await staged.database.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [CORNER]);
+    await staged.coordinator.applyCornerRestart(CORNER);
+    expect(staged.coordinator.activeRoomIds()).not.toContain(CORNER);
+    expect(existsSync(scratch)).toBe(false);
+
+    await staged.startCorner();
+    const worktree = join(staged.supervisorRoot, 'beeline', 'corners', CORNER);
+    expect(staged.coordinator.activeRoomIds()).toContain(CORNER);
+    expect(staged.token).toHaveBeenCalledWith(ROOM);
+    expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
+    expect((await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim()).toBe(
+      featureBranch,
+    );
+    expect(staged.execute).toHaveBeenCalledWith(
+      'postCornerRemoteState',
+      expect.objectContaining({ cornerId: CORNER, branch: featureBranch, state: 'working' }),
+    );
+  } finally {
+    error.mockRestore();
+    log.mockRestore();
+    await staged.coordinator.shutdown();
+    await staged.database.close();
+  }
+});
+
+/** One no-code corner turn, returning the ACP session it opened. */
+async function noCodeCornerSession(
+  extra: Partial<ConstructorParameters<typeof MonolithCornerTurnLoop>[0]> = {},
+): Promise<Parameters<AcpClient['sessionNew']>[0] | undefined> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-no-code-prompt-'));
   roots.push(root);
   const workspace = join(root, 'rooms', 'corner-id', 'scratch');
@@ -254,8 +330,14 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
     onFailure: vi.fn(),
     onCloseRequested: vi.fn(async () => undefined),
     createAcpClient: () => acp,
+    ...extra,
   }).run();
   await scheduler.dispose();
+  return sessionInput;
+}
+
+it('tells a no-code corner to deliver artifacts and tag the requester, never to open a pull request', async () => {
+  const sessionInput = await noCodeCornerSession();
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
@@ -281,4 +363,335 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
   expect(prompt).not.toContain('Open the pull request with gh');
   expect(prompt).not.toContain('gh pr merge');
   expect(prompt).not.toContain(CORNER_AUTHOR_CONTRACT);
+  expect(prompt).not.toContain('upgrade_corner_to_code');
+});
+
+it('offers the one-way code upgrade to the session that actually mounts the tool', async () => {
+  const sessionInput = await noCodeCornerSession({ agentMayUpgradeCorner: true });
+
+  const prompt = String(sessionInput?.systemPrompt);
+  expect(prompt).toContain('upgrade_corner_to_code');
+  expect(prompt).toContain('explicitly asks for code edits in this same corner');
+  expect(prompt).toContain('Never call it from an implied request');
+  const agentEnvironment = new Map(
+    sessionInput?.mcpServers
+      .find((server) => server.name === 'beeline-agent')
+      ?.env.map(({ name, value }) => [name, value]),
+  );
+  expect(
+    agentToolsFor(
+      agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+      agentEnvironment.get('BEELINE_AGENT_DM') === '1',
+      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+      agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+      false,
+      agentEnvironment.get('BEELINE_CORNER_CAN_UPGRADE') === '1',
+    ).map((tool) => tool.name),
+  ).toContain('upgrade_corner_to_code');
+});
+
+it('retires a no-code session on the timed restore read when the server already moved it to code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-lane-poll-'));
+  roots.push(root);
+  const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+  await mkdir(workspace, { recursive: true });
+  const agent = stored('11'.repeat(32), 'Bee');
+  const runtime = {
+    agentId: '11'.repeat(32),
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+  } as unknown as AgentRuntimeRecord;
+  const config: BodyConfig = {
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    workspaceRoot: workspace,
+    autoApprovePermissions: true,
+  };
+  const execute = vi.fn(async (name: string) => {
+    if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+    if (name === 'getCornerRestoreState')
+      return {
+        cornerId: 'corner-id',
+        objective: 'Write it up',
+        lane: 'code',
+        closeRequested: false,
+      };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const onLaneChanged = vi.fn();
+  const onCloseRequested = vi.fn(async () => undefined);
+
+  await new MonolithCornerTurnLoop({
+    cornerId: 'corner-id',
+    parentRoomId: 'room-id',
+    workspaceId: 'workspace',
+    objective: 'Write it up',
+    worktreePath: workspace,
+    lane: 'no_code',
+    runtime,
+    config,
+    api,
+    scheduler,
+    pollMs: 1,
+    onPoll: vi.fn(),
+    onFailure: vi.fn(),
+    onCloseRequested,
+    onLaneChanged,
+  }).run();
+  await scheduler.dispose();
+
+  expect(onLaneChanged).toHaveBeenCalledTimes(1);
+  expect(onCloseRequested).not.toHaveBeenCalled();
+  expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-id' });
+});
+
+/**
+ * One upgradeable no-code corner turn whose `upgrade_corner_to_code` call
+ * lands: `commitUpgrade()` stands in for the server-side transaction that
+ * moves the lane and spends this turn's write authority.
+ */
+async function upgradeTurn(
+  answer: (input: {
+    commitUpgrade: () => void;
+    requestClose: () => void;
+    onChunk?: (delta: string, full: string, currentRun?: string) => void;
+    onToolCalls?: (calls: ToolCallEntry[]) => void;
+  }) => Promise<PromptResult>,
+): Promise<{ written: string[]; execute: ReturnType<typeof vi.fn>; onLaneChanged: () => void }> {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-turn-'));
+  roots.push(root);
+  const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+  const scratchRoot = join(workspace, 'agent-home');
+  await mkdir(scratchRoot, { recursive: true });
+  const agent = stored('11'.repeat(32), 'Bee');
+  const runtime = {
+    agentId: '11'.repeat(32),
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+  } as unknown as AgentRuntimeRecord;
+  const config: BodyConfig = {
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    agentHomeRoot: scratchRoot,
+    workspaceRoot: workspace,
+    autoApprovePermissions: true,
+  };
+  const source = {
+    id: 'e'.repeat(64),
+    authorId: HUMAN,
+    createdAt: 1,
+    type: 'message' as const,
+    body: 'go edit the widget renderer',
+    attachments: [],
+  };
+  const command = {
+    id: source.id,
+    roomId: 'corner-id',
+    agentId: agent.publicKey,
+    sourceMessageId: source.id,
+    turnRequestId: source.id,
+    action: 'input' as const,
+    reason: 'human_tag',
+    rootCommandId: source.id,
+    rootSourceMessageId: source.id,
+    agentDepth: 0,
+    source,
+  };
+  let lane = 'no_code';
+  let closeRequested = false;
+  let delivered = false;
+  const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+    if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
+      return { allowed: true };
+    if (name === 'getAgentCommands') {
+      if (delivered) return { commandProtocol: 1, commands: [] };
+      delivered = true;
+      return { commandProtocol: 1, commands: [command] };
+    }
+    if (name === 'claimAgentCommand') return { id: input.commandId, createdAt: 1 };
+    if (name === 'getCornerRestoreState')
+      return {
+        cornerId: 'corner-id',
+        objective: 'Fix the widget renderer',
+        lane,
+        closeRequested,
+      };
+    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getWorkspaceRoster')
+      return {
+        members: [
+          { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          { identityId: HUMAN, kind: 'human', name: 'Ada', handle: 'ada', role: 'owner' },
+        ],
+      };
+    if (name === 'getAgentConfiguration') return { commands: [] };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+  const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+  vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+    async (_session, _prompt, _timeout, onChunk, _onPlan, onToolCalls) =>
+      answer({
+        commitUpgrade: () => {
+          lane = 'code';
+        },
+        requestClose: () => {
+          closeRequested = true;
+        },
+        onChunk,
+        onToolCalls,
+      }),
+  );
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const onLaneChanged = vi.fn();
+
+  await new MonolithCornerTurnLoop({
+    cornerId: 'corner-id',
+    parentRoomId: 'room-id',
+    workspaceId: 'workspace',
+    objective: 'Fix the widget renderer',
+    worktreePath: workspace,
+    lane: 'no_code',
+    requesterHandle: 'ada',
+    agentMayUpgradeCorner: true,
+    runtime,
+    config,
+    api,
+    scheduler,
+    pollMs: 1,
+    closePollMs: 1,
+    onPoll: vi.fn(),
+    onFailure: vi.fn(),
+    onCloseRequested: vi.fn(async () => undefined),
+    onLaneChanged,
+    createAcpClient: () => acp,
+  }).run();
+  await scheduler.dispose();
+  return { written: execute.mock.calls.map(([name]) => name as string), execute, onLaneChanged };
+}
+
+/** Every ending this session must NOT write once its authority is spent. */
+function expectTextlessUpgradeEnding(result: {
+  written: string[];
+  execute: ReturnType<typeof vi.fn>;
+}): void {
+  // A closing reply would be refused, and the refusal would fail a turn that
+  // succeeded.
+  expect(result.written).not.toContain('postRoomMessage');
+  expect(result.execute).not.toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'failed' }),
+  );
+  expect(result.execute).not.toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'complete' }),
+  );
+  // The half-written answer does not stay on the page under a corner that is
+  // already restarting.
+  expect(result.written).toContain('retractAgentLiveOutput');
+  // The upgrade call keeps no activity row: that write is refused too, and its
+  // refusal would be the only thing a successful upgrade logged.
+  expect(result.written).not.toContain('postAgentActivity');
+}
+
+it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing after it', async () => {
+  const result = await upgradeTurn(async ({ commitUpgrade, onChunk, onToolCalls }) => {
+    const calls = [{ id: 'call-1', title: 'upgrade_corner_to_code', status: 'completed' }];
+    commitUpgrade();
+    // The call settles before any narration, so nothing holds its row back.
+    onToolCalls?.(calls);
+    const text = 'Upgraded this corner so I can edit the renderer.';
+    onChunk?.(text, text, text);
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+  });
+
+  expectTextlessUpgradeEnding(result);
+  expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
+});
+
+it('ends the same way for a harness that reports no tool calls at all', async () => {
+  // cursor-acp-bridge translates only message chunks, so the upgrade is never
+  // visible in this turn's tool-call stream — the corner's own lane is.
+  const result = await upgradeTurn(async ({ commitUpgrade, onChunk }) => {
+    commitUpgrade();
+    const text = 'Upgraded this corner so I can edit the renderer.';
+    onChunk?.(text, text, text);
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
+  });
+
+  expectTextlessUpgradeEnding(result);
+  expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the ledger row for an upgrade the server refused', async () => {
+  // Nothing was committed, so this turn still owns its authority: the refusal
+  // belongs in the corner beside every other failed call, not only in the log.
+  const result = await upgradeTurn(async ({ requestClose, onToolCalls, onChunk }) => {
+    const calls = [
+      {
+        id: 'call-1',
+        title: 'upgrade_corner_to_code',
+        status: 'failed',
+        content: 'corner lane upgrade requires an explicit human request in this corner',
+      },
+    ];
+    onToolCalls?.(calls);
+    const text = 'I cannot start code work here without your explicit ask.';
+    onChunk?.(text, text, text);
+    requestClose();
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+  });
+
+  expect(result.written).toContain('postAgentActivity');
+  // The turn is ordinary from here: it answers and settles.
+  expect(result.written).toContain('postRoomMessage');
+  expect(result.execute).toHaveBeenCalledWith(
+    'postAgentTurnReceipt',
+    expect.objectContaining({ status: 'complete' }),
+  );
+  expect(result.onLaneChanged).not.toHaveBeenCalled();
 });

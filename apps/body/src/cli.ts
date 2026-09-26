@@ -114,6 +114,11 @@ import {
 } from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 import { runScratchSweep } from './scratch-sweep.js';
+import {
+  disableLaunchdAgentService,
+  installLaunchdTrustySquireBrokerService,
+  reconcileLaunchdAgentServices,
+} from './launchd.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -344,6 +349,18 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           }`,
         );
       });
+    } else if (
+      pendingSuccessor &&
+      process.platform === 'darwin' &&
+      process.env.BEELINE_LAUNCHD_USER !== '0'
+    ) {
+      await installLaunchdTrustySquireBrokerService().catch((error) => {
+        console.error(
+          `[beeline] host Squire broker launchd job not converged: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
     }
   }
 
@@ -393,7 +410,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       onHiccupRestart: (attempt) => {
         const delay = hiccupBackoffMs(attempt);
         console.warn(
-          `[thin-core] hiccup restart attempt ${attempt}; exiting so systemd can start a fresh helper`,
+          `[thin-core] hiccup restart attempt ${attempt}; exiting so the service manager can start a fresh helper`,
         );
         if (delay <= 0) {
           process.exit(0);
@@ -717,6 +734,10 @@ async function main(): Promise<void> {
       await reconcileAgentServices({ env: process.env }).catch((error) => {
         console.error('[beeline] failed to enumerate orphan agent units:', error);
       });
+    } else if (agentPubkey && process.platform === 'darwin') {
+      await reconcileLaunchdAgentServices({ env: process.env }).catch((error) => {
+        console.error('[beeline] failed to enumerate orphan agent launchd jobs:', error);
+      });
     }
     if (!configPath && agentPubkey) {
       const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
@@ -724,7 +745,7 @@ async function main(): Promise<void> {
     }
     if (!configPath && agentPubkey) {
       throw new DaemonExitError(
-        `unknown agent ${agentPubkey}: no durable runtime exists; refusing systemd restart loop`,
+        `unknown agent ${agentPubkey}: no durable runtime exists; refusing service restart loop`,
         UNKNOWN_AGENT_EXIT_STATUS,
       );
     }
@@ -760,6 +781,8 @@ async function main(): Promise<void> {
     const runtime = await readRuntimeRecord(configPath);
     if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
       await disableAgentService(runtime.agent.publicKey);
+    } else if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
+      await disableLaunchdAgentService(runtime.agent.publicKey);
     } else {
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }
@@ -773,7 +796,7 @@ async function main(): Promise<void> {
 main().catch(async (err) => {
   // Cover failures before runStoredDaemon reaches its core-level try/catch
   // (runtime migration, safety/config parsing, sandbox detection). A pending
-  // release that cannot reach READY rolls back once; systemd starts the
+  // release that cannot reach READY rolls back once; the service manager starts the
   // restored anchor. Worker/interactive command failures never touch it.
   if (process.argv[2] === 'daemon') {
     const layout = beelineInstallLayout(process.env);

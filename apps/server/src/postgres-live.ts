@@ -129,7 +129,10 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false)
+        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
+        'lane', COALESCE(NEW.lane, OLD.lane),
+        'laneChanged', CASE WHEN TG_OP = 'UPDATE'
+          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END
       );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
@@ -225,6 +228,8 @@ interface LiveNotificationPayload {
   archived?: boolean;
   removed?: boolean;
   closeRequested?: boolean;
+  lane?: string;
+  laneChanged?: boolean;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -259,6 +264,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.closeRequested === 'boolean'
         ? { closeRequested: parsed.closeRequested }
         : {}),
+      ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
+      ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
     };
   } catch {
     return undefined;
@@ -446,6 +453,8 @@ export class PostgresLiveListener {
       ...(payload.archived ? { archived: true } : {}),
       ...(payload.removed ? { removed: true } : {}),
       ...(payload.closeRequested ? { closeRequested: true } : {}),
+      ...(payload.lane ? { lane: payload.lane } : {}),
+      ...(payload.laneChanged ? { laneChanged: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
       ...(payload.traceId && payload.databaseAt
         ? {

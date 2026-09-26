@@ -1890,8 +1890,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
 }: OrdinaryLedgerMessageProps) {
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
-  const speakerFace = indexedAuthor?.face ?? agent?.face;
-  const speakerAvatar = indexedAuthor?.avatar ?? agent?.avatar;
+  // A loaded roster entry is the current identity. Historical rows may still
+  // carry the face or generated avatar that was current when they were cached,
+  // including artwork the agent has since removed.
+  const speakerFace = agent ? agent.face : indexedAuthor?.face;
+  const speakerAvatar = agent ? agent.avatar : indexedAuthor?.avatar;
   const currentAgent =
     indexedAuthor?.kind === 'agent'
       ? {

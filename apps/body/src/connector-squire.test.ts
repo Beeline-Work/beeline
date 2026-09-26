@@ -945,6 +945,35 @@ describe('on-disk profile claim reclaim', () => {
     }
   });
 
+  it('reads the shared broker pid from launchd on macOS', async () => {
+    const previousPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const dir = claimDir();
+    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
+    writeLock(dir.lockPath, broker.pid!);
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    try {
+      const result = await installSquire({
+        workspaceId: 'ws-1',
+        profileDir: dir.profileDir,
+        lockRoot: dir.lockRoot,
+        run: async (command, args) => {
+          expect(command).toBe('launchctl');
+          expect(args).toEqual([
+            'print', `gui/${process.getuid?.()}/app.usebeeline.trusty-squire-broker`,
+          ]);
+          return { code: 0, stdout: `state = running\npid = ${broker.pid}\n`, stderr: '' };
+        },
+        mcp: client,
+      });
+      expect(result.status).toBe('connected');
+    } finally {
+      if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
+      broker.kill();
+      dir.cleanup();
+    }
+  });
+
   it('keeps a broker claim and reports a failed vault probe', async () => {
     const dir = claimDir();
     const broker = spawn('sleep', ['30'], { stdio: 'ignore' });

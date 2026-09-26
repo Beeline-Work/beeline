@@ -374,8 +374,11 @@ on All.
 `ConversationRow.tsx` is shared by mobile and desktop. Names use `body`. An
 unread row sits on `bgUnread` with a `bodyStrong` name and a `textPrimary`
 preview; a trailing brass dot means the Room has new messages, independent of
-corner state; the row's corner summary shares that ground. Read cursors are
-unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
+corner state, and it takes a ring only while the Room asks the viewer to act —
+an approval waiting, or a mention still unread, because a mention the viewer
+has already read is no longer a need (`roomRowAttentionReason` in
+`buzz/room-list-row.ts`); the row's corner summary shares that ground. Read
+cursors are unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
 On phone, the byline sits above a two-line `body` preview in `textSecondary`;
 on desktop, author and preview share a two-line `meta` block. DMs omit the
 byline because the peer is already named in the heading. Rows have generous

@@ -65,12 +65,12 @@ Codex, Claude Code, Grok, and OpenCode use the sign-in they already have on that
 
 You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXXXX` — and the package also installs a `beeline` bin alias.
 
-**Requirements:** Node 20.11+, Linux x64, and systemd user services. The published daemon bundle is `linux-x64` only today; macOS is not shipped.
+**Requirements:** Node 20.11+ and either Linux x64 with systemd user services or macOS (Apple silicon or Intel) with launchd. On macOS the helper is supervised in your login session: a LaunchAgent starts at login rather than at boot, so keep a user logged in — turn on automatic login for a headless Mac. Pairing over SSH with nobody logged in cannot start the daemon.
 
 ## What happens
 
 1. `connect` redeems the app's one-time pairing code and receives an agent identity for your Workspace.
-2. It downloads the signed current daemon bundle into `~/.local/lib/beeline` and starts it as a supervised `systemd --user` service, one per agent.
+2. It downloads the signed current daemon bundle into `~/.local/lib/beeline` and starts it as a supervised per-user service, one per agent (`systemd --user` on Linux, a launchd LaunchAgent on macOS).
 3. The agent appears in the Room. Tag it like a teammate.
 4. Given a repository-bound Room, the agent can open a corner and produce a pull request there.
 5. The daemon updates itself when a new release ships, draining any turn in flight first, and rolls back if the new bundle cannot answer.
@@ -102,8 +102,8 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 
 ## Security posture
 
-- **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved, and so are shell commands, because the sandbox — not an allowlist — is what holds the line for both.
-- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap` gets one automatic install attempt at daemon start (Linux hosts with `apt-get`; the unit's start deadline is extended to cover it, and a failed attempt is remembered for a day rather than retried on every restart). If the sandbox still cannot be built — a kernel that refuses unprivileged user namespaces, no usable package manager, or an operator who turned it off — every session afterwards runs unwrapped: mounted MCP tools stay approved, the agent's session prompt states whether it can run shell commands, and the read-only rule for anything else rests on the harness's own sandbox. Codex keeps its offline read-only mode; a harness that asks, like Claude Code, is told a shell is unavailable instead of being granted one. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
+- **The filesystem boundary is the sandbox, not a tool list.** Room sessions run under bubblewrap with a read-only view of the checkout, a private `/tmp`, and an isolated home. Every mounted MCP tool is approved, and so are shell commands while the sandbox wraps the session, because the sandbox — not an allowlist — is what holds the line for both.
+- **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap` gets one automatic install attempt at daemon start (Linux hosts with `apt-get`; the unit's start deadline is extended to cover it, and a failed attempt is remembered for a day rather than retried on every restart). If the sandbox still cannot be built — a kernel that refuses unprivileged user namespaces, no usable package manager, or an operator who turned it off — every session afterwards runs unwrapped: mounted MCP tools stay approved, the agent's session prompt states whether it can run shell commands, and the read-only rule for anything else rests on the harness's own sandbox. Codex keeps its offline read-only mode; a harness that asks, like Claude Code or Grok, is told a shell is unavailable instead of being granted one. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox. OpenCode Rooms select its Plan agent; bubblewrap holds the filesystem boundary when available.
 - **Write access requires a corner.** A corner is a separate worktree on its own branch with a repository-scoped GitHub App token, and it is opened by an explicit host-governed call, never inferred.
 - **Reach outside the sandbox is a grant.** Repository cards stay in the requesting Room, where a Workspace owner or admin can answer. Personal-resource cards — host commands, paths, devices, secrets, wallets, Composio, and other MCP routes — go to the resource owner's private connector or `@system` DM, and only that owner can answer. Every approval is scoped to the Room and the original human requester, so delegation or an approval resume cannot turn someone else's request into owner consent. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered. An ALWAYS route remains available for the same scope until it is revoked; ONCE is consumed by the first authorized resource call, not by discovery.
 - **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. It bypasses repository prompts for any requester, but bypasses personal-resource prompts only when the original requester is the resource owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only. Generic budget grants are retired.
@@ -177,7 +177,7 @@ Sign in with GitHub, and the app hands you the pairing code that `npx usebeeline
 
 ## Beta
 
-Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 only; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
+Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 and macOS, not Windows; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
 
 ## One README for GitHub and npm
 

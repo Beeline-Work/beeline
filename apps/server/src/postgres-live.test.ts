@@ -317,6 +317,43 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('marks the one-way no-code lane change so every subscribed helper can restart', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'research')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind)
+       VALUES($1,$2,'', 'no_code','human')`,
+      [corner, AUTHOR],
+    );
+    await eventually(() => received.some((event) => event.type === 'invalidate'));
+    received.length = 0;
+
+    await database.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [corner]);
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:corner_facts' &&
+          event.roomId === corner &&
+          event.lane === 'code' &&
+          event.laneChanged === true,
+      ),
+    );
+  });
+
   it('leaves a top-level Room membership without a corner opener', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

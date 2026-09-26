@@ -65,7 +65,10 @@ deliberate consent gate, never inferred from pin direction.
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
 and are submitted to TestFlight from its generated IPA. Android store binaries
 continue to build on EAS cloud and use the existing Google Play authentication
-and upload path.
+and upload path. Three legs now contend for that single machine: the iOS store
+build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate -
+that queueing is why the release budget was widened for attempts that build the
+macOS helper (or deliver on a reused artifact so it never had to).
 
 Selected jobs build immutable artifacts named with both release version and
 source SHA, promote them, run bounded checks, and publish a component
@@ -119,10 +122,15 @@ node --test scripts/unified-release.test.mjs
 
 A failed attempt stores its release state. Up to two automatic retries use the
 same version and SHA, skip checked components, reuse successful immutable build
-artifacts, and rerun only unfinished component work. Missing identities,
-unknown selections, missing carried references, and absent selected artifacts
-fail closed. Helper fleet uptake is recorded once as post-release observability;
-installed-helper convergence never gates delivery.
+artifacts, and rerun only unfinished component work. When an earlier attempt at
+this identity already merged the three-platform daemon artifact, `initialize`
+resolves the run holding it once and the helper leg promotes those exact bytes,
+so neither macOS bundle is rebuilt. When no reusable artifact resolves - it
+expired, was deleted, or the lookup errored - the macOS legs rebuild instead of
+dead-ending, and a fresh release identity has no such artifact and always builds
+them. Missing identities, unknown selections, missing carried references, and
+absent selected artifacts fail closed. Helper fleet uptake is recorded once as
+post-release observability; installed-helper convergence never gates delivery.
 
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
@@ -136,10 +144,22 @@ Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
-Normal selective attempts have a 20-minute dispatch-to-result budget. Component
-jobs have shorter explicit timeouts and network smoke checks have second-scale
-limits. The final index records outcome, duration, selected/carried components,
-and a failure class (`budget` or the unfinished component list).
+Normal selective attempts spend their 20-minute budget from dispatch to the
+`mobile_ota` **completion** checkpoint, not to the end of the whole run: the
+native, desktop, and website legs finish after the phone can already receive the
+update, so they no longer count against the fix-to-phone promise. An attempt
+that built a store binary or ran the emulator proof is allowed 60 minutes, and
+one whose helper leg either built the macOS bundles or delivered on a reused
+artifact 150 - a cold `cargo build --release` on the one self-hosted Intel Mac
+that the iOS leg also holds is queue time, not a missed budget, and a retry that
+delivered on reused bytes is not a budget failure just because that Mac never
+had to run. When no OTA completion checkpoint exists the whole-run elapsed time
+stands in for it. Separately the whole run has a 45-minute soft limit: exceeding
+it never fails the attempt or blocks the release record, it only marks the
+attempt **slow** in the summary. Component jobs otherwise have shorter explicit
+timeouts and network smoke checks have second-scale limits. The final index
+records outcome, duration, selected/carried components, and a failure class
+(`budget` or the unfinished component list).
 
 ## Reliability measurement
 

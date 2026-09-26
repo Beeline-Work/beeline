@@ -657,17 +657,12 @@ export type SandboxInstallRunner = (
 const INSTALL_TIMEOUT_MS = 2 * 60_000;
 const INSTALL_OUTPUT_LIMIT = 32 * 1024;
 
-/** How long a lost package-manager lock is given to free before giving up. */
-const PACKAGE_LOCK_WAIT_MS = 60_000;
-const PACKAGE_LOCK_POLL_MS = 2_000;
-
 /**
- * Worst case for the refresh + install pair plus a lock wait, for a caller that
- * has to keep this off a start-up deadline it does not own (`cli.ts` extends the
- * systemd start timeout by exactly this before the first package command runs).
+ * Worst case for the refresh + install pair, for a caller that has to keep this
+ * off a start-up deadline it does not own (`cli.ts` extends the systemd start
+ * timeout by exactly this before the first package command runs).
  */
-export const BUBBLEWRAP_INSTALL_BUDGET_MS =
-  2 * INSTALL_TIMEOUT_MS + PACKAGE_LOCK_WAIT_MS + 15_000;
+export const BUBBLEWRAP_INSTALL_BUDGET_MS = 2 * INSTALL_TIMEOUT_MS + 15_000;
 
 /**
  * A failed install is remembered for a day, so a host where bubblewrap is simply
@@ -778,25 +773,6 @@ function bubblewrapPackageSupport(
 }
 
 /**
- * Did this stage lose the package-manager lock rather than fail? Several helper
- * units restarting together (a reboot, one managed update) send every one of
- * them here at once, and a loser's failure says nothing about whether
- * bubblewrap can be installed on this host — the winner is installing it.
- *
- * Read from the WHOLE stage output, never the one line the operator reason
- * keeps: apt's `Could not get lock` sits two lines above its own last line
- * (`E: Unable to lock directory …`), so a verdict taken from the reduced prose
- * misses exactly the stage that races first.
- */
-function lostPackageManagerLock(output: string): boolean {
-  return /could not get lock|could not lock|unable to lock|unable to acquire|frontend lock|another process/i.test(
-    output,
-  );
-}
-
-type InstallFailure = { readonly ok: false; readonly reason: string; readonly lockedOut: boolean };
-
-/**
  * One install attempt on a host `bubblewrapPackageSupport` already cleared, as
  * the unprivileged helper account: `sudo -n` only, because the agent runs as a
  * systemd `--user` unit and never as root.
@@ -810,37 +786,14 @@ type InstallFailure = { readonly ok: false; readonly reason: string; readonly lo
  */
 async function installBubblewrap(
   run: SandboxInstallRunner,
-): Promise<{ readonly ok: true } | InstallFailure> {
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
   await run('sudo', ['-n', 'apt-get', 'update']);
   const install = await run('sudo', ['-n', 'apt-get', 'install', '-y', 'bubblewrap']);
   if (install.code === 0) return { ok: true };
   return {
     ok: false,
     reason: lastLine(install.output, `apt-get install exited ${install.code}`),
-    lockedOut: lostPackageManagerLock(install.output),
   };
-}
-
-const sleepFor = (ms: number): Promise<void> =>
-  new Promise((done) => {
-    setTimeout(done, ms);
-  });
-
-/**
- * Wait, bounded, for the helper that holds the lock to finish — observed through
- * the only thing that matters, `bwrap` appearing on PATH. One re-detection
- * follows; there is no second install attempt.
- */
-async function waitForSiblingInstall(
-  env: NodeJS.ProcessEnv,
-  sleep: (ms: number) => Promise<void>,
-  now: () => number,
-): Promise<void> {
-  const deadline = now() + PACKAGE_LOCK_WAIT_MS;
-  while (now() < deadline) {
-    await sleep(PACKAGE_LOCK_POLL_MS);
-    if (executableOnPath('bwrap', env)) return;
-  }
 }
 
 /** Fixed prompt sentences: no host posture, no paths, no installer output. */
@@ -868,10 +821,10 @@ const shellDetailNotInstalled = (fix: string): string =>
  * that is present but failed its self-test is not a missing package.
  *
  * Detection ALWAYS runs before the failure marker is read, so a hand-installed
- * `bwrap` is adopted immediately however recently an attempt failed; only a host
- * that still has none consults the marker and skips the package commands. A lost
- * package-manager lock is never remembered: it is a fact about a sibling holding
- * the lock, not about this host, so a loser retries on its next start.
+ * `bwrap` is adopted immediately however recently an attempt failed — including
+ * one a sibling helper installed while this one lost the package-manager lock;
+ * only a host that still has none consults the marker and skips the package
+ * commands.
  *
  * `beforeInstall` fires once, only when a package command is actually about to
  * run: the caller owns whatever deadline that spend comes out of.
@@ -888,7 +841,6 @@ export async function ensureBwrapSandbox(
     /** Where the install-failure marker lives; omitted keeps no memory at all. */
     stateDir?: string;
     now?: () => number;
-    sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<BwrapAvailability> {
   const detect = options.detect ?? detectBwrapSandbox;
@@ -936,23 +888,20 @@ export async function ensureBwrapSandbox(
   }
   await options.beforeInstall?.();
   const installed = await installBubblewrap(options.run ?? runSandboxInstallCommand);
-  if (!installed.ok && installed.lockedOut) {
-    await waitForSiblingInstall(env, options.sleep ?? sleepFor, now);
-  }
   const after = detect(detectInput);
   if (after.path) {
     clearInstallFailure(options.stateDir);
     return after;
   }
   if (!installed.ok) {
-    if (!installed.lockedOut) recordInstallFailure(options.stateDir, now());
+    recordInstallFailure(options.stateDir, now());
     return failed(installed.reason);
   }
-  clearInstallFailure(options.stateDir);
+  const stillAbsent = !executableOnPath('bwrap', env);
+  if (stillAbsent) recordInstallFailure(options.stateDir, now());
+  else clearInstallFailure(options.stateDir);
   return {
     advisory: `${after.advisory} ${shellConsequence}`,
-    shellDetail: executableOnPath('bwrap', env)
-      ? SHELL_DETAIL_SELF_TEST
-      : shellDetailNotInstalled(support.fix),
+    shellDetail: stillAbsent ? shellDetailNotInstalled(support.fix) : SHELL_DETAIL_SELF_TEST,
   };
 }

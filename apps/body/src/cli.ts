@@ -265,7 +265,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
   });
   if (sandbox.path) config.bwrapPath = sandbox.path;
-  else if (sandbox.shellDetail) config.sandboxUnavailableDetail = sandbox.shellDetail;
+  else if (sandbox.shellDetail) config.shellUnavailableDetail = sandbox.shellDetail;
   // Owner-configured credential masks ride the runtime record; the
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.

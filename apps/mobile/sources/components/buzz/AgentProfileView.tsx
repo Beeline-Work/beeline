@@ -5,10 +5,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
 import { ProfileIdentity } from './ProfileIdentity';
-import { ChevronGlyph } from './ChevronGlyph';
 import { MonoButton } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { SettingsRow } from './SettingsRow';
+import { PageHeader } from './PageHeader';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
 
@@ -46,7 +46,7 @@ export function AgentProfileView({
   canManage: boolean;
   canEdit: boolean;
   avatarDisabled: boolean;
-  onGenerateAvatar: (soul: string, direction?: string) => Promise<void>;
+  onGenerateAvatar: (soul: string) => Promise<void>;
   refreshAgent: () => Promise<AgentDetailView>;
   loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
@@ -120,18 +120,14 @@ export function AgentProfileView({
     axis?.options.find((option) => option.id === value)?.name ?? value ?? 'Not available';
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="agent-profile">
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close profile"
-          onPress={onClose}
-          style={styles.close}
-          testID="close-agent-profile"
-        >
-          <ChevronGlyph direction="left" size={22} color={styles.accent.color} />
-        </Pressable>
-        <Text style={styles.heading}>Profile</Text>
-      </View>
+      <PageHeader
+        backAccessibilityLabel="Close profile"
+        backTestID="close-agent-profile"
+        onBack={onClose}
+        prominent
+        testID="agent-profile-header"
+        title="Profile"
+      />
       <KeyboardAwareScrollView contentContainerStyle={styles.content}>
         {loading && <SurfaceGlyphLoader testID="agent-profile-loader" />}
         {error && (
@@ -149,36 +145,36 @@ export function AgentProfileView({
               title="Model / difficulty"
               value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
             />
-            <View style={styles.headerActions}>
-              <MonoButton
-                label="Message"
+            <View style={styles.actions}>
+              <SettingsRow
+                title="Message"
+                tone="action"
                 onPress={onMessage}
-                variant="secondary"
                 testID="agent-profile-message"
               />
               {canEdit &&
                 (editing ? (
                   <>
-                    <MonoButton
-                      label="Cancel"
+                    <SettingsRow
+                      title="Cancel"
+                      tone="action"
                       disabled={saving}
                       onPress={onCancel}
-                      variant="secondary"
                       testID="cancel-agent-edit"
                     />
-                    <MonoButton
-                      label={saving ? 'Saving' : 'Save'}
+                    <SettingsRow
+                      title={saving ? 'Saving…' : 'Save'}
+                      tone="action"
                       disabled={saving}
-                      loading={saving}
                       onPress={onSave}
                       testID="save-agent-soul"
                     />
                   </>
                 ) : (
-                  <MonoButton
-                    label="Edit"
+                  <SettingsRow
+                    title="Edit"
+                    tone="action"
                     onPress={onEdit}
-                    variant="secondary"
                     testID="edit-agent-soul"
                   />
                 ))}
@@ -195,7 +191,7 @@ export function AgentProfileView({
               />
             )}
             <View style={styles.section}>
-              <Text style={styles.strong}>SOUL</Text>
+              <Text style={styles.sectionLabel}>SOUL</Text>
               {editing ? (
                 <TextInput
                   accessibilityLabel="Persona / instructions"
@@ -250,7 +246,7 @@ export function AgentProfileView({
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
-                <Text style={styles.strong}>Recent work</Text>
+                <Text style={styles.sectionLabel}>Recent work</Text>
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
               {allWork.length ? (
@@ -302,28 +298,7 @@ export function AgentProfileView({
 }
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
-  header: {
-    minHeight: 60,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  close: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-  heading: {
-    ...Typography.default(),
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.textPrimary,
-    flex: 1,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: theme.buzz.space.sm,
-    paddingVertical: theme.buzz.space.md,
-  },
+  actions: { paddingTop: theme.buzz.space.sm },
   content: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.xxl },
   identity: {
     paddingVertical: theme.buzz.space.lg,
@@ -371,6 +346,11 @@ const styles = StyleSheet.create((theme) => ({
   copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
   meta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  sectionLabel: {
+    ...Typography.default(),
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.textMuted,
+  },
   accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },
   section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
   readMore: { minHeight: 44, justifyContent: 'center' },

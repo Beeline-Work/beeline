@@ -11,7 +11,9 @@ vi.mock('react-native', () => ({
   View: (props: any) => React.createElement('View', props, props.children),
 }));
 vi.mock('@/modal/ModalManager', () => ({ Modal: { confirm: vi.fn(async () => true) } }));
-vi.mock('./MonoHull', () => ({ MonoButton: (props: any) => React.createElement('Button', props) }));
+vi.mock('./SettingsRow', () => ({
+  SettingsRow: (props: any) => React.createElement('SettingsRow', props),
+}));
 import { SoulPortraitControls } from './SoulPortraitControls';
 
 const original = {
@@ -47,25 +49,21 @@ describe('soul avatar generation', () => {
     const generate = vi.fn().mockRejectedValue(new Error('offline'));
     mount(original, generate);
     expect(countHint()).toBe(0);
-    await act(async () => renderer.root.findByType('Button').props.onPress());
-    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul', undefined);
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
+    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul');
     expect(countHint()).toBe(0);
-    expect(renderer.root.findByType('Button').props.label).toBe('Retry avatar generation');
+    expect(renderer.root.findByType('SettingsRow').props.title).toBe('Retry avatar generation');
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
     ).toContain('offline');
   });
 
-  it('passes trimmed optional direction with the current soul', async () => {
+  it('has no free-text direction input and sends only the current soul', async () => {
     const generate = vi.fn().mockRejectedValue(new Error('save refused'));
     mount(original, generate);
-    act(() =>
-      renderer.root
-        .findByProps({ testID: 'avatar-direction' })
-        .props.onChangeText('  brighter eyes  '),
-    );
-    await act(async () => renderer.root.findByType('Button').props.onPress());
-    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul', 'brighter eyes');
+    expect(renderer.root.findAllByProps({ testID: 'avatar-direction' })).toHaveLength(0);
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
+    expect(generate).toHaveBeenCalledWith('The CURRENT edited soul');
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
     ).toContain('save refused');
@@ -88,12 +86,12 @@ describe('soul avatar generation', () => {
       return generated;
     });
     const props = mount(original, vi.fn().mockResolvedValue(undefined), refresh);
-    await act(async () => renderer.root.findByType('Button').props.onPress());
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     expect(countHint()).toBe(0);
-    expect(renderer.root.findByType('Button').props.disabled).toBe(true);
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(countHint()).toBe(1);
-    expect(renderer.root.findByType('Button').props.disabled).toBe(false);
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(false);
     act(() => renderer.unmount());
     mount(generated);
     expect(countHint()).toBe(1);
@@ -102,21 +100,23 @@ describe('soul avatar generation', () => {
 
   it('bounds an offline wait and preserves exclusion when the settings close', async () => {
     const props = mount();
-    await act(async () => renderer.root.findByType('Button').props.onPress());
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     await act(async () => vi.advanceTimersByTimeAsync(180000));
-    expect(renderer.root.findByType('Button').props.label).toBe('Retry avatar generation');
+    expect(renderer.root.findByType('SettingsRow').props.title).toBe('Retry avatar generation');
     expect(countHint()).toBe(0);
-    await act(async () => renderer.root.findByType('Button').props.onPress());
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     act(() => renderer.unmount());
     const calls = (props.refresh as any).mock.calls.length;
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect((props.refresh as any).mock.calls.length).toBe(calls + 1);
     const reopened = mount();
-    expect(renderer.root.findByType('Button').props.disabled).toBe(true);
-    expect(renderer.root.findByType('Button').props.label).toBe('generating, will DM you when the avatar is ready');
-    await act(async () => renderer.root.findByType('Button').props.onPress());
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'avatar-generation-pending' }).props.children).toBe(
+      'generating, will DM you when the avatar is ready',
+    );
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     expect(reopened.generate).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(180000));
-    expect(renderer.root.findByType('Button').props.disabled).toBe(false);
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(false);
   });
 });

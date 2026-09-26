@@ -16,6 +16,7 @@ import {
 } from '@/components/buzz/HullActionSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { MonoButton } from '@/components/buzz/MonoHull';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -161,18 +162,14 @@ export function HumanProfile({
   };
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="human-profile">
-      <View style={styles.header}>
-        <MonoButton label="Back" variant="secondary" onPress={() => void close()} disabled={busy} />
-        <Text style={styles.title}>Profile</Text>
-        {canEditRole && !editing && (
-          <MonoButton
-            label="Edit"
-            variant="secondary"
-            onPress={() => setEditing(true)}
-            testID="edit-person-role"
-          />
-        )}
-      </View>
+      <PageHeader
+        backAccessibilityLabel="Back"
+        backTestID="close-human-profile"
+        onBack={() => void close()}
+        prominent
+        testID="human-profile-header"
+        title="Profile"
+      />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
         {loading && <SurfaceGlyphLoader />}
         {error && (
@@ -206,6 +203,15 @@ export function HumanProfile({
                 }
               />
             )}
+            {canEditRole && !editing && (
+              <SettingsRow
+                title="Edit"
+                tone="action"
+                disabled={busy}
+                onPress={() => setEditing(true)}
+                testID="edit-person-role"
+              />
+            )}
             {self && (
               <SettingsRow
                 title="Edit your profile"
@@ -224,20 +230,20 @@ export function HumanProfile({
                   testID="person-role-selector"
                   onPress={() => setRolePickerOpen(true)}
                 />
-                <View style={styles.actions}>
-                  <MonoButton
-                    label="Cancel"
-                    variant="secondary"
+                <View>
+                  <SettingsRow
+                    title="Cancel"
+                    tone="action"
                     disabled={busy}
                     onPress={() => {
                       setRole(member.role);
                       setEditing(false);
                     }}
                   />
-                  <MonoButton
-                    label="Save"
+                  <SettingsRow
+                    title={busy ? 'Saving…' : 'Save'}
+                    tone="action"
                     disabled={busy}
-                    loading={busy}
                     testID="save-person-role"
                     onPress={() =>
                       void perform(async () => {
@@ -350,21 +356,6 @@ export default function HumanProfileRoute() {
 }
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
-  header: {
-    minHeight: 60,
-    paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    gap: theme.buzz.space.md,
-    alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  title: {
-    ...Typography.default(),
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.textPrimary,
-    flex: 1,
-  },
   content: { paddingHorizontal: theme.buzz.space.md },
   identity: {
     alignItems: 'center',
@@ -383,11 +374,5 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.sectionHead,
     color: theme.buzz.textMuted,
     paddingTop: theme.buzz.space.md,
-  },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: theme.buzz.space.md,
-    paddingVertical: theme.buzz.space.md,
   },
 }));

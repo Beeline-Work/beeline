@@ -1,7 +1,7 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 export interface PageHeaderProps {
   /** The section's one title. */
@@ -10,11 +10,15 @@ export interface PageHeaderProps {
   meta?: string;
   /** Workspace context above the section title. */
   eyebrow?: string;
+  /** Uses the large page-title treatment shared by profile-shaped surfaces. */
+  prominent?: boolean;
   /** Count aligned with the title block's trailing edge. */
   trailing?: string;
   /** Renders the back control when provided. */
   onBack?: () => void;
   backAccessibilityLabel?: string;
+  backTestID?: string;
+  titleTestID?: string;
   testID?: string;
 }
 
@@ -28,22 +32,30 @@ export function PageHeader({
   title,
   meta,
   eyebrow,
+  prominent = false,
   trailing,
   onBack,
   backAccessibilityLabel = 'Back',
+  backTestID,
+  titleTestID,
   testID,
 }: PageHeaderProps) {
   return (
     <View style={[styles.header, eyebrow && styles.headerWithEyebrow]} testID={testID}>
       {onBack ? (
-        <Pressable
+        <TouchableOpacity
           accessibilityLabel={backAccessibilityLabel}
           accessibilityRole="button"
           onPress={onBack}
           style={styles.back}
+          testID={backTestID}
         >
-          <Ionicons color={styles.headerTitle.color} name="chevron-back" size={22} />
-        </Pressable>
+          <ChevronGlyph
+            color={styles.headerTitle.color}
+            direction="left"
+            size={CHEVRON_BACK_SIZE}
+          />
+        </TouchableOpacity>
       ) : null}
       <View style={styles.headerCopy}>
         {eyebrow ? (
@@ -51,7 +63,9 @@ export function PageHeader({
             {eyebrow}
           </Text>
         ) : null}
-        <Text style={[styles.headerTitle, eyebrow && styles.headerHero]}>{title}</Text>
+        <Text style={[styles.headerTitle, prominent && styles.headerHero]} testID={titleTestID}>
+          {title}
+        </Text>
         {meta ? <Text style={styles.headerMeta}>{meta}</Text> : null}
       </View>
       {trailing ? <Text style={styles.headerTrailing}>{trailing}</Text> : null}
@@ -61,14 +75,14 @@ export function PageHeader({
 
 const styles = StyleSheet.create((theme) => ({
   header: {
-    minHeight: 60,
+    minHeight: 66,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
     paddingHorizontal: 12,
   },
-  headerWithEyebrow: { minHeight: 66 },
+  headerWithEyebrow: {},
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerCopy: { flex: 1, minWidth: 0 },
   headerEyebrow: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },

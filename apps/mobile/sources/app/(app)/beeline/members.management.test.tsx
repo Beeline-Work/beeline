@@ -629,7 +629,14 @@ describe('Members workspace management', () => {
   it('shows the connected owner on the agent profile', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'profile-owner' })
+        .findAllByType('Text')
+        .flatMap((node: any) => node.children)
+        .filter((child: any) => typeof child === 'string')
+        .join(''),
+    ).toContain('viewer');
   });
 
   it('omits a handleless owner from the agent row and profile', async () => {
@@ -1004,7 +1011,7 @@ describe('Members workspace management', () => {
     );
     expect(client.setAgentSoul).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({ testID: 'avatar-refinement-hint' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.label).toBe(
+    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.title).toBe(
       'Retry avatar generation',
     );
     expect(
@@ -1012,14 +1019,10 @@ describe('Members workspace management', () => {
     ).toContain('offline');
   });
 
-  it('sends optional avatar direction with the current soul', async () => {
+  it('omits avatar direction and sends only the current soul', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
-    await act(async () =>
-      renderer.root
-        .findByProps({ testID: 'avatar-direction' })
-        .props.onChangeText('  brighter eyes  '),
-    );
+    expect(renderer.root.findAllByProps({ testID: 'avatar-direction' })).toHaveLength(0);
     await act(async () =>
       renderer.root
         .findByProps({ testID: 'agent-soul-instructions' })
@@ -1030,7 +1033,7 @@ describe('Members workspace management', () => {
     expect(client.composeMessage).toHaveBeenCalledWith(
       {
         sessionId: 'dm-room',
-        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"; visual direction: "brighter eyes"',
+        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"',
       },
       { mentionAgent: AGENT },
     );
@@ -1286,7 +1289,14 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'profile-handle' })
+        .findAllByType('Text')
+        .flatMap((node: any) => node.children)
+        .filter((child: any) => typeof child === 'string')
+        .join(''),
+    ).toContain('clara');
     const ban = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(ban.props.accessibilityLabel).toBe('Ban agent');
     expect(ban.findAllByType('Text')[0].props.children).toBe('Ban');
@@ -1399,8 +1409,22 @@ describe('Members workspace management', () => {
     await openAgentManagement(renderer);
 
     // Management names the agent and owner before offering removal.
-    expect(renderer.root.findByProps({ testID: 'profile-handle' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('clara');
-    expect(renderer.root.findByProps({ testID: 'profile-owner' }).findAllByType('Text').flatMap((node: any) => node.children).filter((child: any) => typeof child === 'string').join('')).toContain('viewer');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'profile-handle' })
+        .findAllByType('Text')
+        .flatMap((node: any) => node.children)
+        .filter((child: any) => typeof child === 'string')
+        .join(''),
+    ).toContain('clara');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'profile-owner' })
+        .findAllByType('Text')
+        .flatMap((node: any) => node.children)
+        .filter((child: any) => typeof child === 'string')
+        .join(''),
+    ).toContain('viewer');
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove agent');
     expect(control.findAllByType('Text')[0].props.children).toBe('Remove');

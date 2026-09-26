@@ -342,7 +342,7 @@ describe('Members invite affordance design', () => {
   });
 
   it('keeps permanent header and member indexes off lifted/card surfaces', () => {
-    expect(source).toContain('<View style={styles.header}>');
+    expect(source).toContain('<PageHeader');
     expect(source).not.toContain('<HullSurface strength="quiet" style={styles.header}>');
     expect(source).toMatch(/section:\s*\{\s*\}/);
     expect(source).not.toMatch(/sectionHeading:[\s\S]{0,220}backgroundColor/);

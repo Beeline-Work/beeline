@@ -28,7 +28,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { connectionsForViewer } from '@/buzz/workbench';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { Typography } from '@/constants/Typography';
-import { HullSurface, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -43,7 +43,7 @@ import {
 } from '@/push/buzz-push-registration';
 import { buzzPushPhaseDetail, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { PROFILE_IDENTITY_PICTURE_SIZE, ProfileIdentity } from '@/components/buzz/ProfileIdentity';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
@@ -51,7 +51,6 @@ import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
-import { IDENTITY_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
 import { t } from '@/text';
@@ -60,7 +59,7 @@ import { saveStoredPushLevel } from '@/push/push-level-storage';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
 import { openExternalUrl } from '@/utils/open-external-url';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -72,12 +71,6 @@ import {
 const PRIVACY_URL = 'https://usebeeline.app/privacy/';
 const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
-/* The person's Settings tile: same geometry as the Workspace settings tile,
- * seated by the same rule (`buzz/workspace-tile`). Named for a human mark so
- * it does not read through a `WORKSPACE_` constant. */
-const PICTURE_TILE = IDENTITY_SETTINGS_TILE;
-const PICTURE_SEAT = workspacePictureSeat(PICTURE_TILE);
-
 export default function BuzzIdentitySettings() {
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
   const insets = useSafeAreaInsets();
@@ -208,7 +201,11 @@ export default function BuzzIdentitySettings() {
         const communityId = workspaceList.workspaces.some((item) => item.id === activeCommunityId)
           ? (activeCommunityId ?? undefined)
           : workspaceList.workspaces[0]?.id;
-        if (!cancelled) setWorkspaceRole(workspaceList.workspaces.find((workspace) => workspace.id === communityId)?.role ?? null);
+        if (!cancelled)
+          setWorkspaceRole(
+            workspaceList.workspaces.find((workspace) => workspace.id === communityId)?.role ??
+              null,
+          );
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
           : await client.getGlobalPersonProfile(identity.publicKey);
@@ -218,18 +215,19 @@ export default function BuzzIdentitySettings() {
         if (!cancelled) {
           const nextName = profile?.name ?? preferredName ?? fallbackPersonName(identity.publicKey);
           setProfileName(nextName);
-        if (profile?.handle) {
-          const handle = profile.handle;
-          setManagedIdentity((current) =>
-            current ?? {
-              handle,
-              displayName: nextName,
-              source: 'github',
-              githubLogin: handle,
-              githubRenameAvailable: false,
-            },
-          );
-        }
+          if (profile?.handle) {
+            const handle = profile.handle;
+            setManagedIdentity(
+              (current) =>
+                current ?? {
+                  handle,
+                  displayName: nextName,
+                  source: 'github',
+                  githubLogin: handle,
+                  githubRenameAvailable: false,
+                },
+            );
+          }
           setPushEnabledState(enabled);
           setPushRegistration(registration);
           setPushPermission(permission);
@@ -355,7 +353,8 @@ export default function BuzzIdentitySettings() {
     pushRegistration !== null &&
     !pushRegistration.registered &&
     buzzPushPhaseDetail(pushRegistration.phase) !== null;
-  const managedHandle = managedIdentity?.handle ?? (profileName ? personHandle(profileName, profilePubkey ?? '') : '');
+  const managedHandle =
+    managedIdentity?.handle ?? (profileName ? personHandle(profileName, profilePubkey ?? '') : '');
   const githubLogin = managedIdentity?.githubLogin ?? managedHandle;
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
@@ -381,73 +380,39 @@ export default function BuzzIdentitySettings() {
     void openExternalUrl(`https://github.com/${githubLogin}`).catch(() => undefined);
   }, [githubLogin]);
 
-  const faceMark = (
-    <View style={styles.pictureSeat}>
-      {face && profilePubkey ? (
-        <IdentityMark
-          kind="human"
-          seed={profilePubkey}
-          face={face}
-          name={profileName || 'You'}
-          size={PICTURE_SEAT.pictureSize}
-          testID="identity-face-mark"
-        />
-      ) : (
-        <BeelineMark size={PICTURE_SEAT.pictureSize} />
-      )}
-    </View>
-  );
-
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <HullSurface strength="quiet" style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <ChevronGlyph
-            color={styles.backButtonText.color}
-            direction="left"
-            size={CHEVRON_BACK_SIZE}
-          />
-        </TouchableOpacity>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>Settings</Text>
-        </View>
-      </HullSurface>
+      <PageHeader
+        backAccessibilityLabel="Back"
+        onBack={() => router.back()}
+        prominent
+        testID="settings-profile-header"
+        title="Settings"
+      />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={styles.ident} testID="identity-settings">
-          {monolithEnabled && profilePubkey ? (
-            <TouchableOpacity
-              accessibilityLabel="Change face"
-              accessibilityRole="button"
-              onPress={() => setFacePickerOpen(true)}
-              style={styles.tile}
-              testID="identity-face-setting"
-            >
-              {faceMark}
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.tile} testID="identity-face-setting">
-              {faceMark}
-            </View>
-          )}
-          {managedHandle ? (
-            <TouchableOpacity
-              accessibilityLabel={`@${managedHandle}`}
-              accessibilityRole="link"
-              onPress={openGitHubProfile}
-              testID="identity-managed-handle"
-            >
-              <Text style={styles.handle}>
-                <Text style={styles.handleAt}>@</Text>
-                <Text style={styles.handle}>{managedHandle}</Text>
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-          {workspaceRole && <Text style={styles.workspaceRole} testID="settings-workspace-role">{workspaceRole}</Text>}
+        <View testID="identity-settings">
+          <ProfileIdentity
+            avatarAccessibilityLabel="Change face"
+            avatarFallback={face ? undefined : <BeelineMark size={PROFILE_IDENTITY_PICTURE_SIZE} />}
+            avatarTestID="identity-face-setting"
+            handleAccessibilityLabel={managedHandle ? `@${managedHandle}` : undefined}
+            handleTestID="identity-managed-handle"
+            hideUnavailableHandle
+            identity={{
+              kind: 'human',
+              pubkey: profilePubkey ?? 'pending-profile',
+              name: profileName || 'You',
+              ...(managedHandle ? { handle: managedHandle } : {}),
+              ...(face ? { face } : {}),
+            }}
+            identityMarkTestID="identity-face-mark"
+            onAvatarPress={
+              monolithEnabled && profilePubkey ? () => setFacePickerOpen(true) : undefined
+            }
+            onHandlePress={managedHandle ? openGitHubProfile : undefined}
+            role={workspaceRole ?? undefined}
+          />
         </View>
 
         {monolithEnabled && (
@@ -480,7 +445,9 @@ export default function BuzzIdentitySettings() {
                   style={styles.pushRetryButton}
                   testID="push-retry-registration"
                 >
-                  <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
+                  <Text style={styles.pushRetryText}>
+                    {pushWorking ? 'RETRYING…' : 'RETRY NOW'}
+                  </Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -621,60 +588,10 @@ export default function BuzzIdentitySettings() {
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { color: hull.textPrimary },
-    headerCopy: { flex: 1, minWidth: 0 },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    container: { flex: 1, backgroundColor: hull.bgBase },
     content: {
       paddingHorizontal: hull.space.md,
       paddingBottom: hull.space.xxl,
-    },
-    ident: {
-      alignItems: 'center',
-      gap: hull.space.md,
-      paddingTop: hull.space.lg,
-      paddingBottom: hull.space.lg,
-    },
-    tile: {
-      width: PICTURE_TILE.size,
-      height: PICTURE_TILE.size,
-      borderRadius: PICTURE_TILE.radius,
-      borderWidth: PICTURE_TILE.borderWidth,
-      borderColor: hull.accent,
-      backgroundColor: hull.bgRaised,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    /* The picture's seat: it rounds the picture's own corners, so the bezel
-     * never has to crop them. Concentric curves, one even slab of tile. */
-    pictureSeat: {
-      width: PICTURE_SEAT.pictureSize,
-      height: PICTURE_SEAT.pictureSize,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: PICTURE_SEAT.pictureRadius,
-      overflow: 'hidden',
-    },
-    handle: {
-      ...Typography.default(),
-      ...hull.type.bodyStrong,
-      color: hull.textPrimary,
-      textAlign: 'center',
-    },
-    workspaceRole: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
-    handleAt: {
-      ...Typography.default(),
-      ...hull.type.bodyStrong,
-      color: hull.accent,
     },
     section: {},
     sectionLabel: {
@@ -723,7 +640,12 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    version: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },
+    version: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      textAlign: 'center',
+    },
     check: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
   };
 });

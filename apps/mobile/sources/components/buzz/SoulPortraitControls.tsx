@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal/ModalManager';
 import { runAvatarGeneration, useAvatarGeneration } from '@/buzz/avatar-generation';
-import { MonoButton } from './MonoHull';
+import { SettingsRow } from './SettingsRow';
 
 export function SoulPortraitControls({
   detail,
@@ -17,14 +17,13 @@ export function SoulPortraitControls({
   detail: AgentDetailView;
   soul: string;
   disabled: boolean;
-  generate: (soul: string, direction?: string) => Promise<void>;
+  generate: (soul: string) => Promise<void>;
   refresh: () => Promise<AgentDetailView>;
 }) {
   const agentId = detail.agent.identity.pubkey;
   const job = useAvatarGeneration(agentId);
   const pending = job.pending || detail.avatarGenerationPending === true;
   const error = job.error;
-  const [direction, setDirection] = useState('');
   const generation = useRef(0);
   const requestActive = useRef(false);
   const refreshRef = useRef(refresh);
@@ -63,12 +62,12 @@ export function SoulPortraitControls({
       await runAvatarGeneration(agentId, async () => {
         const confirmed = await Modal.confirm(
           'Generate avatar from soul?',
-          'This sends the current soul text and optional direction to the agent. Unsaved soul edits are not saved by this action.',
+          'This sends the current soul text to the agent. Unsaved soul edits are not saved by this action.',
           { cancelText: 'Cancel', confirmText: 'Generate' },
         );
         if (!confirmed || attempt !== generation.current) return;
         const previous = detail.avatarGenerationId;
-        await generate(soul.trim(), direction.trim() || undefined);
+        await generate(soul.trim());
         for (let i = 0; i < 90; i += 1) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
           const next = await refreshRef.current();
@@ -89,31 +88,18 @@ export function SoulPortraitControls({
   const handle = detail.agent.identity.handle?.replace(/^@/, '');
   return (
     <View style={styles.container} testID="soul-avatar-generator">
-      <TextInput
-        accessibilityLabel="Avatar direction (optional)"
-        editable={!disabled && !pending}
-        maxLength={300}
-        onChangeText={setDirection}
-        placeholder="Optional direction, e.g. make the eyes brighter"
-        placeholderTextColor={styles.placeholder.color}
-        style={styles.direction}
-        testID="avatar-direction"
-        value={direction}
-      />
-      <MonoButton
-        label={
-          pending
-            ? 'generating, will DM you when the avatar is ready'
-            : error
-              ? 'Retry avatar generation'
-              : 'Generate avatar from soul'
-        }
+      <SettingsRow
+        title={error ? 'Retry avatar generation' : 'Generate avatar from soul'}
+        tone="action"
         onPress={() => void draw()}
-        loading={pending}
         disabled={disabled || pending || !soul.trim()}
-        variant="secondary"
         testID="generate-avatar-from-soul"
       />
+      {pending && (
+        <Text style={styles.copy} testID="avatar-generation-pending">
+          generating, will DM you when the avatar is ready
+        </Text>
+      )}
       {error && (
         <Text accessibilityRole="alert" style={styles.copy} testID="avatar-generation-error">
           {error}
@@ -137,15 +123,4 @@ const styles = StyleSheet.create((theme) => ({
   container: { gap: theme.buzz.space.md, marginTop: theme.buzz.space.md },
   title: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   copy: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  placeholder: { color: theme.buzz.textMuted },
-  direction: {
-    ...Typography.default(),
-    ...theme.buzz.type.body,
-    color: theme.buzz.textPrimary,
-    borderWidth: 1,
-    borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
-    minHeight: 44,
-    paddingHorizontal: 12,
-  },
 }));

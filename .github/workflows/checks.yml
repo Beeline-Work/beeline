@@ -460,9 +460,7 @@ jobs:
         working-directory: apps/body
         env:
           BEELINE_LAUNCHD_USER: '0'
-          BEELINE_ACCEPTANCE_CLI_ENTRYPOINT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}/prefix/lib/beeline/lib/beeline/beeline-cli.mjs
-          BEELINE_ACCEPTANCE_LIB_DIR: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}/prefix/lib/beeline
-          BEELINE_ACCEPTANCE_READONLY_MCP: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}/prefix/bin/beeline-readonly-mcp
+          BEELINE_ACCEPTANCE_INSTALL_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
         run: npx vitest run src/daemon-api-client.integration.test.ts -t "takes an app grant through finish"
       - name: Prove a Room answer and open_corner on macOS
         working-directory: apps/body

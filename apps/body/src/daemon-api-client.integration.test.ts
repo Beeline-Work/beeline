@@ -648,12 +648,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           const liveRuntime = await readRuntimeRecord(configPath);
           liveRuntime.sandbox = 'off';
           await writeRuntimeRecord(liveRuntime);
-          const installedEntrypoint = process.env.BEELINE_ACCEPTANCE_CLI_ENTRYPOINT?.trim();
-          const installedLibDir = process.env.BEELINE_ACCEPTANCE_LIB_DIR?.trim();
-          const installedReadonlyMcp = process.env.BEELINE_ACCEPTANCE_READONLY_MCP?.trim();
+          // Same layout scripts/verify-beeline-install.mjs materializes:
+          // binDir <root>/prefix/bin, libDir <root>/prefix/lib/beeline.
+          const installRoot = process.env.BEELINE_ACCEPTANCE_INSTALL_ROOT?.trim();
+          const installedLibDir = installRoot
+            ? `${installRoot}/prefix/lib/beeline`
+            : undefined;
           return launchRuntimeDaemon(configPath, {
             entrypoint:
-              installedEntrypoint || fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
+              (installRoot &&
+                `${installRoot}/prefix/lib/beeline/lib/beeline/beeline-cli.mjs`) ||
+              fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
             env: {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
@@ -661,8 +666,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
               PATH: `${supervisorRoot}:${process.env.PATH ?? ''}`,
               BUZZ_DEV_MCP_BIN: '/bin/false',
               ...(installedLibDir ? { BEELINE_LIB_DIR: installedLibDir } : {}),
-              ...(installedReadonlyMcp
-                ? { BEELINE_READONLY_MCP_BIN: installedReadonlyMcp }
+              ...(installRoot
+                ? { BEELINE_READONLY_MCP_BIN: `${installRoot}/prefix/bin/beeline-readonly-mcp` }
                 : {
                     BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(
                       new URL('../dist/read-only-mcp.js', import.meta.url),

@@ -318,7 +318,7 @@ function bootoutRemovalInProgress(error: unknown): boolean {
   const reported = `${error instanceof Error ? error.message : String(error)}\n${
     (error as { stderr?: unknown } | null)?.stderr ?? ''
   }`;
-  return /operation now in progress/i.test(reported) || /failed:\s*36\b/i.test(reported);
+  return /failed:\s*36\b/.test(reported);
 }
 
 export async function installLaunchdAgentService(

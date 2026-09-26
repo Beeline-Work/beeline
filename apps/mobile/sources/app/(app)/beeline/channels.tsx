@@ -362,14 +362,10 @@ export default function BuzzChannels() {
         return;
       }
       // An invite opened before sign-in outranks every other landing.
-      const parked = deckLanding({
-        pendingInvite: await loadPendingInvite(),
-        workspaces: { status: 'pending' },
-        chats: 'pending',
-      });
-      if (parked.kind === 'invite') {
+      const pendingInvite = await loadPendingInvite();
+      if (pendingInvite) {
         if (!cancelled)
-          router.replace({ pathname: '/join/[token]', params: { token: parked.token } });
+          router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
         return;
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
@@ -844,18 +840,18 @@ export default function BuzzChannels() {
     [activeCommunityId, canManageWorkspace],
   );
 
-  if (landing.kind === 'choice' || landing.kind === 'loader') {
-    // Choice: the create-or-join screen is the landing and the effect above
-    // is replacing this one; loader: nothing has answered yet.
-    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
-  }
-  if (!chatList) {
+  if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{error}</Text>
         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
+  }
+  if (landing.kind !== 'deck' || !chatList) {
+    // Choice: the create-or-join screen is the landing and the effect above
+    // is replacing this one; loader: nothing has answered yet.
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
 
   return (

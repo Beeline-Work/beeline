@@ -2,9 +2,10 @@
  * What a composer-fill request — a starter prompt, a catch-up ask — should do.
  *
  * Words somebody typed are never overwritten, because the composer has no
- * undo; and the request is never a silent no-op either, because a visible
- * control must act: a refused fill still brings the person to the draft they
- * already have.
+ * undo. A caller with nothing else to show for the tap asks for
+ * `focusOnRefusal`, so a refused fill still brings the person to the draft
+ * they already have instead of doing nothing at all; a caller whose own
+ * surface stays on screen (a sheet) leaves it off.
  */
 export type ComposerMention = { readonly handle: string; readonly pubkey: string };
 
@@ -23,8 +24,9 @@ export function planComposerFill(input: {
   readonly draft: string;
   readonly text: string;
   readonly mention?: ComposerMention;
+  readonly focusOnRefusal?: boolean;
 }): ComposerFillPlan {
-  if (input.draft.trim()) return { focus: true, fill: null };
+  if (input.draft.trim()) return { focus: Boolean(input.focusOnRefusal), fill: null };
   const handle = input.mention?.handle.replace(/^@/, '');
   return {
     focus: true,

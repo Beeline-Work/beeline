@@ -54,6 +54,13 @@ so no client is left on a dead route.
    - it records `welcome-workspace-retirement-v1` in `beeline_release_steps` last.
 
    A retry, or any later release, sees the marker and does nothing.
+
+   A refusal is fail-closed by design: a wrong id (a display name, a person, an
+   agent that was never a Welcome member) raises out of the release migration,
+   so the schema is never marked current and the release's server leg fails
+   rather than quietly doing nothing. Fix the id — or unset
+   `BEELINE_RETIRE_WELCOME_GREETER_ID` to skip the step — and re-run the
+   release.
 5. **Verify.**
    - The preflight now reports `workspace: null` plus the marker.
    - A brand-new sign-in lands on the choice screen.

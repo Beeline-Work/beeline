@@ -1954,19 +1954,22 @@ export function BuzzChatSurface({
   // The one way anything but typing puts words in the composer: a starter
   // prompt and a catch-up request both go through here, and `planComposerFill`
   // owns what that does to a draft somebody already started.
-  const fillComposer = useCallback((text: string, mention?: ComposerMention) => {
-    const plan = planComposerFill({ draft: inputTextRef.current, text, mention });
-    if (plan.focus) scheduleAnimationFrame(() => composerRef.current?.focus());
-    if (!plan.fill) return false;
-    if (plan.fill.mention) {
-      selectedAgentMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
-      selectedMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
-    }
-    inputTextRef.current = plan.fill.text;
-    setInputText(plan.fill.text);
-    setInputSelection(plan.fill.selection);
-    return true;
-  }, []);
+  const fillComposer = useCallback(
+    (text: string, options: { mention?: ComposerMention; focusOnRefusal?: boolean } = {}) => {
+      const plan = planComposerFill({ draft: inputTextRef.current, text, ...options });
+      if (plan.focus) scheduleAnimationFrame(() => composerRef.current?.focus());
+      if (!plan.fill) return false;
+      if (plan.fill.mention) {
+        selectedAgentMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+        selectedMentionsRef.current.set(plan.fill.mention.handle, plan.fill.mention.pubkey);
+      }
+      inputTextRef.current = plan.fill.text;
+      setInputText(plan.fill.text);
+      setInputSelection(plan.fill.selection);
+      return true;
+    },
+    [],
+  );
   const starterPrompts = useMemo(() => {
     if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
       return undefined;
@@ -1979,13 +1982,17 @@ export function BuzzChatSurface({
       {
         lead: 'Ask an agent',
         detail: 'to turn an idea into a plan',
-        onPress: () => fillComposer(`${tag}Help me turn this idea into a plan: `, mention),
+        onPress: () =>
+          fillComposer(`${tag}Help me turn this idea into a plan: `, {
+            mention,
+            focusOnRefusal: true,
+          }),
         testID: 'starter-ask-agent',
       },
       {
         lead: 'Open a corner',
         detail: 'for focused work with its own branch',
-        onPress: () => fillComposer(`${tag}Open a corner to `, mention),
+        onPress: () => fillComposer(`${tag}Open a corner to `, { mention, focusOnRefusal: true }),
         testID: 'starter-open-corner',
       },
       {
@@ -2197,7 +2204,8 @@ export function BuzzChatSurface({
     ) return;
     const handle = agent.handle.replace(/^@/, '');
     const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-    if (fillComposer(prompt, { handle, pubkey: agent.pubkey })) setCatchUpSheetVisible(false);
+    if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
+      setCatchUpSheetVisible(false);
   }, [catchUpBoundaryId, fillComposer, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
   const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
     !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);

@@ -22,6 +22,17 @@ export function resourceFacadeArgs(): string[] {
   ];
 }
 
+/**
+ * A host declaration names its own stable resource target, and may declare
+ * that its TRANSPORT — not this façade — is what spends a Once grant, when
+ * the transport is itself the boundary every caller must cross (the Registry
+ * broker holds the provider token and is reachable straight from a sandbox).
+ * Both then ask the one server gate; exactly one of them consumes.
+ */
+export const MCP_RESOURCE_TARGET_KEY = 'beeline_resource_target';
+export const MCP_RESOURCE_GATE_KEY = 'beeline_resource_gate';
+export const MCP_RESOURCE_GATE_TRANSPORT = 'transport';
+
 const DISCOVERY = new Set(['initialize', 'ping', 'tools/list']);
 /** Discovery and notifications never spend a Once grant. */
 export const NON_CONSUMING = new Set([
@@ -319,6 +330,7 @@ export async function authorizeResourceMessage(
   message: Record<string, unknown>,
   target: string,
   authFile: string,
+  spendsGrant = true,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
   if (!message || Array.isArray(message) || typeof message !== 'object') return false;
@@ -346,7 +358,7 @@ export async function authorizeResourceMessage(
       body: JSON.stringify({
         ...context,
         target,
-        ...(NON_CONSUMING.has(message.method) ? { consume: false } : {}),
+        ...(spendsGrant && !NON_CONSUMING.has(message.method) ? {} : { consume: false }),
       }),
       signal: AbortSignal.timeout(20_000),
     },
@@ -357,6 +369,7 @@ export async function authorizeResourceMessage(
 export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   const target = env.BEELINE_RESOURCE_TARGET;
   const authFile = env.BEELINE_RESOURCE_AUTH_FILE;
+  const spendsGrant = env.BEELINE_RESOURCE_GATE !== MCP_RESOURCE_GATE_TRANSPORT;
   if (!target || !authFile || !env.BEELINE_RESOURCE_LAUNCH)
     throw new Error('resource route authorization is unavailable');
   const launch = JSON.parse(env.BEELINE_RESOURCE_LAUNCH) as {
@@ -430,7 +443,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         return;
       }
       try {
-        if (!(await authorizeResourceMessage(message, target, authFile)))
+        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant)))
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call') {
           squireDrivenUrl = drivenUrlIn(record(message.params)?.arguments) ?? squireDrivenUrl;

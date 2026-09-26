@@ -1,21 +1,22 @@
 import { Typography } from '@/constants/Typography';
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { RoomViewMember, WorkspaceView } from '@beeline/api-contract/phone';
+import type {
+  RoomViewMember,
+  WorkspaceMemberGrantView,
+  WorkspaceView,
+} from '@beeline/api-contract/phone';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { ProfileIdentity } from '@/components/buzz/ProfileIdentity';
-import {
-  HullActionSheetModal,
-  HullActionSheetRow,
-  HullActionSheetCancel,
-} from '@/components/buzz/HullActionSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { MonoButton } from '@/components/buzz/MonoHull';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { ProfileActions } from '@/components/buzz/ProfileActions';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -37,8 +38,8 @@ export function HumanProfile({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [connectedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
+  const [grants, setGrants] = useState<readonly WorkspaceMemberGrantView[]>([]);
   const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState<RoomViewMember['role']>('member');
@@ -70,6 +71,7 @@ export function HumanProfile({
         }
         setWorkspace(surface);
         setConnectedAgents(owned.agents);
+        setGrants(page.grants ?? []);
         setAgentsHasMore(owned.agentsTruncated);
         setMember(person);
         setRole(person.role);
@@ -161,18 +163,14 @@ export function HumanProfile({
   };
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="human-profile">
-      <View style={styles.header}>
-        <MonoButton label="Back" variant="secondary" onPress={() => void close()} disabled={busy} />
-        <Text style={styles.title}>Profile</Text>
-        {canEditRole && !editing && (
-          <MonoButton
-            label="Edit"
-            variant="secondary"
-            onPress={() => setEditing(true)}
-            testID="edit-person-role"
-          />
-        )}
-      </View>
+      <PageHeader
+        backAccessibilityLabel="Back"
+        backTestID="close-human-profile"
+        onBack={() => void close()}
+        prominent
+        testID="human-profile-header"
+        title="Profile"
+      />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
         {loading && <SurfaceGlyphLoader />}
         {error && (
@@ -185,27 +183,70 @@ export function HumanProfile({
         )}
         {member && (
           <>
-            <ProfileIdentity identity={member.identity} role={member.role} />
-            {!self && (
-              <SettingsRow
-                title="Message"
-                tone="action"
-                chevron="right"
-                disabled={busy}
-                testID="human-profile-message"
-                onPress={() =>
-                  void perform(async () => {
-                    if (!(await confirmDiscard())) return;
-                    const room = await monolithPhoneOperation('resolveDirectMessage', {
-                      workspaceId,
-                      participantId: memberId,
-                    });
-                    allowNavigation.current = true;
-                    navigateToRoom(router, room.id);
-                  })
-                }
-              />
-            )}
+            <ProfileIdentity
+              identity={member.identity}
+              role={member.role}
+              actions={
+                !self ? (
+                  <ProfileActions
+                    actions={[
+                      {
+                        label: 'Message',
+                        disabled: busy,
+                        testID: 'human-profile-message',
+                        onPress: () =>
+                          void perform(async () => {
+                            if (!(await confirmDiscard())) return;
+                            const room = await monolithPhoneOperation('resolveDirectMessage', {
+                              workspaceId,
+                              participantId: memberId,
+                            });
+                            allowNavigation.current = true;
+                            navigateToRoom(router, room.id);
+                          }),
+                      },
+                      ...(canEditRole
+                        ? editing
+                          ? [
+                              {
+                                label: 'Cancel',
+                                disabled: busy,
+                                onPress: () => {
+                                  setRole(member.role);
+                                  setEditing(false);
+                                },
+                                testID: 'cancel-person-role',
+                              },
+                              {
+                                label: busy ? 'Saving…' : 'Save',
+                                disabled: busy,
+                                testID: 'save-person-role',
+                                onPress: () =>
+                                  void perform(async () => {
+                                    await monolithPhoneOperation('addWorkspaceMember', {
+                                      workspaceId,
+                                      memberId,
+                                      role,
+                                    });
+                                    setMember({ ...member, role });
+                                    setEditing(false);
+                                  }),
+                              },
+                            ]
+                          : [
+                              {
+                                label: 'Edit',
+                                disabled: busy,
+                                onPress: () => setEditing(true),
+                                testID: 'edit-person-role',
+                              },
+                            ]
+                        : []),
+                    ]}
+                  />
+                ) : undefined
+              }
+            />
             {self && (
               <SettingsRow
                 title="Edit your profile"
@@ -216,42 +257,38 @@ export function HumanProfile({
             )}
             {editing && canEditRole && (
               <View testID="person-role-editor">
-                <SettingsRow
-                  title="Role"
-                  value={role}
-                  chevron="down"
-                  disabled={busy}
+                <Text style={styles.section}>Access level</Text>
+                <View
+                  accessibilityRole="radiogroup"
+                  style={styles.roleToggle}
                   testID="person-role-selector"
-                  onPress={() => setRolePickerOpen(true)}
-                />
-                <View style={styles.actions}>
-                  <MonoButton
-                    label="Cancel"
-                    variant="secondary"
-                    disabled={busy}
-                    onPress={() => {
-                      setRole(member.role);
-                      setEditing(false);
-                    }}
-                  />
-                  <MonoButton
-                    label="Save"
-                    disabled={busy}
-                    loading={busy}
-                    testID="save-person-role"
-                    onPress={() =>
-                      void perform(async () => {
-                        await monolithPhoneOperation('addWorkspaceMember', {
-                          workspaceId,
-                          memberId,
-                          role,
-                        });
-                        setMember({ ...member, role });
-                        setEditing(false);
-                      })
-                    }
-                  />
+                >
+                  {(['member', 'admin'] as const).map((choice) => {
+                    const selected = role === choice;
+                    return (
+                      <TouchableOpacity
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected, disabled: busy }}
+                        disabled={busy}
+                        key={choice}
+                        onPress={() => setRole(choice)}
+                        style={[styles.roleChoice, selected && styles.roleChoiceSelected]}
+                        testID={`person-role-${choice}`}
+                      >
+                        <Text style={[styles.roleLabel, selected && styles.roleLabelSelected]}>
+                          {choice === 'admin' ? 'Admin' : 'Member'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
+                <SettingsRow
+                  title="Ban from Workspace"
+                  tone="destructive"
+                  disabled={busy}
+                  testID="ban-person"
+                  onPress={() => void ban()}
+                />
               </View>
             )}
             <Text style={styles.section}>Connected agents</Text>
@@ -297,40 +334,24 @@ export function HumanProfile({
                 }
               />
             )}
-            {canBan && (
-              <SettingsRow
-                title="Ban from Workspace"
-                tone="destructive"
-                disabled={busy}
-                testID="ban-person"
-                onPress={() => void ban()}
-              />
+            <Text style={styles.section}>Grants</Text>
+            {grants.length ? (
+              grants.map((grant) => (
+                <SettingsRow
+                  key={grant.grantId}
+                  title={grant.target}
+                  description={`${grant.agent.handle ? `@${grant.agent.handle}` : grant.agent.name} · ${grant.kind} · ${grant.status}`}
+                  testID={`member-grant-${grant.grantId}`}
+                />
+              ))
+            ) : (
+              <Text style={styles.copy} testID="member-grants-empty">
+                No grants to show.
+              </Text>
             )}
           </>
         )}
       </ScrollView>
-      <HullActionSheetModal
-        title="Workspace role"
-        visible={rolePickerOpen && canEditRole}
-        onClose={() => setRolePickerOpen(false)}
-        testID="person-role-picker"
-        accessibilityLabel="Close role selector"
-      >
-        {(['admin', 'member', 'spectator'] as const).map((choice) => (
-          <HullActionSheetRow
-            key={choice}
-            label={choice}
-            selected={role === choice}
-            disabled={busy}
-            testID={`person-role-${choice}`}
-            onPress={() => {
-              setRole(choice);
-              setRolePickerOpen(false);
-            }}
-          />
-        ))}
-        <HullActionSheetCancel onPress={() => setRolePickerOpen(false)} />
-      </HullActionSheetModal>
     </View>
   );
 }
@@ -350,21 +371,6 @@ export default function HumanProfileRoute() {
 }
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
-  header: {
-    minHeight: 60,
-    paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    gap: theme.buzz.space.md,
-    alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  title: {
-    ...Typography.default(),
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.textPrimary,
-    flex: 1,
-  },
   content: { paddingHorizontal: theme.buzz.space.md },
   identity: {
     alignItems: 'center',
@@ -384,10 +390,28 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textMuted,
     paddingTop: theme.buzz.space.md,
   },
-  actions: {
+  roleToggle: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: theme.buzz.space.md,
-    paddingVertical: theme.buzz.space.md,
+    gap: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.sm,
   },
+  roleChoice: {
+    alignItems: 'center',
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.radius,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  roleChoiceSelected: {
+    backgroundColor: theme.buzz.accent,
+    borderColor: theme.buzz.accent,
+  },
+  roleLabel: {
+    ...Typography.default('semiBold'),
+    ...theme.buzz.type.meta,
+    color: theme.buzz.textSecondary,
+  },
+  roleLabelSelected: { color: theme.buzz.textInverted },
 }));

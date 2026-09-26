@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8');
 const members = readFileSync(new URL('../members.tsx', import.meta.url), 'utf8');
+const profileIdentity = readFileSync(
+  new URL('../../../../components/buzz/ProfileIdentity.tsx', import.meta.url),
+  'utf8',
+);
 
 function styleBlock(text: string, name: string): string {
-  const start = text.indexOf(`    ${name}: {`);
+  const start = text.search(new RegExp(`\\n\\s+${name}: \\{`));
   expect(start, `missing style ${name}`).toBeGreaterThanOrEqual(0);
   let depth = 0;
   for (let index = text.indexOf('{', start); index < text.length; index += 1) {
@@ -39,34 +43,39 @@ describe('Settings reads as the Members page', () => {
   it('uses SettingsRow for the list, without cards', () => {
     expect(settings).toContain('<SettingsRow');
     expect(settings).not.toMatch(/borderRadius: hull\.radius/);
-    expect(styleBlock(settings, 'tile')).not.toMatch(/backgroundColor: hull\.bgTerminal/);
+    expect(settings).toContain('<ProfileIdentity');
+    expect(styleBlock(profileIdentity, 'tile')).not.toMatch(
+      /backgroundColor: theme\.buzz\.bgTerminal/,
+    );
   });
 
   it('has no explanatory paragraphs or card headings', () => {
-    expect(settings).not.toMatch(/How people see you|sectionBody|sectionTitle|opens your GitHub profile/i);
+    expect(settings).not.toMatch(
+      /How people see you|sectionBody|sectionTitle|opens your GitHub profile/i,
+    );
     expect(settings).not.toMatch(/Switch GitHub|Linked sign-in|Display</);
   });
 
   it('centres a 2px brass-bezelled identity tile above the handle', () => {
-    expect(styleBlock(settings, 'ident')).toContain("alignItems: 'center'");
+    expect(styleBlock(profileIdentity, 'identity')).toContain("alignItems: 'center'");
     // The 2px brass bezel is named once, with the rest of the tile's geometry
     // (`buzz/workspace-tile`, where the picture's seat is derived from it).
-    expect(settings).toContain('const PICTURE_TILE = IDENTITY_SETTINGS_TILE');
-    expect(settings).toContain('const PICTURE_SEAT = workspacePictureSeat(PICTURE_TILE)');
-    expect(styleBlock(settings, 'tile')).toContain('borderWidth: PICTURE_TILE.borderWidth');
-    expect(styleBlock(settings, 'tile')).toContain('borderColor: hull.accent');
-    expect(styleBlock(settings, 'pictureSeat')).toContain('borderRadius: PICTURE_SEAT.pictureRadius');
-    expect(settings).toContain('size={PICTURE_SEAT.pictureSize}');
+    expect(profileIdentity).toContain('const tile = IDENTITY_SETTINGS_TILE');
+    expect(profileIdentity).toContain('const seat = workspacePictureSeat(tile)');
+    expect(styleBlock(profileIdentity, 'tile')).toContain('borderWidth: tile.borderWidth');
+    expect(styleBlock(profileIdentity, 'tile')).toContain('borderColor: theme.buzz.accent');
+    expect(styleBlock(profileIdentity, 'seat')).toContain('borderRadius: seat.pictureRadius');
+    expect(profileIdentity).toContain('size={seat.pictureSize}');
     expect(settings).not.toContain('WORKSPACE_SETTINGS_TILE');
     expect(settings).not.toContain('const IDENTITY_TILE');
-    expect(settings).toContain('testID="identity-face-setting"');
-    expect(settings).toContain('testID="identity-managed-handle"');
+    expect(settings).toContain('avatarTestID="identity-face-setting"');
+    expect(settings).toContain('handleTestID="identity-managed-handle"');
   });
 
   it('paints the handle @ in brass and the rest in ordinary text', () => {
-    expect(styleBlock(settings, 'handleAt')).toContain('color: hull.accent');
-    expect(styleBlock(settings, 'handle')).toContain('color: hull.textPrimary');
-    expect(settings).toMatch(/handleAt}>@</);
+    expect(styleBlock(profileIdentity, 'at')).toContain('color: theme.buzz.accent');
+    expect(styleBlock(profileIdentity, 'handle')).toContain('color: theme.buzz.textPrimary');
+    expect(profileIdentity).toMatch(/styles\.at}>@</);
   });
 
   it('keeps danger last and uses a danger tone', () => {

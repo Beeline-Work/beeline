@@ -46,6 +46,7 @@ import {
   type WorkspaceAgentView,
   type WorkspaceListView,
   type WorkspaceManagedRoomView,
+  type WorkspaceMemberGrantView,
   type WorkspaceMemberListView,
   type WorkspaceView,
 } from './phone-types.js';
@@ -464,6 +465,14 @@ export function readAgentGrantView(value: unknown): AgentGrantView | null {
 
 export function isAgentGrantView(value: unknown): value is AgentGrantView {
   return readAgentGrantView(value) !== null;
+}
+
+function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView | null {
+  const item = record(value);
+  const grant = readAgentGrantView(value);
+  const agent = readIdentity(item?.agent);
+  if (!grant || !agent || agent.kind !== 'agent') return null;
+  return { ...grant, agent };
 }
 
 function readGrantRequest(value: unknown): GrantRequestCardView | null {
@@ -1558,6 +1567,7 @@ export function readWorkspaceMemberListView(value: unknown): WorkspaceMemberList
     agents,
     membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
     agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
+    ...field('grants', readList(item.grants, readWorkspaceMemberGrantView)),
     ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
     ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
   };
@@ -1636,7 +1646,10 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
       'recentWorkCursor',
       nonempty(item.recentWorkCursor) ? item.recentWorkCursor : undefined,
     ),
-    ...field('avatarGenerationPending', typeof item.avatarGenerationPending === 'boolean' ? item.avatarGenerationPending : undefined),
+    ...field(
+      'avatarGenerationPending',
+      typeof item.avatarGenerationPending === 'boolean' ? item.avatarGenerationPending : undefined,
+    ),
     recentWork:
       readList(
         item.recentWork,

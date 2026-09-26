@@ -177,6 +177,9 @@ await database.query(
 const tokens = await auth.exchangeGitHubOidc('proof');
 const VIEWER = tokens.identityId;
 const PEER = (await auth.exchangeGitHubOidc('chloropine')).identityId;
+const VIEWER_ROLE = process.env.AUDIT_VIEWER_ROLE === 'member' ? 'member' : 'owner';
+const PEER_ROLE = VIEWER_ROLE === 'owner' ? 'member' : 'owner';
+const AGENT_OWNER = process.env.AUDIT_AGENT_OWNER === 'peer' ? PEER : VIEWER;
 
 const AGENT_NIGLET = 'a'.repeat(64);
 const AGENT_SOL = 'b'.repeat(64);
@@ -191,7 +194,7 @@ await database.query(
   `INSERT INTO agents(agent_id,owner_id,selected_model,selected_effort)
    VALUES($1,$3,'claude-opus-5','high'),($2,$3,'claude-sonnet-5','medium')
    ON CONFLICT(agent_id) DO NOTHING`,
-  [AGENT_NIGLET, AGENT_SOL, VIEWER],
+  [AGENT_NIGLET, AGENT_SOL, AGENT_OWNER],
 );
 
 // ---- workspace, rooms -----------------------------------------------------
@@ -220,8 +223,8 @@ await database.query(
 );
 
 const members: [string, string | null, string, string][] = [
-  [WORKSPACE, null, VIEWER, 'owner'],
-  [WORKSPACE, null, PEER, 'member'],
+  [WORKSPACE, null, VIEWER, VIEWER_ROLE],
+  [WORKSPACE, null, PEER, PEER_ROLE],
   [WORKSPACE, null, AGENT_NIGLET, 'member'],
   [WORKSPACE, null, AGENT_SOL, 'member'],
   [WORKSPACE, ROOM, VIEWER, 'owner'],
@@ -241,6 +244,13 @@ for (const [workspace, room, identity, role] of members) {
     [workspace, room, identity, role],
   );
 }
+
+await database.query(
+  `INSERT INTO agent_grants(
+     id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at
+   ) VALUES($1,$2,$3,'repository','lunchboxfortwo/beeline','ship the profile audit',$4,$5,'approved',$6,now())`,
+  [uuid(), AGENT_NIGLET, WORKSPACE, PEER, ROOM, VIEWER],
+);
 
 // ---- transcript -----------------------------------------------------------
 type Row = {
@@ -423,6 +433,7 @@ const session = JSON.stringify(
     dmId: DM,
     botRooms,
     agents: { niglet: AGENT_NIGLET, sol: AGENT_SOL },
+    viewerRole: VIEWER_ROLE,
   },
   null,
   2,

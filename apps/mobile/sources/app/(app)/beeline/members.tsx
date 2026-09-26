@@ -44,7 +44,8 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
-import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
@@ -270,7 +271,7 @@ export default function BuzzMembers({
     surface?.viewer.permissions.manage &&
     selectedAgent &&
     selectedAgent.agent.role !== 'owner' &&
-    (surface.viewer.role === 'owner' || ['member','spectator'].includes(selectedAgent.agent.role)),
+    (surface.viewer.role === 'owner' || ['member', 'spectator'].includes(selectedAgent.agent.role)),
   );
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const selectedAgentOwnerByline = selectedAgent?.owner
@@ -604,7 +605,7 @@ export default function BuzzMembers({
     }
   };
 
-  const requestSoulAvatar = async (soul: string, direction?: string) => {
+  const requestSoulAvatar = async (soul: string) => {
     if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
       throw new Error('Agent settings are unavailable.');
     const client = new BuzzRigTransport(identity);
@@ -613,7 +614,7 @@ export default function BuzzMembers({
     const message = await client.composeMessage(
       {
         sessionId: room.channelId,
-        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}${direction ? `; visual direction: ${JSON.stringify(direction)}` : ''}`,
+        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}`,
       },
       { mentionAgent: agent.pubkey },
     );
@@ -1241,7 +1242,10 @@ export default function BuzzMembers({
           name={member.identity.name}
           onPress={() =>
             router.push({
-              pathname: member.identity.pubkey === surface.viewer.identity.pubkey ? '/beeline/settings' : '/beeline/human-profile',
+              pathname:
+                member.identity.pubkey === surface.viewer.identity.pubkey
+                  ? '/beeline/settings'
+                  : '/beeline/human-profile',
               params: { communityId: workspaceId, memberId: member.identity.pubkey },
             } as Href)
           }
@@ -1274,17 +1278,14 @@ export default function BuzzMembers({
         style={[styles.container, { paddingTop: insets.top }]}
         testID="workspace-members-surface"
       >
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
-          </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>{surface.workspace.name}</Text>
-            <Text style={styles.title} testID="members-title">
-              {MEMBERS_LABEL}
-            </Text>
-          </View>
-        </View>
+        <PageHeader
+          eyebrow={surface.workspace.name}
+          onBack={() => router.back()}
+          prominent
+          testID="members-header"
+          title={MEMBERS_LABEL}
+          titleTestID="members-title"
+        />
         {!!displayedError && (
           <TouchableOpacity
             onPress={() => {
@@ -1442,19 +1443,6 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.lg,
     },
     loadingText: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    header: {
-      minHeight: 66,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: hull.space.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { color: hull.textPrimary },
-    headerCopy: { flex: 1 },
-    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     errorPanel: { padding: hull.space.sm },
     error: {
       ...Typography.default(),

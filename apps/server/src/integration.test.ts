@@ -834,6 +834,48 @@ describe('monolith integration', () => {
     expect(await currentRole()).toBe('owner');
   });
 
+  it('projects a member grant ledger while keeping personal grants owner-private', async () => {
+    const adminToken = await phoneToken('member-grants-admin');
+    const adminId = createHash('sha256').update('github:member-grants-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    const repositoryGrant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const secretGrant = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await database.query(
+      `INSERT INTO agent_grants(
+         id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at
+       ) VALUES
+         ($1,$3,$4,'repository','beeline-work/beeline','ship it',$5,$6,'approved',$5,now()),
+         ($2,$3,$4,'secret','FLY_API_TOKEN','deploy it',$5,$6,'approved',$5,now())`,
+      [repositoryGrant, secretGrant, AGENT, WORKSPACE, HUMAN, ROOM],
+    );
+
+    const profile = async (token: string) =>
+      (await (
+        await request(
+          `/v1/phone/workspaces/${WORKSPACE}/members?memberId=${HUMAN}`,
+          'GET',
+          undefined,
+          token,
+        )
+      ).json()) as {
+        grants: Array<{ grantId: string; agent: { pubkey: string } }>;
+      };
+
+    expect((await profile(adminToken)).grants).toEqual([
+      expect.objectContaining({
+        grantId: repositoryGrant,
+        agent: expect.objectContaining({ pubkey: AGENT }),
+      }),
+    ]);
+    expect((await profile(accessToken)).grants.map((grant) => grant.grantId).sort()).toEqual(
+      [repositoryGrant, secretGrant].sort(),
+    );
+  });
+
   it('restores a tombstoned Workspace member when an invite-only Room becomes public', async () => {
     const memberToken = await phoneToken('publicize-tombstoned-member');
     const memberId = createHash('sha256')

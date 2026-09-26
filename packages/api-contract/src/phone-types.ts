@@ -387,6 +387,11 @@ export type AgentGrantView = {
   readonly script?: CommandGrantScript;
 };
 
+/** A settled grant attributed to one agent owned by a Workspace member. */
+export type WorkspaceMemberGrantView = AgentGrantView & {
+  readonly agent: RoomViewIdentity;
+};
+
 /** One @wallet ledger card (the mobile twin of the server card payload). */
 export type WalletTxCardView = NonNullable<RoomViewMessage['walletTx']>;
 export type WalletInsufficientCardView = NonNullable<RoomViewMessage['walletInsufficient']>;
@@ -736,6 +741,8 @@ export type WorkspaceView = {
 export type WorkspaceMemberListView = {
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
+  /** Present on a single-human profile query; absent from ordinary roster pages. */
+  readonly grants?: readonly WorkspaceMemberGrantView[];
   /** Absent on older servers means unknown — never treat as zero. */
   readonly peopleTotal?: number;
   /** Absent on older servers means unknown — never treat as zero. */

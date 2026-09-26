@@ -86,13 +86,13 @@ describe('Members page layout contract', () => {
   });
 
   it('shows the assigned animal and handle through the shared Settings identity', () => {
-    expect(profile).toContain('<ProfileIdentity identity={identity}');
-    expect(profileIdentity).toContain('testID="profile-handle"');
+    expect(profile).toMatch(/<ProfileIdentity\s+identity=\{identity\}/);
+    expect(profileIdentity).toContain("handleTestID = 'profile-handle'");
     expect(profileIdentity).toContain('face={identity.face}');
     expect(profileIdentity).toContain('IDENTITY_SETTINGS_TILE');
-    expect(profile).toContain('testID="edit-agent-soul"');
-    expect(profile).toContain('testID="save-agent-soul"');
-    expect(profile).toContain('testID="cancel-agent-edit"');
+    expect(profile).toContain("testID: 'edit-agent-soul'");
+    expect(profile).toContain("testID: 'save-agent-soul'");
+    expect(profile).toContain("testID: 'cancel-agent-edit'");
     expect(profile).not.toContain('agent-tab-manage');
     expect(source).not.toContain('testID="close-agent-settings"');
     expect(source).not.toContain('accessibilityLabel="Close agent settings"');
@@ -105,8 +105,8 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('Ban this agent from every Room');
     expect(source).toContain('testID="remove-agent"');
     expect(source).toContain('style={styles.removeAgentControl}');
-    expect(profile).toContain('<ProfileIdentity identity={identity}');
-    expect(profileIdentity).toContain('testID="profile-handle"');
+    expect(profile).toMatch(/<ProfileIdentity\s+identity=\{identity\}/);
+    expect(profileIdentity).toContain("handleTestID = 'profile-handle'");
     expect(profile).toContain('ownerHandle={detail.owner?.handle}');
     expect(profileIdentity).toContain('testID="profile-owner"');
   });

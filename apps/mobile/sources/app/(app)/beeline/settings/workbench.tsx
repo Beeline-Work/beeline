@@ -14,6 +14,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
@@ -60,6 +61,7 @@ export default function WorkbenchScreen() {
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletWorkspaceMissing, setWalletWorkspaceMissing] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [foregroundGeneration, setForegroundGeneration] = useState(0);
   const load = useCallback(
@@ -140,11 +142,21 @@ export default function WorkbenchScreen() {
     [disconnectingId, load, workspaceId],
   );
 
-  const openWallet = useCallback(() => {
-    router.push({
-      pathname: '/beeline/settings/workbench/wallet',
-      params: { workspaceId },
-    } as unknown as Href);
+  const openWallet = useCallback(async () => {
+    try {
+      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      if (!selectedId) {
+        setWalletWorkspaceMissing(true);
+        return;
+      }
+      setWalletWorkspaceMissing(false);
+      router.push({
+        pathname: '/beeline/settings/workbench/wallet',
+        params: { workspaceId: selectedId },
+      } as unknown as Href);
+    } catch {
+      setNetworkFailure('wallet');
+    }
   }, [workspaceId]);
 
   const connectWallet = useCallback(async () => {
@@ -152,14 +164,23 @@ export default function WorkbenchScreen() {
     setWalletConnecting(true);
     setNetworkFailure(null);
     try {
-      await getWalletSource().createWallet({ workspaceId });
-      openWallet();
+      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      if (!selectedId) {
+        setWalletWorkspaceMissing(true);
+        return;
+      }
+      setWalletWorkspaceMissing(false);
+      await getWalletSource().createWallet({ workspaceId: selectedId });
+      router.push({
+        pathname: '/beeline/settings/workbench/wallet',
+        params: { workspaceId: selectedId },
+      } as unknown as Href);
     } catch {
       setNetworkFailure('wallet');
     } finally {
       setWalletConnecting(false);
     }
-  }, [openWallet, walletConnecting, workspaceId]);
+  }, [walletConnecting, workspaceId]);
 
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
@@ -186,6 +207,17 @@ export default function WorkbenchScreen() {
           onRetry={() => void (networkFailure === 'wallet' ? connectWallet() : load())}
           testID="workbench-network-unavailable"
         />
+      </View>
+    );
+  }
+
+  if (walletWorkspaceMissing) {
+    return (
+      <View style={screenStyle}>
+        {header}
+        <Text testID="workbench-wallet-workspace-missing">
+          Join or select a Workspace, then open Wallet again.
+        </Text>
       </View>
     );
   }

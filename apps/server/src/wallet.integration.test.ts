@@ -180,6 +180,59 @@ describe('wallet over the fake CDP seam', () => {
     expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
   });
 
+  it('rejects missing, malformed, and inaccessible grant Workspaces before changing expiry', async () => {
+    await createdWallet();
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=now() - interval '1 hour' WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(false);
+    const otherWorkspace = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    for (const [payload, expected] of [
+      [{}, 'valid Workspace ID required'],
+      [{ workspaceId: '' }, 'valid Workspace ID required'],
+      [{ workspaceId: 'not-a-uuid' }, 'valid Workspace ID required'],
+      [{ workspaceId: otherWorkspace }, 'workspace membership required'],
+    ] as const) {
+      const response = await fetch(`${origin}/v1/phone/operations/grantWalletDelegation`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe(expected);
+      const expiry = (
+        await database.query<{ active: boolean }>(
+          `SELECT delegation_expires_at > now() AS active FROM wallet_bindings WHERE identity_id=$1`,
+          [HUMAN],
+        )
+      ).rows[0];
+      expect(expiry?.active).toBe(false);
+    }
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(true);
+    const expiry = (
+      await database.query<{ active: boolean }>(
+        `SELECT delegation_expires_at > now() AS active FROM wallet_bindings WHERE identity_id=$1`,
+        [HUMAN],
+      )
+    ).rows[0];
+    expect(expiry?.active).toBe(true);
+  });
+
   it('a failing history read does not break createWallet or readWallet', async () => {
     // The real CDP v2 history endpoint is unconfirmed (it 401s/404s); the
     // wallet must be fully usable — address + balances — regardless.

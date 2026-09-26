@@ -765,6 +765,104 @@ describe('weekly institutional curator', () => {
     ).toEqual([successor]);
   });
 
+  it('retains a procedure record and its use ledger past retention', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'merge_review','live',$3,$4,$5,'workspace_candidate','retention-proof')`,
+      [SKILL_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    // Archived long enough ago that this cycle's retention pass reaches it.
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit,updated_at)
+       VALUES($1,$2,'expired-procedure','An expired procedure','archived',1,1,$3,
+              'Beeline-Work/beeline',$4,$5::timestamptz-interval '400 days')`,
+      [SKILL, WORKSPACE, ROOM, 'f'.repeat(40), NOW],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,extractor_version,model)
+       VALUES($1,1,'The expired body.',$2,$3,ARRAY[$4]::text[],'Beeline-Work/beeline',$5,
+              'test','test')`,
+      [SKILL, 'a'.repeat(64), SKILL_JOB, MESSAGE, 'f'.repeat(40)],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_uses
+       (id,workspace_id,skill_id,skill_version,room_id,requester_identity_id,agent_id)
+       VALUES($1,$2,$3,1,$4,$5,$6)`,
+      [randomUUID(), WORKSPACE, SKILL, ROOM, HUMAN, AGENT],
+    );
+    const loadedBefore = (await institutionalObjectiveDashboard(database, WORKSPACE)).skillsLoaded;
+    expect(loadedBefore).toBe(1);
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+
+    // The body is gone, but the record, its provenance and the load stay.
+    expect(
+      (
+        await database.query<{ markdown: string; source_deleted_at: Date | null }>(
+          `SELECT markdown,source_deleted_at FROM workspace_skill_versions WHERE skill_id=$1`,
+          [SKILL],
+        )
+      ).rows[0],
+    ).toMatchObject({ markdown: '', source_deleted_at: expect.any(Date) });
+    expect(
+      (
+        await database.query<{ source_job_id: string; source_message_ids: string[] }>(
+          `SELECT source_job_id,source_message_ids FROM workspace_skill_versions WHERE skill_id=$1`,
+          [SKILL],
+        )
+      ).rows[0],
+    ).toMatchObject({ source_job_id: SKILL_JOB, source_message_ids: [MESSAGE] });
+    expect((await institutionalObjectiveDashboard(database, WORKSPACE)).skillsLoaded).toBe(
+      loadedBefore,
+    );
+  });
+
+  it('records one contiguous gap when the cursor advance shares the write', async () => {
+    const offline = new Date(NOW.getTime() - 20 * 86_400_000);
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, offline)).toBe(false);
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, NOW)).toBe(false);
+    // The cursor moved with the gap, so the next sample extends rather than
+    // inserting a second overlapping span whose seconds would be counted twice.
+    expect(
+      (
+        await database.query<{ started_at: Date; ended_at: Date }>(
+          `SELECT started_at,ended_at FROM institutional_host_availability_gaps
+           WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows,
+    ).toEqual([{ started_at: offline, ended_at: NOW }]);
+    expect(
+      (
+        await database.query<{ observed_at: Date }>(
+          `SELECT availability_observed_at observed_at
+           FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows[0],
+    ).toMatchObject({ observed_at: NOW });
+
+    // A third still-offline sample extends that one span instead of opening a
+    // second overlapping one, so its seconds are never subtracted twice.
+    const later = new Date(NOW.getTime() + 86_400_000);
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, later)).toBe(false);
+    expect(
+      (
+        await database.query<{ started_at: Date; ended_at: Date }>(
+          `SELECT started_at,ended_at FROM institutional_host_availability_gaps
+           WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows,
+    ).toEqual([{ started_at: offline, ended_at: later }]);
+  });
+
   it('does not restart the archive clock when stale re-affirms a stale row', async () => {
     await database.query(
       `INSERT INTO institutional_memory_jobs

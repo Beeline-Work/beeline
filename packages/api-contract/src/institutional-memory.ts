@@ -504,6 +504,31 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
 }
 
 /** Strict parser for one merge-derived, restricted procedure proposal. */
+/**
+ * A code anchor is stored provenance, so its shape is checked rather than taken
+ * on the model's word: an arbitrary string is not a digest, and an absolute or
+ * escaping path does not name a file inside the anchored repository.
+ */
+function codeContentDigest(value: unknown): string {
+  const digest = boundedText(value, 'workspace skill content hash', 64);
+  if (!/^[0-9a-f]{64}$/.test(digest)) {
+    throw new Error('workspace skill content hash is not a sha256 digest');
+  }
+  return digest;
+}
+
+function repositoryRelativePath(value: unknown): string {
+  const path = boundedText(value, 'workspace skill path', 500);
+  if (
+    path.startsWith('/') ||
+    path.includes('\\') ||
+    path.split('/').some((segment) => segment === '..' || segment === '')
+  ) {
+    throw new Error('workspace skill path is not repository-relative');
+  }
+  return path;
+}
+
 export function parseInstitutionalMergeReviewProposal(
   value: unknown,
 ): InstitutionalMergeReviewProposal {
@@ -561,14 +586,10 @@ export function parseInstitutionalMergeReviewProposal(
       anchor: {
         repository: boundedText(anchor.repository, 'workspace skill repository', 300),
         targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
-        ...(anchor.path === undefined
-          ? {}
-          : { path: boundedText(anchor.path, 'workspace skill path', 500) }),
+        ...(anchor.path === undefined ? {} : { path: repositoryRelativePath(anchor.path) }),
         ...(anchor.contentHash === undefined
           ? {}
-          : {
-              contentHash: boundedText(anchor.contentHash, 'workspace skill content hash', 128),
-            }),
+          : { contentHash: codeContentDigest(anchor.contentHash) }),
       },
     };
   }

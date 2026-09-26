@@ -111,6 +111,31 @@ describe('institutional merge review contract', () => {
     expect(parseInstitutionalMergeReviewProposal(proposal)).toEqual(proposal);
   });
 
+  it('refuses a code anchor that is not verifiable provenance', () => {
+    const withAnchor = (anchor: Record<string, unknown>) => ({
+      ...proposal,
+      skill: { ...proposal.skill, anchor: { ...proposal.skill.anchor, ...anchor } },
+    });
+    // A digest nobody can check is not provenance.
+    expect(() =>
+      parseInstitutionalMergeReviewProposal(withAnchor({ contentHash: 'looks-about-right' })),
+    ).toThrow(/sha256 digest/);
+    expect(() =>
+      parseInstitutionalMergeReviewProposal(withAnchor({ contentHash: 'A'.repeat(64) })),
+    ).toThrow(/sha256 digest/);
+    // Nor does a path that escapes or leaves the anchored repository.
+    for (const path of ['/etc/passwd', '../secrets.txt', 'apps/../../outside.ts', 'a//b.ts']) {
+      expect(() => parseInstitutionalMergeReviewProposal(withAnchor({ path }))).toThrow(
+        /repository-relative/,
+      );
+    }
+    expect(
+      parseInstitutionalMergeReviewProposal(
+        withAnchor({ path: 'apps/server/src/database.ts', contentHash: 'b'.repeat(64) }),
+      ).skill?.anchor,
+    ).toMatchObject({ path: 'apps/server/src/database.ts', contentHash: 'b'.repeat(64) });
+  });
+
   it('rejects unknown fields, invalid slugs, and descriptions over 60 characters', () => {
     expect(() => parseInstitutionalMergeReviewProposal({ ...proposal, native: true })).toThrow(
       /unknown field native/,

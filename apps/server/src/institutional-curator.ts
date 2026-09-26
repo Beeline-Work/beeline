@@ -72,43 +72,49 @@ export async function recordWorkspaceHostAvailability(
   workspaceId: string,
   now: Date,
 ): Promise<boolean> {
-  const state = (
-    await database.query<{ available: boolean; observed_at: Date | null; created_at: Date }>(
-      `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,
-              rollout.availability_observed_at observed_at,workspace.created_at
-       FROM institutional_memory_workspace_rollouts rollout
-       JOIN workspaces workspace ON workspace.id=rollout.workspace_id
-       WHERE rollout.workspace_id=$1`,
-      [workspaceId, now],
-    )
-  ).rows[0];
-  if (!state) return true;
-  const since = state.observed_at ?? state.created_at;
-  const credited =
-    state.available &&
-    state.observed_at !== null &&
-    now.getTime() - since.getTime() <= AVAILABILITY_OBSERVATION_MAX_MS;
-  if (!credited && since.getTime() < now.getTime()) {
-    const extended = await database.query(
-      `UPDATE institutional_host_availability_gaps SET ended_at=$3
-       WHERE id=(SELECT id FROM institutional_host_availability_gaps
-                 WHERE workspace_id=$1 AND ended_at=$2 ORDER BY started_at DESC LIMIT 1)`,
-      [workspaceId, since, now],
-    );
-    if (!extended.rowCount) {
-      await database.query(
-        `INSERT INTO institutional_host_availability_gaps(id,workspace_id,started_at,ended_at)
-         VALUES($1,$2,$3,$4)`,
-        [randomUUID(), workspaceId, since, now],
+  // The gap write and the cursor advance are one transaction: a crash between
+  // them would leave ended_at no longer equal to the next `since`, so the
+  // extend would miss and a second overlapping gap would double-count.
+  return database.transaction(async (db) => {
+    const state = (
+      await db.query<{ available: boolean; observed_at: Date | null; created_at: Date }>(
+        `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,
+                rollout.availability_observed_at observed_at,workspace.created_at
+         FROM institutional_memory_workspace_rollouts rollout
+         JOIN workspaces workspace ON workspace.id=rollout.workspace_id
+         WHERE rollout.workspace_id=$1
+         FOR UPDATE OF rollout`,
+        [workspaceId, now],
+      )
+    ).rows[0];
+    if (!state) return true;
+    const since = state.observed_at ?? state.created_at;
+    const credited =
+      state.available &&
+      state.observed_at !== null &&
+      now.getTime() - since.getTime() <= AVAILABILITY_OBSERVATION_MAX_MS;
+    if (!credited && since.getTime() < now.getTime()) {
+      const extended = await db.query(
+        `UPDATE institutional_host_availability_gaps SET ended_at=$3
+         WHERE id=(SELECT id FROM institutional_host_availability_gaps
+                   WHERE workspace_id=$1 AND ended_at=$2 ORDER BY started_at DESC LIMIT 1)`,
+        [workspaceId, since, now],
       );
+      if (!extended.rowCount) {
+        await db.query(
+          `INSERT INTO institutional_host_availability_gaps(id,workspace_id,started_at,ended_at)
+           VALUES($1,$2,$3,$4)`,
+          [randomUUID(), workspaceId, since, now],
+        );
+      }
     }
-  }
-  await database.query(
-    `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=$2
-     WHERE workspace_id=$1`,
-    [workspaceId, now],
-  );
-  return state.available;
+    await db.query(
+      `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=$2
+       WHERE workspace_id=$1`,
+      [workspaceId, now],
+    );
+    return state.available;
+  });
 }
 
 const PROHIBITED_CURATOR_SECRET_PATTERNS = [
@@ -307,10 +313,19 @@ async function deterministicLifecycle(
        AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, archiveAfterDays],
   );
+  // Retention ends the CONTENT, not the record: the row, its immutable versions
+  // and every recorded load stay, exactly as the memory-item path keeps its own
+  // sources and supersession. Deleting the skill would cascade its use ledger
+  // away and retroactively shrink the discoverability measurements.
   await database.query(
-    `DELETE FROM workspace_skills skill
-     WHERE skill.workspace_id=$1 AND skill.state='archived'
-       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
+    `UPDATE workspace_skill_versions version
+     SET markdown='',source_deleted_at=$2
+     WHERE version.source_deleted_at IS NULL
+       AND version.skill_id IN (
+         SELECT skill.id FROM workspace_skills skill
+         WHERE skill.workspace_id=$1 AND skill.state='archived'
+           AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
+       )`,
     [workspaceId, now, retentionDays],
   );
   return {

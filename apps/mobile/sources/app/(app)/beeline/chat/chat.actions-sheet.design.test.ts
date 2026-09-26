@@ -182,12 +182,13 @@ describe('Room and corner actions sheets', () => {
     }
     expect(row(cornerSheet, 'close-corner-action')).toContain('destructive');
     // The confirmation lives in the handler, and both rows still reach it.
-    expect(chat).toContain('const handleRoomLifecycle = useCallback(async () => {');
+    expect(chat).toContain("async (action: 'delete' | 'leave') => {");
     const handler = chat.slice(
-      chat.indexOf('const handleRoomLifecycle = useCallback(async () => {'),
+      chat.indexOf('const handleRoomLifecycle = useCallback('),
       chat.indexOf('const handleRenameRoom = useCallback'),
     );
     expect(handler).toContain('await Modal.confirm(');
+    expect(handler).toContain('leaveRoomWithConfirmation(');
     expect(handler).toContain('destructive: true');
   });
 
@@ -200,9 +201,8 @@ describe('Room and corner actions sheets', () => {
     expect(row(roomSheet, 'room-schedules-action')).toContain(
       "pathname: '/beeline/settings/schedules'",
     );
-    for (const testID of ['delete-room-action', 'leave-room-action']) {
-      expect(row(roomSheet, testID)).toContain('onPress={handleRoomLifecycle}');
-    }
+    expect(row(roomSheet, 'delete-room-action')).toContain("handleRoomLifecycle('delete')");
+    expect(row(roomSheet, 'leave-room-action')).toContain("handleRoomLifecycle('leave')");
     expect(row(cornerSheet, 'close-corner-action')).toContain('void handleCloseCorner()');
     // A rename in flight still holds the sheet open against the scrim.
     expect(chat).toContain('dismissOnBackdrop={!renameBusy}');
@@ -245,7 +245,9 @@ describe('Room and corner actions sheets', () => {
       expect(plain).not.toContain('metadata=');
     }
     expect(messageSheet).toContain('testID="message-actions-close"');
-    expect(chat).toContain("'The message text and attachments will be removed. A deleted-message record will remain in this Room.'");
+    expect(chat).toContain(
+      "'The message text and attachments will be removed. A deleted-message record will remain in this Room.'",
+    );
     expect(chat).toContain('if (message.isAgentDraft || message.deleted) return;');
   });
 
@@ -295,10 +297,7 @@ describe('Room and corner actions sheets', () => {
     // One sheet per message actions; the rows stay inside this screen's
     // HullActionSheetModal and the ledger only signals the long press.
     expect(chat).toContain('onMessageActions={openMessageActions}');
-    const variants = readFileSync(
-      new URL('./RoomMessageVariants.tsx', import.meta.url),
-      'utf8',
-    );
+    const variants = readFileSync(new URL('./RoomMessageVariants.tsx', import.meta.url), 'utf8');
     expect(variants).toContain('onMessageActions?');
     expect(variants).toContain('onLongPress={onActions}');
     expect(variants).not.toContain('message-actions-sheet');

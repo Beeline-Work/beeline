@@ -540,6 +540,8 @@ export type RoomLiveDelta =
 
 export type RoomView = {
   readonly room: RoomViewHeader;
+  /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
+  readonly leaveDeletesRoom?: boolean;
   readonly messages: readonly RoomViewMessage[];
   /** Settled corner tool activity, outside the bounded conversation window. */
   readonly toolRows?: readonly RoomViewMessage[];
@@ -637,6 +639,8 @@ export type ChatListCorner = {
 
 export type ChatListItem = {
   readonly room: RoomViewHeader;
+  /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
+  readonly leaveDeletesRoom?: boolean;
   /** Every current Room agent has a resolved presence fact and none is online.
    *  Carried by the deck so first-paint footer geometry matches the Room GET. */
   readonly agentsOffline?: boolean;

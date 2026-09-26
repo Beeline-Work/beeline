@@ -433,6 +433,18 @@ describe('phone surface readers', () => {
     expect(view?.chats[0]?.unread).toBe(false);
   });
 
+  it('preserves the last-manager deletion warning on Room and deck reads', () => {
+    expect(readRoomView({ ...currentRoom, leaveDeletesRoom: true })?.leaveDeletesRoom).toBe(true);
+    const view = readChatListView({
+      workspace,
+      chats: [{ room: header, leaveDeletesRoom: true }],
+      viewer: identity,
+      truncated: false,
+      watchFilters: [],
+    });
+    expect(view?.chats[0]?.leaveDeletesRoom).toBe(true);
+  });
+
   it('reads open corners and drops rows it cannot render', () => {
     const cornerId = '44444444-4444-4444-8444-444444444444';
     const view = readChatListView({

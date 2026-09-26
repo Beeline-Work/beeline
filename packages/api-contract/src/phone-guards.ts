@@ -1164,6 +1164,10 @@ function readChat(value: unknown): ChatListItem | null {
   return {
     room,
     unread: item.unread === true,
+    ...field(
+      'leaveDeletesRoom',
+      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
+    ),
     ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
     ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
     ...field(
@@ -1446,6 +1450,10 @@ export function readRoomView(value: unknown): RoomView | null {
   return {
     room,
     messages,
+    ...field(
+      'leaveDeletesRoom',
+      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
+    ),
     members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
     latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
     viewer,

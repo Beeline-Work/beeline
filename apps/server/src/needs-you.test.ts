@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import {
+  askSql,
   isNeedsYouAsk,
   keepEnd,
   needsYouRowText,
@@ -61,6 +62,38 @@ describe('the Needs-you ask rule', () => {
         'ada',
       ),
     ).toBe('… before I sign off: can you confirm the App Store review note before we ship?');
+  });
+});
+
+describe('the ask rule in SQL', () => {
+  it('reads every message exactly as isNeedsYouAsk does', async () => {
+    const database = new PgliteDatabase();
+    const samples = [
+      '@ada can you look?',
+      '@ada can you look?  \n',
+      '@ada is this ok? I think so.',
+      '@ada please look',
+      '@ada PLEASE look',
+      '@ada Please.',
+      'please',
+      '@ada I approved it',
+      '@ada approve the deploy',
+      '@ada approves',
+      '@ada feedback welcome',
+      '@ada feedbacks',
+      '@ada re-approve it',
+      '@ada approve_now',
+      '@ada approve2',
+      '@ada this release train is cursed',
+      '@ada ?!',
+      '@ada ¿qué? please',
+    ];
+    for (const text of samples) {
+      const row = (
+        await database.query<{ asks: boolean }>(`SELECT ${askSql('$1::text')} asks`, [text])
+      ).rows[0];
+      expect({ text, asks: row?.asks }).toEqual({ text, asks: isNeedsYouAsk(text) });
+    }
   });
 });
 
@@ -185,6 +218,21 @@ describe('PhoneService Needs-you tray', () => {
 
     await post(CORNER, VIEWER, 'the first one', 1);
     expect(await count()).toBe(0);
+  });
+
+  it('never lets newer near-miss messages crowd out an older real ask', async () => {
+    const ask = await post(ROOM, PEER, '@ada please review the release notes', 60);
+    // More near-misses than the query's candidate limit, all newer than the ask:
+    // each tags the reader and holds "approved", which is not the word "approve".
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(1000000 + series),64,'0'),$1,$2,'@ada I approved it',
+         now() - interval '30 minutes' + series * interval '1 millisecond'
+       FROM generate_series(1,600) series`,
+      [ROOM, PEER],
+    );
+    expect((await read()).items.map((item) => item.messageId)).toEqual([ask]);
+    expect(await count()).toBe(1);
   });
 
   it('refuses to clear a message the reader cannot see', async () => {

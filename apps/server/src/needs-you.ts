@@ -23,24 +23,40 @@ export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as cons
 /** A cell's life, counted from the first time the person saw it in the tray. */
 export const NEEDS_YOU_EXPIRY_HOURS = 24;
 /**
- * How far back a tagged message is considered at all. The expiry clock only
- * starts once a cell is seen, so without this bound a person returning after
- * months would open a tray of ancient questions.
+ * How far back a tagged message is considered at all — a deliberate bound for
+ * launch and backfill, not part of the approved expiry rule. The 24-hour clock
+ * only starts once a cell is seen, so without this window the first tray open
+ * (or a person back after months) would pull every tagged question in the
+ * Workspace's history. Inside the window, the 24-hour clock still starts only
+ * on first sight.
  */
 const NEEDS_YOU_LOOKBACK_DAYS = 7;
 /** Roughly two lines of a phone cell; the desktop list pane is the same width. */
 export const NEEDS_YOU_TEXT_MAX = 80;
+/** A safety cap on qualifying rows only: `askSql` runs before it, so no near-miss can crowd out an ask. */
 const CANDIDATE_LIMIT = 500;
 
 const TRIGGER_WORD = new RegExp(
   `(^|[^\\p{L}\\p{N}_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})(?=$|[^\\p{L}\\p{N}_])`,
   'iu',
 );
+/** A closing question mark, allowing only ordinary trailing whitespace — `askSql` reads the same. */
+const ENDS_WITH_QUESTION = /\?[ \t\n\r\f\v]*$/;
 
-/** The ask half of the rule: ends with `?`, or says please / approve / feedback. */
+/** The ask half of the rule: ends with `?`, or says please / approve / feedback as a word. */
 export function isNeedsYouAsk(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.endsWith('?') || TRIGGER_WORD.test(trimmed);
+  return ENDS_WITH_QUESTION.test(text) || TRIGGER_WORD.test(text);
+}
+
+/**
+ * `isNeedsYouAsk` in SQL, applied BEFORE the candidate limit so the limit only
+ * ever counts messages that really ask. The two readings must agree
+ * (`needs-you.test.ts` holds them to one table); the TypeScript twin still
+ * re-checks every row the query returns.
+ */
+export function askSql(textExpr: string): string {
+  return `(${textExpr} ~ '\\?[ \\t\\n\\r\\f\\v]*$'
+    OR ${textExpr} ~* '(^|[^[:alnum:]_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})($|[^[:alnum:]_])')`;
 }
 
 function sentences(text: string): string[] {
@@ -190,7 +206,7 @@ export async function needsYouItems(
          AND mark.cleared_at IS NULL
          AND (mark.first_seen_at IS NULL
            OR mark.first_seen_at>now()-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
-         AND (btrim(m.text) LIKE '%?' OR m.text ~* '(${NEEDS_YOU_TRIGGER_WORDS.join('|')})')
+         AND ${askSql('m.text')}
          AND ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
          AND NOT EXISTS (
            SELECT 1 FROM messages reply

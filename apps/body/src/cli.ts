@@ -261,6 +261,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // really about to run.
   const sandbox = await ensureBwrapSandbox({
     ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
+    stateDir: dirname(configPath),
     beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
   });
   if (sandbox.path) config.bwrapPath = sandbox.path;

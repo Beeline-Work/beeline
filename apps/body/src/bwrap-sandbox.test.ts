@@ -601,14 +601,37 @@ describe('feature detection falls back rather than failing the daemon', () => {
      */
     function hostPath(executables: string[]): {
       env: NodeJS.ProcessEnv;
+      dir: string;
+      install: (name: string) => void;
       cleanup: () => void;
     } {
       const dir = mkdtempSync(resolve(tmpdir(), 'beeline-bwrap-host-'));
-      for (const name of executables) {
+      const install = (name: string) =>
         writeFileSync(resolve(dir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-      }
+      for (const name of executables) install(name);
       return {
         env: { PATH: dir, BEELINE_HARNESS_PATH_AUGMENT: '0' },
+        dir,
+        install,
+        cleanup: () => rmSync(dir, { recursive: true, force: true }),
+      };
+    }
+
+    /** The helper's own runtime directory, where the failure marker lives. */
+    function stateDir(): { path: string; markedAt: () => number | undefined; cleanup: () => void } {
+      const dir = mkdtempSync(resolve(tmpdir(), 'beeline-bwrap-state-'));
+      return {
+        path: dir,
+        markedAt: () => {
+          try {
+            return Number.parseInt(
+              readFileSync(resolve(dir, 'bubblewrap-install-failed'), 'utf8').trim(),
+              10,
+            );
+          } catch {
+            return undefined;
+          }
+        },
         cleanup: () => rmSync(dir, { recursive: true, force: true }),
       };
     }
@@ -741,6 +764,10 @@ describe('feature detection falls back rather than failing the daemon', () => {
         });
         expect(ran).toBe(false);
         expect(result.advisory).toContain('no apt-get');
+        // Naming the absent package manager and then prescribing it is the one
+        // thing this branch exists to avoid.
+        expect(result.advisory).toContain(BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER);
+        expect(result.advisory).not.toContain(BUBBLEWRAP_INSTALL_FIX);
         expect(result.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX_UNKNOWN_MANAGER);
         expect(result.shellDetail).not.toContain('apt-get');
       } finally {
@@ -805,6 +832,174 @@ describe('feature detection falls back rather than failing the daemon', () => {
         expect(result.path).toBeUndefined();
         expect(result.advisory).toContain('Linux only');
       } finally {
+        host.cleanup();
+      }
+    });
+
+    /**
+     * A host where bubblewrap is unobtainable would otherwise pay a full
+     * `apt-get update` + install before READY on every `Restart=always` bounce.
+     */
+    it('remembers a failed attempt for a day and skips the package commands', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const first = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000_000,
+          detect: () => missing,
+          run: async () => ({ code: 100, output: 'E: Unable to locate package bubblewrap' }),
+        });
+        expect(first.path).toBeUndefined();
+        expect(state.markedAt()).toBe(5_000_000);
+
+        let ran = false;
+        let extended = 0;
+        const second = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 5_000_000 + 60 * 60_000,
+          beforeInstall: () => {
+            extended += 1;
+          },
+          detect: () => missing,
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        expect(extended).toBe(0);
+        expect(second.path).toBeUndefined();
+        expect(second.advisory).toContain('did not retry');
+        expect(second.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX);
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('retries once the remembered failure is a day old, and forgets it on success', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        writeFileSync(resolve(state.path, 'bubblewrap-install-failed'), '1000\n', 'utf8');
+        const commands: string[][] = [];
+        let detections = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 1000 + 25 * 60 * 60_000,
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
+          run: async (command, args) => {
+            commands.push([command, ...args]);
+            return { code: 0, output: '' };
+          },
+        });
+        expect(commands).toEqual([
+          ['sudo', '-n', 'apt-get', 'update'],
+          ['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap'],
+        ]);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(state.markedAt()).toBeUndefined();
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * The marker is consulted only AFTER detection, so an operator who installs
+     * the package by hand is not made to wait out somebody else's failure.
+     */
+    it('adopts a bwrap that appeared since the failure, marker or not', async () => {
+      const host = hostPath(['apt-get', 'bwrap']);
+      const state = stateDir();
+      try {
+        writeFileSync(resolve(state.path, 'bubblewrap-install-failed'), '9000\n', 'utf8');
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 9_001,
+          detect: () => usable,
+          run: async () => {
+            throw new Error('must not install');
+          },
+        });
+        expect(result.path).toBe('/usr/bin/bwrap');
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    /**
+     * Several helper units restarting together send every one of them here at
+     * once: the losers' apt-lock failure says nothing about this host, so they
+     * wait for the winner rather than running unwrapped for their whole life.
+     */
+    it('waits for the helper holding the package lock, then adopts its install', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        let clock = 0;
+        let sleeps = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms;
+            sleeps += 1;
+            if (sleeps === 3) host.install('bwrap');
+          },
+          // The real detection is what decides; here it answers from the same
+          // PATH the sibling's install lands on.
+          detect: () => (existsSync(resolve(host.dir, 'bwrap')) ? usable : missing),
+          run: async (command, args) =>
+            args.includes('update')
+              ? { code: 100, output: 'E: Could not get lock /var/lib/apt/lists/lock' }
+              : { code: 0, output: '' },
+        });
+        expect(sleeps).toBe(3);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(state.markedAt()).toBeUndefined();
+      } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('gives up unsandboxed when the lock frees and bwrap is still missing', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        let clock = 0;
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms;
+          },
+          detect: () => missing,
+          run: async () => ({ code: 100, output: 'E: Could not get lock /var/lib/apt/lists/lock' }),
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.advisory).toContain('Could not get lock');
+        expect(state.markedAt()).toBe(clock);
+      } finally {
+        state.cleanup();
         host.cleanup();
       }
     });

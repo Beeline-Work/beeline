@@ -116,6 +116,9 @@ describe('Members page layout contract', () => {
     expect(styleBlock(source, 'removeAgentControl')).toContain('minHeight: 44');
     expect(styleBlock(source, 'removeAgentControl')).toContain('borderColor: hull.dialogDanger');
     expect(styleBlock(source, 'removeAgentText')).toContain('color: hull.textPrimary');
+    // One full-width destructive button, its words centred like a button.
+    expect(styleBlock(source, 'removeAgentText')).toContain("textAlign: 'center'");
+    expect(source).not.toContain('Ban from Workspace');
 
     const channel = (hex: string) => {
       const part = parseInt(hex, 16) / 255;

@@ -76,6 +76,12 @@ runs:
           --input-dir relay-stack/web/dl \
           --input-dir "$arm64_dir" \
           --input-dir "$x64_dir"
+        if [ -f "$arm64_dir/mac-helper-inputs.json" ]; then
+          cp "$arm64_dir/mac-helper-inputs.json" "$RUNNER_TEMP/daemon-release/mac-helper-inputs-darwin-arm64.json"
+        fi
+        if [ -f "$x64_dir/mac-helper-inputs.json" ]; then
+          cp "$x64_dir/mac-helper-inputs.json" "$RUNNER_TEMP/daemon-release/mac-helper-inputs-darwin-x64.json"
+        fi
     - if: inputs.phase == 'build'
       uses: actions/upload-artifact@v4
       with:

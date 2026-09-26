@@ -296,6 +296,7 @@ test('server deployment dry-run prints both success and rollback ordering', () =
 test('component selection follows the explicit path map', () => {
   assert.deepEqual(selectReleaseComponents(['apps/server/src/index.ts']), ['server']);
   assert.deepEqual(selectReleaseComponents(['apps/body/src/index.ts']), ['helper']);
+  assert.deepEqual(selectReleaseComponents(['apps/gate/src/index.ts']), ['helper']);
   assert.deepEqual(selectReleaseComponents(['relay-stack/web/index.html']), ['website']);
   assert.deepEqual(selectReleaseComponents(['docs/operator.md']), []);
   assert.deepEqual(selectReleaseComponents([], { selection: 'server,mobile-ota' }), [
@@ -1182,8 +1183,7 @@ test('every helper stage has either a reused artifact or a Mac rebuild, never ne
     };
     const inputs = { plan_only: false };
     const macosRuns = evaluateWorkflowCondition(macos.if, { inputs, needs: { initialize }, steps: {} });
-    // helper_macos only exists to produce the Mac bundles, so a run of it is a
-    // rebuild; anything else leaves its result 'skipped'.
+    // helper_macos produces the Mac bundles by carry or cold build.
     const needs = { initialize, helper_macos: { result: macosRuns ? 'success' : 'skipped' } };
     const context = { inputs, needs, steps: {} };
     return {
@@ -1196,7 +1196,7 @@ test('every helper stage has either a reused artifact or a Mac rebuild, never ne
     };
   }
 
-  // A fresh identity builds the Mac bundles exactly as before.
+  // A fresh identity still produces new Mac artifacts.
   assert.deepEqual(resolve({ stage: 'pending', reuseRunId: '' }), {
     rebuilds: true, helperRuns: true, downloadsMacBundles: true, merges: true, checkpointsBuilt: true, promotes: true,
   });
@@ -1232,6 +1232,37 @@ test('every helper stage has either a reused artifact or a Mac rebuild, never ne
       );
     }
   }
+});
+
+test('fresh Mac bundle carry is optional and every failure selects the cold build', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const lookup = workflow.jobs.initialize.steps.find(step => step.id === 'previous_mac');
+  const steps = workflow.jobs.helper_macos.steps;
+  const download = steps.find(step => step.id === 'previous_bundle');
+  const carry = steps.find(step => step.id === 'carry_bundle');
+  const cold = steps.find(step => step.name === 'Build and install-verify the native helper');
+  assert.match(lookup.if, /steps\.helper_reuse\.outputs\.run_id == ''/);
+  assert.match(lookup.with.script, /successful\.length !== 1/);
+  assert.match(lookup.with.script, /run\.data\.conclusion === 'success'/);
+  assert.equal(download['continue-on-error'], true);
+  assert.equal(carry['continue-on-error'], true);
+  assert.match(carry.run, /--carry-forward/);
+  for (const [downloadOutcome, carryOutcome, expectedCold] of [
+    ['skipped', 'skipped', true],
+    ['failure', 'skipped', true],
+    ['success', 'failure', true],
+    ['success', 'success', false],
+  ]) {
+    const context = { inputs: {}, needs: {}, steps: {
+      previous_bundle: { outcome: downloadOutcome }, carry_bundle: { outcome: carryOutcome },
+    } };
+    assert.equal(evaluateWorkflowCondition(carry.if, context), downloadOutcome === 'success');
+    assert.equal(evaluateWorkflowCondition(cold.if, context), expectedCold);
+  }
+  const upload = steps.find(step => step.uses === 'actions/upload-artifact@v4');
+  assert.match(upload.with.path, /mac-helper-inputs\.json/);
+  assert.equal(lookup['continue-on-error'], true);
+  assert.match(workflow.jobs.initialize.outputs.previous_mac_run_id, /steps\.previous_mac\.outputs\.run_id/);
 });
 
 test('a helper release riding a reused artifact is not classified a budget failure', () => {

@@ -16,6 +16,9 @@ import { constants } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { validateBundleDirectory } from './pages-site.mjs';
+import { macHelperInputs } from './mac-helper-inputs.mjs';
+import { writeBeelineArchive } from './beeline-archive.mjs';
 
 const UPSTREAM_REF = process.env.BEELINE_BUZZ_REF ?? '07a3c768d619db31fee3f0590f9433cdd1213e8f';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -158,18 +161,39 @@ async function sha256(path) {
 
 async function main() {
   const platform = parsePlatform();
-  const binaries = await resolveAgentBinaries(platform);
+  const carryIndex = process.argv.indexOf('--carry-forward');
+  const carryDir = carryIndex >= 0 ? process.argv[carryIndex + 1] : '';
+  const binaries = carryDir ? undefined : await resolveAgentBinaries(platform);
+  if (carryIndex >= 0 && !carryDir) fail('--carry-forward requires a directory');
+  const staging = resolve(toolsRoot, 'bundle', platform);
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  await mkdir(outputRoot, { recursive: true });
+  if (carryDir) {
+    const { manifest } = await validateBundleDirectory(carryDir);
+    const bundle = manifest.bundles?.[platform];
+    if (!bundle || bundle.file !== `beeline-${platform}.tar.gz`) {
+      fail(`carry-forward artifact must contain ${platform}`);
+    }
+    const previousInputs = JSON.parse(await readFile(resolve(carryDir, `mac-helper-inputs-${platform}.json`), 'utf8'));
+    const currentInputs = macHelperInputs();
+    if (!currentInputs.reuseSafe || !previousInputs.reuseSafe ||
+        JSON.stringify(previousInputs) !== JSON.stringify(currentInputs)) fail('Mac bundle inputs changed');
+    run('tar', ['-C', staging, '-xzf', resolve(carryDir, bundle.file)]);
+  }
   const codegraphSource = resolve(
     repoRoot,
     'node_modules',
     '@colbymchenry',
     `codegraph-${platform}`,
   );
-  if (!(await executable(resolve(codegraphSource, 'bin', 'codegraph')))) {
+  if (!carryDir && !(await executable(resolve(codegraphSource, 'bin', 'codegraph')))) {
     fail(`CodeGraph platform bundle not installed for ${platform}: ${codegraphSource}`);
   }
-  assertBinaryPlatform(binaries.agent, platform);
-  assertBinaryPlatform(binaries.mcp, platform);
+  if (!carryDir) {
+    assertBinaryPlatform(binaries.agent, platform);
+    assertBinaryPlatform(binaries.mcp, platform);
+  }
 
   const sourceCommit =
     process.env.BEELINE_BUNDLE_COMMIT ?? capture('git', ['rev-parse', 'HEAD']) ?? '';
@@ -183,112 +207,111 @@ async function main() {
   run('npm', ['run', 'build', '-w', '@beeline/gate']);
   run('npm', ['run', 'build', '-w', '@beeline/body']);
 
-  const staging = resolve(toolsRoot, 'bundle', platform);
-  await rm(staging, { recursive: true, force: true });
-  await mkdir(resolve(staging, 'bin'), { recursive: true });
-  await mkdir(resolve(staging, 'lib', 'beeline'), { recursive: true });
-  await mkdir(outputRoot, { recursive: true });
+  if (!carryDir) {
+    await mkdir(resolve(staging, 'bin'), { recursive: true });
+    await mkdir(resolve(staging, 'lib', 'beeline'), { recursive: true });
 
-  run('npx', [
-    '--no-install',
-    'esbuild',
-    resolve(repoRoot, 'apps/body/dist/cli.js'),
-    '--bundle',
-    '--platform=node',
-    '--format=esm',
-    '--target=node20',
-    "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
-    '--define:import.meta.url="beeline:bundle"',
-    `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-cli.mjs')}`,
-  ]);
-  run('npx', [
-    '--no-install',
-    'esbuild',
-    resolve(repoRoot, 'apps/body/dist/read-only-mcp.js'),
-    '--bundle',
-    '--platform=node',
-    '--format=esm',
-    '--target=node20',
-    `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs')}`,
-  ]);
-  // Pi receives MCP through this release-owned, version-pinned adapter. It is
-  // built into the immutable archive; session startup never runs `pi install`
-  // and therefore never depends on registry or mutable global package state.
-  run('npx', [
-    '--no-install',
-    'esbuild',
-    resolve(repoRoot, 'node_modules/pi-mcp-adapter/index.ts'),
-    '--bundle',
-    '--minify',
-    '--platform=node',
-    '--format=esm',
-    '--target=node20',
-    // Pi supplies these as virtual host modules. Bundling them duplicates the
-    // whole Pi runtime inside the generated extension and makes cold loading
-    // exceed the managed-update functional gate's 10-second startup window.
-    '--external:@earendil-works/pi-*',
-    '--external:typebox',
-    '--external:typebox/*',
-    `--outfile=${resolve(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs')}`,
-  ]);
+    run('npx', [
+      '--no-install',
+      'esbuild',
+      resolve(repoRoot, 'apps/body/dist/cli.js'),
+      '--bundle',
+      '--platform=node',
+      '--format=esm',
+      '--target=node20',
+      "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
+      '--define:import.meta.url="beeline:bundle"',
+      `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-cli.mjs')}`,
+    ]);
+    run('npx', [
+      '--no-install',
+      'esbuild',
+      resolve(repoRoot, 'apps/body/dist/read-only-mcp.js'),
+      '--bundle',
+      '--platform=node',
+      '--format=esm',
+      '--target=node20',
+      `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs')}`,
+    ]);
+    // Pi receives MCP through this release-owned, version-pinned adapter. It is
+    // built into the immutable archive; session startup never runs `pi install`
+    // and therefore never depends on registry or mutable global package state.
+    run('npx', [
+      '--no-install',
+      'esbuild',
+      resolve(repoRoot, 'node_modules/pi-mcp-adapter/index.ts'),
+      '--bundle',
+      '--minify',
+      '--platform=node',
+      '--format=esm',
+      '--target=node20',
+      // Pi supplies these as virtual host modules. Bundling them duplicates the
+      // whole Pi runtime inside the generated extension and makes cold loading
+      // exceed the managed-update functional gate's 10-second startup window.
+      '--external:@earendil-works/pi-*',
+      '--external:typebox',
+      '--external:typebox/*',
+      `--outfile=${resolve(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs')}`,
+    ]);
 
-  // Compatibility-only entrypoints for helpers installed before 6c3cca0c:
-  // their updater verifies these paths while staging a release. Remove after
-  // no installed helper predates that release.
-  for (const legacyEntrypoint of ['squire-mcp-proxy.mjs', 'agent-tool-mcp-proxy.mjs']) {
+    // Compatibility-only entrypoints for helpers installed before 6c3cca0c:
+    // their updater verifies these paths while staging a release. Remove after
+    // no installed helper predates that release.
+    for (const legacyEntrypoint of ['squire-mcp-proxy.mjs', 'agent-tool-mcp-proxy.mjs']) {
+      await writeFile(
+        resolve(staging, 'lib', 'beeline', legacyEntrypoint),
+        '// Legacy updater compatibility stub.\nprocess.exit(0);\n',
+      );
+    }
+
+    await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
+    await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));
+    await cp(codegraphSource, resolve(staging, 'lib', 'beeline', 'codegraph'), {
+      recursive: true,
+    });
+    await chmod(resolve(staging, 'bin', 'buzz-agent'), 0o755);
+    await chmod(resolve(staging, 'bin', 'buzz-dev-mcp'), 0o755);
+    await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'bin', 'codegraph'), 0o755);
+    await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'node'), 0o755);
+    // The in-bundle wrappers never hand node a '..' component (node's module
+    // resolver mis-resolves '..' after a symlinked directory — the exact
+    // MODULE_NOT_FOUND shape from the layout regression). Executed through the
+    // installed forwarders, BEELINE_LIB_DIR is already exported by the
+    // forwarder as the clean ANCHOR path (<prefix>/lib/beeline); executed
+    // directly inside a bundle, the wrapper computes its release root while
+    // preserving BEELINE_LIB_DIR as that release's inner lib for self-update's
+    // legacy normalization. See apps/body/src/self-update.ts, "THE CONTRACT".
+    const wrapperPrologue = [
+      '#!/bin/sh',
+      'set -eu',
+      'case $0 in',
+      '  /*) script_path=$0 ;;',
+      '  *) script_path=$(pwd -P)/$0 ;;',
+      'esac',
+      'if [ -n "${BEELINE_LIB_DIR:-}" ]; then',
+      '  BEELINE_BUNDLE_ROOT=$BEELINE_LIB_DIR',
+      'else',
+      '  BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
+      '  BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline',
+      'fi',
+      'export BEELINE_LIB_DIR',
+    ].join('\n');
     await writeFile(
-      resolve(staging, 'lib', 'beeline', legacyEntrypoint),
-      '// Legacy updater compatibility stub.\nprocess.exit(0);\n',
+      resolve(staging, 'bin', 'beeline-readonly-mcp'),
+      `${wrapperPrologue}\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
+      { mode: 0o755 },
+    );
+    await writeFile(
+      resolve(staging, 'bin', 'codegraph'),
+      `${wrapperPrologue}\nexec "$BEELINE_BUNDLE_ROOT/lib/beeline/codegraph/bin/codegraph" "$@"\n`,
+      { mode: 0o755 },
+    );
+    await writeFile(
+      resolve(staging, 'bin', 'beeline'),
+      `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
+      { mode: 0o755 },
     );
   }
-
-  await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
-  await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));
-  await cp(codegraphSource, resolve(staging, 'lib', 'beeline', 'codegraph'), {
-    recursive: true,
-  });
-  await chmod(resolve(staging, 'bin', 'buzz-agent'), 0o755);
-  await chmod(resolve(staging, 'bin', 'buzz-dev-mcp'), 0o755);
-  await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'bin', 'codegraph'), 0o755);
-  await chmod(resolve(staging, 'lib', 'beeline', 'codegraph', 'node'), 0o755);
-  // The in-bundle wrappers never hand node a '..' component (node's module
-  // resolver mis-resolves '..' after a symlinked directory — the exact
-  // MODULE_NOT_FOUND shape from the layout regression). Executed through the
-  // installed forwarders, BEELINE_LIB_DIR is already exported by the
-  // forwarder as the clean ANCHOR path (<prefix>/lib/beeline); executed
-  // directly inside a bundle, the wrapper computes its release root while
-  // preserving BEELINE_LIB_DIR as that release's inner lib for self-update's
-  // legacy normalization. See apps/body/src/self-update.ts, "THE CONTRACT".
-  const wrapperPrologue = [
-    '#!/bin/sh',
-    'set -eu',
-    'case $0 in',
-    '  /*) script_path=$0 ;;',
-    '  *) script_path=$(pwd -P)/$0 ;;',
-    'esac',
-    'if [ -n "${BEELINE_LIB_DIR:-}" ]; then',
-    '  BEELINE_BUNDLE_ROOT=$BEELINE_LIB_DIR',
-    'else',
-    '  BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
-    '  BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline',
-    'fi',
-    'export BEELINE_LIB_DIR',
-  ].join('\n');
-  await writeFile(
-    resolve(staging, 'bin', 'beeline-readonly-mcp'),
-    `${wrapperPrologue}\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
-    { mode: 0o755 },
-  );
-  await writeFile(
-    resolve(staging, 'bin', 'codegraph'),
-    `${wrapperPrologue}\nexec "$BEELINE_BUNDLE_ROOT/lib/beeline/codegraph/bin/codegraph" "$@"\n`,
-    { mode: 0o755 },
-  );
-  await writeFile(
-    resolve(staging, 'bin', 'beeline'),
-    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
-    { mode: 0o755 },
-  );
 
   await writeFile(
     resolve(staging, 'lib', 'beeline', 'bundle.json'),
@@ -312,7 +335,8 @@ async function main() {
   const filename = `beeline-${platform}.tar.gz`;
   const archive = resolve(outputRoot, filename);
   await rm(archive, { force: true });
-  run('tar', ['-C', staging, '-czf', archive, 'bin', 'lib']);
+  if (platform.startsWith('darwin-')) await writeBeelineArchive(staging, archive, toolsRoot);
+  else run('tar', ['-C', staging, '-czf', archive, 'bin', 'lib']);
   const digest = await sha256(archive);
   await writeFile(`${archive}.sha256`, `${digest}  ${filename}\n`);
 
@@ -358,6 +382,9 @@ async function main() {
 
   manifest.bundles[platform].verified = verified;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  if (platform.startsWith('darwin-')) {
+    await writeFile(resolve(outputRoot, 'mac-helper-inputs.json'), `${JSON.stringify(macHelperInputs())}\n`);
+  }
 
   console.log(`build-beeline-bundle: ${archive}`);
   console.log(`build-beeline-bundle: sha256 ${digest}`);

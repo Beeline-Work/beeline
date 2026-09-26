@@ -93,6 +93,8 @@ jobs:
       stage_server: ${{ steps.plan.outputs.stage_server }}
       stage_helper: ${{ steps.plan.outputs.stage_helper }}
       helper_reuse_run_id: ${{ steps.helper_reuse.outputs.run_id }}
+      previous_mac_run_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.run_id || '' }}
+      previous_mac_release_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.release_id || '' }}
       stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
       native_android: ${{ steps.plan.outputs.native_android }}
@@ -301,6 +303,42 @@ jobs:
             } catch (error) {
               core.info(`Daemon artifact lookup failed, building every platform: ${error.message}`);
             }
+      - name: Find the last successful release's Mac bundles
+        id: previous_mac
+        continue-on-error: true
+        if: >-
+          inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
+          contains(fromJSON('["pending","built"]'), steps.plan.outputs.stage_helper) &&
+          steps.helper_reuse.outputs.run_id == ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const fs = require('fs');
+              const path = require('path');
+              const previous = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'previous', 'release-attempt.json')));
+              const helper = previous.components?.helper;
+              if (previous.state !== 'delivered' || !/^v\d+\.\d+\.\d+$/.test(helper?.version ?? '') ||
+                  !/^[0-9a-f]{40}$/.test(helper?.sourceSha ?? '')) return;
+              const releaseId = `${helper.version}-${helper.sourceSha}`;
+              const name = `daemon-artifact-${releaseId}`;
+              const all = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+                owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+              });
+              const candidates = all.filter(a => a.name === name && !a.expired && a.workflow_run?.id);
+              const successful = [];
+              for (const artifact of candidates) {
+                const run = await github.rest.actions.getWorkflowRun({
+                  owner: context.repo.owner, repo: context.repo.repo, run_id: artifact.workflow_run.id,
+                });
+                if (run.data.conclusion === 'success') successful.push(artifact);
+              }
+              if (successful.length !== 1) return;
+              core.setOutput('run_id', String(successful[0].workflow_run.id));
+              core.setOutput('release_id', releaseId);
+            } catch (error) {
+              core.info(`Previous Mac bundle lookup unavailable; building: ${error.message}`);
+            }
 
   server_deploy_plan:
     needs: initialize
@@ -461,10 +499,8 @@ jobs:
       contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper) &&
       needs.initialize.outputs.helper_reuse_run_id == ''
     runs-on: ${{ fromJSON(matrix.runs_on) }}
-    # Every run is cold: the bundle builds buzz-agent and buzz-dev-mcp with
-    # `cargo build --release --locked` from a fresh clone, and checkout's
-    # `clean: true` removes `.beeline-tools/target` on the self-hosted Mac too.
-    # The PR gate budgets 35 minutes for the same darwin-x64 build.
+    # A matching verified payload avoids the cold cargo build. Every failed
+    # lookup, download or verification falls through to the normal build.
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -488,7 +524,26 @@ jobs:
       - run: npm ci
       - name: Require the native build architecture
         run: test "$(uname -m)" = "${{ matrix.machine_arch }}"
+      - name: Download the previous Mac bundle when available
+        id: previous_bundle
+        if: needs.initialize.outputs.previous_mac_run_id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-artifact-${{ needs.initialize.outputs.previous_mac_release_id }}
+          path: ${{ runner.temp }}/previous-mac-bundle
+          run-id: ${{ needs.initialize.outputs.previous_mac_run_id }}
+          github-token: ${{ github.token }}
+      - name: Carry the verified Mac payload into this release
+        id: carry_bundle
+        if: steps.previous_bundle.outcome == 'success'
+        continue-on-error: true
+        run: npm run bundle:beeline -- --platform "${{ matrix.platform }}" --carry-forward "$RUNNER_TEMP/previous-mac-bundle"
+        env:
+          BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
+          BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
       - name: Build and install-verify the native helper
+        if: steps.carry_bundle.outcome != 'success'
         run: npm run bundle:beeline -- --platform "${{ matrix.platform }}"
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
@@ -500,6 +555,7 @@ jobs:
             relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz
             relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256
             relay-stack/web/dl/manifest.json
+            relay-stack/web/dl/mac-helper-inputs.json
           if-no-files-found: error
           retention-days: 7
 

@@ -10,13 +10,13 @@ The Pinned empty state, unread rows and Workspace rail changes shipped alongside
 
 ## Human profiles and bans
 
-Human profiles show identity, handle and Workspace role. Message opens a DM; a viewer's own profile links to identity Settings. Owners may edit other members' roles; admins may edit ordinary members, without assigning owner. Role changes require Save and mutation errors remain visible.
+Human profiles show identity, handle, Workspace role, connected agents, and a read-only ledger of those agents' settled grants. Repository grants are visible to Workspace members; personal-resource grants remain visible only to the agent owner. Message opens a DM; a viewer's own profile links to identity Settings. Owners may edit other members' roles; admins may edit ordinary members, without assigning owner. Edit mode alone reveals the Member/Admin selector and Ban action. Role changes require Save and mutation errors remain visible.
 
 Ban is separate from removal. It records a persistent Workspace-scoped ban and removes all memberships in that Workspace in one transaction. Owners are protected; admins cannot ban peers or owners; nobody can ban themselves. A database trigger serializes restoration against ban decisions and refuses active membership writes from every path, including invites, pairing and background imports. Workspace deletion cascades bans. Managers can inspect paginated Banned members in the roster and lift a ban; lifting permits a new invitation without automatically restoring membership. Agent retirement keeps its existing global teardown semantics.
 
 ## Current validation limitations
 
-The profile component preview builds, but Chrome exits before rendering in the current corner environment, so new phone/desktop screenshots and native device checks are unverified. The no-mistakes runner cannot initialize because the repository already has a different gate remote. Direct builds, typechecks and executable regression tests provide local evidence; the configured reviewer and GitHub-authoritative merge gate still apply.
+The profile surfaces are verified in the running branch web client at 390×844 and 1440×1000 against disposable local workspaces. Native Android/iOS device rendering still requires an emulator or device.
 
 ## Verification
 
@@ -48,4 +48,4 @@ Historical board note: a follow-up regression reproduces a failed profile read f
 
 Settings retains its controls and order, with the current Workspace role below the handle. Both profile headers reuse Settings' 76-pixel bezel and 64-pixel picture seat. Profile identities show handles only with brass @ marks. Agent Message and owner-only Edit are adjacent; Generate remains owner-only. The human profile has one role selector (admin/member/spectator), denies equal or higher-rank edits, and lists the person's agents across the Workspace using the owner-filtered paginated roster. Existing owner/admin management authority is preserved; spectators cannot send Workspace messages or perform scoped mutations.
 
-PR #1704 is integrated through merge commit `1930c6b6`; save-error reporting is preserved. The later design-language pass removed the unrequested free-text avatar direction: generation now sends the current soul alone, disables the action while its existing single-flight job is active, and shows the promised DM status below it. Current phone-width app captures are recorded in [profile alignment evidence](evidence/profiles/alignment/README.md).
+PR #1704 is integrated through merge commit `1930c6b6`; save-error reporting is preserved. The later design-language pass removed the unrequested free-text avatar direction: generation now sends the current soul alone, disables the action while its existing single-flight job is active, and shows the promised DM status below it. Current phone-width app captures are recorded in [profile alignment evidence](evidence/profiles/alignment/README.md); the compact-actions, edit-mode, grants, and dual-viewport follow-up is recorded in [profile audit revision evidence](evidence/profiles/revision/README.md).

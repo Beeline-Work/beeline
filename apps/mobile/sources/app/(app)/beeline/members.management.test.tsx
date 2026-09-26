@@ -707,7 +707,6 @@ describe('Members workspace management', () => {
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();
     await press(renderer, 'edit-person-role');
-    await press(renderer, 'person-role-selector');
     await press(renderer, 'person-role-admin');
     expect(phoneOperation).not.toHaveBeenCalled();
     await press(renderer, 'save-person-role');
@@ -751,6 +750,9 @@ describe('Members workspace management', () => {
 
   it('confirms persistent bans and leaves membership untouched on cancellation', async () => {
     const renderer = await personProfile();
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+    await press(renderer, 'edit-person-role');
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' }).length).toBeGreaterThan(0);
     modal.confirm.mockResolvedValueOnce(false);
     await press(renderer, 'ban-person');
     expect(phoneOperation).not.toHaveBeenCalled();

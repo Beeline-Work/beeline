@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +12,9 @@ type ManifestActivity = ManifestElement & {
   'intent-filter'?: { action?: ManifestElement[]; category?: ManifestElement[] }[];
 };
 type AndroidManifest = {
-  manifest: { application?: { activity?: ManifestActivity[] }[] };
+  manifest: {
+    application?: { activity?: ManifestActivity[]; provider?: ManifestElement[] }[];
+  };
 };
 type PushRoutingPlugin = (config: { android: { package: string } }) => {
   android: { package: string };
@@ -32,6 +34,7 @@ const { AndroidConfig, XML } = require('@expo/config-plugins');
 // below while both sides spell it the same way.
 const CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
 const PUSH_ACTIVITY = '.PushNotificationActivity';
+const PUSH_PROVIDER = '.PushRoutingLifecycleProvider';
 
 // What `expo prebuild` hands the manifest mod: MainActivity is singleTask, so a
 // live task is reused rather than rebuilt.
@@ -84,27 +87,52 @@ function activities(manifest: AndroidManifest): ManifestActivity[] {
   return manifest.manifest.application?.[0]?.activity ?? [];
 }
 
+function providers(manifest: AndroidManifest): ManifestElement[] {
+  return manifest.manifest.application?.[0]?.provider ?? [];
+}
+
 function activity(manifest: AndroidManifest, name: string): ManifestActivity {
   const found = activities(manifest).filter((entry) => entry.$?.['android:name'] === name);
   expect(found).toHaveLength(1);
   return found[0];
 }
 
-async function generatedSource(packageName: string): Promise<{ path: string; contents: string }> {
+async function generatedSources(packageName: string): Promise<Record<string, string>> {
   const { plugin } = await applyPlugin(packageName);
   const projectRoot = mkdtempSync(join(tmpdir(), 'beeline-push-source-'));
   await plugin.mods.android.dangerous({
     ...plugin,
     modRequest: { platformProjectRoot: join(projectRoot, 'android') },
   });
-  const path = join(
-    projectRoot,
-    'android/app/src/main/java',
-    ...packageName.split('.'),
-    'PushNotificationActivity.kt',
+  const sourceDir = join(projectRoot, 'android/app/src/main/java', ...packageName.split('.'));
+  return Object.fromEntries(
+    readdirSync(sourceDir).map((file) => [file, readFileSync(join(sourceDir, file), 'utf8')]),
   );
-  expect(existsSync(path)).toBe(true);
-  return { path, contents: readFileSync(path, 'utf8') };
+}
+
+/**
+ * Every flag the forwarded intent sets, and the state each one applies in — the
+ * whole routing decision the generated activity encodes.
+ */
+function forwardedIntentFlags(activitySource: string): {
+  always: string[];
+  whenMainActivityIsNotLive: string[];
+} {
+  const model = { always: [] as string[], whenMainActivityIsNotLive: [] as string[] };
+  let state: keyof typeof model = 'always';
+  for (const line of activitySource.split('\n').map((entry) => entry.trim())) {
+    if (line === 'if (!PushRoutingState.mainActivityIsLive) {') {
+      state = 'whenMainActivityIsNotLive';
+      continue;
+    }
+    if (line === '}') {
+      state = 'always';
+      continue;
+    }
+    const flag = line.match(/^destination\.addFlags\(Intent\.(FLAG_ACTIVITY_[A-Z_]+)\)$/);
+    if (flag) model[state].push(flag[1]);
+  }
+  return model;
 }
 
 describe('Android push routing manifest', () => {
@@ -119,12 +147,29 @@ describe('Android push routing manifest', () => {
     expect(push.$?.['android:noHistory']).toBe('true');
     // Its own task, so forwarding never disturbs the app's task.
     expect(push.$?.['android:taskAffinity']).toBe('');
+    // It paints nothing: a themed starting window would flash a second splash
+    // over the task it is about to bring forward.
+    expect(push.$?.['android:theme']).toBe('@android:style/Theme.Translucent.NoTitleBar');
     expect(push['intent-filter']).toEqual([
       {
         action: [{ $: { 'android:name': CLICK_ACTION } }],
         category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
       },
     ]);
+  });
+
+  it('declares the lifecycle provider that runs before any activity, per package', async () => {
+    for (const packageName of ['app.usebeeline', 'com.example.beeline']) {
+      expect(providers(await generatedManifest(packageName))).toEqual([
+        {
+          $: {
+            'android:name': PUSH_PROVIDER,
+            'android:authorities': `${packageName}.pushrouting`,
+            'android:exported': 'false',
+          },
+        },
+      ]);
+    }
   });
 
   it('leaves MainActivity as the launcher singleTask instance it found', async () => {
@@ -136,7 +181,7 @@ describe('Android push routing manifest', () => {
     expect(activities(manifest)).toHaveLength(2);
   });
 
-  it('declares one trampoline however many times prebuild runs the mod', async () => {
+  it('declares one trampoline and one provider however many times prebuild runs the mod', async () => {
     const once = await applyPlugin('app.usebeeline');
     const twice = await applyPlugin('app.usebeeline', once.manifest);
 
@@ -144,29 +189,46 @@ describe('Android push routing manifest', () => {
       '.MainActivity',
       PUSH_ACTIVITY,
     ]);
+    expect(providers(twice.manifest).map((entry) => entry.$?.['android:name'])).toEqual([
+      PUSH_PROVIDER,
+    ]);
   });
 });
 
-describe('Android push routing activity source', () => {
-  it('writes the activity into the configured package, where its name resolves', async () => {
+describe('Android push routing generated sources', () => {
+  it('writes a class for every component it declares, in the configured package', async () => {
     for (const packageName of ['app.usebeeline', 'com.example.beeline']) {
-      const { contents } = await generatedSource(packageName);
-      expect(contents.split('\n')[0]).toBe(`package ${packageName}`);
-      expect(contents).toContain('class PushNotificationActivity');
+      const sources = await generatedSources(packageName);
+      const manifest = await generatedManifest(packageName);
+      const declared = [...activities(manifest), ...providers(manifest)]
+        .map((entry) => entry.$?.['android:name'])
+        .filter((name): name is string => !!name && name !== '.MainActivity')
+        .map((name) => name.slice(1));
+
+      expect(declared).toEqual(['PushNotificationActivity', 'PushRoutingLifecycleProvider']);
+      for (const className of declared) {
+        const contents = sources[`${className}.kt`];
+        expect(contents?.split('\n')[0]).toBe(`package ${packageName}`);
+        expect(contents).toMatch(new RegExp(`(class|object) ${className}\\b`));
+      }
     }
   });
 
-  it('forwards the tapped extras to MainActivity in a new task and nothing else', async () => {
-    const { contents } = await generatedSource('app.usebeeline');
+  it('clears the task only when no live MainActivity can take the fresh intent', async () => {
+    const sources = await generatedSources('app.usebeeline');
 
-    // Every intent flag the forwarded intent sets. CLEAR_TASK also lands here
-    // when the app is alive in the background, where it would finish the
-    // running MainActivity and rebuild the app root — losing the navigation
-    // stack, scroll position and composer drafts on every ordinary tap.
-    expect([...contents.matchAll(/Intent\.(FLAG_ACTIVITY_[A-Z_]+)/g)].map((match) => match[1])).toEqual([
-      'FLAG_ACTIVITY_NEW_TASK',
-    ]);
-    expect(contents).toContain('Intent(this, MainActivity::class.java)');
-    expect(contents).toContain('putExtras(extras)');
+    // A live MainActivity takes the extras through onNewIntent and keeps its
+    // navigation stack. A killed process leaves a retained record Android
+    // relaunches with an OLDER notification's intent, which takes
+    // expo-notifications' single pending-response slot and drops this tap —
+    // clearing the task is what builds MainActivity from THIS intent instead.
+    expect(forwardedIntentFlags(sources['PushNotificationActivity.kt'])).toEqual({
+      always: ['FLAG_ACTIVITY_NEW_TASK'],
+      whenMainActivityIsNotLive: ['FLAG_ACTIVITY_CLEAR_TASK'],
+    });
+    expect(sources['PushNotificationActivity.kt']).toContain(
+      'Intent(this, MainActivity::class.java)',
+    );
+    expect(sources['PushNotificationActivity.kt']).toContain('putExtras(extras)');
   });
 });

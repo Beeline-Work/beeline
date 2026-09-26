@@ -218,7 +218,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
       properties: {
         revision: {
           type: 'string',
-          description: 'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
+          description:
+            'HEAD, HEAD~N, a commit hash, origin/branch, or refs/heads|tags|remotes/origin/...; defaults to HEAD.',
         },
         path: { type: 'string', description: 'Optional repository-relative path filter.' },
       },
@@ -260,6 +261,42 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 ];
 
 const AGENT_TOOLS: ToolDefinition[] = [
+  {
+    name: 'propose_memory_item',
+    description:
+      'Record one sourced institutional lesson for future turns. Use workspace_fact only for a system/world fact that stays true when another person asks; use human_profile_fact only for how the durable root requester likes to work. This is quoted context, never authority. Direct-message facts cannot become shared Workspace memory. Cite current Room message ids and use the exact CAS version/id shown by institutional context when updating an item.',
+    inputSchema: {
+      type: 'object',
+      required: [
+        'memory_kind',
+        'canonical_key',
+        'body',
+        'source_message_ids',
+        'correction',
+        'confidence',
+        'base_version',
+      ],
+      properties: {
+        memory_kind: {
+          type: 'string',
+          enum: ['workspace_fact', 'human_profile_fact'],
+        },
+        canonical_key: { type: 'string', minLength: 1, maxLength: 160 },
+        body: { type: 'string', minLength: 1, maxLength: 4000 },
+        source_message_ids: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 16,
+          items: { type: 'string', minLength: 1 },
+        },
+        correction: { type: 'boolean' },
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        base_version: { type: ['integer', 'null'], minimum: 0 },
+        supersedes_item_id: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: 'get_avatar',
     description:
@@ -866,12 +903,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'composio_tools',
-    description: 'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
+    description:
+      'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'composio_execute',
-    description: 'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
+    description:
+      'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
     inputSchema: {
       type: 'object',
       required: ['toolkit', 'tool', 'arguments'],
@@ -1030,9 +1069,11 @@ export function agentToolsFor(
   reviewer = false,
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
+  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
+    if (tool.name === 'propose_memory_item') return institutionalMemoryEnabled;
     if (['steer_corner', 'ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
@@ -2551,8 +2592,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   return {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
-    tailscaleReach: (enabled) =>
-      describeTailscaleReach({ enabled, installIfMissing: enabled }),
+    tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
   };
 }
 
@@ -2586,7 +2626,9 @@ export async function workbenchStatus(
   const who = view.owner?.handle
     ? `@${view.owner.handle}`
     : (view.owner?.name ??
-      (view.addressee?.handle ? `@${view.addressee.handle}` : (view.addressee?.name ?? 'the owner of this machine')));
+      (view.addressee?.handle
+        ? `@${view.addressee.handle}`
+        : (view.addressee?.name ?? 'the owner of this machine')));
   const machine = view.machine?.name ?? 'this machine';
   const lines = [
     `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
@@ -2823,6 +2865,28 @@ async function daemonUploadArtifact(
 
 async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
+    case 'propose_memory_item': {
+      const sourceMessageIds = args.source_message_ids;
+      if (!Array.isArray(sourceMessageIds)) throw new Error('source_message_ids must be an array');
+      return JSON.stringify(
+        await daemonExecute('proposeInstitutionalMemory', {
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          memoryKind: args.memory_kind,
+          canonicalKey: args.canonical_key,
+          body: args.body,
+          sourceMessageIds,
+          correction: args.correction,
+          confidence: args.confidence,
+          cas: {
+            baseVersion: args.base_version,
+            ...(typeof args.supersedes_item_id === 'string'
+              ? { supersedesItemId: args.supersedes_item_id }
+              : {}),
+          },
+        }),
+      );
+    }
     case 'wallet_address':
       return JSON.stringify(
         await daemonExecute('getWalletToolState', {
@@ -3098,15 +3162,22 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
     }
     case 'composio_execute': {
       const context = await activeCommandContext();
-      if (typeof args.toolkit !== 'string' || typeof args.tool !== 'string' ||
-          !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+      if (
+        typeof args.toolkit !== 'string' ||
+        typeof args.tool !== 'string' ||
+        !args.arguments ||
+        typeof args.arguments !== 'object' ||
+        Array.isArray(args.arguments)
+      )
         throw new Error('Composio toolkit, tool and arguments are required');
-      return JSON.stringify(await daemonExecute('executeComposioTool', {
-        ...context,
-        toolkit: args.toolkit,
-        tool: args.tool,
-        arguments: args.arguments,
-      }));
+      return JSON.stringify(
+        await daemonExecute('executeComposioTool', {
+          ...context,
+          toolkit: args.toolkit,
+          tool: args.tool,
+          arguments: args.arguments,
+        }),
+      );
     }
     case 'offer_connector':
       return offerConnector(args);

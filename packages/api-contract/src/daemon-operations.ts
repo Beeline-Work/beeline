@@ -13,6 +13,9 @@ import type {
   ClaimInstitutionalMemoryJobResult,
   CompleteInstitutionalMemoryJobInput,
   FailInstitutionalMemoryJobInput,
+  InstitutionalContextSnapshot,
+  ProposeInstitutionalMemoryInput,
+  ProposeInstitutionalMemoryResult,
 } from './institutional-memory.js';
 import type {
   WalletPayInput,
@@ -106,7 +109,7 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
-  /** Phase-0 only: claims shadow extraction work and never returns live memory. */
+  /** Claims host-side extraction work. The server never calls a model. */
   claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
   heartbeatInstitutionalMemoryJob: Operation<
     AgentInput & { readonly jobId: string; readonly leaseToken: string },
@@ -114,6 +117,11 @@ export type DaemonOperationMap = {
   >;
   completeInstitutionalMemoryJob: Operation<CompleteInstitutionalMemoryJobInput, WriteResult>;
   failInstitutionalMemoryJob: Operation<FailInstitutionalMemoryJobInput, WriteResult>;
+  getInstitutionalContext: Operation<RoomInput & TurnOutputAuthority, InstitutionalContextSnapshot>;
+  proposeInstitutionalMemory: Operation<
+    ProposeInstitutionalMemoryInput,
+    ProposeInstitutionalMemoryResult
+  >;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
@@ -262,7 +270,8 @@ export type DaemonOperationMap = {
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
   getComposioLink: Operation<
     AgentInput & { readonly connectorId: string; readonly pairingGeneration?: number },
-    { readonly status: 'connected' } | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
+    | { readonly status: 'connected' }
+    | { readonly status: 'pending'; readonly toolkit: string; readonly url: string }
   >;
   getComposioTools: Operation<
     RoomInput & { readonly requestId: string; readonly generationId: string },

@@ -43,6 +43,7 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
+import { institutionalContextForTurn } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
   codegraphMcpServer,
@@ -695,10 +696,17 @@ export class MonolithCornerTurnLoop {
       );
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [...new Set([...approved, ...Object.keys(hostImportedMcpDeclarations({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-      }))])];
+      return [
+        ...new Set([
+          ...approved,
+          ...Object.keys(
+            hostImportedMcpDeclarations({
+              operatorHome: this.options.config.operatorHome,
+              agentKind: this.options.config.agentKind,
+            }),
+          ),
+        ]),
+      ];
     } catch {
       return [];
     }
@@ -962,7 +970,11 @@ export class MonolithCornerTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken, resourceAuthFile);
+    const youtube = youtubeMcpServer(
+      this.options.config,
+      this.options.youtubeAccessToken,
+      resourceAuthFile,
+    );
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(
       grantedHostRoutes,
@@ -1250,25 +1262,33 @@ export class MonolithCornerTurnLoop {
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
               await this.syncBranch();
-              const [conversation, roster, delivered, activeReviewerInstruction] =
-                await trace.measure('context-fetch', () =>
-                  Promise.all([
-                    api.execute('getRoomConversation', {
-                      roomId: cornerId,
-                      limit: 200,
-                      narrationRequestId: requestId,
-                    }),
-                    this.roster(),
-                    this.attachmentDir && attachments.length
-                      ? deliverAttachments(
-                          attachments,
-                          join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                          this.options.fetchImpl,
-                        )
-                      : Promise.resolve<DeliveredAttachment[]>([]),
-                    this.activeReviewerInstruction(),
-                  ]),
-                );
+              const [
+                conversation,
+                roster,
+                delivered,
+                activeReviewerInstruction,
+                institutionalContext,
+              ] = await trace.measure('context-fetch', () =>
+                Promise.all([
+                  api.execute('getRoomConversation', {
+                    roomId: cornerId,
+                    limit: 200,
+                    narrationRequestId: requestId,
+                  }),
+                  this.roster(),
+                  this.attachmentDir && attachments.length
+                    ? deliverAttachments(
+                        attachments,
+                        join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                        this.options.fetchImpl,
+                      )
+                    : Promise.resolve<DeliveredAttachment[]>([]),
+                  this.activeReviewerInstruction(),
+                  institutionalContextForTurn(api, cornerId, (message) =>
+                    console.warn(`[thin-core] corner ${cornerId}: ${message}`),
+                  ),
+                ]),
+              );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1298,6 +1318,7 @@ export class MonolithCornerTurnLoop {
                     'New in the corner since your last turn (the earlier transcript is already in this session):',
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  institutionalContext.text,
                   activeReviewerInstruction,
                   [
                     ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),

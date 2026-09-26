@@ -186,8 +186,8 @@ describe('monolith integration', () => {
       database,
       live,
       async () => ({
-      token: 'github-room-token',
-      expiresAt: Date.now() + 60_000,
+        token: 'github-room-token',
+        expiresAt: Date.now() + 60_000,
       }),
       undefined,
       false,
@@ -397,8 +397,9 @@ describe('monolith integration', () => {
     expect((await call({ ...input, agentId: 'c'.repeat(64) })).status).not.toBe(200);
     expect((await call({ ...input, drawing: [] })).status).not.toBe(200);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.avatarGenerationId).toBeUndefined();
-    const completionMessages = () => database.query(
-      `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
+    const completionMessages = () =>
+      database.query(
+        `SELECT m.id FROM messages m JOIN rooms r ON r.id=m.room_id
        WHERE r.workspace_id=$1 AND r.direct_participants @> $2::jsonb
          AND m.text LIKE '%Your avatar is ready.%'`,
         [WORKSPACE, JSON.stringify([HUMAN, AGENT])],
@@ -427,8 +428,12 @@ describe('monolith integration', () => {
     );
     expect((await completionMessages()).rowCount).toBe(1);
     const soulSave = await operation('updateAgentSoul', {
-      workspaceId: WORKSPACE, agentId: AGENT, name: 'Bee', instructions: 'A star god',
-      avatarSeed: AGENT, avatar: 'https://example.com/old-avatar.png',
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      name: 'Bee',
+      instructions: 'A star god',
+      avatarSeed: AGENT,
+      avatar: 'https://example.com/old-avatar.png',
     });
     expect(soulSave.status).toBe(204);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
@@ -1852,6 +1857,19 @@ describe('monolith integration', () => {
       { roomId: ROOM, messageId: authorMessageId, bookmarked: true },
       HUMAN,
     );
+    const memoryItemId = '95000000-0000-4000-8000-000000000001';
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+          audience_kind,confidence,version,created_by_command_id)
+       VALUES($1,$2,'workspace_fact','message.delete-proof','Delete this source.',$3,$4,
+          'workspace',0.9,1,'integration-delete-command')`,
+      [memoryItemId, WORKSPACE, ROOM, authorMessageId],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_item_sources(item_id,message_id) VALUES($1,$2)`,
+      [memoryItemId, authorMessageId],
+    );
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
 
     const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
@@ -1863,6 +1881,14 @@ describe('monolith integration', () => {
     expect(
       (await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, HUMAN)).bookmarks,
     ).toContainEqual(expect.objectContaining({ messageId: authorMessageId, available: false }));
+    expect(
+      (
+        await database.query<{ state: string; body: string; deleted_at: Date | null }>(
+          `SELECT state,body,deleted_at FROM institutional_memory_items WHERE id=$1`,
+          [memoryItemId],
+        )
+      ).rows[0],
+    ).toMatchObject({ state: 'archived', body: '' });
 
     const managerMessageId = 'e'.repeat(64);
     await phone.execute(
@@ -7631,7 +7657,6 @@ describe('monolith integration', () => {
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
-
   it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -8318,9 +8343,22 @@ describe('monolith integration', () => {
       const host = await (await daemonOperation('authorizeHostCall', context)).json();
       expect(host.allowed).toBe(yolo && ownerRequester);
       if (!host.allowed) {
-        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }, token)).status).toBe(403);
-        expect((await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' })).status).toBe(200);
-        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(true);
+        expect(
+          (
+            await operation(
+              'decideAgentGrant',
+              { grantId: host.grantId, decision: 'always' },
+              token,
+            )
+          ).status,
+        ).toBe(403);
+        expect(
+          (await operation('decideAgentGrant', { grantId: host.grantId, decision: 'always' }))
+            .status,
+        ).toBe(200);
+        expect((await (await daemonOperation('authorizeHostCall', context)).json()).allowed).toBe(
+          true,
+        );
       }
       const resource = await (
         await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
@@ -8415,27 +8453,50 @@ describe('monolith integration', () => {
       [grants[1]!.grantId, grants[2]!.grantId, grants[3]!.grantId],
     ]);
     // Reproduce the pre-upgrade shared Room placement.
-    await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [ROOM, grants[0]!.messageId]);
+    await database.query(`UPDATE messages SET room_id=$1 WHERE id=$2`, [
+      ROOM,
+      grants[0]!.messageId,
+    ]);
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
-    const automatic = await (await daemonOperation('requestAgentGrant', {
-      roomId: ROOM, kind: 'host', target: 'automatic-resource', reason: 'use the host',
-    })).json();
-    await database.query(`UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
-      [ROOM, automatic.grantId]);
+    const automatic = await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'host',
+        target: 'automatic-resource',
+        reason: 'use the host',
+      })
+    ).json();
+    await database.query(
+      `UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
+      [ROOM, automatic.grantId],
+    );
     await upgradeGrantPolicy(database);
     await upgradeGrantPolicy(database);
-    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-auto'
-      AND card->>'grantId'=$2`, [ROOM, automatic.grantId])).rowCount).toBe(0);
-    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId])).rows)
-      .toEqual([{status: 'approved'}]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-auto'
+      AND card->>'grantId'=$2`,
+          [ROOM, automatic.grantId],
+        )
+      ).rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId]))
+        .rows,
+    ).toEqual([{ status: 'approved' }]);
     const rows = await database.query<{ id: string; status: string }>(
       `SELECT id,status FROM agent_grants WHERE id=ANY($1::uuid[])`, [grants.map(g => g.grantId)]);
     expect(Object.fromEntries(rows.rows.map(r => [r.id,r.status]))).toEqual({
       [grants[0]!.grantId]: 'pending', [grants[1]!.grantId]: 'revoked', [grants[2]!.grantId]: 'revoked',
       [grants[3]!.grantId]: 'revoked', [grants[4]!.grantId]: 'revoked',
     });
-    const card = (await database.query<{ room_id: string; card: { sourceRoomId: string; grants: Array<{status: string}> } }>(
-      `SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])).rows[0]!;
+    const card = (
+      await database.query<{
+        room_id: string;
+        card: { sourceRoomId: string; grants: Array<{ status: string }> };
+      }>(`SELECT room_id,card FROM messages WHERE id=$1`, [grants[0]!.messageId])
+    ).rows[0]!;
     expect(card.room_id).not.toBe(ROOM);
     expect(card.card.sourceRoomId).toBe(ROOM);
     expect(card.card.grants.map(g => g.status)).toEqual([
@@ -9374,7 +9435,11 @@ describe('monolith integration', () => {
   it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {
     const zekeToken = await phoneToken('zeke');
     const zekeId = createHash('sha256').update('github:zeke').digest('hex');
-    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: zekeId, role: 'member' });
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: zekeId,
+      role: 'member',
+    });
     await operation('addRoomMember', { roomId: ROOM, memberId: zekeId });
     expect(
       (
@@ -9403,7 +9468,10 @@ describe('monolith integration', () => {
     ).json()) as {
       addressee: { identityId: string };
       owner?: { identityId: string; handle?: string };
-      catalog: Array<{ connectorType: string; paired?: { status: string; onThisMachine: boolean } }>;
+      catalog: Array<{
+        connectorType: string;
+        paired?: { status: string; onThisMachine: boolean };
+      }>;
     };
     expect(status.addressee.identityId).toBe(zekeId);
     expect(status.owner).toEqual({ identityId: HUMAN, name: 'Owner', handle: 'owner' });
@@ -9412,7 +9480,9 @@ describe('monolith integration', () => {
       helperName: 'chode',
       onThisMachine: true,
     });
-    expect(status.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toBeUndefined();
+    expect(
+      status.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired,
+    ).toBeUndefined();
   });
 
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {

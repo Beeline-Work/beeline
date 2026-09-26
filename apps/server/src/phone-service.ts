@@ -87,6 +87,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
   notifyConnectorHelper,
@@ -1566,7 +1567,10 @@ export class PhoneService {
         },
         role: room.viewer_role,
         permissions: {
-          send: room.workspace_role !== 'spectator' && !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
+          send:
+            room.workspace_role !== 'spectator' &&
+            !room.archived_at &&
+            !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
           manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
         },
       },
@@ -3542,6 +3546,7 @@ export class PhoneService {
         [input.messageId, input.roomId, viewerId],
       );
       if (!deleted.rowCount) throw new Error('message is not available for deletion');
+      await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
     });
   }
 
@@ -6519,7 +6524,10 @@ export class PhoneService {
         (entry.connectorType === 'composio' && !composioScopeForOwner(viewerId))
           ? { ...entry, available: false }
           : entry.connectorType === 'composio'
-            ? { ...entry, approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat() }
+            ? {
+                ...entry,
+                approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat(),
+              }
             : entry,
       ),
       ...(walletRow
@@ -6677,8 +6685,8 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
-    const composioScope = input.connectorType === 'composio'
-      ? composioScopeForOwner(input.ownerIdentityId) : undefined;
+    const composioScope =
+      input.connectorType === 'composio' ? composioScopeForOwner(input.ownerIdentityId) : undefined;
     if (input.connectorType === 'composio' && !composioScope)
       throw new Error('Composio scope is not configured on this Beeline server');
     if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
@@ -6738,12 +6746,14 @@ export class PhoneService {
         input.connectorType,
         matched.agent_id,
         machineId,
-        JSON.stringify(input.connectorType === 'composio'
-          ? [
-              { label: 'Prepare Composio session', status: 'pending' },
-              { label: 'Link account', status: 'pending' },
-            ]
-          : defaultConnectorSteps()),
+        JSON.stringify(
+          input.connectorType === 'composio'
+            ? [
+                { label: 'Prepare Composio session', status: 'pending' },
+                { label: 'Link account', status: 'pending' },
+              ]
+            : defaultConnectorSteps(),
+        ),
         composioScope ? JSON.stringify(composioScope) : null,
       ],
     );
@@ -7807,7 +7817,17 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
 ]);
 
 const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
-  'leaveWorkspace', 'leaveRoom', 'closeChat', 'reopenChat', 'listMessageBookmarks', 'setMessageBookmark',
-  'readWorkbench', 'readConnectionDetail', 'readWallet', 'readWalletHistory',
- 'getGitHubRepositoryAccess', 'listRoomWorkflows', 'listRoomSchedules',
+  'leaveWorkspace',
+  'leaveRoom',
+  'closeChat',
+  'reopenChat',
+  'listMessageBookmarks',
+  'setMessageBookmark',
+  'readWorkbench',
+  'readConnectionDetail',
+  'readWallet',
+  'readWalletHistory',
+  'getGitHubRepositoryAccess',
+  'listRoomWorkflows',
+  'listRoomSchedules',
 ]);

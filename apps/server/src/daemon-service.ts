@@ -122,7 +122,10 @@ import {
   completeInstitutionalMemoryJob,
   enqueueInstitutionalMemoryTurnReview,
   failInstitutionalMemoryJob,
+  getInstitutionalContext,
   heartbeatInstitutionalMemoryJob,
+  proposeInstitutionalMemory,
+  recordInstitutionalMemoryTurnOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 
@@ -257,6 +260,8 @@ export class DaemonService {
       'openRoomPoll',
       'putCornerApp',
       'requestCornerAppOpen',
+      'getInstitutionalContext',
+      'proposeInstitutionalMemory',
     ]);
     if (
       !this.commandTransaction &&
@@ -483,6 +488,13 @@ export class DaemonService {
                 config: this.institutionalMemoryShadow,
               });
             }
+            await recordInstitutionalMemoryTurnOutcome(
+              db,
+              scopedRoom!,
+              command.turn_request_id,
+              candidate.status === 'complete',
+              String(candidate.status),
+            );
           }
         }
         return result;
@@ -561,6 +573,35 @@ export class DaemonService {
           this.institutionalMemoryShadow,
         );
         return this.writeResult() as Output<Name>;
+      case 'getInstitutionalContext':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional context requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          return {
+            snapshotRevision: 0,
+            text: '',
+            itemIds: [],
+            totalBytes: 0,
+            omitted: {},
+          } as Output<Name>;
+        }
+        return (await getInstitutionalContext(
+          this.database,
+          this.authorizedCommand,
+        )) as Output<Name>;
+      case 'proposeInstitutionalMemory':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional memory proposal requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await proposeInstitutionalMemory(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'proposeInstitutionalMemory'>,
+        )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -843,11 +884,20 @@ export class DaemonService {
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
       case 'getComposioLink':
-        return (await this.composioLink(input as Input<'getComposioLink'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioLink(
+          input as Input<'getComposioLink'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getComposioTools':
-        return (await this.composioTools(input as Input<'getComposioTools'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioTools(
+          input as Input<'getComposioTools'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'executeComposioTool':
-        return (await this.composioExecute(input as Input<'executeComposioTool'>, authenticatedAgentId)) as Output<Name>;
+        return (await this.composioExecute(
+          input as Input<'executeComposioTool'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
           (input as Input<'getGoogleOAuthGrant'>).connectorId,
@@ -968,7 +1018,10 @@ export class DaemonService {
         )) as Output<Name>;
       case 'authorizeHostCall':
         return (await this.authorizeScopedGrant(
-          input as Input<'authorizeHostCall'>, authenticatedAgentId, 'host', authenticatedAgentId,
+          input as Input<'authorizeHostCall'>,
+          authenticatedAgentId,
+          'host',
+          authenticatedAgentId,
         )) as Output<Name>;
       case 'authorizeRepositoryCall': {
         const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
@@ -1256,17 +1309,18 @@ export class DaemonService {
     input: Input<'getComposioLink'>,
     agentId: string,
   ): Promise<Output<'getComposioLink'>> {
-    const row = (await this.database.query<{
-      id: string;
-      owner_identity_id: string;
-      pairing_generation: number;
-      composio_session_id: string | null;
-      composio_link_toolkit: string | null;
-      composio_link_started_at: Date | null;
-      sign_in: { method: string; url: string } | null;
-      composio_scope: unknown;
-    }>(
-      `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
+    const row = (
+      await this.database.query<{
+        id: string;
+        owner_identity_id: string;
+        pairing_generation: number;
+        composio_session_id: string | null;
+        composio_link_toolkit: string | null;
+        composio_link_started_at: Date | null;
+        sign_in: { method: string; url: string } | null;
+        composio_scope: unknown;
+      }>(
+        `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
               c.composio_link_toolkit,c.composio_link_started_at,c.sign_in,c.composio_scope
        FROM workspace_connectors c
        JOIN agents a ON a.agent_id=c.helper_agent_id
@@ -1275,36 +1329,46 @@ export class DaemonService {
          AND owner_member.removed_at IS NULL
        WHERE c.id=$1::uuid AND c.helper_agent_id=$2 AND c.connector_type='composio'
          AND c.status='installing' AND c.owner_identity_id=a.owner_id`,
-      [input.connectorId, agentId],
-    )).rows[0];
-    if (!row || (input.pairingGeneration !== undefined &&
-        row.pairing_generation !== input.pairingGeneration))
+        [input.connectorId, agentId],
+      )
+    ).rows[0];
+    if (
+      !row ||
+      (input.pairingGeneration !== undefined && row.pairing_generation !== input.pairingGeneration)
+    )
       throw new Error('connector not found for this helper');
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
     let sessionId: string | null | undefined = row.composio_session_id;
     if (!sessionId) {
       const created = await this.composioClient.createSession(scope);
-      const updated = (await this.database.query<{ composio_session_id: string }>(
-        `UPDATE workspace_connectors SET composio_session_id=$3
+      const updated = (
+        await this.database.query<{ composio_session_id: string }>(
+          `UPDATE workspace_connectors SET composio_session_id=$3
          WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$4
            AND status='installing' AND composio_session_id IS NULL
          RETURNING composio_session_id`,
-        [row.id, agentId, created, row.pairing_generation],
-      )).rows[0];
-      sessionId = updated?.composio_session_id ??
-        (await this.database.query<{ composio_session_id: string }>(
-          `SELECT composio_session_id FROM workspace_connectors
+          [row.id, agentId, created, row.pairing_generation],
+        )
+      ).rows[0];
+      sessionId =
+        updated?.composio_session_id ??
+        (
+          await this.database.query<{ composio_session_id: string }>(
+            `SELECT composio_session_id FROM workspace_connectors
            WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
-          [row.id, agentId, row.pairing_generation],
-        )).rows[0]?.composio_session_id;
+            [row.id, agentId, row.pairing_generation],
+          )
+        ).rows[0]?.composio_session_id;
       if (!sessionId) throw new Error('connector pairing changed');
     }
     for (const toolkit of scope.toolkits) {
       if (await this.composioClient.connected(sessionId, toolkit, scope)) continue;
       if (row.composio_link_toolkit === toolkit && row.sign_in?.url) {
-        if (!row.composio_link_started_at ||
-            Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000)
+        if (
+          !row.composio_link_started_at ||
+          Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000
+        )
           throw new Error('Composio sign-in expired; tap Retry to open a new link');
         return { status: 'pending', toolkit, url: row.sign_in.url };
       }
@@ -1314,7 +1378,13 @@ export class DaemonService {
          SET composio_link_toolkit=$3,sign_in=$4::jsonb,
              composio_link_started_at=now(),updated_at=now()
          WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$5 AND status='installing'`,
-        [row.id, agentId, toolkit, JSON.stringify({ method: 'oauth', url }), row.pairing_generation],
+        [
+          row.id,
+          agentId,
+          toolkit,
+          JSON.stringify({ method: 'oauth', url }),
+          row.pairing_generation,
+        ],
       );
       return { status: 'pending', toolkit, url };
     }
@@ -1339,11 +1409,15 @@ export class DaemonService {
     | { status: 'permission-required'; grantId?: string }
   > {
     await this.access(input.roomId, agentId);
-    const row = (await this.database.query<{
-      id: string; owner_identity_id: string; helper_agent_id: string; composio_session_id: string;
-      composio_scope: unknown;
-    }>(
-      `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
+    const row = (
+      await this.database.query<{
+        id: string;
+        owner_identity_id: string;
+        helper_agent_id: string;
+        composio_session_id: string;
+        composio_scope: unknown;
+      }>(
+        `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
        FROM workspace_connectors c
        JOIN rooms r ON r.workspace_id=c.workspace_id
        JOIN agents helper ON helper.agent_id=c.helper_agent_id
@@ -1369,8 +1443,12 @@ export class DaemonService {
       };
     const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
     if (!this.composioClient) throw new Error('Composio is not configured');
-    return { connectorId: row.id, helperAgentId: row.helper_agent_id,
-      sessionId: row.composio_session_id, scope };
+    return {
+      connectorId: row.id,
+      helperAgentId: row.helper_agent_id,
+      sessionId: row.composio_session_id,
+      scope,
+    };
   }
 
   private async composioTools(
@@ -1395,20 +1473,30 @@ export class DaemonService {
     if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
       throw new Error('Composio arguments must be an object');
     const result = await this.composioClient!.execute(
-      access.sessionId, access.scope, input.toolkit, input.tool, input.arguments,
+      access.sessionId,
+      access.scope,
+      input.toolkit,
+      input.tool,
+      input.arguments,
     );
-    await receiveConnectionUsage(this.database, {
-      requestId: input.requestId,
-      agentId,
-      roomId: input.roomId,
-      usage: [{
-        ref: `composio:${input.toolkit}`,
-        service: input.toolkit,
-        operation: input.tool,
-        statusCode: 200,
-        bytes: JSON.stringify(result.data ?? null).length,
-      }],
-    }, access.helperAgentId);
+    await receiveConnectionUsage(
+      this.database,
+      {
+        requestId: input.requestId,
+        agentId,
+        roomId: input.roomId,
+        usage: [
+          {
+            ref: `composio:${input.toolkit}`,
+            service: input.toolkit,
+            operation: input.tool,
+            statusCode: 200,
+            bytes: JSON.stringify(result.data ?? null).length,
+          },
+        ],
+      },
+      access.helperAgentId,
+    );
     return result;
   }
 
@@ -1423,7 +1511,14 @@ export class DaemonService {
   ): Promise<Output<'installConnector'>> {
     const result = await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ id: string; pairing_generation: number; connector_type: string; owner_identity_id: string; composio_ready: boolean; composio_scope: unknown }>(
+        await database.query<{
+          id: string;
+          pairing_generation: number;
+          connector_type: string;
+          owner_identity_id: string;
+          composio_ready: boolean;
+          composio_scope: unknown;
+        }>(
           `SELECT id,pairing_generation,connector_type,owner_identity_id,composio_ready,composio_scope FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
           [input.connectorId, agentId],
@@ -1454,16 +1549,20 @@ export class DaemonService {
       );
       if (row.connector_type === 'composio') {
         const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
-        await applyVaultList(database, row, scope.toolkits.map((toolkit) => ({
-          reference: `composio:${toolkit}`,
-          service: toolkit,
-          label: `${toolkit} via Composio`,
-          fieldNames: [],
-          allowedHosts: [],
-          createdAt: Math.floor(Date.now() / 1000),
-          stale: false,
-          state: 'active' as const,
-        })));
+        await applyVaultList(
+          database,
+          row,
+          scope.toolkits.map((toolkit) => ({
+            reference: `composio:${toolkit}`,
+            service: toolkit,
+            label: `${toolkit} via Composio`,
+            fieldNames: [],
+            allowedHosts: [],
+            createdAt: Math.floor(Date.now() / 1000),
+            stale: false,
+            state: 'active' as const,
+          })),
+        );
       }
       return {
         row,
@@ -3909,8 +4008,9 @@ export class DaemonService {
       `UPDATE agents SET soul=CASE WHEN soul IS NULL THEN NULL ELSE soul - 'avatar' END,updated_at=now() WHERE agent_id=$1`,
       [agentId],
     );
-    const request = (await this.database.query<{ workspace_id: string; author_id: string }>(
-      `SELECT r.workspace_id,m.author_id FROM messages m JOIN rooms r ON r.id=m.room_id
+    const request = (
+      await this.database.query<{ workspace_id: string; author_id: string }>(
+        `SELECT r.workspace_id,m.author_id FROM messages m JOIN rooms r ON r.id=m.room_id
        JOIN identities i ON i.id=m.author_id AND i.kind='human'
        JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.identity_id=m.author_id
          AND wm.room_id IS NULL AND wm.removed_at IS NULL
@@ -3921,7 +4021,8 @@ export class DaemonService {
     if (request) {
       const participants = [agentId, request.author_id].sort() as [string, string];
       const roomId = directMessageRoomId(request.workspace_id, participants);
-      await this.database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
+      await this.database.query(
+        `INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
         VALUES($1,$2,$3,'Direct message','invite-only',$4::jsonb) ON CONFLICT DO NOTHING`,
         [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)],
       );
@@ -3932,8 +4033,10 @@ export class DaemonService {
           [request.workspace_id, roomId, participant],
         );
       await systemLine(this.database, {
-        roomId, subject: { kind: 'agent', id: agentId, name: 'Your agent' },
-        verb: 'saved its avatar', consequence: 'Your avatar is ready.',
+        roomId,
+        subject: { kind: 'agent', id: agentId, name: 'Your agent' },
+        verb: 'saved its avatar',
+        consequence: 'Your avatar is ready.',
       });
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     }
@@ -4591,7 +4694,7 @@ export class DaemonService {
             ? 'edit this repository'
             : kind === 'host'
               ? 'run this corner on your machine with host filesystem and command access'
-            : 'use this resource, including paid calls within this approval scope',
+              : 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
@@ -4753,11 +4856,13 @@ export class DaemonService {
         available:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))),
+          (entry.connectorType !== 'composio' ||
+            Boolean(composioScopeForOwner(context.owner.pubkey))),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' || Boolean(composioScopeForOwner(context.owner.pubkey))) &&
+          (entry.connectorType !== 'composio' ||
+            Boolean(composioScopeForOwner(context.owner.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -4838,8 +4943,8 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
-    const composioScope = connectorType === 'composio'
-      ? composioScopeForOwner(context.addressee.pubkey) : undefined;
+    const composioScope =
+      connectorType === 'composio' ? composioScopeForOwner(context.addressee.pubkey) : undefined;
     if (connectorType === 'composio' && !composioScope)
       throw new Error('Composio scope is not configured on this Beeline server');
     const connectorName = connectorDisplayName(connectorType);
@@ -4911,9 +5016,7 @@ export class DaemonService {
         consequence: connectorOfferConsequence(
           connectorType,
           reason,
-          connectorType === 'composio'
-            ? Object.values(composioScope!.tools).flat()
-            : undefined,
+          connectorType === 'composio' ? Object.values(composioScope!.tools).flat() : undefined,
         ),
         helper: context.machine,
         status: 'pending',
@@ -5365,6 +5468,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   heartbeatInstitutionalMemoryJob: true,
   completeInstitutionalMemoryJob: true,
   failInstitutionalMemoryJob: true,
+  getInstitutionalContext: true,
+  proposeInstitutionalMemory: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

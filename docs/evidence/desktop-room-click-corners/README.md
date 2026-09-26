@@ -20,8 +20,8 @@ Clicking the `#General` row opened the Room and expanded its corners.
 
 ## After
 
-| Row click: Room opens, corners stay collapsed | Glyph click: corners expand |
-| --- | --- |
+| Row click: Room opens, corners stay collapsed                 | Glyph click: corners expand                                      |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- |
 | ![after: row click](./after-row-click-collapsed-1280x900.png) | ![after: glyph click](./after-glyph-click-expanded-1280x900.png) |
 
 Opening a corner itself as the main-pane route (`/beeline/chat/<corner>?parent=<room>`, e.g.

@@ -323,8 +323,8 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
-  // Only a corner route expands its parent. Opening a Room itself leaves its
-  // corner list collapsed; the row's corner glyph is the one way to open it.
+  // A corner route expands its parent. Opening a Room itself leaves its corner
+  // list collapsed; the row's corner glyph toggles that list.
   React.useEffect(() => {
     const parentId = promotedCornerParentId;
     if (

@@ -8,6 +8,7 @@ import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { loadAppConfig } from '@/sync/appConfig';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { isTauri } from '@/utils/isTauri';
 
 const DEVICE_ID_KEY = '@beeline/mobile-update-receipt/device-id';
 const RECEIPT_TIMEOUT_MS = 7_500;
@@ -19,6 +20,19 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function string(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+export function runningUpdatePlatform(
+  nativePlatform: string,
+  desktopShell: boolean,
+  desktopPlatform: string | undefined,
+): 'ios' | 'android' | 'macos' | 'windows' | 'linux' | null {
+  if (nativePlatform === 'ios' || nativePlatform === 'android') return nativePlatform;
+  if (!desktopShell) return null;
+  if (/mac/i.test(desktopPlatform ?? '')) return 'macos';
+  if (/win/i.test(desktopPlatform ?? '')) return 'windows';
+  if (/linux/i.test(desktopPlatform ?? '')) return 'linux';
+  return null;
 }
 
 /** EAS exposes the update group in manifest metadata on current OTA manifests. */
@@ -54,7 +68,16 @@ async function installationDeviceId(): Promise<string> {
  * device can still close the OTA delivery loop.
  */
 export async function reportRunningUpdateReceipt(identity: Identity): Promise<void> {
-  if (!['android', 'ios'].includes(Platform.OS)) return;
+  const platform = runningUpdatePlatform(
+    Platform.OS,
+    isTauri(),
+    typeof navigator === 'undefined' ? undefined : navigator.platform,
+  );
+  if (!platform) return;
+  // Desktop has no push-gateway receipt path; its observation is a phone
+  // operation through the same authenticated monolith boundary.
+  if (platform !== 'ios' && platform !== 'android' && !getBuzzRuntimeConfig().monolithEnabled)
+    return;
   const receiptUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/update-receipts`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RECEIPT_TIMEOUT_MS);
@@ -63,7 +86,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
     if (getBuzzRuntimeConfig().monolithEnabled) {
       await monolithPhoneOperation('reportRunningUpdate', {
         deviceId: await installationDeviceId(),
-        platform: Platform.OS as 'ios' | 'android',
+        platform,
         ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
         ...(Updates.channel ? { channel: Updates.channel } : {}),
         ...(runningUpdateGroup(Updates.manifest)

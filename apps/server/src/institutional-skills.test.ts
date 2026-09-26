@@ -57,6 +57,10 @@ beforeEach(async () => {
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Procedures')`, [WORKSPACE]);
   await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`,
+    [WORKSPACE],
+  );
+  await database.query(
     `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES
        ($1,$3,'host-1'),($2,$3,'host-2')`,
     [WORKER, OTHER_AGENT, REQUESTER],

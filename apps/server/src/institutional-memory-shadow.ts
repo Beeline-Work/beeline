@@ -176,7 +176,7 @@ export async function enqueueInstitutionalMemoryTurnReview(
       source.requester_identity_id,
       Array.isArray(source.direct_participants) ? 'human_private' : 'workspace_candidate',
       key,
-      input.config.live && rolloutStage !== 'shadow' ? 'live' : 'shadow',
+      input.config.live && rolloutAllowsLive(rolloutStage) ? 'live' : 'shadow',
     ],
   );
   return inserted.rows[0]?.id;
@@ -340,7 +340,7 @@ export async function enqueueInstitutionalMemoryMergeReview(
         source.requester_identity_id,
         key,
         JSON.stringify(context),
-        input.config.live && rolloutStage !== 'shadow' ? 'live' : 'shadow',
+        input.config.live && rolloutAllowsLive(rolloutStage) ? 'live' : 'shadow',
       ],
     )
   ).rows[0]?.id;

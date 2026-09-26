@@ -6,6 +6,7 @@ import {
   completeInstitutionalMemoryJob,
 } from './institutional-memory-shadow.js';
 import {
+  AVAILABILITY_OBSERVATION_MAX_MS,
   INSTITUTIONAL_CONTEXT_TOKEN_TARGET,
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
   applyInstitutionalCuratorProposal,
@@ -421,27 +422,46 @@ describe('weekly institutional curator', () => {
     expect(await stateOf('institutional_memory_items', DUPLICATE)).toBe('active');
     expect(await stateOf('workspace_skills', SKILL)).toBe('active');
 
-    // The host comes back and serves for another 31 days, so aging resumes.
-    const resumed = new Date(NOW.getTime() + 31 * 86_400_000);
+    // The host comes back. Samples at the real cadence credit their spans with
+    // no new gap row, which is what lets aging resume.
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
        VALUES($1,$2,'presence','presence',$3::jsonb,$4)`,
-      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: resumed.getTime() }), resumed],
+      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: NOW.getTime() }), NOW],
     );
-    // One sample standing in for 31 days of continuous 60-second observation.
-    expect(
-      await recordWorkspaceHostAvailability(database, WORKSPACE, resumed, 32 * 86_400_000),
-    ).toBe(true);
-    expect(
+    let observed = NOW;
+    for (let sample = 0; sample < 3; sample += 1) {
+      observed = new Date(observed.getTime() + AVAILABILITY_OBSERVATION_MAX_MS);
+      await database.query(
+        `UPDATE live_outputs SET updated_at=$2 WHERE agent_id=$1 AND kind='presence'`,
+        [AGENT, observed],
+      );
+      expect(await recordWorkspaceHostAvailability(database, WORKSPACE, observed)).toBe(true);
+    }
+    const gapRows = async () =>
       (
         await database.query(
           `SELECT 1 FROM institutional_host_availability_gaps WHERE workspace_id=$1`,
           [WORKSPACE],
         )
-      ).rowCount,
-    ).toBe(1);
+      ).rowCount;
+    expect(await gapRows()).toBe(1);
+
+    // 31 credited days is that same loop repeated: the cursor advanced and no
+    // gap was ever recorded for the span.
+    const resumed = new Date(NOW.getTime() + 31 * 86_400_000);
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=$2
+       WHERE workspace_id=$1`,
+      [WORKSPACE, resumed],
+    );
+    await database.query(
+      `UPDATE live_outputs SET updated_at=$2 WHERE agent_id=$1 AND kind='presence'`,
+      [AGENT, resumed],
+    );
 
     await runInstitutionalCuratorCycle(database, liveConfig, resumed);
+    expect(await gapRows()).toBe(1);
     expect(await stateOf('institutional_memory_items', DUPLICATE)).toBe('stale');
     expect(await stateOf('workspace_skills', SKILL)).toBe('stale');
   });
@@ -557,6 +577,58 @@ describe('weekly institutional curator', () => {
         )
       ).rows[0]?.state,
     ).toBe('stale');
+  });
+
+  it('rotates the weekly job budget across partitions instead of a fixed prefix', async () => {
+    // Profile partitions sort before workspace facts by kind, so a fixed prefix
+    // of one job would starve the shared partition forever.
+    const others = ['1'.repeat(64), '2'.repeat(64)];
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','One'),($2,'human','Two')`,
+      others,
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$2,'member'),($1,NULL,$3,'member'),
+         ($1,$4,$2,'member'),($1,$4,$3,'member')`,
+      [WORKSPACE, others[0], others[1], ROOM],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+          source_message_id,audience_kind,confidence,version,created_by_command_id,curated_at)
+       VALUES
+         ($1,$5,'human_profile_fact',$3,'one-style','Terse updates.','active',$6,$7,
+          'human_profile',0.9,1,'seed-one',NULL),
+         ($2,$5,'human_profile_fact',$4,'two-style','Long updates.','active',$6,$7,
+          'human_profile',0.9,1,'seed-two',NULL)`,
+      [
+        '30000000-0000-4000-8000-000000000311',
+        '30000000-0000-4000-8000-000000000312',
+        others[0],
+        others[1],
+        WORKSPACE,
+        ROOM,
+        MESSAGE,
+      ],
+    );
+    // Every profile partition was curated recently; the shared one never was.
+    await database.query(
+      `UPDATE institutional_memory_items SET curated_at=$2
+       WHERE workspace_id=$1 AND kind='human_profile_fact'`,
+      [WORKSPACE, NOW],
+    );
+
+    await expect(
+      runInstitutionalCuratorCycle(database, { ...liveConfig, dailyJobLimit: 1 }, NOW),
+    ).resolves.toBe(1);
+    expect(
+      (
+        await database.query<{ context: { partition: string } }>(
+          `SELECT context FROM institutional_memory_jobs WHERE trigger_kind='curator'`,
+        )
+      ).rows.map((job) => job.context.partition),
+    ).toEqual(['workspace-facts']);
   });
 
   it('keeps weekly curator jobs inside the shared daily Workspace cap', async () => {

@@ -165,6 +165,14 @@ function workspaceProposal(roomId: string, sourceMessageId: string) {
   };
 }
 
+/** Live memory is per-Workspace enrollment, never the global flag alone. */
+async function enrollLive(workspaceId = WORKSPACE): Promise<void> {
+  await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`,
+    [workspaceId],
+  );
+}
+
 describe('institutional memory phase-0 shadow capture', () => {
   it('is dark by default and enqueues each completed turn at most once when enabled', async () => {
     expect(institutionalMemoryShadowConfigFromEnv({})).toMatchObject({ enabled: false });
@@ -237,6 +245,7 @@ describe('institutional memory phase-0 shadow capture', () => {
   });
 
   it('does not let a shadow-only worker claim a queued live write', async () => {
+    await enrollLive();
     await database.transaction((db) =>
       enqueueInstitutionalMemoryTurnReview(db, {
         roomId: ROOM,
@@ -262,6 +271,51 @@ describe('institutional memory phase-0 shadow capture', () => {
         config,
       ),
     ).rejects.toThrow(/live institutional memory is disabled/);
+  });
+
+  it('serves no live memory to a Workspace nobody enrolled', async () => {
+    await enrollLive();
+    await database.transaction((db) =>
+      enqueueInstitutionalMemoryTurnReview(db, {
+        roomId: ROOM,
+        sourceMessageId: MESSAGE,
+        requestId: 'unenrolled-review',
+        config: liveConfig,
+      }),
+    );
+    const claimed = (await claimInstitutionalMemoryJob(database, AGENT, liveConfig))!;
+    await completeInstitutionalMemoryJob(
+      database,
+      AGENT,
+      {
+        agentId: AGENT,
+        jobId: claimed.id,
+        leaseToken: claimed.leaseToken,
+        proposal: workspaceProposal(ROOM, MESSAGE),
+        usage,
+      },
+      liveConfig,
+    );
+
+    // Withdrawing the enrollment leaves the live env flag on by itself.
+    await database.query(
+      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: MESSAGE,
+      reason: 'human_tag',
+      turnRequestId: 'unenrolled-turn',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'generation-unenrolled');
+    const context = await liveDaemon().execute(
+      'getInstitutionalContext',
+      { roomId: ROOM, requestId: 'unenrolled-turn', generationId: 'generation-unenrolled' },
+      AGENT,
+    );
+    expect(context).toMatchObject({ text: '', itemIds: [], totalBytes: 0 });
   });
 
   it('uses an explicit rollout stage to narrow global enablement', async () => {
@@ -555,6 +609,8 @@ describe('institutional memory phase-0 shadow capture', () => {
   });
 
   it('compounds a correction across agents for its requester while shared facts reach everyone', async () => {
+    await enrollLive();
+    await enrollLive(OTHER_WORKSPACE);
     await database.transaction((db) =>
       enqueueInstitutionalMemoryTurnReview(db, {
         roomId: DM,
@@ -721,6 +777,7 @@ describe('institutional memory phase-0 shadow capture', () => {
   });
 
   it('binds direct proposals to the active command and enforces item CAS', async () => {
+    await enrollLive();
     const command = await createAgentCommand(database, {
       roomId: ROOM,
       agentId: AGENT,
@@ -901,6 +958,7 @@ describe('institutional memory phase-0 shadow capture', () => {
   });
 
   it('tombstones item content and derived events when a source is deleted', async () => {
+    await enrollLive();
     const secondarySource = '6'.repeat(64);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text)

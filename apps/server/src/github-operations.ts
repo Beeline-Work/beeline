@@ -1591,7 +1591,7 @@ export class GitHubOperations {
           commits: pullRequest.commits,
           files: pullRequest.files,
           checks: observedChecks,
-          headSha: mergedPr?.headSha ?? pullRequest.headSha,
+          headSha: pullRequest.headSha ?? mergedPr?.headSha,
           config: this.institutionalMemory,
         });
       }

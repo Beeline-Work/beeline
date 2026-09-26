@@ -68,7 +68,6 @@ export async function recordWorkspaceHostAvailability(
   database: SqlDatabase,
   workspaceId: string,
   now: Date,
-  maxObservationMs = AVAILABILITY_OBSERVATION_MAX_MS,
 ): Promise<boolean> {
   const state = (
     await database.query<{ available: boolean; observed_at: Date | null; created_at: Date }>(
@@ -85,7 +84,7 @@ export async function recordWorkspaceHostAvailability(
   const credited =
     state.available &&
     state.observed_at !== null &&
-    now.getTime() - since.getTime() <= maxObservationMs;
+    now.getTime() - since.getTime() <= AVAILABILITY_OBSERVATION_MAX_MS;
   if (!credited && since.getTime() < now.getTime()) {
     const extended = await database.query(
       `UPDATE institutional_host_availability_gaps SET ended_at=$3
@@ -134,6 +133,8 @@ type CuratorPartition = {
   workspaceId: string;
   key: string;
   audience: 'workspace_candidate' | 'human_private';
+  /** Oldest curation among this partition's candidates; null = never curated. */
+  curatedAt: number | null;
   candidates: CuratorCandidate[];
 };
 
@@ -334,10 +335,11 @@ async function curatorPartitions(
     requester_identity_id: string;
     repository: string | null;
     path: string | null;
+    curated_at: Date | null;
   }>(
     `SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,item.version,
             item.state,item.source_room_id,item.source_message_id,source.author_id requester_identity_id,
-            item.repository,item.path
+            item.repository,item.path,item.curated_at
      FROM institutional_memory_items item
      JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
      JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
@@ -358,10 +360,11 @@ async function curatorPartitions(
     requester_identity_id: string;
     repository: string;
     path: string | null;
+    curated_at: Date | null;
   }>(
     `SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.state,
             skill.source_room_id,job.source_message_id,job.requester_identity_id,
-            skill.repository,skill.path
+            skill.repository,skill.path,skill.curated_at
      FROM workspace_skills skill
      JOIN workspace_skill_versions version
        ON version.skill_id=skill.id AND version.version=skill.current_version
@@ -374,6 +377,12 @@ async function curatorPartitions(
     [workspaceId],
   );
   const groups = new Map<string, CuratorPartition>();
+  const absorb = (partition: CuratorPartition, curatedAt: Date | null): void => {
+    if (!partition.candidates.length) partition.curatedAt = curatedAt?.getTime() ?? null;
+    else if (partition.curatedAt !== null)
+      partition.curatedAt =
+        curatedAt === null ? null : Math.min(partition.curatedAt, curatedAt.getTime());
+  };
   for (const item of memory.rows) {
     const key =
       item.kind === 'workspace_fact'
@@ -383,8 +392,10 @@ async function curatorPartitions(
       workspaceId,
       key,
       audience: item.kind === 'workspace_fact' ? 'workspace_candidate' : 'human_private',
+      curatedAt: null,
       candidates: [],
     };
+    absorb(partition, item.curated_at);
     partition.candidates.push({
       id: item.id,
       targetType: 'memory_item',
@@ -406,8 +417,10 @@ async function curatorPartitions(
       workspaceId,
       key,
       audience: 'workspace_candidate',
+      curatedAt: null,
       candidates: [],
     };
+    absorb(partition, skill.curated_at);
     partition.candidates.push({
       id: skill.id,
       targetType: 'workspace_skill',
@@ -423,10 +436,17 @@ async function curatorPartitions(
     });
     groups.set(key, partition);
   }
-  return [...groups.values()].map((partition) => ({
-    ...partition,
-    candidates: boundedCuratorCandidates(partition.candidates),
-  }));
+  // The weekly job budget is a prefix of this list, so selection must rotate
+  // across partitions the way candidates already rotate within one.
+  return [...groups.values()]
+    .sort(
+      (left, right) =>
+        (left.curatedAt ?? -1) - (right.curatedAt ?? -1) || left.key.localeCompare(right.key),
+    )
+    .map((partition) => ({
+      ...partition,
+      candidates: boundedCuratorCandidates(partition.candidates),
+    }));
 }
 
 /** One idempotent weekly pass: deterministic aging first, then host-side consolidation jobs. */

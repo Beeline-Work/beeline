@@ -56,6 +56,10 @@ beforeEach(async () => {
     OTHER_WORKSPACE,
   ]);
   await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`,
+    [WORKSPACE],
+  );
+  await database.query(
     `INSERT INTO rooms(id,workspace_id,name) VALUES
        ($1,$5,'Output'),($2,$5,'Shared source'),($3,$5,'Requester private'),
        ($4,$6,'Other workspace')`,

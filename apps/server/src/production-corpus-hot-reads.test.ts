@@ -213,6 +213,11 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
       new PGlite(cacheDirectory ? `file://${cacheDirectory}` : undefined),
     );
     await seedCorpus(database);
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')
+       ON CONFLICT(workspace_id) DO UPDATE SET stage='live'`,
+      [WORKSPACE],
+    );
     const count = await database.query<{ count: string }>(
       `SELECT count(*)::text count FROM messages`,
     );

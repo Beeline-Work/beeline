@@ -3,8 +3,9 @@ import type { SqlDatabase } from './database.js';
 export type InstitutionalRolloutStage = 'off' | 'shadow' | 'pilot' | 'live' | 'paused';
 
 /**
- * An absent row preserves the global feature-flag behavior used by phases 0-3.
- * Once a Workspace is enrolled, its stage becomes the narrower authority.
+ * A Workspace with no row is not enrolled. Its stage is the only authority for
+ * serving memory, so the global feature flag can never enable live memory
+ * everywhere at once.
  */
 export async function institutionalWorkspaceRolloutStage(
   database: SqlDatabase,
@@ -19,7 +20,7 @@ export async function institutionalWorkspaceRolloutStage(
 }
 
 export function rolloutAllowsLive(stage: InstitutionalRolloutStage | undefined): boolean {
-  return stage === undefined || stage === 'pilot' || stage === 'live';
+  return stage === 'pilot' || stage === 'live';
 }
 
 export function rolloutAllowsJobs(stage: InstitutionalRolloutStage | undefined): boolean {

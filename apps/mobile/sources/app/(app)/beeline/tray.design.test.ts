@@ -68,7 +68,9 @@ describe('the tray: Needs you and Saved', () => {
   });
 
   it('names both section counts in the header without a PRIVATE label', () => {
-    expect(bookmarks).toContain('trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}');
+    expect(bookmarks).toContain(
+      'trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}',
+    );
     expect(bookmarks).toContain('eyebrow={workspaceName');
     expect(bookmarks).not.toContain('PRIVATE');
   });

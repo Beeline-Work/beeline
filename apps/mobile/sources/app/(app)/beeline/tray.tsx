@@ -133,9 +133,7 @@ export default function TrayScreen() {
   }, [desktop, workspaceId]);
 
   const selectedUnavailable = selected
-    ? bookmarks.some(
-        (bookmark) => bookmark.messageId === selected.messageId && !bookmark.available,
-      )
+    ? bookmarks.some((bookmark) => bookmark.messageId === selected.messageId && !bookmark.available)
     : false;
   useEffect(() => {
     if (!desktop || !client || !selected || selectedUnavailable) {
@@ -288,9 +286,11 @@ export default function TrayScreen() {
         : [{ key: 'needs-empty', type: 'needs-empty' } as const]),
       { key: 'head-saved', type: 'head', title: 'Saved', count: bookmarks.length },
       ...(bookmarks.length
-        ? bookmarks.map(
-            (bookmark): Row => ({ key: `saved-${bookmark.messageId}`, type: 'saved', bookmark }),
-          )
+        ? bookmarks.map((bookmark): Row => ({
+            key: `saved-${bookmark.messageId}`,
+            type: 'saved',
+            bookmark,
+          }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
     ];
   }, [bookmarks, loading, needs]);

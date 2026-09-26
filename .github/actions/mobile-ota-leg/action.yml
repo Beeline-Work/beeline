@@ -64,7 +64,7 @@ runs:
 
     # ---- build -------------------------------------------------------------
     - name: Find a downloadable mobile candidate for this exact release SHA
-      if: inputs.phase == 'build'
+      if: inputs.phase == 'build' || inputs.phase == 'promote'
       id: reuse
       uses: actions/github-script@v7
       with:
@@ -207,6 +207,8 @@ runs:
       with:
         name: mobile-ota-candidate-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: ${{ runner.temp }}
+        run-id: ${{ steps.reuse.outputs.run_id }}
+        github-token: ${{ github.token }}
     - uses: actions/setup-node@v4
       if: inputs.phase == 'promote'
       with:
@@ -232,7 +234,12 @@ runs:
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
         started="$(date +%s)"
         node scripts/ota-release.mjs mark-canary --ledger "$RUN_LEDGER" --status post-promote
-        node scripts/ota-release.mjs promote --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+        node scripts/ota-release.mjs recover-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
+          --result "$RUNNER_TEMP/mobile-ota-recovery.txt" --retry-attempt "${{ inputs.retry_attempt }}" \
+          --run-id "$GITHUB_RUN_ID"
+        if [ "$(cat "$RUNNER_TEMP/mobile-ota-recovery.txt")" = new ]; then
+          node scripts/ota-release.mjs promote --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+        fi
         node scripts/ota-release.mjs assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
           | tee "$RUNNER_TEMP/mobile-ota-promotion-proof.txt"
         node scripts/ota-release.mjs assert-production-list --ledger "$RUN_LEDGER" \

@@ -345,6 +345,11 @@ function exactKeys(
   if (unknown) throw new Error(`${label} has unknown field ${unknown}`);
 }
 
+/** An optional field a model left inapplicable: absent and explicit null agree. */
+function omitted(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
 function boundedText(value: unknown, label: string, maximum: number, bytes = false): string {
   if (typeof value !== 'string' || value.includes('\0')) throw new Error(`${label} is invalid`);
   const normalized = value.trim();
@@ -543,7 +548,7 @@ export function parseInstitutionalMergeReviewProposal(
     throw new Error('institutional merge review proposal version is unsupported');
   }
   let skill: WorkspaceSkillProposal | null = null;
-  if (proposal.skill !== null) {
+  if (!omitted(proposal.skill)) {
     const rawSkill = record(proposal.skill, 'workspace skill proposal');
     exactKeys(
       rawSkill,
@@ -559,15 +564,7 @@ export function parseInstitutionalMergeReviewProposal(
       throw new Error('workspace skill slug is invalid');
     }
     const anchor = record(rawSkill.anchor, 'workspace skill code anchor');
-    // `contentHash` is TOLERATED and dropped, never stored: a host still running
-    // the older prompt would otherwise lose its whole review to an unknown-field
-    // refusal. The model is given no file bytes, so any digest it emits is
-    // asserted rather than computed, and nothing reads one.
-    exactKeys(
-      anchor,
-      ['repository', 'targetCommit', 'path', 'contentHash'],
-      'workspace skill code anchor',
-    );
+    exactKeys(anchor, ['repository', 'targetCommit', 'path'], 'workspace skill code anchor');
     if (
       rawSkill.baseVersion !== null &&
       (!Number.isSafeInteger(rawSkill.baseVersion) || (rawSkill.baseVersion as number) <= 0)
@@ -629,7 +626,7 @@ export function parseInstitutionalMergeReviewProposal(
       summary: boundedText(finding.summary, 'institutional review finding summary', 1_000),
       severity,
       confidence: finding.confidence,
-      ...(finding.path === undefined
+      ...(omitted(finding.path)
         ? {}
         : { path: boundedText(finding.path, 'institutional review finding path', 500) }),
     };
@@ -698,32 +695,29 @@ export function parseInstitutionalCuratorProposal(value: unknown): Institutional
     if (action.action !== 'consolidate' && action.duplicateIds.length !== 0) {
       throw new Error('institutional curator lifecycle action cannot carry duplicates');
     }
-    const body =
-      action.body === undefined
-        ? undefined
-        : boundedText(
-            action.body,
-            'institutional curator body',
-            INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
-            true,
-          );
-    const description =
-      action.description === undefined
-        ? undefined
-        : boundedText(
-            action.description,
-            'institutional curator skill description',
-            WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
-          );
-    const markdown =
-      action.markdown === undefined
-        ? undefined
-        : boundedText(
-            action.markdown,
-            'institutional curator skill markdown',
-            WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
-            true,
-          );
+    const body = omitted(action.body)
+      ? undefined
+      : boundedText(
+          action.body,
+          'institutional curator body',
+          INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+          true,
+        );
+    const description = omitted(action.description)
+      ? undefined
+      : boundedText(
+          action.description,
+          'institutional curator skill description',
+          WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
+        );
+    const markdown = omitted(action.markdown)
+      ? undefined
+      : boundedText(
+          action.markdown,
+          'institutional curator skill markdown',
+          WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+          true,
+        );
     if (
       action.action === 'consolidate' &&
       ((action.targetType === 'memory_item' && (!body || description || markdown)) ||

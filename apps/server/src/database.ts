@@ -3,6 +3,7 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
+import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -1043,10 +1044,6 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
-  -- A kill switch, so it defaults ON: staging a Workspace must not leave it
-  -- serving memory with none of the lifecycle running. Stopping the curator
-  -- without unstaging is what this column is for.
-  curator_enabled boolean NOT NULL DEFAULT true,
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
@@ -1857,17 +1854,23 @@ export async function migrate(database: SqlDatabase): Promise<void> {
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
   // Without this the drained backfill's first probe is a full heap read of the
-  // busiest table on every release. It indexes only unfilled rows, so it is
-  // empty once the backfill completes and the trigger keeps it that way.
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_search_document_backfill_idx
-     ON messages(id) WHERE search_document IS NULL`,
+  // busiest table on every release. It indexes only unfilled conversational
+  // rows, so it is empty once the backfill completes and the trigger keeps it
+  // that way.
+  await createIndexConcurrently(
+    database,
+    'messages_search_document_backfill_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_document_backfill_idx
+     ON messages(created_at DESC)
+     WHERE search_document IS NULL AND presentation='message'`,
   );
   const searchDocuments = await backfillMessageSearchDocuments(database);
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_search_document_idx
+  await createIndexConcurrently(
+    database,
+    'messages_search_document_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_document_idx
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   );
@@ -1899,32 +1902,56 @@ export async function migrate(database: SqlDatabase): Promise<void> {
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
 
 /**
- * Fill `messages.search_document` for rows written before the trigger existed,
- * one bounded primary-key window at a time so no statement holds the table for
- * longer than a batch.
+ * Fill `messages.search_document` for rows written before the trigger existed.
+ *
+ * Only rows `searchInstitutionalHistory` can ever return are filled: it matches
+ * `presentation='message'` inside INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, and a row
+ * older than that window today can never re-enter it, so a document for one is
+ * work with no reader. That is what keeps this off the release's critical path
+ * — the alternative rewrites the busiest table in full behind the release gate.
+ * Batches are bounded by the partial index each UPDATE empties, so no statement
+ * holds the table for longer than one batch.
  */
 export async function backfillMessageSearchDocuments(
   database: SqlDatabase,
   batchSize = MESSAGE_SEARCH_BACKFILL_BATCH,
 ): Promise<number> {
-  let cursor = '';
   let filled = 0;
   for (;;) {
-    const window = await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE id>$1 AND search_document IS NULL ORDER BY id LIMIT $2`,
-      [cursor, batchSize],
-    );
-    const last = window.rows.at(-1)?.id;
-    if (!last) return filled;
     const updated = await database.query(
       `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
-       WHERE id>$1 AND id<=$2 AND search_document IS NULL`,
-      [cursor, last],
+       WHERE id IN (
+         SELECT id FROM messages
+         WHERE search_document IS NULL AND presentation='message'
+           AND created_at>=now()-$1*interval '1 day'
+         ORDER BY created_at DESC LIMIT $2)`,
+      [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
     );
     filled += updated.rowCount;
-    cursor = last;
-    if (window.rows.length < batchSize) return filled;
+    if (updated.rowCount < batchSize) return filled;
   }
+}
+
+/**
+ * A CONCURRENTLY build cancelled mid-flight — the release's own timeout is the
+ * ordinary way — leaves an INVALID index behind, and `IF NOT EXISTS` would then
+ * skip it forever while every reader silently seq-scans. Drop that carcass
+ * first; a valid index is left alone.
+ */
+async function createIndexConcurrently(
+  database: SqlDatabase,
+  name: string,
+  create: string,
+): Promise<void> {
+  const existing = await database.query<{ valid: boolean }>(
+    `SELECT indisvalid valid FROM pg_index
+     WHERE indexrelid=to_regclass($1) AND to_regclass($1) IS NOT NULL`,
+    [name],
+  );
+  const state = existing.rows[0];
+  if (state?.valid) return;
+  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+  await database.query(create);
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

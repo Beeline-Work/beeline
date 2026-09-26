@@ -6,7 +6,10 @@ import {
 } from '@beeline/api-contract/daemon';
 import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
 import type { SqlDatabase } from './database.js';
-import type { InstitutionalMemoryShadowConfig } from './institutional-memory-shadow.js';
+import {
+  DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
 import {
   applyWorkspaceSkillProposal,
   assertRestrictedWorkspaceSkillSafe,
@@ -18,6 +21,8 @@ export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
 /** Exactly one weekly budget's worth of per-partition candidates, never more. */
 export const CURATOR_CANDIDATE_WINDOW =
   DEFAULT_CURATOR_WEEKLY_JOB_LIMIT * INSTITUTIONAL_CURATOR_CANDIDATE_MAX;
+/** How much time one repeat-evidence measurement covers, and its comparison. */
+export const INSTITUTIONAL_REPEAT_WINDOW_DAYS = 28;
 /** The per-turn institutional context budget the rollout gate holds p95 to. */
 export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
 /**
@@ -180,14 +185,16 @@ export interface InstitutionalObjectiveDashboard {
   readonly servedItems: number;
   readonly staleServedItems: number;
   readonly staleServeRate: number;
-  /** Repeats beyond the first, over the correction and review-finding ledgers. */
-  readonly repeatedCorrections: number;
-  readonly repeatedReviewFindings: number;
   /**
-   * False leaves a staged Workspace serving memory with no lifecycle pass at
-   * all, so the dashboard names it rather than leaving the half state silent.
+   * Repeats beyond the first over the correction and review-finding ledgers,
+   * within `repeatWindowDays` and within the equal window before it. The pair is
+   * what makes a reduction readable; neither side is evidence of a cause.
    */
-  readonly curatorEnabled: boolean;
+  readonly repeatWindowDays: number;
+  readonly repeatedCorrections: number;
+  readonly priorRepeatedCorrections: number;
+  readonly repeatedReviewFindings: number;
+  readonly priorRepeatedReviewFindings: number;
   readonly shadowReady: boolean;
   readonly rolloutReady: boolean;
 }
@@ -218,8 +225,9 @@ export async function institutionalObjectiveDashboard(
       served_items: string;
       stale_served_items: string;
       repeated_corrections: string;
+      prior_repeated_corrections: string;
       repeated_review_findings: string;
-      curator_enabled: boolean | null;
+      prior_repeated_review_findings: string;
     }>(
       `SELECT
          (SELECT count(*) FROM institutional_context_serves
@@ -264,20 +272,38 @@ export async function institutionalObjectiveDashboard(
          -- workspace_fact is shared, so two DIFFERENT people correcting one
          -- canonical key is the repeat the system exists to reduce, while a
          -- human_profile_fact only repeats for its own subject.
+         --
+         -- Each counter is WINDOWED, and its immediately preceding window of
+         -- equal length rides alongside it: a lifetime total only ever rises, so
+         -- no single read of one could express the REDUCTION the criteria ask
+         -- for. Two adjacent windows are a difference, not a causal claim.
          (SELECT COALESCE(sum(repeats-1),0) FROM (
             SELECT count(*) repeats FROM institutional_memory_correction_events
-            WHERE workspace_id=$1
+            WHERE workspace_id=$1 AND created_at>=now()-$2*interval '1 day'
             GROUP BY memory_kind,canonical_key,
               CASE WHEN memory_kind='workspace_fact' THEN NULL ELSE requester_identity_id END
             HAVING count(*)>1) repeated) repeated_corrections,
          (SELECT COALESCE(sum(repeats-1),0) FROM (
+            SELECT count(*) repeats FROM institutional_memory_correction_events
+            WHERE workspace_id=$1 AND created_at<now()-$2*interval '1 day'
+              AND created_at>=now()-2*$2*interval '1 day'
+            GROUP BY memory_kind,canonical_key,
+              CASE WHEN memory_kind='workspace_fact' THEN NULL ELSE requester_identity_id END
+            HAVING count(*)>1) repeated) prior_repeated_corrections,
+         (SELECT COALESCE(sum(repeats-1),0) FROM (
             SELECT count(*) repeats FROM institutional_review_findings
             WHERE workspace_id=$1 AND path IS NOT NULL
+              AND created_at>=now()-$2*interval '1 day'
             GROUP BY taxonomy,path
             HAVING count(*)>1) repeated) repeated_review_findings,
-         (SELECT curator_enabled FROM institutional_memory_workspace_rollouts
-          WHERE workspace_id=$1) curator_enabled`,
-      [workspaceId],
+         (SELECT COALESCE(sum(repeats-1),0) FROM (
+            SELECT count(*) repeats FROM institutional_review_findings
+            WHERE workspace_id=$1 AND path IS NOT NULL
+              AND created_at<now()-$2*interval '1 day'
+              AND created_at>=now()-2*$2*interval '1 day'
+            GROUP BY taxonomy,path
+            HAVING count(*)>1) repeated) prior_repeated_review_findings`,
+      [workspaceId, INSTITUTIONAL_REPEAT_WINDOW_DAYS],
     )
   ).rows[0];
   const contextServes = Number(row?.context_serves ?? 0);
@@ -304,9 +330,11 @@ export async function institutionalObjectiveDashboard(
     servedItems,
     staleServedItems,
     staleServeRate: servedItems ? staleServedItems / servedItems : 0,
+    repeatWindowDays: INSTITUTIONAL_REPEAT_WINDOW_DAYS,
     repeatedCorrections: Number(row?.repeated_corrections ?? 0),
+    priorRepeatedCorrections: Number(row?.prior_repeated_corrections ?? 0),
     repeatedReviewFindings: Number(row?.repeated_review_findings ?? 0),
-    curatorEnabled: row?.curator_enabled === true,
+    priorRepeatedReviewFindings: Number(row?.prior_repeated_review_findings ?? 0),
     shadowReady: completedJobs >= 20 && deadJobs === 0,
     rolloutReady:
       completedTurns >= 20 &&
@@ -546,7 +574,7 @@ export async function runInstitutionalCuratorCycle(
   }>(
     `SELECT workspace_id,stage,auto_advance,stale_after_days,archive_after_days,retention_days
      FROM institutional_memory_workspace_rollouts
-     WHERE curator_enabled AND stage IN ('shadow','pilot','live')
+     WHERE stage IN ('shadow','pilot','live')
      ORDER BY workspace_id`,
   );
   const week = utcWeekKey(now);
@@ -575,7 +603,10 @@ export async function runInstitutionalCuratorCycle(
             )
           ).rows[0]?.count ?? 0,
         );
-        const remainingDailyJobs = Math.max(0, (config.dailyJobLimit ?? 50) - jobsToday);
+        const remainingDailyJobs = Math.max(
+          0,
+          (config.dailyJobLimit ?? DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT) - jobsToday,
+        );
         if (remainingDailyJobs === 0) return 0;
         const inserted = await db.query<{ id: string }>(
           `INSERT INTO institutional_curator_cycles(id,workspace_id,cycle_key)

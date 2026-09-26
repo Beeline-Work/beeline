@@ -117,13 +117,12 @@ describe('institutional merge review contract', () => {
       skill: { ...proposal.skill, anchor: { ...proposal.skill.anchor, ...anchor } },
     });
     // The model is given no file bytes, so any digest it emits is asserted, not
-    // computed — and the anchor-stale pass would retire a correct procedure on
-    // the strength of it. The field never survives parsing, valid-looking or not.
+    // computed. There is no such field, and the anchor fails closed on it like
+    // every other unknown key rather than accepting a spelling nothing reads.
     for (const contentHash of ['b'.repeat(64), 'looks-about-right', 'A'.repeat(64), null]) {
-      const parsed = parseInstitutionalMergeReviewProposal(withAnchor({ contentHash }));
-      expect(parsed.skill?.anchor).not.toHaveProperty('contentHash');
-      expect(parsed.skill?.markdown).toBe(proposal.skill.markdown);
-      expect(parsed.findings).toHaveLength(1);
+      expect(() => parseInstitutionalMergeReviewProposal(withAnchor({ contentHash }))).toThrow(
+        /unknown field contentHash/,
+      );
     }
     // An unverifiable path is dropped too, without discarding valid work.
     for (const path of ['/etc/passwd', '../secrets.txt', 'apps/../../outside.ts', 'a//b.ts', 42]) {
@@ -139,6 +138,27 @@ describe('institutional merge review contract', () => {
       parseInstitutionalMergeReviewProposal(withAnchor({ path: 'apps/server/src/database.ts' }))
         .skill?.anchor,
     ).toMatchObject({ path: 'apps/server/src/database.ts' });
+  });
+
+  it('treats an explicit null optional field as absent instead of losing the review', () => {
+    const parsed = parseInstitutionalMergeReviewProposal({
+      ...proposal,
+      findings: [{ ...proposal.findings[0], path: null }],
+    });
+    expect(parsed.findings).toEqual([
+      {
+        taxonomy: proposal.findings[0].taxonomy,
+        summary: proposal.findings[0].summary,
+        severity: proposal.findings[0].severity,
+        confidence: proposal.findings[0].confidence,
+      },
+    ]);
+    expect(parsed.skill?.slug).toBe(proposal.skill.slug);
+    // Findings with no procedure is the ordinary shape of a review that found
+    // nothing worth publishing, and an omitted key means the same as null.
+    expect(parseInstitutionalMergeReviewProposal({ ...proposal, skill: undefined }).skill).toBe(
+      null,
+    );
   });
 
   it('rejects unknown fields, invalid slugs, and descriptions over 60 characters', () => {
@@ -190,6 +210,55 @@ describe('institutional curator contract', () => {
       partition: 'workspace-facts',
       actions: expect.arrayContaining([expect.objectContaining({ action: 'consolidate' })]),
     });
+  });
+
+  it('keeps a partition whose lifecycle action nulls the content it does not replace', () => {
+    // One `"body": null` used to throw, and the throw discarded every other
+    // action in the same partition proposal.
+    expect(
+      parseInstitutionalCuratorProposal({
+        proposalVersion: 1,
+        partition: 'workspace-facts',
+        actions: [
+          {
+            action: 'stale',
+            targetType: 'memory_item',
+            targetId: 'item-1',
+            baseVersion: 2,
+            duplicateIds: [],
+            body: null,
+            description: null,
+            markdown: null,
+            rationale: 'Nothing has cited it in months.',
+          },
+          {
+            action: 'retain',
+            targetType: 'memory_item',
+            targetId: 'item-2',
+            baseVersion: 1,
+            duplicateIds: [],
+            rationale: 'Still current.',
+          },
+        ],
+      }).actions,
+    ).toEqual([
+      {
+        action: 'stale',
+        targetType: 'memory_item',
+        targetId: 'item-1',
+        baseVersion: 2,
+        duplicateIds: [],
+        rationale: 'Nothing has cited it in months.',
+      },
+      {
+        action: 'retain',
+        targetType: 'memory_item',
+        targetId: 'item-2',
+        baseVersion: 1,
+        duplicateIds: [],
+        rationale: 'Still current.',
+      },
+    ]);
   });
 
   it('rejects consolidation without duplicates and lifecycle actions with replacement text', () => {

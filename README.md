@@ -151,9 +151,8 @@ harness skills. Serving live memory requires an explicit
 `shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent
 weekly curator ages and retains items, queues audience-partitioned consolidation on authorized user
 hosts, honors Workspace job/token budgets, and advances an opted-in cohort only when its objective
-dashboard clears the rollout gate. That curator is behind its own kill switch: it runs only for a
-Workspace whose row also sets `curator_enabled`, so staging a Workspace never starts aging by
-itself and clearing one column stops it without unstaging.
+dashboard clears the rollout gate. `stage` is the one enablement axis: `paused` stops the curator
+without unstaging, and `off` removes the Workspace from every lane.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 

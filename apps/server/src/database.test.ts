@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
+import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import {
   assertSchemaCurrent,
@@ -171,11 +172,29 @@ describe('message search vectors', () => {
     // The trigger indexed every insert without a table rewrite.
     expect(await searchable()).toBe(25);
 
+    // A row older than the search window can never be returned by a search, so
+    // the release does not pay to vectorize it. This is the whole reason the
+    // backfill is not a full rewrite of the busiest table behind the gate.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('ancient',$1,$2,'release marker ancient',
+              now()-($3+30)*interval '1 day')`,
+      [room, 'a'.repeat(64), INSTITUTIONAL_HISTORY_MAX_AGE_DAYS],
+    );
+
     // Rows written before the column existed carry no vector until the backfill.
     await database.query(`UPDATE messages SET search_document=NULL`);
     expect(await searchable()).toBe(0);
     expect(await backfillMessageSearchDocuments(database, 10)).toBe(25);
     expect(await searchable()).toBe(25);
+    expect(
+      (
+        await database.query<{ document: string | null }>(
+          `SELECT search_document::text document FROM messages WHERE id='ancient'`,
+        )
+      ).rows[0]?.document,
+    ).toBe(null);
+
     // A filled table's single probe must not read the heap: the partial index
     // over unfilled rows is empty, so it answers without touching messages.
     await database.query(
@@ -189,7 +208,10 @@ describe('message search vectors', () => {
       (
         await database.query<Record<string, unknown>>(
           `EXPLAIN (FORMAT JSON)
-           SELECT id FROM messages WHERE id>'' AND search_document IS NULL ORDER BY id LIMIT 2000`,
+           SELECT id FROM messages
+           WHERE search_document IS NULL AND presentation='message'
+             AND created_at>=now()-${INSTITUTIONAL_HISTORY_MAX_AGE_DAYS}*interval '1 day'
+           ORDER BY created_at DESC LIMIT 2000`,
         )
       ).rows[0]?.['QUERY PLAN'],
     );

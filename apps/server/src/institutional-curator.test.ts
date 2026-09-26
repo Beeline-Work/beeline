@@ -11,6 +11,7 @@ import {
   INSTITUTIONAL_CURATOR_CANDIDATE_MAX,
   INSTITUTIONAL_CONTEXT_TOKEN_TARGET,
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
+  INSTITUTIONAL_REPEAT_WINDOW_DAYS,
   applyInstitutionalCuratorProposal,
   institutionalObjectiveDashboard,
   recordWorkspaceHostAvailability,
@@ -74,9 +75,9 @@ beforeEach(async () => {
   );
   await database.query(
     `INSERT INTO institutional_memory_workspace_rollouts
-       (workspace_id,stage,auto_advance,curator_enabled,stale_after_days,archive_after_days,
+       (workspace_id,stage,auto_advance,stale_after_days,archive_after_days,
         retention_days,availability_observed_at)
-     VALUES($1,'pilot',true,true,30,60,120,$2)`,
+     VALUES($1,'pilot',true,30,60,120,$2)`,
     [WORKSPACE, NOW],
   );
   await database.query(
@@ -1225,7 +1226,6 @@ describe('weekly institutional curator', () => {
       servedItems: 3,
       staleServedItems: 1,
       staleServeRate: 1 / 3,
-      curatorEnabled: true,
     });
 
     // Aging DUPLICATE after the serve must not turn that serve retroactively
@@ -1240,15 +1240,6 @@ describe('weekly institutional curator', () => {
       staleServedItems: 1,
       staleServeRate: 1 / 3,
     });
-
-    // A Workspace staged live with the curator gate shut says so, rather than
-    // silently running none of the lifecycle.
-    await database.query(
-      `UPDATE institutional_memory_workspace_rollouts SET curator_enabled=false
-       WHERE workspace_id=$1`,
-      [WORKSPACE],
-    );
-    expect((await institutionalObjectiveDashboard(database, WORKSPACE)).curatorEnabled).toBe(false);
   });
 
   it('counts repeats beyond the first in the correction and review ledgers', async () => {
@@ -1320,11 +1311,37 @@ describe('weekly institutional curator', () => {
       );
     }
 
+    // Three more corrections of one key land in the PRIOR window, and two in
+    // the window before that — old enough to belong to neither measurement.
+    for (const [index, age] of [
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS + 2,
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS + 3,
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS + 4,
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS * 2 + 5,
+      INSTITUTIONAL_REPEAT_WINDOW_DAYS * 2 + 6,
+    ].entries()) {
+      const jobId = await job(`aged-${index}`);
+      await database.query(
+        `INSERT INTO institutional_memory_correction_events
+         (id,workspace_id,requester_identity_id,job_id,source_room_id,source_message_id,
+          canonical_key,body,memory_kind,classifier_version,confidence,created_at)
+         VALUES($1,$2,$3,$4,$5,$6,'aged-key','A correction.','workspace_fact','v1',0.9,
+                now()-$7*interval '1 day')`,
+        [randomUUID(), WORKSPACE, HUMAN, jobId, ROOM, MESSAGE, age],
+      );
+    }
+
     // shared-key: 2 events, 1 repeat. repeated-key for HUMAN: 2 events, 1
     // repeat. repeated-key for `other`: 1 event, no repeat. other-key: none.
+    // The prior window holds 3 aged-key events (2 repeats); the pair before it
+    // is outside both windows and contributes to neither, so the reduction the
+    // criteria ask for is readable from one dashboard read.
     expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      repeatWindowDays: INSTITUTIONAL_REPEAT_WINDOW_DAYS,
       repeatedCorrections: 2,
+      priorRepeatedCorrections: 2,
       repeatedReviewFindings: 2,
+      priorRepeatedReviewFindings: 0,
     });
   });
 

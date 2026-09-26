@@ -514,6 +514,29 @@ export class GitHubOperations {
     return { token: value.token, expiresAt: new Date(value.expiresAt).getTime() };
   }
 
+  /**
+   * The installation token, repository, and default branch behind a corner or
+   * Room addressed by either id.
+   *
+   * A generated procedure's source Room is the CORNER it came out of, while an
+   * installation token is minted for the top-level Room only, so the lookup
+   * walks to the corner's parent — the same authority `roomToken` requires. It
+   * deliberately does not filter archived Rooms: a code-anchor check runs long
+   * after the corner that produced the procedure has been archived away.
+   */
+  async roomAnchorTarget(roomId: string) {
+    const parentId = (
+      await this.database.query<{ id: string }>(
+        `SELECT COALESCE(parent.id,own.id) id FROM rooms own
+         LEFT JOIN rooms parent ON parent.id=own.parent_id
+         WHERE own.id=$1`,
+        [roomId],
+      )
+    ).rows[0]?.id;
+    if (!parentId) throw new Error('GitHub repository installation not found');
+    return this.roomWorkflowTarget(parentId);
+  }
+
   private async roomWorkflowTarget(roomId: string) {
     const row = (
       await this.database.query<{

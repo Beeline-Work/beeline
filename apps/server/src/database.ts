@@ -123,7 +123,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 6;
+export const REQUIRED_SCHEMA_VERSION = 7;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -975,6 +975,21 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   UNIQUE(workspace_id,slug)
 );
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS curated_at timestamptz;
+-- The git blob id of the anchored file AT the recorded commit, filled by the
+-- server's own GitHub read (never asserted by a model), plus the outcome of the
+-- last comparison against the repository's current code. A procedure whose
+-- anchored file no longer matches is stale advice whatever its age, so the
+-- anchor pass and the aging pass both end in the same state vocabulary.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS code_content_hash text;
+ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_code_content_hash_check;
+ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_code_content_hash_check
+  CHECK (code_content_hash IS NULL OR code_content_hash ~ '^[0-9a-f]{40}$');
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_checked_at timestamptz;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_at timestamptz;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_reason text;
+ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_anchor_stale_reason_check;
+ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason_check
+  CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
 

@@ -14,6 +14,10 @@ import {
   applyWorkspaceSkillProposal,
   assertRestrictedWorkspaceSkillSafe,
 } from './institutional-skills.js';
+import {
+  refreshWorkspaceSkillAnchors,
+  type InstitutionalSkillAnchorSource,
+} from './institutional-skill-anchors.js';
 
 export const DEFAULT_CURATOR_WEEKLY_JOB_LIMIT = 20;
 export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
@@ -581,6 +585,7 @@ export async function runInstitutionalCuratorCycle(
   database: SqlDatabase,
   config: InstitutionalMemoryShadowConfig,
   now = new Date(),
+  options: { readonly anchors?: InstitutionalSkillAnchorSource } = {},
 ): Promise<number> {
   if (!config.enabled) return 0;
   const rollouts = await database.query<{
@@ -602,6 +607,21 @@ export async function runInstitutionalCuratorCycle(
     const cycleKey = `weekly:${week}`;
     let workspaceQueued: number;
     try {
+      // Anchors are checked before the locked transaction, never inside it: the
+      // comparison is network I/O and the lock is the one every settling turn in
+      // this Workspace also takes. Like aging, an anchor contradiction only
+      // matters once the Workspace can actually serve, so the shadow stage is
+      // left alone.
+      if (config.live && rollout.stage !== 'shadow') {
+        try {
+          await refreshWorkspaceSkillAnchors(database, rollout.workspace_id, options.anchors, now);
+        } catch (error) {
+          console.error(
+            `[server] institutional skill anchor pass failed (${rollout.workspace_id}):`,
+            error,
+          );
+        }
+      }
       await recordWorkspaceHostAvailability(database, rollout.workspace_id, now);
       workspaceQueued = await database.transaction(async (db) => {
         await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [

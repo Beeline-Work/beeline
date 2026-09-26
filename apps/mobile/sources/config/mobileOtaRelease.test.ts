@@ -2043,6 +2043,11 @@ esac
       'RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60',
     );
     expect(unifiedReleaseScript).toContain('RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60');
+    // A macOS helper release keeps its own 150-minute allowance (PR #1741).
+    expect(unifiedWorkflow).toContain('--helper-macos-build-ran "$helper_macos_build_ran"');
+    expect(unifiedReleaseScript).toContain(
+      'RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS = 150 * 60',
+    );
     expect(unifiedReleaseScript).toContain("checkpoint?.component === 'mobile-ota' && checkpoint.state === 'checked'");
     expect(unifiedReleaseScript).toContain('const otaElapsedSeconds = otaCompletedAt === undefined');
     expect(unifiedReleaseScript).toContain('const failureClass = otaElapsedSeconds >= budgetSeconds');

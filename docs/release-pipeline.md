@@ -139,14 +139,20 @@ Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
-Normal selective attempts have a 20-minute dispatch-to-result budget. An attempt
+Normal selective attempts spend their 20-minute budget from dispatch to the
+`mobile_ota` **completion** checkpoint, not to the end of the whole run: the
+native, desktop, and website legs finish after the phone can already receive the
+update, so they no longer count against the fix-to-phone promise. An attempt
 that built a store binary or ran the emulator proof is allowed 60 minutes, and
 one that built the macOS helper bundles 150 - a cold `cargo build --release` on
 the one self-hosted Intel Mac that the iOS leg also holds is queue time, not a
-missed budget. Component jobs otherwise have shorter explicit timeouts and
-network smoke checks have second-scale limits. The final index records outcome,
-duration, selected/carried components, and a failure class (`budget` or the
-unfinished component list).
+missed budget. When no OTA completion checkpoint exists the whole-run elapsed
+time stands in for it. Separately the whole run has a 45-minute soft limit:
+exceeding it never fails the attempt or blocks the release record, it only marks
+the attempt **slow** in the summary. Component jobs otherwise have shorter
+explicit timeouts and network smoke checks have second-scale limits. The final
+index records outcome, duration, selected/carried components, and a failure
+class (`budget` or the unfinished component list).
 
 ## Reliability measurement
 

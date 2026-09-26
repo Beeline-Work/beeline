@@ -2207,6 +2207,7 @@ export class PhoneService {
         selected_model: string | null;
         selected_effort: string | null;
         model_unavailable: 'model' | 'effort' | 'selection' | null;
+        harness_kind: string | null;
         yolo_mode: boolean;
         yolo_forced_off: boolean;
         yolo_set_by_name: string | null;
@@ -2221,7 +2222,7 @@ export class PhoneService {
         owner_handle: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
-                (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
+                a.harness_kind,(SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
@@ -2308,6 +2309,7 @@ export class PhoneService {
           }
         : {}),
       catalog: config?.model_catalog ?? [],
+      ...(config?.harness_kind ? { harness: config.harness_kind } : {}),
       commands: config?.commands ?? [],
       ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
       ...(config?.selected_model || config?.selected_effort
@@ -2751,7 +2753,7 @@ export class PhoneService {
          VALUES($1,$2,$3::jsonb,$4,$5,$6,$7)
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
            selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
-           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
+           model_catalog='[]'::jsonb,model_unavailable=NULL,harness_kind=NULL,commands='[]'::jsonb,
            schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,machine_id=EXCLUDED.machine_id,
@@ -5909,7 +5911,7 @@ export class PhoneService {
       );
       await database.query(
         `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
-           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
+           model_catalog='[]'::jsonb,model_unavailable=NULL,harness_kind=NULL,commands='[]'::jsonb,
            schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,updated_at=now()

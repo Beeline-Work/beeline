@@ -8696,6 +8696,27 @@ describe('monolith integration', () => {
     expect(isAgentDetailView(view)).toBe(true);
   });
 
+  it('names the harness whose catalog the daemon posted, and ignores a malformed one', async () => {
+    const catalog = [
+      { id: 'model', category: 'model', options: [{ id: 'claude-opus-5' }, { id: 'gpt-5.6' }] },
+    ];
+    const post = (harness: unknown) =>
+      daemonOperation('postAgentModelCatalog', {
+        agentId: AGENT,
+        workspaceId: WORKSPACE,
+        options: catalog,
+        harness,
+      });
+    expect((await post('cursor')).status).toBe(200);
+    const phone = new PhoneService(database, 'http://placeholder');
+    const view = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
+    expect(view?.harness).toBe('cursor');
+    expect(isAgentDetailView(view)).toBe(true);
+    // A value that is not a harness word never replaces the one on record.
+    expect((await post('<script>')).status).toBe(200);
+    expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.harness).toBe('cursor');
+  });
+
   it('lets any workspace member invite their own agent', async () => {
     const memberToken = await phoneToken('pairing-member');
     const memberId = createHash('sha256').update('github:pairing-member').digest('hex');

@@ -794,6 +794,12 @@ export type AgentDetailView = {
    */
   readonly seededSoul?: string;
   readonly catalog: readonly AgentModelConfigOption[];
+  /**
+   * The harness kind that advertised `catalog`, as its helper reported it
+   * (`cursor`, `claude`, `codex`, ...). Display only; absent until a helper
+   * that reports it posts a catalog.
+   */
+  readonly harness?: string;
   /** Full latest ACP command snapshot. Empty means the harness advertises none. */
   readonly commands?: readonly AgentComposerCommand[];
   readonly runtimeSelection?: AgentModelSelection;

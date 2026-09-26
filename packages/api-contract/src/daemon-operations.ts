@@ -710,6 +710,11 @@ export type PostAgentModelCatalogInput = AgentInput & {
   readonly selection?: { readonly model?: string; readonly effort?: string };
   /** Startup validation verdict for the persisted selection. */
   readonly unavailable?: 'model' | 'effort' | 'selection';
+  /**
+   * The harness kind this catalog came from (`cursor`, `claude`, `codex`, ...),
+   * so a reader can see whose list it is. Display only; it grants nothing.
+   */
+  readonly harness?: string;
 };
 export type PostCornerLifecycleInput = CornerInput & {
   readonly status: string;

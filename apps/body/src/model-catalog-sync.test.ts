@@ -186,6 +186,32 @@ describe('syncAgentModelCatalog', () => {
     ]);
   });
 
+  it('names the harness the catalog came from, and re-posts once when it starts to', async () => {
+    const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
+    const api = fakeApi();
+    const base = {
+      api: api as never,
+      agentEnv: {},
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeDir,
+      fetchCatalog: async () => ({ catalog: [] }),
+      log: vi.fn(),
+    };
+
+    // A helper from before the harness was reported leaves a hash without it.
+    expect(await syncAgentModelCatalog({ ...base, agent: { command: 'agent', args: [] } })).toBe(
+      'posted',
+    );
+    expect(api.posted.at(-1)).not.toHaveProperty('harness');
+
+    const cursor = { command: 'cursor-agent-acp', args: [], kind: 'cursor' as const };
+    expect(await syncAgentModelCatalog({ ...base, agent: cursor })).toBe('posted');
+    expect(api.posted.at(-1)).toMatchObject({ harness: 'cursor', options: [] });
+    expect(await syncAgentModelCatalog({ ...base, agent: cursor })).toBe('unchanged');
+    expect(api.posted).toHaveLength(2);
+  });
+
   it('publishes the startup-unavailable mark while probing the default catalog', async () => {
     const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
     const api = fakeApi({ model: 'claude-fable-5-1[1m]' });

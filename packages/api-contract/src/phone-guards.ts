@@ -136,6 +136,11 @@ function field<K extends string, V>(
     : ({ [key]: value } as { [P in K]: Exclude<V, undefined> });
 }
 
+/** A harness kind is a short lowercase word; anything else reads as absent. */
+function harnessKind(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(value) ? value : undefined;
+}
+
 function oneOf<const T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value)
     ? (value as T)
@@ -1674,6 +1679,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
       nonempty(item.avatarGenerationId) ? item.avatarGenerationId : undefined,
     ),
     ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),
+    ...field('harness', harnessKind(item.harness)),
     ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
     ...field('selected', readModelSelection(item.selected)),
     ...field('modelUnavailable', oneOf(item.modelUnavailable, ['model', 'effort', 'selection'])),

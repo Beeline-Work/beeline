@@ -1514,6 +1514,26 @@ describe('Members workspace management', () => {
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
 
+  it('names the runtime whose catalog the Model row offers', async () => {
+    state.agent = { ...baseAgent(), harness: 'cursor' };
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: 'model-axis-label-model' }).props.children).toBe(
+      'Model · Cursor',
+    );
+    expect(renderer.root.findByProps({ testID: 'model-axis-label-effort' }).props.children).toBe(
+      'Effort',
+    );
+  });
+
+  it('keeps the bare Model label until a helper reports its runtime', async () => {
+    const renderer = await render();
+    await openAgentManagement(renderer);
+    expect(renderer.root.findByProps({ testID: 'model-axis-label-model' }).props.children).toBe(
+      'Model',
+    );
+  });
+
   it('draws a removed agent nowhere: no row, no count, no open detail', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);

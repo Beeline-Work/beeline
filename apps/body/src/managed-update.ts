@@ -17,6 +17,7 @@ import {
   type UpdateAttemptRecord,
 } from './self-update.js';
 import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
+import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
 import { convergeTrustySquireBrokerService } from './systemd.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
@@ -319,6 +320,12 @@ export class ManagedUpdateHandoff {
       // would otherwise keep its PATH-less unit. Best-effort.
       if (process.platform === 'linux' && this.#env.BEELINE_SYSTEMD_USER !== '0') {
         await convergeTrustySquireBrokerService({
+          libDir: this.#layout.libDir,
+          env: this.#env,
+          log: (line) => console.log(line),
+        });
+      } else if (process.platform === 'darwin' && this.#env.BEELINE_LAUNCHD_USER !== '0') {
+        await convergeLaunchdTrustySquireBrokerService({
           libDir: this.#layout.libDir,
           env: this.#env,
           log: (line) => console.log(line),
@@ -717,7 +724,7 @@ export async function gateManagedSuccessor(input: {
   }
 }
 
-/** One rollback, without self-spawning; systemd owns the next process. */
+/** One rollback, without self-spawning; the native service manager owns the next process. */
 export async function rollbackFailedSuccessor(
   layout: BeelineInstallLayout,
   runtimeDir?: string,

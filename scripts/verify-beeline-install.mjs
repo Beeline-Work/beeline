@@ -186,7 +186,15 @@ async function verifySquireProxy(proxyPath, cwd, env) {
 async function main() {
   const platform = requestedPlatform();
   if (!platform) fail('unsupported host platform');
-  const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'beeline-bare-install-'));
+  const retainedRoot = process.env.BEELINE_INSTALL_VERIFY_ROOT?.trim();
+  const temporaryRoot = retainedRoot
+    ? resolve(retainedRoot)
+    : await mkdtemp(resolve(tmpdir(), 'beeline-bare-install-'));
+  if (retainedRoot) {
+    // Acceptance jobs consume the exact installation after this probe. Refuse
+    // an existing target instead of deleting a caller-selected directory.
+    await mkdir(temporaryRoot);
+  }
   const binDir = resolve(temporaryRoot, 'prefix', 'bin');
   const libDir = resolve(temporaryRoot, 'prefix', 'lib', 'beeline');
   const bareCwd = resolve(temporaryRoot, 'no-repository');
@@ -396,7 +404,7 @@ async function main() {
     console.log(`verify-beeline-install: ACP read-only session ${readonlySession.sessionId}`);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
-    await rm(temporaryRoot, { recursive: true, force: true });
+    if (!retainedRoot) await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 

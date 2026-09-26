@@ -648,14 +648,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           const liveRuntime = await readRuntimeRecord(configPath);
           liveRuntime.sandbox = 'off';
           await writeRuntimeRecord(liveRuntime);
+          const installedEntrypoint = process.env.BEELINE_ACCEPTANCE_CLI_ENTRYPOINT?.trim();
+          const installedLibDir = process.env.BEELINE_ACCEPTANCE_LIB_DIR?.trim();
+          const installedReadonlyMcp = process.env.BEELINE_ACCEPTANCE_READONLY_MCP?.trim();
           return launchRuntimeDaemon(configPath, {
-            entrypoint: fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
+            entrypoint:
+              installedEntrypoint || fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
             env: {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
+              BEELINE_LAUNCHD_USER: '0',
               PATH: `${supervisorRoot}:${process.env.PATH ?? ''}`,
               BUZZ_DEV_MCP_BIN: '/bin/false',
-              BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(new URL('../dist/read-only-mcp.js', import.meta.url)),
+              ...(installedLibDir ? { BEELINE_LIB_DIR: installedLibDir } : {}),
+              ...(installedReadonlyMcp
+                ? { BEELINE_READONLY_MCP_BIN: installedReadonlyMcp }
+                : {
+                    BEELINE_READONLY_MCP_SCRIPT: fileURLToPath(
+                      new URL('../dist/read-only-mcp.js', import.meta.url),
+                    ),
+                  }),
               XDG_STATE_HOME: supervisorRoot,
             },
           });

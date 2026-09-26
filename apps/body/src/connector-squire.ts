@@ -55,11 +55,15 @@
  * expressed against the `SquireMcpClient` interface so tests drive a mocked
  * Squire and no test touches a real Squire account.
  */
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import {
+  LAUNCHD_BROKER_LABEL,
+  launchdUserDomain,
+} from './launchd.js';
 import { squireHostPaths, squireHostRewriteEnv, TRUSTY_SQUIRE_BROKER_UNIT_NAME } from './squire-host.js';
 import type {
   ConnectionDetail,
@@ -227,7 +231,15 @@ function readLinuxProcessGroup(pid: number): number | undefined {
   }
 }
 
-function readLinuxParentPid(pid: number): number | undefined {
+function readProcessParentPid(pid: number): number | undefined {
+  if (process.platform === 'darwin') {
+    try {
+      const parent = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
+      return Number.isSafeInteger(parent) && parent > 0 ? parent : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const close = stat.lastIndexOf(')');
@@ -247,12 +259,19 @@ function brokerOwnsClaim(owner: SquireProfileLockOwner, brokerPid: number): bool
   while (pid !== undefined && !seen.has(pid)) {
     if (pid === brokerPid) return true;
     seen.add(pid);
-    pid = readLinuxParentPid(pid);
+    pid = readProcessParentPid(pid);
   }
   return false;
 }
 
 async function brokerMainPid(run: ShellRunner): Promise<number | undefined> {
+  if (process.platform === 'darwin') {
+    const result = await run('launchctl', [
+      'print', `${launchdUserDomain()}/${LAUNCHD_BROKER_LABEL}`,
+    ]);
+    const pid = Number(result.stdout.match(/^\s*pid\s*=\s*(\d+)\s*$/m)?.[1] ?? '0');
+    return result.code === 0 && Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+  }
   const result = await run('systemctl', [
     '--user', 'show', '--property=MainPID', '--value', TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   ]);

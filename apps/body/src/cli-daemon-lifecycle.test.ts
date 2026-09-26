@@ -45,7 +45,7 @@ describe('daemon lifecycle exits', () => {
     });
     expect(result.code).toBe(UNKNOWN_AGENT_EXIT_STATUS);
     expect(result.output).toContain('unknown agent');
-    expect(result.output).toContain('refusing systemd restart loop');
+    expect(result.output).toContain('refusing service restart loop');
   }, 15_000);
 
   it('reconciles enabled orphan units without touching an enabled live-runtime unit', async () => {

@@ -68,18 +68,28 @@ restart. Release-time smoke proves the published package and manifest. Fleet
 uptake is asynchronous post-release observability and never blocks delivery.
 
 The PR gate `MAC HELPER ACCEPTANCE` runs on the repository's self-hosted Intel
-Mac. It performs a fresh installer run, exercises launchd crash restart and a
+Mac, on its own path filter alone (a shared-package or unmapped-path change
+does not widen onto that one machine). It performs a fresh installer run, exercises launchd crash restart and a
 bootout/bootstrap cycle (the closest non-destructive CI equivalent to a
 logout/login), verifies the terminal exit-status contract, pairs against the
 in-process monolith, observes a Room answer, and exercises `open_corner` with
 the deterministic ACP fixture. The native Apple-silicon release build runs its
-same installer/ACP/CodeGraph bundle proof on GitHub's hosted arm64 Mac runner.
+same installer/ACP/CodeGraph bundle proof on GitHub's hosted arm64 Mac runner,
+which is where the Apple-silicon bundle is proven; `MAC ARM BUNDLE (on demand)`
+is a dispatch lane for reproducing it, not a pull-request gate.
 
 macOS has no bubblewrap namespaces. The helper therefore uses the existing
 `bwrap`-unavailable fallback: it logs `harness OS sandbox UNAVAILABLE`, runs ACP
 children without an OS-level filesystem sandbox, and relies on the permission
 handler for the Room read-only rule. This is the same behavior as a Linux host
 without a working `bwrap`; this release adds no substitute sandbox.
+
+Having no bubblewrap also makes one product behavior reachable on macOS that a
+Linux host with a working `bwrap` never sees: a granted command run in a
+TOP-LEVEL Room is refused with `ROOM_SANDBOX_UNAVAILABLE`, because a Room run
+is sandboxed or nothing (C94 fail-closed). Corner grants are unaffected — they
+run on the host by design — so `run_granted_command` works in corners and
+refuses in Rooms on every Mac.
 
 Two supervision guarantees the Linux systemd unit provides have no launchd
 counterpart, and are accepted platform gaps rather than omissions. Agent

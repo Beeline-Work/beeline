@@ -210,15 +210,12 @@ export type SquireProfileClaim =
     };
 
 /**
- * Squire records a darwin owner's birth as `darwin:<ps -o lstart=>` with runs
- * of whitespace collapsed (its own `readProcessStartTime`), so this reading has
- * to produce the identical token or a live owner would read as a reused pid.
+ * Linux only, on purpose: a birth token this reading cannot produce is compared
+ * byte-for-byte against the one Squire wrote, and a mismatch would read a LIVE
+ * foreign holder as a reused pid and clear its claim. Elsewhere the absence of
+ * pid-reuse detection keeps `lockOwnerIsAlive` fail-safe.
  */
 function readProcessStartTime(pid: number): string | undefined {
-  if (process.platform === 'darwin') {
-    const started = readPsField(pid, 'lstart=')?.replace(/\s+/g, ' ');
-    return started ? `darwin:${started}` : undefined;
-  }
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const close = stat.lastIndexOf(')');

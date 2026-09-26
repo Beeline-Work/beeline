@@ -306,7 +306,6 @@ export async function installLaunchdAgentService(
   options: {
     env?: NodeJS.ProcessEnv;
     run?: LaunchdRunner;
-    start?: boolean;
     waitTimeoutMs?: number;
     invocationPath?: string;
   } = {},
@@ -329,7 +328,6 @@ export async function installLaunchdAgentService(
   const before = await launchdStatus(run, target);
   await bootoutIfLoaded(run, target);
   await run(['enable', target]);
-  if (options.start === false) return 0;
   // `RunAtLoad` starts the job as part of bootstrap, and the job was booted
   // out above, so there is nothing left for a `kickstart -k` to replace.
   await run(['bootstrap', domain, plistPath]);

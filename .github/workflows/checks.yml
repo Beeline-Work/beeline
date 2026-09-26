@@ -1,7 +1,7 @@
 # The consolidated PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and must stay stable: TYPECHECK, SHARED PACKAGE
-# TESTS, BODY SUITE, MAC HELPER ACCEPTANCE, MAC ARM BUNDLE, DEAD CODE,
+# TESTS, BODY SUITE, MAC HELPER ACCEPTANCE, DEAD CODE,
 # PUSH-GATEWAY SUITE, MOBILE SUITE,
 # MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
 # STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, APP LINK ASSOCIATIONS,
@@ -16,6 +16,11 @@
 #   apps/mobile          → MOBILE SUITE + MOBILE-EXPORT REACHABILITY
 #   packages/**          → every path-filtered job (imported by every app)
 #   any path in no module → every path-filtered job (fail closed)
+# MAC HELPER ACCEPTANCE is the exception: it holds the repository's one
+# self-hosted Intel Mac, so it follows its own `macHelper` filter alone and is
+# never widened by run-everything. The Apple-silicon bundle is proven by the
+# release's own `helper_macos` leg; MAC ARM BUNDLE (on demand) is a dispatch
+# lane, not a PR context.
 # A skipped required job uses a job-level `if:` so GitHub reports the check
 # as skipped-and-satisfied. Never put a required check behind a workflow-level
 # `on.pull_request.paths` filter: that omits the check entirely and the PR
@@ -256,7 +261,7 @@ jobs:
             fi
           }
           set_out body "$BODY_MODULE"
-          set_out macHelper "$MAC_HELPER"
+          echo "macHelper=$MAC_HELPER" >> "$GITHUB_OUTPUT"
           set_out pushGateway "$PUSH_GATEWAY_MODULE"
           set_out mobileSuite "$MOBILE_MODULE"
           set_out mobileExportReachability "$MOBILE_MODULE"
@@ -456,14 +461,9 @@ jobs:
           BEELINE_LAUNCHD_USER: '0'
         run: npx vitest run src/fresh-room-discovery.integration.test.ts
 
-  mac-arm-bundle:
-    name: MAC ARM BUNDLE
-    needs: changes
-    if: >-
-      !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.macHelper == 'true') ||
-        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-arm-bundle'))
-      )
+  mac-arm-bundle-on-demand:
+    name: MAC ARM BUNDLE (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-arm-bundle')
     runs-on: macos-15
     timeout-minutes: 25
     steps:

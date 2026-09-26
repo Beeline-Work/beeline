@@ -452,6 +452,153 @@ describe('connect_app', () => {
     expect(await routes()).toHaveLength(2);
   });
 
+  it('refuses a Squire call that names a disconnected app or two apps, whatever else it names', async () => {
+    const squireId = await connectSquire();
+    const daemon = daemonWith(fakeRegistry([linearServer]).client);
+    const linear = (await daemon.execute(
+      'connectApp',
+      { ...turn, app: 'Linear', reason: 'file the bug' },
+      HELPER,
+    )) as { appId: string };
+    await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
+      {
+        reference: 'vault:stripe',
+        service: 'stripe',
+        label: 'live',
+        fieldNames: ['secret_key'],
+        allowedHosts: ['api.stripe.com'],
+        createdAt: 1,
+        stale: false,
+        state: 'active',
+      },
+    ]);
+    await daemon.execute('connectApp', { ...turn, app: 'Stripe', reason: 'refund' }, HELPER);
+    // Every decision is approved, so only the gate's own rule can refuse.
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [HELPER]);
+    const mixed = { ...turn, target: 'squire', operation: 'use_credential' };
+    // Two connected apps in one call: no single decision or ledger to charge.
+    await expect(
+      daemon.execute('authorizeResourceCall', { ...mixed, appKeys: ['linear', 'stripe'] }, HELPER),
+    ).resolves.toEqual({ allowed: false });
+    // Stripe active, Linear disconnected: Stripe's approval never covers Linear.
+    const phone = new PhoneService(database, 'http://placeholder');
+    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: linear.appId }, OWNER);
+    for (const appKeys of [['linear', 'stripe'], ['stripe', 'linear'], ['linear']])
+      await expect(
+        daemon.execute('authorizeResourceCall', { ...mixed, appKeys }, HELPER),
+      ).resolves.toEqual({ allowed: false });
+    expect((await database.query(`SELECT 1 FROM workspace_app_usage`)).rowCount).toBe(0);
+    // The one-app call still answers to its own app.
+    await expect(
+      daemon.execute('authorizeResourceCall', { ...mixed, appKeys: ['stripe'] }, HELPER),
+    ).resolves.toMatchObject({ allowed: true });
+    const usage = await database.query<{ app_key: string }>(
+      `SELECT a.app_key FROM workspace_app_usage u JOIN workspace_apps a ON a.id=u.app_id`,
+    );
+    expect(usage.rows).toEqual([{ app_key: 'stripe' }]);
+  });
+
+  it('keeps one app, one decision and one ledger across the person’s Workspaces', async () => {
+    const OTHER_WORKSPACE = '44444444-4444-4444-8444-444444444444';
+    const OTHER_ROOM = '55555555-5555-4555-8555-555555555555';
+    const OTHER_HELPER = 'c'.repeat(64);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Garden')`, [OTHER_WORKSPACE]);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`, [
+      OTHER_HELPER,
+    ]);
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name,yolo_mode)
+       VALUES($1,$2,'machine-one','Owner laptop',false)`,
+      [OTHER_HELPER, OWNER],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Garden tools')`,
+      [OTHER_ROOM, OTHER_WORKSPACE, OWNER],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
+      [OTHER_WORKSPACE, OWNER, OTHER_HELPER, OTHER_ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('garden-source',$1,$2,'Connect Linear')`,
+      [OTHER_ROOM, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_commands(
+         id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+         root_command_id,root_source_message_id,agent_depth,state,generation_id,lease_expires_at
+       ) VALUES('garden-command',$1,$2,'garden-source','garden-request','input','human_tag',
+         'garden-command','garden-source',0,'claimed','garden-generation',now()+interval '10 minutes')`,
+      [OTHER_ROOM, OTHER_HELPER],
+    );
+    const gardenTurn = {
+      roomId: OTHER_ROOM,
+      requestId: 'garden-request',
+      generationId: 'garden-generation',
+    };
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([linearServer]).client);
+    const first = (await daemon.execute(
+      'connectApp',
+      { ...turn, app: 'Linear', reason: 'file the bug' },
+      HELPER,
+    )) as { appId: string; connectorId: string };
+    await database.query(
+      `UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE id=$1`,
+      [first.connectorId],
+    );
+    const second = await daemon.execute(
+      'connectApp',
+      { ...gardenTurn, app: 'linear.app', reason: 'triage' },
+      OTHER_HELPER,
+    );
+    expect(second).toMatchObject({ appId: first.appId, status: 'connected' });
+    expect(second).not.toHaveProperty('route');
+    expect(await routes()).toHaveLength(1);
+    expect(
+      (await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='registry-mcp'`))
+        .rowCount,
+    ).toBe(1);
+    expect(await readOwnerApps(database, OWNER)).toHaveLength(1);
+    const phone = new PhoneService(database, 'http://placeholder');
+    expect((await phone.execute('readWorkbench', { workspaceId: '' }, OWNER)).apps).toHaveLength(1);
+    // The person's server mounts in the other Workspace's Room too, and a call
+    // there is the same app: the same app:<key> decision and the same ledger.
+    const configuration = await daemon.execute(
+      'getAgentConfiguration',
+      { agentId: OTHER_HELPER, roomId: OTHER_ROOM },
+      OTHER_HELPER,
+    );
+    expect(configuration.registryMcpRoutes).toEqual([
+      expect.objectContaining({ connectorId: first.connectorId, target: 'registry-mcp:app.linear/linear' }),
+    ]);
+    await daemon.execute(
+      'authorizeResourceCall',
+      { ...gardenTurn, target: 'registry-mcp:app.linear/linear', operation: 'list_issues' },
+      OTHER_HELPER,
+    );
+    const grants = await database.query<{ target: string }>(`SELECT target FROM agent_grants`);
+    expect(grants.rows).toEqual([{ target: 'app:linear' }]);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$1,decided_at=now()`, [
+      OWNER,
+    ]);
+    await expect(
+      daemon.execute(
+        'authorizeResourceCall',
+        { ...gardenTurn, target: 'registry-mcp:app.linear/linear', operation: 'list_issues' },
+        OTHER_HELPER,
+      ),
+    ).resolves.toMatchObject({ allowed: true });
+    const [app] = await readOwnerApps(database, OWNER);
+    expect(app).toMatchObject({ appId: first.appId, useCount: 1 });
+    // Disconnecting it once revokes the approval every Workspace was using.
+    await phone.execute('disconnectWorkbenchApp', { workspaceId: '', appId: first.appId }, OWNER);
+    expect((await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows).toEqual([
+      { status: 'revoked' },
+    ]);
+  });
+
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {
     await connectSquire();
     const phone = new PhoneService(

@@ -315,6 +315,13 @@ export type DaemonOperationMap = {
     }
   >;
   createCorner: Operation<CreateCornerInput, CornerResult>;
+  /**
+   * One-way `no_code -> code` promotion of a repository-backed corner. The
+   * active command must come from a human message in that same corner; the
+   * server spends that command, re-arms it as a pending resume and pushes
+   * `corner-restart`, so the caller's turn owns no write authority after this
+   * returns and the same ask is delivered again in the restarted code session.
+   */
   upgradeCornerLane: Operation<
     CornerInput & TurnOutputAuthority,
     { readonly cornerId: string; readonly lane: 'code' }
@@ -533,7 +540,7 @@ export type CornerRestoreResult = {
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;
-  /** The lane this corner was opened in. A restarted helper must not cut a worktree for `no_code`. */
+  /** The corner's current lane, after any `upgradeCornerLane`. A restarted helper must not cut a worktree for `no_code`. */
   readonly lane: CornerLane;
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports delivery to. */
   readonly requesterHandle?: string;
@@ -755,11 +762,12 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly repository?: string;
     readonly targetBranch?: string;
     /**
-     * Which lane the corner runs in, chosen once at open and durable after.
-     * `no_code` skips the worktree, the commit, the pull request and the merge:
-     * the work comes back as artifacts and a reply tagging the requester. A
-     * corner with no repository is `no_code` whatever this says.
+     * Which lane the corner runs in, chosen at open. `no_code` skips the
+     * worktree, the commit, the pull request and the merge: the work comes back
+     * as artifacts and a reply tagging the requester. A corner with no
+     * repository is `no_code` whatever this says.
      * `research` keeps a writable worktree under a durable delivery and merge hold.
+     * The one later change is `upgradeCornerLane`'s one-way `no_code -> code`.
      */
     readonly lane?: CornerLane;
   };

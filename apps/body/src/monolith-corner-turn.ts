@@ -502,7 +502,11 @@ export interface MonolithCornerTurnOptions {
   openedBy?: string;
   objective: string;
   worktreePath: string;
-  /** Immutable server lane; research has a worktree but no automatic delivery or agent close. */
+  /**
+   * The server's lane for this session; research has a worktree but no automatic
+   * delivery or agent close. Only `no_code -> code` ever moves, once, and the
+   * session is retired and restarted for it rather than mutated in place.
+   */
   lane?: 'code' | 'no_code' | 'research';
   /** The parent is repository-backed while this corner is still no-code. */
   agentMayUpgradeCorner?: boolean;

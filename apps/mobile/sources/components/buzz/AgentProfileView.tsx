@@ -219,26 +219,30 @@ export function AgentProfileView({
                   {soul || 'No soul has been set.'}
                 </Text>
               )}
-              {soul && !editing && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded }}
-                  onPress={() => setExpanded((value) => !value)}
-                  style={styles.readMore}
-                >
-                  <Text style={styles.accent}>{expanded ? 'Show less' : 'Read full soul'}</Text>
-                </Pressable>
-              )}
-              {canEdit && detail && (
-                <SoulPortraitControls
-                  key={identity.pubkey}
-                  detail={detail}
-                  soul={editing ? soulDraft : soul}
-                  disabled={avatarDisabled}
-                  generate={onGenerateAvatar}
-                  refresh={refreshAgent}
-                />
-              )}
+              {(soul && !editing) || (canEdit && detail) ? (
+                <View style={styles.soulActions}>
+                  {soul && !editing && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() => setExpanded((value) => !value)}
+                      style={styles.readMore}
+                    >
+                      <Text style={styles.accent}>{expanded ? 'Show less' : 'Read full soul'}</Text>
+                    </Pressable>
+                  )}
+                  {canEdit && detail && (
+                    <SoulPortraitControls
+                      key={identity.pubkey}
+                      detail={detail}
+                      soul={editing ? soulDraft : soul}
+                      disabled={avatarDisabled}
+                      generate={onGenerateAvatar}
+                      refresh={refreshAgent}
+                    />
+                  )}
+                </View>
+              ) : null}
             </View>
             <SettingsRow
               title="Permission mode"
@@ -362,5 +366,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     paddingHorizontal: theme.buzz.space.sm,
   },
+  soulActions: { gap: 0 },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
 }));

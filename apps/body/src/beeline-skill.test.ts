@@ -240,6 +240,15 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('desirability evidence:');
   });
 
+  it('reviews the diff before lazily creating and always deleting a test checkout', () => {
+    expect(markdown.indexOf('Run `gh pr diff N`')).toBeLessThan(
+      markdown.indexOf('Check out that exact head only when an empirical command'),
+    );
+    expect(markdown).toContain('git worktree remove --force');
+    expect(markdown).toContain('Cleanup is mandatory on PASS, FAIL, and command error');
+    expect(markdown).not.toContain('Check out that exact head in a new scratch git worktree');
+  });
+
   it('fails a bug proof that skips a recorded reproduction identifier', () => {
     expect(markdown).toContain('if a `Reproduction <id>` was recorded, quote it');
     expect(markdown).toContain(
@@ -278,9 +287,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     );
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');
-    expect(markdown).toContain(
-      "I can/can't reach X on this machine because Y; to fix it, Z.",
-    );
+    expect(markdown).toContain("I can/can't reach X on this machine because Y; to fix it, Z.");
   });
 
   // R5: earlier skill text sent the person to Settings → Workbench → Tools
@@ -322,9 +329,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   });
 
   it('holds the key-sovereignty rule', () => {
-    expect(markdown).toContain(
-      "the agent owner cannot authorize someone else’s resources.",
-    );
+    expect(markdown).toContain('the agent owner cannot authorize someone else’s resources.');
   });
 });
 

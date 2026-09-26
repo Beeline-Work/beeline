@@ -1,11 +1,17 @@
 import { execFile } from 'node:child_process';
-import { access, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DaemonApiClient } from './daemon-api-client.js';
+import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { materializeCornerWorktree, removeCornerWorktreeAndBranches } from './room-runtime.js';
+import {
+  materializeCornerWorktree,
+  removeCornerWorktreeAndBranches,
+  RoomRuntimeCoordinator,
+} from './room-runtime.js';
 
 /**
  * Two agents, one corner, one branch — proved against real git.
@@ -117,6 +123,263 @@ describe('a helper joining a corner it did not open', () => {
     await expect(
       git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`),
     ).resolves.toBeTruthy();
+  });
+
+  it('refuses cleanup while the worktree has unpushed files', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-dirty-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-dirty',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    await writeFile(resolve(worktree.path, 'not-pushed.txt'), 'keep me\n');
+
+    await expect(
+      removeCornerWorktreeAndBranches({
+        ...worktree,
+        cornerId: 'corner-dirty',
+        branch: FEATURE,
+        token: 'unused',
+      }),
+    ).rejects.toThrow(/unpushed working-tree work/);
+    await expect(access(resolve(worktree.path, 'not-pushed.txt'))).resolves.toBeUndefined();
+  });
+
+  it('refuses cleanup while HEAD has a commit no origin ref contains', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-ahead-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-ahead',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    await writeFile(resolve(worktree.path, 'not-pushed.txt'), 'keep me\n');
+    await git(worktree.path, 'add', '.');
+    await git(worktree.path, 'commit', '-m', 'not pushed');
+
+    await expect(
+      removeCornerWorktreeAndBranches({
+        ...worktree,
+        cornerId: 'corner-ahead',
+        branch: FEATURE,
+        token: 'unused',
+      }),
+    ).rejects.toThrow(/unpushed commits/);
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+  });
+
+  it('removes ignored build output because it is disposable, not unpushed work', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-build-output-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-build-output',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    await writeFile(resolve(worktree.path, '.gitignore'), 'target/\n');
+    await git(worktree.path, 'add', '.gitignore');
+    await git(worktree.path, 'commit', '-m', 'ignore build output');
+    await git(worktree.path, 'push', 'origin', FEATURE);
+    await mkdir(resolve(worktree.path, 'target', 'debug'), { recursive: true });
+    await writeFile(resolve(worktree.path, 'target', 'debug', 'large-build'), 'derived\n');
+
+    await removeCornerWorktreeAndBranches({
+      ...worktree,
+      cornerId: 'corner-build-output',
+      branch: FEATURE,
+      token: 'unused',
+    });
+
+    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reaps a recovered detached worktree after proving its HEAD was published', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-detached-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-detached',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    await git(worktree.path, 'checkout', '--detach');
+
+    await removeCornerWorktreeAndBranches(
+      {
+        ...worktree,
+        cornerId: 'corner-detached',
+        branch: FEATURE,
+        token: 'unused',
+        recovered: true,
+      },
+      { preserveRemoteBranch: true },
+    );
+
+    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('sweeps an archived worktree that predates the current process', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-stale-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-stale',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getCornerRestoreState') {
+        return {
+          cornerId: 'corner-stale',
+          featureBranch: FEATURE,
+          lifecycle: {
+            lifecycle: 'done',
+            checks: 'passing',
+            pr: {
+              number: 1,
+              url: 'https://github.com/example/repo/pull/1',
+              title: 'Done',
+              targetBranch: 'main',
+              headSha: 'a'.repeat(40),
+              mergedAt: '2026-09-25T00:00:00Z',
+            },
+          },
+        };
+      }
+      if (name === 'getRoomRepositoryState') {
+        return {
+          resolution: 'repository',
+          key: 'example/repo',
+          remote,
+          targetBranch: 'main',
+        };
+      }
+      if (name === 'getRoomGitHubToken') return { token: 'unused', expiresAt: Date.now() + 60_000 };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: {
+          name: 'Bee',
+          publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+        },
+        rooms: [],
+        communityId: 'workspace',
+        supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const recovery = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(
+        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+      ): Promise<void>;
+    };
+
+    await recovery.sweepArchivedCornerWorktrees(
+      new Map([['corner-stale', { cornerId: 'corner-stale', parentRoomId: 'room-parent' }]]),
+    );
+
+    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(execute).toHaveBeenCalledWith('postCornerRemoteState', {
+      cornerId: 'corner-stale',
+      branch: FEATURE,
+      state: 'gone',
+      checks: 'unknown',
+    });
+    await coordinator.shutdown();
+  });
+
+  it('refuses a stale corner directory linked to the wrong repository cache', async () => {
+    const [{ remote }, { remote: wrongRemote }] = await Promise.all([
+      remoteWithCornerBranch(),
+      remoteWithCornerBranch(),
+    ]);
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-wrong-repo-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-wrong-repo',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getCornerRestoreState') {
+        return { cornerId: 'corner-wrong-repo', featureBranch: FEATURE };
+      }
+      if (name === 'getRoomRepositoryState') {
+        return {
+          resolution: 'repository',
+          key: 'example/wrong-repo',
+          remote: wrongRemote,
+          targetBranch: 'main',
+        };
+      }
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: {
+          name: 'Bee',
+          publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+        },
+        rooms: [],
+        communityId: 'workspace',
+        supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const recovery = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(
+        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+      ): Promise<void>;
+    };
+    await recovery.sweepArchivedCornerWorktrees(
+      new Map([
+        ['corner-wrong-repo', { cornerId: 'corner-wrong-repo', parentRoomId: 'room-parent' }],
+      ]),
+    );
+
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(coordinator.needsFastReconcile()).toBe(true);
+    expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
+    await coordinator.shutdown();
   });
 
   it('keeps the exact local ref when remote deletion fails, then retries successfully', async () => {

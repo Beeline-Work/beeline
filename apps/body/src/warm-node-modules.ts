@@ -1,6 +1,7 @@
 /**
- * Warm npm starts for corner worktrees: one shared package cache, and a
- * lockfile-keyed `node_modules` store hardlinked into every new worktree.
+ * Warm package/build starts for corner worktrees: shared npm and pnpm caches,
+ * one Cargo target directory, and a lockfile-keyed `node_modules` store
+ * hardlinked into every new worktree.
  *
  * A corner worktree is cut from a bare canonical clone and therefore arrives
  * with no `node_modules` at all, while `agent-home.ts` hands every corner its
@@ -20,6 +21,10 @@
  *     lockfile that produced them. A new worktree whose lockfile matches an
  *     entry gets that tree HARDLINKED in, which costs no additional disk and
  *     no unpacking — the second corner on a lockfile skips install entirely.
+ *   - `pnpm-store/` lets pnpm do the same content-addressed hardlink reuse for
+ *     repositories that use pnpm instead of npm.
+ *   - `cargo-target/` keeps Rust dependency and incremental build artifacts
+ *     outside each disposable checkout, so another corner can reuse them.
  *
  * **An install is not always one directory.** npm hoists a workspace tree to
  * the root `node_modules`, but a version conflict leaves packages in a
@@ -124,6 +129,16 @@ export const WARM_STORE_MAX_ENTRIES = 3;
 /** The one npm cache every corner session on this host shares. */
 export function sharedNpmCacheDir(supervisorRoot: string): string {
   return resolve(supervisorRoot, 'beeline', 'npm-cache');
+}
+
+/** The pnpm content-addressable store shared by every corner on this host. */
+export function sharedPnpmStoreDir(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'pnpm-store');
+}
+
+/** Cargo build output shared by every corner on this host. */
+export function sharedCargoTargetDir(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'cargo-target');
 }
 
 /** The host-wide warm `node_modules` store, one entry per lockfile key. */

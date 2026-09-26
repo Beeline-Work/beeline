@@ -80,7 +80,9 @@ import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import { isConfiguredReviewer } from './beeline-skill.js';
 import {
   harvestWarmNodeModules,
+  sharedCargoTargetDir,
   sharedNpmCacheDir,
+  sharedPnpmStoreDir,
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
 import { roomMentionDirectory } from './monolith-room-turn.js';
@@ -825,12 +827,22 @@ export class MonolithCornerTurnLoop {
     // shared cache instead. It lives under the supervisor root the sandbox
     // protects, so it also needs the explicit writable re-bind below.
     const npmCacheDir = sharedNpmCacheDir(this.options.runtime.supervisorRoot);
-    await mkdir(npmCacheDir, { recursive: true, mode: 0o700 });
+    const pnpmStoreDir = sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
+    const cargoTargetDir = sharedCargoTargetDir(this.options.runtime.supervisorRoot);
+    await Promise.all(
+      [npmCacheDir, pnpmStoreDir, cargoTargetDir].map((path) =>
+        mkdir(path, { recursive: true, mode: 0o700 }),
+      ),
+    );
     const agentEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...githubEnv,
       npm_config_cache: npmCacheDir,
+      // pnpm reads its settings from PNPM_CONFIG_* environment variables and
+      // hardlinks packages out of this content-addressable store.
+      PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
+      CARGO_TARGET_DIR: cargoTargetDir,
     };
     const operatorHome = this.options.config.operatorHome ?? homedir();
     this.agentEnv = agentEnv;
@@ -870,6 +882,8 @@ export class MonolithCornerTurnLoop {
           // and this one is deliberately outside the per-corner home so the
           // download is paid once per host rather than once per corner.
           npmCacheDir,
+          pnpmStoreDir,
+          cargoTargetDir,
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
@@ -944,6 +958,8 @@ export class MonolithCornerTurnLoop {
                 // a sanitized env would otherwise send them to npm's default
                 // per-corner cache.
                 { name: 'npm_config_cache', value: npmCacheDir },
+                { name: 'PNPM_CONFIG_STORE_DIR', value: pnpmStoreDir },
+                { name: 'CARGO_TARGET_DIR', value: cargoTargetDir },
               ],
             },
           ]

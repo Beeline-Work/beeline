@@ -65,12 +65,12 @@ Codex, Claude Code, Grok, and OpenCode use the sign-in they already have on that
 
 You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXXXX` — and the package also installs a `beeline` bin alias.
 
-**Requirements:** Node 20.11+, Linux x64, and systemd user services. The published daemon bundle is `linux-x64` only today; macOS is not shipped.
+**Requirements:** Node 20.11+ and either Linux x64 with systemd user services or macOS (Apple silicon or Intel) with launchd. On macOS the helper is supervised in your login session: a LaunchAgent starts at login rather than at boot, so keep a user logged in — turn on automatic login for a headless Mac. Pairing over SSH with nobody logged in cannot start the daemon.
 
 ## What happens
 
 1. `connect` redeems the app's one-time pairing code and receives an agent identity for your Workspace.
-2. It downloads the signed current daemon bundle into `~/.local/lib/beeline` and starts it as a supervised `systemd --user` service, one per agent.
+2. It downloads the signed current daemon bundle into `~/.local/lib/beeline` and starts it as a supervised per-user service, one per agent (`systemd --user` on Linux, a launchd LaunchAgent on macOS).
 3. The agent appears in the Room. Tag it like a teammate.
 4. Given a repository-bound Room, the agent can open a corner and produce a pull request there.
 5. The daemon updates itself when a new release ships, draining any turn in flight first, and rolls back if the new bundle cannot answer.
@@ -176,7 +176,7 @@ Sign in with GitHub, and the app hands you the pairing code that `npx usebeeline
 
 ## Beta
 
-Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 only; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
+Beeline is `0.0.x` and moves fast. Concretely, today: the daemon bundle ships for Linux x64 and macOS, not Windows; corners assume a GitHub repository the app can reach; five sandbox grant kinds are recorded but not yet enforced; and releases are cut by hand rather than on every merge. The pieces described above are the ones that work.
 
 ## One README for GitHub and npm
 

@@ -13,12 +13,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const controls = vi.hoisted(() => ({
   installBroker: vi.fn(async () => undefined),
   installAgent: vi.fn(async () => 4242),
+  installLaunchdBroker: vi.fn(async () => undefined),
+  installLaunchdAgent: vi.fn(async () => 5252),
   daemonPid: vi.fn(async () => null as number | null),
 }));
 
 vi.mock('./systemd.js', () => ({
   installTrustySquireBrokerService: controls.installBroker,
   installAgentService: controls.installAgent,
+}));
+
+vi.mock('./launchd.js', () => ({
+  installLaunchdTrustySquireBrokerService: controls.installLaunchdBroker,
+  installLaunchdAgentService: controls.installLaunchdAgent,
 }));
 
 vi.mock('./runtime.js', async (importOriginal) => {
@@ -41,6 +48,8 @@ describe('beeline start installs the host Squire elector', () => {
   beforeEach(() => {
     controls.installBroker.mockClear();
     controls.installAgent.mockClear();
+    controls.installLaunchdBroker.mockClear();
+    controls.installLaunchdAgent.mockClear();
     controls.daemonPid.mockReset().mockResolvedValue(null);
     root = mkdtempSync(resolve(tmpdir(), 'beeline-start-broker-'));
     mkdirSync(resolve(root, 'beeline', 'agents', 'ff'.repeat(32)), { recursive: true });
@@ -89,5 +98,19 @@ describe('beeline start installs the host Squire elector', () => {
 
     expect(reports.map((report) => report.status)).toEqual(['started']);
     expect(controls.installAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses launchd for the broker and agent on macOS', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+    const reports = await start();
+
+    expect(reports).toEqual([
+      expect.objectContaining({ status: 'started', pid: 5252 }),
+    ]);
+    expect(controls.installLaunchdBroker).toHaveBeenCalledTimes(1);
+    expect(controls.installLaunchdAgent).toHaveBeenCalledTimes(1);
+    expect(controls.installBroker).not.toHaveBeenCalled();
+    expect(controls.installAgent).not.toHaveBeenCalled();
   });
 });

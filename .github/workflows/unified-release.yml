@@ -406,9 +406,60 @@ jobs:
           path: checkpoint-server.json
           if-no-files-found: error
 
-  helper:
+  helper_macos:
+    name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true'
+    if: >-
+      inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
+      needs.initialize.outputs.stage_helper == 'pending'
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    # Every run is cold: the bundle builds buzz-agent and buzz-dev-mcp with
+    # `cargo build --release --locked` from a fresh clone, and checkout's
+    # `clean: true` removes `.beeline-tools/target` on the self-hosted Mac too.
+    # The PR gate budgets 35 minutes for the same darwin-x64 build.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            machine_arch: arm64
+            runs_on: '["macos-15"]'
+          - platform: darwin-x64
+            machine_arch: x86_64
+            runs_on: '["self-hosted","macOS","X64","ios-builder"]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Require the native build architecture
+        run: test "$(uname -m)" = "${{ matrix.machine_arch }}"
+      - name: Build and install-verify the native helper
+        run: npm run bundle:beeline -- --platform "${{ matrix.platform }}"
+        env:
+          BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
+          BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.platform }}-${{ needs.initialize.outputs.release_id }}
+          path: |
+            relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz
+            relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256
+            relay-stack/web/dl/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+  helper:
+    needs: [initialize, helper_macos]
+    if: >-
+      !cancelled() && inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
+      (needs.initialize.outputs.stage_helper != 'pending' || needs.helper_macos.result == 'success')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 12
     permissions:
@@ -424,12 +475,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        if: needs.initialize.outputs.stage_helper == 'pending'
+        with:
+          name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/daemon-darwin-arm64
+      - uses: actions/download-artifact@v4
+        if: needs.initialize.outputs.stage_helper == 'pending'
+        with:
+          name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
         if: needs.initialize.outputs.stage_helper == 'pending'
         with:
           phase: build
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          darwin_arm64_bundle_dir: ${{ runner.temp }}/daemon-darwin-arm64
+          darwin_x64_bundle_dir: ${{ runner.temp }}/daemon-darwin-x64
       - name: Checkpoint the helper build
         if: needs.initialize.outputs.stage_helper == 'pending'
         run: |
@@ -1021,7 +1084,7 @@ jobs:
     # classify itself as a failed attempt, and (below) must never redispatch its
     # pinned identity — that redispatch cancelled the fresh cut that replaced it.
     if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
     permissions:
@@ -1101,6 +1164,7 @@ jobs:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           SERVER_RESULT: ${{ needs.server.result }}
           HELPER_RESULT: ${{ needs.helper.result }}
+          HELPER_MACOS_RESULT: ${{ needs.helper_macos.result }}
           MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
           RELEASE_PROOF_RESULT: ${{ needs.release_proof.result }}
           MOBILE_NATIVE_ANDROID_RESULT: ${{ needs.mobile_native_android.result }}
@@ -1128,16 +1192,26 @@ jobs:
           # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
           # every component yet was classified "budget" and never published its
           # release record. When a native build ran, allow 60 minutes instead.
+          # A macOS helper release pays the same shape twice over: a cold
+          # `cargo build --release` of buzz-agent/buzz-dev-mcp, serial ahead of the
+          # helper leg, on the ONE self-hosted Intel Mac that the iOS leg (90-minute
+          # cap) and the Mac PR gate (35) also hold. Queue time on that single runner
+          # is the cost, present whether or not iOS built in this attempt, so a
+          # helper release that delivered every component must not be classified
+          # "budget" for waiting in it: 150 minutes covers the worst serialized case.
           budget_seconds=1200
           if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
             budget_seconds=3600
+          fi
+          if [ "$HELPER_MACOS_RESULT" = success ]; then
+            budget_seconds=9000
           fi
           # Termination rules for the retry loop: a cancelled attempt (including
           # cancel-in-progress), a failed release migration, and any attempt
           # whose server leg touched a Fly Machine are all PERMANENT for this
           # release identity — the retry job must never re-dispatch them.
           cancelled=false
-          for need_result in "$SERVER_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
+          for need_result in "$SERVER_RESULT" "$HELPER_MACOS_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
             if [ "$need_result" = cancelled ]; then cancelled=true; fi
           done
           machines_touched=false

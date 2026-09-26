@@ -85,7 +85,10 @@ export function isCanonicalInstalledLauncher(
   );
 }
 
-function assertCanonicalInstalledLauncher(env: NodeJS.ProcessEnv, invocationPath?: string): void {
+function assertCanonicalInstalledLauncher(
+  env: NodeJS.ProcessEnv,
+  invocationPath?: string,
+): void {
   if (isCanonicalInstalledLauncher(env, invocationPath)) return;
   throw new Error(
     'refusing to modify the shared Beeline systemd unit outside the canonical ~/.local/bin/beeline launcher',

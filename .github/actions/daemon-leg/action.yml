@@ -1,6 +1,6 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
-# phase=build builds and install-verifies the exact linux-x64 bundle,
+# phase=build combines the install-verified Linux and macOS native bundles,
 # phase=promote publishes it to Pages and smoke-tests the exact manifest. Fleet
 # uptake is asynchronous observability and never holds a release open.
 name: Beeline daemon release leg
@@ -16,6 +16,12 @@ inputs:
     required: true
   pages_manifest_url:
     default: https://beeline-work.github.io/beeline/dl/manifest.json
+  darwin_arm64_bundle_dir:
+    description: Downloaded native darwin-arm64 artifact directory
+    default: ''
+  darwin_x64_bundle_dir:
+    description: Downloaded native darwin-x64 artifact directory
+    default: ''
 
 runs:
   using: composite
@@ -74,10 +80,13 @@ runs:
       if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
       shell: bash
       run: |
-        mkdir -p "$RUNNER_TEMP/daemon-release"
-        cp relay-stack/web/dl/beeline-linux-x64.tar.gz "$RUNNER_TEMP/daemon-release/"
-        cp relay-stack/web/dl/beeline-linux-x64.tar.gz.sha256 "$RUNNER_TEMP/daemon-release/"
-        cp relay-stack/web/dl/manifest.json "$RUNNER_TEMP/daemon-release/"
+        test -n "${{ inputs.darwin_arm64_bundle_dir }}"
+        test -n "${{ inputs.darwin_x64_bundle_dir }}"
+        node scripts/merge-beeline-bundles.mjs \
+          --output-dir "$RUNNER_TEMP/daemon-release" \
+          --input-dir relay-stack/web/dl \
+          --input-dir "${{ inputs.darwin_arm64_bundle_dir }}" \
+          --input-dir "${{ inputs.darwin_x64_bundle_dir }}"
     - if: inputs.phase == 'build'
       uses: actions/upload-artifact@v4
       with:
@@ -91,12 +100,12 @@ runs:
       uses: actions/download-artifact@v4
       with:
         name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: bundle/linux-x64
+        path: bundle/all-platforms
     - name: Publish the daemon artifact to durable Pages hosting
       if: inputs.phase == 'promote'
       uses: ./.github/actions/pages-leg
       with:
-        bundle_dir: bundle/linux-x64
+        bundle_dir: bundle/all-platforms
         release_sha: ${{ inputs.release_sha }}
         release_version: ${{ inputs.release_version }}
         manifest_url: ${{ inputs.pages_manifest_url }}

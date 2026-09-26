@@ -719,12 +719,16 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
   assert.match(source, /release ceiling is 20 minutes/);
-  assert.doesNotMatch(
-    source
-      .replace(/  release_proof:[\s\S]*?\n  mobile_ota:/, '')
-      .replace(/  mobile_native_android:[\s\S]*?\n  release_result:/, ''),
-    /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/,
-  );
+  // Only the legs that build a store binary, run the emulator proof, or build a
+  // native helper bundle from cold cargo may exceed the 20-minute ceiling; every
+  // other job stays inside the fix-to-phone promise.
+  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const cap = job['timeout-minutes'];
+    if (cap === undefined) continue;
+    if (slowLegs.has(name)) continue;
+    assert.ok(cap < 20, `${name} timeout-minutes ${cap} exceeds the release ceiling`);
+  }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -744,9 +748,11 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_ios\.result == 'success'/);
+  // helper_macos is a direct need so release_result can widen its budget for the
+  // cold cargo build the macOS helper bundles pay for.
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper', 'mobile_ota', 'mobile_native_android', 'mobile_native_ios',
-    'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
+    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_native_android',
+    'mobile_native_ios', 'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
   ]);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);

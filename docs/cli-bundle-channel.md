@@ -6,7 +6,7 @@
 > retained only as cutover history; do not execute its mirror-enable steps.
 
 Existing helpers poll `https://usebeeline.app/dl/manifest.json`. That URL and
-its relative `beeline-linux-x64.tar.gz` and `.sha256` paths remain unchanged.
+its relative platform archive and `.sha256` paths remain unchanged.
 No helper migration, URL override, or intervening helper release is required.
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
 for the entire website, including `/dl` and `.well-known`.
@@ -14,9 +14,12 @@ for the entire website, including `/dl` and `.well-known`.
 ## Release authority and durable storage
 
 When helper code or a shared helper contract is selected,
-`.github/actions/daemon-leg/action.yml` builds and install-verifies the native
-linux-x64 bundle under the release's exact version and source SHA. Other selective
-releases carry the last successful helper version, SHA, and artifact reference.
+`.github/actions/daemon-leg/action.yml` combines install-verified native
+`linux-x64`, `darwin-arm64`, and `darwin-x64` bundles under the release's exact
+version and source SHA. The macOS builds run natively: Apple silicon on GitHub's
+hosted macOS runner and Intel on the repository's self-hosted macOS runner.
+Other selective releases carry the last successful helper version, SHA, and
+artifact reference.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to
 `.github/actions/pages-leg/action.yml`. The Pages leg:
 
@@ -48,22 +51,70 @@ separate task from retiring the dev relay services.
 
 ## Consumer and verification contract
 
-The manifest uses schemaVersion 1, with `sourceCommit`, `version`, and one
-`bundles["linux-x64"]` entry containing `file`, `sha256`, `bytes`, `node`,
-`commit`, `version`, and `verified: true`. The bundle and top-level identities
+The manifest uses schemaVersion 1, with `sourceCommit`, `version`, and
+`bundles["linux-x64"]`, `bundles["darwin-arm64"]`, and
+`bundles["darwin-x64"]` entries containing `file`, `sha256`, `bytes`, `node`,
+`commit`, `version`, and `verified: true`. Every bundle and the top-level identity
 must match the unified release identity. Source commit is the helper's primary
-comparison; the unified release's `vX.Y.Z` is the version fallback. Darwin
-publishing remains disabled; this change adds no platform or independent build.
+comparison; the unified release's `vX.Y.Z` is the version fallback.
 
-The verifier requires the exact expected manifest, checks the SHA sidecar,
+The verifier requires the exact expected manifest, checks every SHA sidecar,
 and executes the production `SelfUpdateManager` in a disposable prefix seeded
 with an older identity. It fetches and hashes the actual tarball, extracts it,
 smoke-tests the CLI, activates the stable anchor, checks the installed identity,
-and runs the installed `beeline --version`. It does not pair, start a daemon,
-or touch an existing helper. The older identity is a fixture that forces a
-same-release redeploy through the real updater path, not a claim of fleet
-restart. Release-time smoke proves the published package and manifest. Fleet
-uptake is asynchronous post-release observability and never blocks delivery.
+and runs the installed `beeline --version`. Release bundle verification does not
+pair, start a production daemon, or touch an existing helper. The older identity
+is a fixture that forces a same-release redeploy through the real updater path,
+not a claim of fleet restart. Release-time smoke proves the published package
+and manifest. Fleet uptake is asynchronous post-release observability and never
+blocks delivery.
+
+The PR gate `MAC HELPER ACCEPTANCE` runs on the repository's self-hosted Intel
+Mac. Its filter is the macOS-specific sources alone — never the run-everything
+fallback — so an ordinary `apps/body`, shared-package, or unmapped-path change
+never queues behind that one machine. It performs a fresh installer run,
+exercises launchd crash restart and a bootout/bootstrap cycle
+(the closest non-destructive CI equivalent to a logout/login), verifies the
+terminal exit-status contract, pairs against the in-process monolith, observes a
+Room answer, and exercises `open_corner` with the deterministic ACP fixture. The
+native Apple-silicon bundle is proven only by the release's own `helper_macos`
+leg, which runs the same installer/ACP/CodeGraph bundle proof on GitHub's hosted
+arm64 Mac runner; no pull-request gate rebuilds it.
+
+macOS has no bubblewrap namespaces. The helper therefore uses the existing
+`bwrap`-unavailable fallback: it logs `harness OS sandbox UNAVAILABLE`, runs ACP
+children without an OS-level filesystem sandbox, and relies on the permission
+handler for the Room read-only rule. This is the same behavior as a Linux host
+without a working `bwrap`; this release adds no substitute sandbox.
+
+Having no bubblewrap also makes one product behavior reachable on macOS that a
+Linux host with a working `bwrap` never sees: a granted command run in a
+TOP-LEVEL Room is refused with `ROOM_SANDBOX_UNAVAILABLE`, because a Room run
+is sandboxed or nothing (C94 fail-closed). Corner grants are unaffected — they
+run on the host by design — so `run_granted_command` works in corners and
+refuses in Rooms on every Mac.
+
+Three supervision guarantees the Linux systemd unit provides have no launchd
+counterpart, and are accepted platform gaps rather than omissions. Agent
+stdout and stderr go to the single plain file
+`~/Library/Logs/Beeline/agent-<key>.log` with no rotation and no size cap,
+where Linux writes to the capped and rotated journal — a crash loop or months
+of ordinary logging grow that file without bound, and pruning that file is the
+operator's job. launchd has no `sd_notify` protocol, so the unit's
+`Type=notify` plus `WatchdogSec=180s` recovery of a wedged-but-running daemon
+does not exist on macOS: such a daemon stays up and silent until a human
+restarts it. This release adds neither a rotating writer nor a watchdog.
+
+And the helper is supervised in the per-GUI-session domain, `gui/<uid>`, not a
+system domain: the LaunchAgent loads when that user LOGS IN, not at boot, and
+`launchctl enable|bootstrap gui/<uid>/…` fails outright when no Aqua session
+exists. So a Mac needs a real logged-in session — autologin on a headless Mac
+mini, or a human at the keyboard — for `beeline connect`/`beeline start` to
+install the job at all, and for the helper to come back after a reboot; over
+SSH with nobody logged in, pairing reports `its daemon did not start` and there
+is no non-launchd fallback. The `gui/` domain is deliberate, not incidental:
+Trusty Squire drives a real Chrome in that session, and Linux's
+`systemctl --user` carries the analogous `loginctl enable-linger` requirement.
 
 Redirects are refused in the hosting proof: a github.io redirect back to the
 old dev origin must not count as a successful Pages verification. Use the

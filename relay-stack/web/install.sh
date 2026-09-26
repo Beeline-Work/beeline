@@ -33,7 +33,7 @@ esac
 
 platform=${BEELINE_INSTALL_PLATFORM:-"$os-$arch"}
 case "$platform" in
-  linux-x64|darwin-arm64) ;;
+  linux-x64|darwin-arm64|darwin-x64) ;;
   *) fail "no Beeline bundle is available for $platform" ;;
 esac
 

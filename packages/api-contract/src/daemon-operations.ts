@@ -14,8 +14,12 @@ import type {
   CompleteInstitutionalMemoryJobInput,
   FailInstitutionalMemoryJobInput,
   InstitutionalContextSnapshot,
+  LoadWorkspaceSkillInput,
+  LoadWorkspaceSkillResult,
   ProposeInstitutionalMemoryInput,
   ProposeInstitutionalMemoryResult,
+  SearchInstitutionalHistoryInput,
+  SearchInstitutionalHistoryResult,
 } from './institutional-memory.js';
 import type {
   WalletPayInput,
@@ -122,6 +126,13 @@ export type DaemonOperationMap = {
     ProposeInstitutionalMemoryInput,
     ProposeInstitutionalMemoryResult
   >;
+  /** Full-text history search constrained to the complete output audience. */
+  searchInstitutionalHistory: Operation<
+    SearchInstitutionalHistoryInput,
+    SearchInstitutionalHistoryResult
+  >;
+  /** Load one merge-derived restricted procedure after rechecking its source audience. */
+  loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
@@ -719,6 +730,17 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly heartbeat?: boolean;
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
+  /**
+   * The turn's REAL prompt token cost as the harness itself reported it (pi's
+   * session record: uncached input + cache reads + cache writes), and the exact
+   * byte length of the prompt that produced it. Optional because most harnesses
+   * expose no usage at all; absent is "unknown", never zero, and the rollout
+   * budget gate falls back to its byte estimate rather than inventing a number.
+   */
+  readonly inputTokens?: number;
+  readonly promptBytes?: number;
+  /** Distinct tool calls this turn made, counted from the harness's own stream. */
+  readonly toolCalls?: number;
   /** Typed Room-safe classification; detail stays in the daemon log. */
   readonly reasonKind?:
     | 'hiccup'

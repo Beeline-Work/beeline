@@ -33,6 +33,8 @@ import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
+import { runInstitutionalCuratorCycle } from './institutional-curator.js';
+import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -130,6 +132,7 @@ async function main() {
       webAppOrigins,
     },
   );
+  const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -138,6 +141,7 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
   const githubJobs = githubClients
@@ -148,8 +152,30 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
+  // Generated procedures are anchored to real code, so the curator's staleness
+  // pass needs an installation token and the repository's default branch. With
+  // no GitHub App configured there is no anchor to check and no contradiction to
+  // record, so the pass is skipped rather than guessed at.
+  const institutionalAnchors: InstitutionalSkillAnchorSource | undefined =
+    githubClients && githubJobs
+      ? {
+          resolveRoomRepository: (roomId) => githubJobs.roomAnchorTarget(roomId),
+          // The anchored repository is the one content is compared in — the
+          // token is what comes from the Room. A Room later pointed at another
+          // repository still gets asked about the code the procedure was
+          // actually written against.
+          fileBlobSha: (input) =>
+            githubClients.app.fileBlobSha({
+              accessToken: input.token,
+              fullName: input.repository,
+              path: input.path,
+              ref: input.ref,
+            }),
+        }
+      : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
@@ -221,7 +247,7 @@ async function main() {
     process.env.BEELINE_COMPOSIO_API_KEY
       ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
       : undefined,
-    institutionalMemoryShadowConfigFromEnv(),
+    institutionalMemory,
     mcpRegistry,
     registryMcpOAuth,
   );
@@ -282,6 +308,13 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
+        try {
+          await runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
+            ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
+          });
+        } catch (error) {
+          console.error('[server] institutional curator cycle failed:', error);
+        }
         if (githubJobs) {
           try {
             await githubJobs.refreshUnknownMergeability();

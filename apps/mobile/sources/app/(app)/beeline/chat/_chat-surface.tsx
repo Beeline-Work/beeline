@@ -330,6 +330,7 @@ import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { ForwardMessagePickerSheet } from '@/components/buzz/ForwardMessagePickerSheet';
+import { ForwardCornerSheet } from '@/components/buzz/ForwardCornerSheet';
 import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
@@ -695,6 +696,7 @@ export function BuzzChatSurface({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [openingRandomCorner, setOpeningRandomCorner] = useState(false);
+  const [forwardCornerPrompt, setForwardCornerPrompt] = useState<ChatDisplayMessage | null>(null);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [participantPickerKind, setParticipantPickerKind] = useState<'person' | 'agent' | null>(
     null,
@@ -4080,8 +4082,13 @@ export function BuzzChatSurface({
     viewerIsAgent,
   ]);
 
+  /**
+   * Mobile swipe-right asks first, through the shared bottom sheet — the same
+   * presentation Room creation uses. The sheet holds the message while it is
+   * open; declining creates nothing.
+   */
   const handleForwardToNewCorner = useCallback(
-    async (message: ChatDisplayMessage) => {
+    (message: ChatDisplayMessage) => {
       if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
       if (!transport) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -4092,48 +4099,53 @@ export function BuzzChatSurface({
         return;
       }
       void Haptics.selectionAsync();
-      setOpeningRandomCorner(true);
-      try {
-        await forwardMessageToNewCorner({
-          confirm: () =>
-            Modal.confirm(
-              `Forward to a new ${CORNER_LABEL}?`,
-              `A human-owned ${CORNER_LABEL} opens with this message ready to send in its composer.`,
-              { cancelText: 'Cancel', confirmText: `Open ${CORNER_LABEL}` },
-            ),
-          forwardText: formatForwardedMessage(
-            message.text,
-            displayRoomName,
-            message.authorIdentity ?? {
-              name: message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE',
-              ...(message.pubkey ? { handle: fallbackMemberHandle(message.pubkey) } : {}),
-            },
-            { roomId: decodedId, messageId: message.relayId ?? message.id },
-          ),
-          createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
-          roomId: decodedId,
-          openCorner: (cornerId, title) => {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            router.push(cornerHref(cornerId, decodedId, title));
-          },
-        });
-      } catch (err) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
-      } finally {
-        setOpeningRandomCorner(false);
-      }
+      setForwardCornerPrompt(message);
     },
-    [
-      decodedId,
-      desktopExperience,
-      displayRoomName,
-      isArchived,
-      openingRandomCorner,
-      transport,
-      viewerIsAgent,
-    ],
+    [desktopExperience, isArchived, openingRandomCorner, transport, viewerIsAgent],
   );
+
+  const confirmForwardToNewCorner = useCallback(async () => {
+    const target = forwardCornerPrompt;
+    if (!target) return;
+    if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
+    if (!transport) return;
+    setForwardCornerPrompt(null);
+    setOpeningRandomCorner(true);
+    try {
+      await forwardMessageToNewCorner({
+        confirm: async () => true,
+        forwardText: formatForwardedMessage(
+          target.text,
+          displayRoomName,
+          target.authorIdentity ?? {
+            name: target.pubkey ? fallbackMemberName(target.pubkey) : 'SOMEONE',
+            ...(target.pubkey ? { handle: fallbackMemberHandle(target.pubkey) } : {}),
+          },
+          { roomId: decodedId, messageId: target.relayId ?? target.id },
+        ),
+        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        roomId: decodedId,
+        openCorner: (cornerId, title) => {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.push(cornerHref(cornerId, decodedId, title));
+        },
+      });
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+    } finally {
+      setOpeningRandomCorner(false);
+    }
+  }, [
+    decodedId,
+    desktopExperience,
+    displayRoomName,
+    forwardCornerPrompt,
+    isArchived,
+    openingRandomCorner,
+    transport,
+    viewerIsAgent,
+  ]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -6122,6 +6134,12 @@ export function BuzzChatSurface({
           testID="message-actions-close"
         />
       </HullActionSheetModal>
+
+      <ForwardCornerSheet
+        onClose={() => setForwardCornerPrompt(null)}
+        onOpen={() => void confirmForwardToNewCorner()}
+        visible={Boolean(forwardCornerPrompt)}
+      />
 
       <ForwardMessagePickerSheet
         busyRoomId={forwardBusyRoomId}

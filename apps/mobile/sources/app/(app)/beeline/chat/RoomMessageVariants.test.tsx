@@ -1634,7 +1634,8 @@ describe('Room message variant components', () => {
     );
     expect(live.root.findByType('ActivityTimeline').props.mark).toMatchObject({ face: 'fox' });
 
-    // The row's own server identity wins over the roster copy.
+    // A historical row may come from disk with the face it had when cached.
+    // The current roster artwork must win after the agent changes its face.
     render(
       <OrdinaryLedgerMessage
         {...props}
@@ -1642,12 +1643,26 @@ describe('Room message variant components', () => {
           id: 'indexed',
           pubkey: 'agent',
           isAgentAuthor: true,
-          authorIdentity: { pubkey: 'agent', kind: 'agent', name: 'Foxy', face: 'owl' },
+          authorIdentity: {
+            pubkey: 'agent',
+            kind: 'agent',
+            name: 'Foxy',
+            face: 'owl',
+            avatar: 'https://images.example/cached.png',
+          },
         })}
-        agent={{ pubkey: 'agent', displayName: 'Foxy', face: 'fox' }}
+        agent={{
+          pubkey: 'agent',
+          displayName: 'Foxy',
+          face: 'fox',
+          avatar: 'https://images.example/current.png',
+        }}
       />,
     );
-    expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'owl' });
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({
+      face: 'fox',
+      avatarUrl: 'https://images.example/current.png',
+    });
   });
 
   it('never lifts a live draft into settled narration (C108 duplicate)', () => {
@@ -1855,7 +1870,7 @@ describe('Room message variant components', () => {
     render(
       <OrdinaryLedgerMessage
         message={consecutive}
-        agent={{ pubkey: 'agent-lumen', displayName: 'Lumen' }}
+        agent={{ pubkey: 'agent-lumen', displayName: 'Lumen', face: 'owl' }}
         agentModel="  openrouter/deepseek-deepseek-v.4.1-flash  "
         continued
         participantsHydrated

@@ -251,18 +251,32 @@ describe('Room view presentation', () => {
     });
   });
 
-  it('re-resolves a stale roster label from each current server message projection', () => {
+  it('keeps current member artwork when cached historical messages carry an older face', () => {
     const agentPubkey = 'b'.repeat(64);
     const viewerPubkey = 'a'.repeat(64);
     const staleMember = {
-      identity: { pubkey: agentPubkey, kind: 'agent' as const, name: 'Arlo', handle: 'arlo' },
+      identity: {
+        pubkey: agentPubkey,
+        kind: 'agent' as const,
+        name: 'Arlo',
+        handle: 'arlo',
+        face: 'fox',
+        avatar: 'https://images.example/current.png',
+      },
       role: 'member' as const,
     };
     const indexedMessage = (name: string, handle: string): RoomViewMessage => ({
       id: 'identity-message',
       text: `Hello from ${name}`,
       createdAt: 12,
-      author: { pubkey: agentPubkey, kind: 'agent', name, handle },
+      author: {
+        pubkey: agentPubkey,
+        kind: 'agent',
+        name,
+        handle,
+        face: 'owl',
+        avatar: 'https://images.example/cached.png',
+      },
       presentation: 'message',
     });
     const projector = createRoomMessageProjector();
@@ -275,6 +289,8 @@ describe('Room view presentation', () => {
     expect(conversationIdentityByPubkey([staleMember], fresh).get(agentPubkey)).toMatchObject({
       name: 'Codex',
       handle: 'codex',
+      face: 'fox',
+      avatar: 'https://images.example/current.png',
     });
   });
 

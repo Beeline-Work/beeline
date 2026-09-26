@@ -68,7 +68,7 @@ continue to build on EAS cloud and use the existing Google Play authentication
 and upload path. Three legs now contend for that single machine: the iOS store
 build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate -
 that queueing is why the release budget was widened for attempts that build the
-macOS helper.
+macOS helper (or deliver on a reused artifact so it never had to).
 
 Selected jobs build immutable artifacts named with both release version and
 source SHA, promote them, run bounded checks, and publish a component

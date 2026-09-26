@@ -81,8 +81,9 @@ exercises launchd crash restart and a bootout/bootstrap cycle
 terminal exit-status contract, pairs against the in-process monolith, observes a
 Room answer, and exercises `open_corner` with the deterministic ACP fixture. The
 native Apple-silicon bundle is proven only by the release's own `helper_macos`
-leg, which runs the same installer/ACP/CodeGraph bundle proof on GitHub's hosted
-arm64 Mac runner; no pull-request gate rebuilds it.
+leg - or, on a retry reusing a merged artifact, by the attempt that built those
+exact bytes - which runs the same installer/ACP/CodeGraph bundle proof on
+GitHub's hosted arm64 Mac runner; no pull-request gate rebuilds it.
 
 macOS has no bubblewrap namespaces. The helper therefore uses the existing
 `bwrap`-unavailable fallback: it logs `harness OS sandbox UNAVAILABLE`, runs ACP

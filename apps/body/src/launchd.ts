@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -246,12 +246,21 @@ const runLaunchctl: LaunchdRunner = async (args, options) => {
   return { stdout: result.stdout };
 };
 
+/**
+ * One supervisor script serves every agent on the host, and `sh` reads its
+ * script lazily from the open file's offset: rewriting it in place while another
+ * agent's shell sits in `wait` resumes that shell on new bytes at an old offset.
+ * The replacement is a rename onto the path, the same primitive install.sh uses
+ * for the bundle anchor, so an executing shell keeps the inode it started with.
+ */
 async function writeManagedFile(path: string, content: string, mode: number): Promise<boolean> {
   const existing = await readFile(path, 'utf8').catch(() => '');
   if (existing === content) return false;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, content, { mode });
-  await chmod(path, mode);
+  const pending = `${path}.${process.pid}.pending`;
+  await writeFile(pending, content, { mode });
+  await chmod(pending, mode);
+  await rename(pending, path);
   return true;
 }
 
@@ -415,8 +424,12 @@ export async function reconcileLaunchdAgentServices(
     if (!publicKey) continue;
     try {
       if (await hasRuntime(runtimeConfigPath(defaultSupervisorRoot(env), publicKey))) continue;
+      // Heal the job definition, never the running process: this pass runs
+      // inside a starting daemon, and booting out a live orphan (or this job
+      // itself) waits out that agent's whole drain before anything else starts.
       await disableLaunchdAgentService(publicKey, {
         env,
+        stop: false,
         ...(options.run ? { run: options.run } : {}),
       });
       reconciled.push(publicKey);

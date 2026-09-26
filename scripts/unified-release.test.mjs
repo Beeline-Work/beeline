@@ -719,12 +719,16 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
   assert.match(source, /release ceiling is 20 minutes/);
-  assert.doesNotMatch(
-    source
-      .replace(/  release_proof:[\s\S]*?\n  mobile_ota:/, '')
-      .replace(/  mobile_native_android:[\s\S]*?\n  release_result:/, ''),
-    /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/,
-  );
+  // Only the legs that build a store binary, run the emulator proof, or build a
+  // native helper bundle from cold cargo may exceed the 20-minute ceiling; every
+  // other job stays inside the fix-to-phone promise.
+  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const cap = job['timeout-minutes'];
+    if (cap === undefined) continue;
+    if (slowLegs.has(name)) continue;
+    assert.ok(cap < 20, `${name} timeout-minutes ${cap} exceeds the release ceiling`);
+  }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);

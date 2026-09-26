@@ -91,16 +91,27 @@ is sandboxed or nothing (C94 fail-closed). Corner grants are unaffected — they
 run on the host by design — so `run_granted_command` works in corners and
 refuses in Rooms on every Mac.
 
-Two supervision guarantees the Linux systemd unit provides have no launchd
+Three supervision guarantees the Linux systemd unit provides have no launchd
 counterpart, and are accepted platform gaps rather than omissions. Agent
 stdout and stderr go to the single plain file
 `~/Library/Logs/Beeline/agent-<key>.log` with no rotation and no size cap,
 where Linux writes to the capped and rotated journal — a crash loop or months
-of ordinary logging grow that file without bound, and pruning it is the
-operator's. And launchd has no `sd_notify` protocol, so the unit's
+of ordinary logging grow that file without bound, and pruning that file is the
+operator's job. launchd has no `sd_notify` protocol, so the unit's
 `Type=notify` plus `WatchdogSec=180s` recovery of a wedged-but-running daemon
 does not exist on macOS: such a daemon stays up and silent until a human
 restarts it. This release adds neither a rotating writer nor a watchdog.
+
+And the helper is supervised in the per-GUI-session domain, `gui/<uid>`, not a
+system domain: the LaunchAgent loads when that user LOGS IN, not at boot, and
+`launchctl enable|bootstrap gui/<uid>/…` fails outright when no Aqua session
+exists. So a Mac needs a real logged-in session — autologin on a headless Mac
+mini, or a human at the keyboard — for `beeline connect`/`beeline start` to
+install the job at all, and for the helper to come back after a reboot; over
+SSH with nobody logged in, pairing reports `its daemon did not start` and there
+is no non-launchd fallback. The `gui/` domain is deliberate, not incidental:
+Trusty Squire drives a real Chrome in that session, and Linux's
+`systemctl --user` carries the analogous `loginctl enable-linger` requirement.
 
 Redirects are refused in the hosting proof: a github.io redirect back to the
 old dev origin must not count as a successful Pages verification. Use the

@@ -390,7 +390,7 @@ describe('launchd supervision contract', () => {
     await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('reconciles only exact orphan agent plists and removes them after bootout', async () => {
+  it('reconciles only exact orphan agent plists without stopping a running one', async () => {
     const { env, invocationPath } = await canonicalEnv();
     const orphan = 'c'.repeat(64);
     const live = 'd'.repeat(64);
@@ -424,10 +424,11 @@ describe('launchd supervision contract', () => {
         hasRuntime: async (path) => path.includes(live),
       }),
     ).resolves.toEqual([orphan]);
+    // This pass runs inside a starting daemon: a bootout here would wait out the
+    // orphan's whole drain (up to ExitTimeOut) before that daemon could run, and
+    // on a single-agent host the job being booted out is its own.
     expect(calls).toEqual([
       ['disable', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`],
-      ['print', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`],
-      ['bootout', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`],
     ]);
     await expect(stat(launchdAgentPlistPath(orphan, env))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(launchdAgentPlistPath(live, env))).resolves.toMatchObject({});

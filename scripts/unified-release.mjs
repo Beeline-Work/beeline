@@ -40,6 +40,7 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'scripts/app-associations.', components: ['website'] },
   { prefix: 'scripts/pages-', components: ['website'] },
   { prefix: 'scripts/build-beeline-bundle.', components: ['helper'] },
+  { prefix: 'scripts/merge-beeline-bundles.', components: ['helper'] },
   { prefix: 'scripts/build-usebeeline-package.', components: ['helper'] },
   { prefix: 'scripts/install-beeline.', components: ['helper'] },
   { prefix: 'scripts/verify-beeline-install.', components: ['helper'] },

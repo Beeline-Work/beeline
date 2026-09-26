@@ -94,5 +94,12 @@ describe('Room open paints a Room, not the last message', () => {
     expect(landing).toMatch(
       /if \([^)]*(?:transcriptLandingAnchor|messageAnchor|notificationMessageId)[^)]*\) return/,
     );
+    // Native FlatList may not have measured an older message when the push
+    // arrives. The failure path must bring that row into range and retry it.
+    expect(surface).toContain('pendingNotificationLandingRef');
+    const failedIndex = surface.slice(surface.indexOf('onScrollToIndexFailed='));
+    expect(failedIndex).toContain('notification.messageId');
+    expect(failedIndex).toContain('scrollToOffset');
+    expect(failedIndex).toContain('scrollToIndex');
   });
 });

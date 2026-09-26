@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Metro resolves the published build/, so exercise that exact mapper.
+import { mapNotificationContent } from '../../node_modules/expo-notifications/build/utils/mapNotificationResponse';
 import {
   isInitialLandingNavigationSuppressed,
   resetInitialLandingForTests,
@@ -14,8 +16,35 @@ import {
   type NotificationResponseRouting,
   type TappedNotificationResponse,
 } from './notification-response';
+import { getBuzzNotificationTargetFromData } from '../utils/notificationRouting';
 
 const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT';
+
+it('keeps FCM routing fields when Expo parses a JSON-shaped notification body', () => {
+  const content = mapNotificationContent({
+    dataString: '{"note":"Hoots @captain corner cold exact message 6"}',
+    data: {
+      type: 'channel-activity',
+      target: 'message',
+      workspaceId: 'workspace-other',
+      roomId: 'room-parent',
+      channelId: 'corner-child',
+      cornerId: 'corner-child',
+      messageId: 'exact-message-6',
+    },
+  } as Parameters<typeof mapNotificationContent>[0]);
+
+  expect(content.data).toMatchObject({ note: 'Hoots @captain corner cold exact message 6' });
+  expect(getBuzzNotificationTargetFromData(content.data)).toEqual({
+    type: 'channel-activity',
+    target: 'message',
+    workspaceId: 'workspace-other',
+    roomId: 'room-parent',
+    channelId: 'corner-child',
+    cornerId: 'corner-child',
+    messageId: 'exact-message-6',
+  });
+});
 
 beforeEach(() => {
   resetInitialLandingForTests();

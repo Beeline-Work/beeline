@@ -12,12 +12,6 @@ import type { PushSender } from './background.js';
 
 export type PushDeliveryMessage = Parameters<PushSender['send']>[1];
 
-// The Android manifest declares one activity with this intent filter
-// (`apps/mobile/plugins/withAndroidPushRouting.js`): the tap forwards the
-// notification's own extras into MainActivity instead of resuming the task on
-// whatever intent it last recorded.
-const ANDROID_PUSH_CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
-
 interface FirebaseCredentialEnvironment {
   GOOGLE_APPLICATION_CREDENTIALS_JSON?: string;
   GOOGLE_CLOUD_PROJECT?: string;
@@ -106,7 +100,6 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
     data,
     android: {
       notification: {
-        clickAction: ANDROID_PUSH_CLICK_ACTION,
         ...(data.roomId ? { tag: data.roomId } : {}),
       },
     },

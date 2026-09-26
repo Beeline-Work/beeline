@@ -92,9 +92,7 @@ describe('getBuzzNotificationTargetFromData', () => {
   });
 
   it('reads routing back out of a JSON-shaped body Expo rewrote into an envelope', () => {
-    // Expo's Android bridge JSON-parses a data `body` and replaces
-    // `content.data` with the parsed envelope; the destination must survive
-    // that rewrite rather than landing the person on the Room list.
+    // Older Expo-service responses may put their routing fields inside data.
     expect(
       getBuzzNotificationTargetFromData({
         title: 'Beeline',
@@ -115,6 +113,25 @@ describe('getBuzzNotificationTargetFromData', () => {
       roomId: 'room-other',
       channelId: 'room-other',
       messageId: 'message-other',
+    });
+  });
+
+  it('prefers FCM route fields over a JSON body that contains its own data object', () => {
+    expect(
+      getBuzzNotificationTargetFromData({
+        type: 'channel-activity',
+        target: 'message',
+        workspaceId: 'workspace-other',
+        roomId: 'room-parent',
+        channelId: 'corner-child',
+        cornerId: 'corner-child',
+        messageId: 'real-message',
+        data: { type: 'channel-activity', channelId: 'stale-room', messageId: 'wrong-message' },
+      }),
+    ).toMatchObject({
+      channelId: 'corner-child',
+      cornerId: 'corner-child',
+      messageId: 'real-message',
     });
   });
 

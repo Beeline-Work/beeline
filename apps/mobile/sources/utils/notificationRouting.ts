@@ -29,14 +29,18 @@ function nonEmptyString(value: unknown): string | undefined {
 /**
  * Read the routing contract out of an Expo-service envelope.
  *
- * Expo's Android bridge rewrites `content.data` with the parsed notification
- * body whenever the FCM data payload carries a JSON `body` — its Expo-service
- * envelope shape — and that rewrite replaces Beeline's own top-level fields.
- * The routing fields must therefore also be readable from the envelope's
- * nested `data`, so a JSON-shaped body can never erase the destination. A
- * plain payload is returned unchanged.
+ * The patched Android bridge retains independent FCM fields when it parses a
+ * JSON-shaped body. Older Expo-service envelopes can still place the routing
+ * contract under `data`; use that only when no top-level route is present.
  */
 function unwrapNotificationEnvelope(data: unknown): unknown {
+  // The independent FCM fields win over text parsed from a JSON-looking
+  // message body. A real Expo-service envelope has no route at this level.
+  if (
+    nonEmptyString(getObjectValue(data, 'type')) &&
+    (nonEmptyString(getObjectValue(data, 'channelId')) ||
+      nonEmptyString(getObjectValue(data, 'workspaceId')))
+  ) return data;
   const nested = getObjectValue(data, 'data');
   if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return data;
   const carriesRouting = ['type', 'channelId', 'roomId', 'workspaceId', 'target'].some(

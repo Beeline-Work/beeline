@@ -64,14 +64,14 @@ export default {
         // without bumping it. The gate hashes the installed native dependency
         // tree for both platforms, so a patch to one platform's native source
         // (apps/mobile/patches) moves the other platform's stamp too; both pins
-        // move together and the old runtime stays in `COMPAT_RUNTIMES` so
+        // move together and previously shipped runtimes stay in `COMPAT_RUNTIMES` so
         // installed binaries keep receiving OTA.
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "30",
+            runtimeVersion: runtimeVersionOverride || "31",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -105,7 +105,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "30",
+            runtimeVersion: runtimeVersionOverride || "31",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

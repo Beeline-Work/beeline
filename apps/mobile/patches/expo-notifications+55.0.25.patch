@@ -23,3 +23,62 @@ index 2e51957..487e4ec 100644
      }
    }
  }
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationSerializer.java b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationSerializer.java
+index bcc1b6d..3c8e158 100644
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationSerializer.java
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/NotificationSerializer.java
+@@ -69,6 +69,7 @@ public class NotificationSerializer {
+           // If the body is a JSON object string, the notification was sent by the Expo notification service,
+           // so we do the expected remapping of fields (we JSON-parse the string into an object in JS)
+           content.putString("dataString", dataBody);
++          content.putBundle("data", toBundle(data));
+         } else {
+           // The message was sent directly from Firebase or some other service,
+           // and we copy the data as is
+@@ -195,6 +196,9 @@ public class NotificationSerializer {
+       // If the body is a JSON object string, the notification was sent by the Expo notification service,
+       // so we do the expected remapping of fields (we JSON-parse the string into an object in JS)
+       serializedContent.putString("dataString", body);
++      // A directly-sent FCM notification may also have a JSON-shaped body.
++      // Keep its independent data fields so JS can retain the tap destination.
++      serializedContent.putBundle("data", filteredBundleForJSTypeConverter(extras));
+       serializedContent.putString("body", extras.getString("message"));
+     } else {
+       // The notification came directly from Firebase or some other service,
+diff --git a/node_modules/expo-notifications/build/utils/mapNotificationResponse.js b/node_modules/expo-notifications/build/utils/mapNotificationResponse.js
+index 247f523..32184e4 100644
+--- a/node_modules/expo-notifications/build/utils/mapNotificationResponse.js
++++ b/node_modules/expo-notifications/build/utils/mapNotificationResponse.js
+@@ -55,7 +55,12 @@ export const mapNotificationContent = (content) => {
+         const dataString = content['dataString'];
+         if (typeof dataString === 'string') {
+             const mappedContent = { ...content };
+-            mappedContent.data = JSON.parse(dataString);
++            const parsedData = JSON.parse(dataString);
++            // Android's JSON-body heuristic must not discard independent FCM data
++            // fields, including the destination of the notification being tapped.
++            mappedContent.data = parsedData && typeof parsedData === 'object' && !Array.isArray(parsedData)
++                ? { ...parsedData, ...content.data }
++                : content.data ?? parsedData;
+             Object.defineProperty(mappedContent, 'dataString', {
+                 get() {
+                     if (!didWarn) {
+diff --git a/node_modules/expo-notifications/src/utils/mapNotificationResponse.ts b/node_modules/expo-notifications/src/utils/mapNotificationResponse.ts
+index c77c1e7..6faad3c 100644
+--- a/node_modules/expo-notifications/src/utils/mapNotificationResponse.ts
++++ b/node_modules/expo-notifications/src/utils/mapNotificationResponse.ts
+@@ -65,7 +65,13 @@ export const mapNotificationContent = (content: NotificationContent) => {
+     const dataString = content['dataString'];
+     if (typeof dataString === 'string') {
+       const mappedContent: NotificationContent & { dataString?: string } = { ...content };
+-      mappedContent.data = JSON.parse(dataString);
++      const parsedData = JSON.parse(dataString);
++      // Android's JSON-body heuristic must not discard independent FCM data
++      // fields, including the destination of the notification being tapped.
++      mappedContent.data =
++        parsedData && typeof parsedData === 'object' && !Array.isArray(parsedData)
++          ? { ...parsedData, ...content.data }
++          : content.data ?? parsedData;
+       Object.defineProperty(mappedContent, 'dataString', {
+         get() {
+           if (!didWarn) {

@@ -7,9 +7,8 @@ import {
 } from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
-// The tap trampoline the mobile manifest declares for this exact action is
-// covered by apps/mobile's `androidPushRouting.test.ts`.
-const ANDROID_PUSH_CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
+// Android's default FCM tap resolves the package launcher trampoline; mobile
+// manifest coverage lives in `androidPushRouting.test.ts`.
 
 describe('Firebase push credentials', () => {
   it('uses an inline service account with cert and its project id', () => {
@@ -118,7 +117,7 @@ describe('Firebase push routing payload', () => {
       messageId: 'message-1',
     });
     expect(payload.android).toEqual({
-      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION, tag: roomId },
+      notification: { tag: roomId },
     });
     expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
     expect(payload.android).not.toHaveProperty('collapseKey');
@@ -156,7 +155,6 @@ describe('Firebase push routing payload', () => {
       token: 'device-token',
       android: {
         notification: {
-          clickAction: ANDROID_PUSH_CLICK_ACTION,
           tag: 'room-welcome',
         },
       },
@@ -185,7 +183,7 @@ describe('Firebase push routing payload', () => {
       workspaceId: 'workspace-default',
     });
     expect(payload.android).toEqual({
-      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION },
+      notification: {},
     });
   });
 });

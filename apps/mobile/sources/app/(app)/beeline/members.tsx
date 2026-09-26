@@ -38,6 +38,7 @@ import {
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
@@ -62,7 +63,6 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
 const MODEL_CATALOG_CONFIRM_ATTEMPTS = 140;
-const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 
 async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
@@ -518,7 +518,7 @@ export default function BuzzMembers({
     setWorking('pair-agent');
     try {
       const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
-      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+      setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
       setError(`Could not create agent invite: ${String(reason)}`);
     } finally {

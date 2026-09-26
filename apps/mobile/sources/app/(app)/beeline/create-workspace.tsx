@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Identity } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import {
   buildCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
@@ -40,7 +41,6 @@ const STEP_LABELS: Record<Step, string> = {
   2: 'Your profile',
   3: 'Bring your crew',
 };
-const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 
 /**
  * Create a Workspace in three short steps (Slack's pacing, Beeline's
@@ -56,9 +56,11 @@ export default function CreateWorkspace() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const workspaceId = useRef(Crypto.randomUUID()).current;
-  // The name the last confirmation asked the server for, recorded BEFORE the
-  // call: a create whose response never arrived may still have committed.
-  const attemptedName = useRef<string | null>(null);
+  // A create is attempted before its answer is known, so what the server
+  // HOLDS is only what a call has confirmed: null means unknown, and an
+  // unknown name is rewritten rather than assumed.
+  const createAttempted = useRef(false);
+  const confirmedName = useRef<string | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [step, setStep] = useState<Step>(1);
   const [workspaceName, setWorkspaceName] = useState('');
@@ -122,15 +124,18 @@ export default function CreateWorkspace() {
     setWorking('create');
     setError(null);
     setNotice(null);
-    const previousName = attemptedName.current;
-    attemptedName.current = name;
+    const firstAttempt = !createAttempted.current;
+    createAttempted.current = true;
     try {
       const created = await monolithPhoneOperation('createWorkspace', { workspaceId, name });
       // Step 1 stays editable behind the back control, and the create is
-      // idempotent on this id: a confirmed rename has to be written, or the
-      // Workspace would silently keep the name the person just corrected.
-      if (previousName !== null && previousName !== name)
+      // idempotent on this id: only the first attempt can have inserted this
+      // name, so any later confirmation writes the rename the person made.
+      if (firstAttempt) confirmedName.current = name;
+      if (confirmedName.current !== name) {
         await monolithPhoneOperation('updateWorkspace', { workspaceId, name });
+        confirmedName.current = name;
+      }
       await saveActiveCommunityId(identity.publicKey, created.id);
       setRoomId(created.roomId ?? null);
       if (picture) {
@@ -215,7 +220,7 @@ export default function CreateWorkspace() {
       if (!command) {
         setWorking('agent');
         const pairing = await monolithPhoneOperation('createAgentPairingCode', { workspaceId });
-        command = `${CONNECT_AGENT_COMMAND} ${pairing.code}`;
+        command = agentPairingCommand(pairing.code);
         setPairCommand(command);
       }
       const copiedOk = await (

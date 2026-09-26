@@ -13,8 +13,12 @@ import { ensureSystemIdentity } from './system-line.js';
  * `retireWelcomeWorkspace` only when the release owner arms it with
  * `BEELINE_RETIRE_WELCOME_GREETER_ID`, after the create-or-join onboarding is
  * live on every supported client. The boot reseed and the sign-in landing are
- * already gone from this server image, so nothing refills the Workspace
- * while — or after — this runs.
+ * already gone from this server image, so nothing refills the Workspace after
+ * this runs — but the release leg runs migrations BEFORE either Machine is
+ * updated, so arming this on the very release that removes the landing leaves
+ * the PREVIOUS image serving sign-ins while it runs, and one of those
+ * re-creates the Workspace behind a marker no retry revisits. Arm it only on a
+ * later release (docs/welcome-retirement.md step 4).
  *
  * In one transaction, under an advisory lock:
  *   1. a recorded marker means this already ran: return quietly;

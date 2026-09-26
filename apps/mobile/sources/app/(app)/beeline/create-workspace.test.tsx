@@ -229,6 +229,37 @@ describe('creating a Workspace', () => {
     expect(find(renderer, 'create-step-profile')).toHaveLength(1);
   });
 
+  it('writes the rename again after the first rename failed and the retry changed nothing', async () => {
+    let renames = 0;
+    controls.operation.mockImplementation(async (name: string, input: any) => {
+      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
+      if (name === 'createWorkspace') return { id: input.workspaceId, roomId: 'general-1' };
+      if (name === 'updateWorkspace' && typeof input.name === 'string') {
+        renames += 1;
+        if (renames === 1) throw new Error('network');
+        return undefined;
+      }
+      return undefined;
+    });
+    const renderer = await render();
+    await type(renderer, 'create-workspace-name', 'Foo');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
+    await press(renderer, 'create-back');
+    await type(renderer, 'create-workspace-name', 'Bar');
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(find(renderer, 'create-error')).toHaveLength(1));
+    // The same name confirmed again: the server still holds "Foo", so the
+    // rename has to be written, not skipped as already done.
+    await press(renderer, 'create-continue');
+    await vi.waitFor(() => expect(renames).toBe(2));
+    expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
+      workspaceId: WORKSPACE,
+      name: 'Bar',
+    });
+    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
+  });
+
   it('writes a name corrected after a create whose response never arrived', async () => {
     let calls = 0;
     controls.operation.mockImplementation(async (name: string, input: any) => {

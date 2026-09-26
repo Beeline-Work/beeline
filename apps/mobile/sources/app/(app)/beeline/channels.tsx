@@ -15,6 +15,7 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { loadPendingInvite } from '@/buzz/pending-invite';
 import { deckLanding } from '@/buzz/deck-landing';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
@@ -88,7 +89,6 @@ import { StyleSheet } from 'react-native-unistyles';
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
-const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 const ROW_HEIGHT = 64;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /** Match the fixed trailing inset used by Room and corner conversation headers. */
@@ -801,7 +801,7 @@ export default function BuzzChannels() {
       const pairing = await (
         await transport.ensureClient()
       ).createAgentPairingCode(activeCommunityId);
-      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+      setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
       setPairingError(`Could not create agent invite: ${String(reason)}`);
     } finally {

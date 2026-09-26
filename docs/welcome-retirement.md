@@ -43,7 +43,12 @@ so no client is left on a dead route.
    `bee11e00-0000-4000-8000-000000000103`. The canary's review sign-in re-creates that Room in
    the review Workspace, so the canary does not start failing once Welcome is gone.
 4. **Arm the retirement.** Set the repository variable `BEELINE_RETIRE_WELCOME_GREETER_ID` to the
-   Greeter's exact agent id. Leave it unset to skip the step entirely. The next
+   Greeter's exact agent id. Leave it unset to skip the step entirely. Arm it only on a release
+   AFTER the image without the sign-in landing is already serving: the server leg runs migrations
+   BEFORE either Fly Machine is updated, so on the release that removes the landing the previous
+   image still serves every sign-in for the canary update and its five-minute watch — and one
+   sign-in in that window re-creates the Workspace after the DELETE, with the completion marker
+   already written, so no retry ever cleans it up. The next
    unified release's migration step runs `retireWelcomeWorkspace`
    (`apps/server/src/welcome-retirement.ts`) in one transaction:
    - it refuses and changes nothing unless the id is an agent member of Welcome;

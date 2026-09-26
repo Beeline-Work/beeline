@@ -1708,11 +1708,12 @@ export class GitHubOperations {
       ],
     );
     const repositories = await this.app.listRepositories(installationId);
-    await database.query(
-      `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`,
-      [installationId],
-    );
     for (const repository of repositories) await this.storeRepository(repository, database);
+    await database.query(
+      `UPDATE github_repositories SET active=false,updated_at=now()
+       WHERE installation_id=$1 AND NOT (repository_id=ANY($2::bigint[])) AND active`,
+      [installationId, repositories.map((repository) => repository.id)],
+    );
   }
   /**
    * GET /user/installations is keyed to the OAuth lookup token's visibility:

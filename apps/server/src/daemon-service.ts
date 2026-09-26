@@ -852,20 +852,14 @@ export class DaemonService {
       case 'getRoomGitHubToken': {
         if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
         const roomId = (input as Input<'getRoomGitHubToken'>).roomId;
-        await this.access(roomId, authenticatedAgentId);
         try {
           return (await this.roomGitHubToken(roomId)) as Output<Name>;
         } catch (error) {
-          // A removed installation or a repository outside its grant is a
-          // Room configuration fact. State it once, in server-owned words;
-          // retries must neither spam the Room nor expose GitHub's 404 text.
+          // The exact missing-installation result is a Room configuration
+          // fact. An upstream 404 alone does not establish that fact.
           if (
-            (error instanceof Error &&
-              error.message === 'GitHub repository installation not found') ||
-            (typeof error === 'object' &&
-              error !== null &&
-              'status' in error &&
-              error.status === 404)
+            error instanceof Error &&
+            error.message === 'GitHub repository installation not found'
           ) {
             await ensureSystemIdentity(this.database);
             await systemLine(this.database, {

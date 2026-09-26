@@ -417,7 +417,8 @@ they read “5 corners” in quiet ink.
 The API batches canonical state derivation for visible corners; archived work
 is excluded. On mobile the label opens the existing Room Corners page. On
 desktop it toggles an inline list, waiting first, with each corner independently
-selectable and draggable. The active Room initially expands; explicit per-Room
+selectable and draggable. Opening a Room row leaves its corner list collapsed;
+opening a corner directly expands its parent Room. Explicit per-Room expansion
 choices persist. Expanded rows use the canonical waiting/working/review/idle
 vocabulary rather than inventing an ambiguous “needs you” state.
 

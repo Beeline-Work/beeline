@@ -601,12 +601,56 @@ describe('desktop Workspace navigation', () => {
     );
   });
 
+  it('opens a Room on a row click without expanding its corners, which only the glyph expands', async () => {
+    act(() => control('desktop-room-room-a').props.onPress());
+    expect(routerNavigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { dangerouslySingular: true },
+    );
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="row-click-opened-room" />);
+    });
+    await settle();
+
+    expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+    expect(
+      tree.root.findAll((node: any) => node.props.testID === 'desktop-room-corners-room-a'),
+    ).toHaveLength(0);
+
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+    expect(control('desktop-corner-corner-a').props.accessibilityLabel).toBe(
+      'Open corner Fix fixture, working',
+    );
+  });
+
+  it('keeps a corner route beneath its expanded parent Room', async () => {
+    route.pathname = '/beeline/chat/corner-a';
+    route.parent = 'room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="corner-route" />);
+    });
+    await settle();
+
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+    expect(control('desktop-corner-corner-a')).toBeDefined();
+  });
+
   it('lists open corners from the chat list with no per-Room corners read', async () => {
     route.pathname = '/beeline/chat/room-a';
     await act(async () => {
       tree.update(<SidebarView key="room-corners-payload" />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     const glyph = control('desktop-corner-glyph-corner-a');
     expect(glyph.type).toBe('CornerGlyph');
@@ -624,6 +668,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key={`room-corners-${state}`} />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     const label = tree.root.find(
       (node: any) => node.type === 'Text' && node.props.children === state,
@@ -639,6 +684,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="room-corners-ready" />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     expect(control('desktop-corner-glyph-corner-a').props.color).toBeUndefined();
     const label = tree.root.find(

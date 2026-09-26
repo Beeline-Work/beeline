@@ -23,6 +23,9 @@ import type {
 } from './wallet.js';
 import type {
   ConnectionDetailView,
+  ConnectWorkbenchAppInput,
+  ConnectWorkbenchAppResult,
+  DisconnectWorkbenchAppInput,
   PairConnectorInput,
   PairConnectorResult,
   ReadConnectionDetailInput,
@@ -142,6 +145,10 @@ export type PhoneOperationMap = {
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
   unpairConnector: { input: UnpairConnectorInput; output: void };
+  /** The one front door for connecting an app from the Workbench. */
+  connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };
+  /** Stop every route of one app and revoke its standing approvals. */
+  disconnectWorkbenchApp: { input: DisconnectWorkbenchAppInput; output: void };
   readConnectionDetail: { input: ReadConnectionDetailInput; output: ConnectionDetailView };
   revokeConnectionGrants: {
     input: RevokeConnectionGrantsInput;

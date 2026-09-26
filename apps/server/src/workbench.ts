@@ -48,7 +48,6 @@ const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'google-calendar', name: 'Google Calendar', available: true },
   { connectorType: 'google-drive', name: 'Google Drive', available: true },
   { connectorType: 'google-youtube', name: 'YouTube', available: true },
-  { connectorType: 'composio', name: 'Composio', available: true },
 ];
 
 export function connectorCatalog(): readonly ConnectorCatalogEntry[] {
@@ -64,11 +63,23 @@ export function isConnectableConnector(type: ConnectorKind): boolean {
   return CONNECTABLE_CONNECTOR_KINDS.includes(type);
 }
 
+/**
+ * Connector kinds that no longer connect but whose hidden identity already
+ * spoke: their receipt DMs stay read-only ledgers with their own face.
+ */
+const RETIRED_CONNECTOR_KINDS = ['composio'] as const;
+
 const logoCache = new Map<string, string>();
 
 /** Fixed bot logos, including System, served at /v1/connectors/logo/<type>.svg. */
 export function connectorLogo(type: string): string | undefined {
-  if (type !== 'system' && type !== 'google' && !isConnectorKind(type)) return undefined;
+  if (
+    type !== 'system' &&
+    type !== 'google' &&
+    !isConnectorKind(type) &&
+    !(RETIRED_CONNECTOR_KINDS as readonly string[]).includes(type)
+  )
+    return undefined;
   const cached = logoCache.get(type);
   if (cached) return cached;
   try {
@@ -84,12 +95,14 @@ export function connectorLogo(type: string): string | undefined {
 }
 
 /** The deterministic hidden identity that speaks FOR one connector type. */
-export function connectorIdentityId(type: ConnectorKind): string {
+export function connectorIdentityId(
+  type: ConnectorKind | (typeof RETIRED_CONNECTOR_KINDS)[number],
+): string {
   return createHash('sha256').update(`beeline:connector-identity:${type}`).digest('hex');
 }
 
 const CONNECTOR_TYPES_BY_ID = new Map(
-  CONNECTOR_KINDS.map((type) => [connectorIdentityId(type), type]),
+  [...CONNECTOR_KINDS, ...RETIRED_CONNECTOR_KINDS].map((type) => [connectorIdentityId(type), type]),
 );
 
 /** Every fixed connector speaker id, for read surfaces that distinguish its ledger DM. */

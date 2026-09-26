@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { describe, it, expect, vi } from 'vitest';
 import {
   drivenUrlIn,
+  resourceCallFacts,
   resourceFacadeArgs,
   squireApprovalCopy,
   squireApprovalFromMcp,
@@ -40,6 +41,39 @@ describe('the page a Squire session is driving', () => {
     expect(drivenUrlIn('operate_start', { url: 'https://user:pw@provider.test/login' })).toBe(
       undefined,
     );
+  });
+});
+
+describe('what the gate learns about one resource call', () => {
+  it('names the apps a Squire call is for, so it answers to that app’s one decision', () => {
+    expect(
+      resourceCallFacts(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'use_credential',
+            arguments: { service: 'linear', http: { method: 'POST', url: 'https://api.linear.app/graphql' } },
+          },
+        },
+        'squire',
+      ),
+    ).toEqual({ operation: 'use_credential', appKeys: ['linear'] });
+    expect(
+      resourceCallFacts(
+        { method: 'tools/call', params: { name: 'operate_start', arguments: { url: 'https://resend.com' } } },
+        'squire',
+      ),
+    ).toEqual({ operation: 'operate_start', appKeys: ['resend'] });
+  });
+
+  it('never reads app hints off another route, and discovery carries nothing', () => {
+    expect(
+      resourceCallFacts(
+        { method: 'tools/call', params: { name: 'search', arguments: { url: 'https://linear.app' } } },
+        'registry-mcp:app.linear/linear',
+      ),
+    ).toEqual({ operation: 'search' });
+    expect(resourceCallFacts({ method: 'tools/list' }, 'squire')).toEqual({});
   });
 });
 

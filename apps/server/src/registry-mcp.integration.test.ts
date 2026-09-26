@@ -79,7 +79,6 @@ describe('Registry MCP connection orchestration', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { enabled: false },
       new McpRegistryClient(exactFetches as typeof fetch),
     );

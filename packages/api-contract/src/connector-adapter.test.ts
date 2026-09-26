@@ -10,13 +10,9 @@ import {
 
 describe('connector adapters', () => {
   it('registers owner-bound connectors', () => {
-    expect(adaptedConnectorKinds()).toEqual(['trusty-squire', 'google-youtube', 'composio']);
+    expect(adaptedConnectorKinds()).toEqual(['trusty-squire', 'google-youtube']);
     expect(connectorAdapter('trusty-squire')).toBe(SQUIRE_CONNECTOR_ADAPTER);
-    expect(connectorAdapter('composio')?.authorize('connect', 'other')).toEqual({
-      allowed: false,
-      reason: 'connector not found (access denied)',
-    });
-    expect(connectorAdapter('composio')?.assignmentKinds('installing')).toEqual(['install']);
+    expect(connectorAdapter('composio')).toBeUndefined();
     expect(connectorAdapter('google-youtube')).toBe(YOUTUBE_CONNECTOR_ADAPTER);
     expect(connectorAdapter('google-gmail')).toBeUndefined();
     expect(connectorAdapter('tailscale')).toBeUndefined();

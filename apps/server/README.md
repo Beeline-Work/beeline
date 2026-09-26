@@ -46,18 +46,14 @@ Drive, and YouTube scopes; each product is installed and reports status
 separately. Enable the corresponding APIs and complete Google's verification
 for restricted scopes before offering this outside test users.
 
-Composio appears in Workbench when the server has both `BEELINE_COMPOSIO_API_KEY`
-and `BEELINE_COMPOSIO_SCOPE`. The latter is JSON with an explicit toolkit and
-tool allowlist, for example
-`{"toolkits":["github"],"tools":{"github":["GITHUB_CREATE_AN_ISSUE"]}}`.
-Use tool slugs from the current Composio catalog. The project key stays on the
-server. Pairing creates a Composio session for the Workbench owner, the helper
-reports each toolkit's Connect Link to that owner's sign-in screen, and only
-an active turn triggered by that owner can run an allowed tool. Every call is
-recorded in that owner's Workbench connection ledger; ordinary use does not
-send a receipt DM. Configure the key and scope before pairing, and keep the
-approved scope is stored when paired; changing the server allowlist affects
-only new or re-paired connections.
+Apps connect through one front door: an agent's `connect_app` or Workbench →
+Connect an app. The server chooses the route in a fixed order — an app already
+connected in Workbench, the app's official hosted MCP server from the Registry,
+then Trusty Squire with an API key, then Squire in a browser only when the app
+has no API — and records each choice in `workspace_app_routes`. Every use on
+every route is authorized as `app:<key>` and recorded in
+`workspace_app_usage` (`src/app-connections.ts`). Composio is retired; its
+persisted rows are removed by the migration.
 
 The browser client is hosted separately at `https://web.usebeeline.app`. Set
 `BEELINE_WEB_APP_ORIGINS=https://web.usebeeline.app` in production so the server

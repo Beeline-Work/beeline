@@ -292,6 +292,85 @@ describe('Workbench settings screen', () => {
     expect(push.params.connectorId).toBe('google-gmail');
   });
 
+  it('shows one Connect an app action and one row per app, with its key folded in', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([
+      {
+        id: 'app-vercel',
+        key: 'vercel',
+        name: 'Vercel',
+        domain: 'vercel.com',
+        transport: 'squire-api',
+        status: 'connected',
+        helperName: 'squire-box',
+        helperId: 'machine-1',
+        connectionReference: 'cred_vercel',
+        useCount: 2,
+      },
+      {
+        id: 'app-linear',
+        key: 'linear',
+        name: 'Linear',
+        domain: 'linear.app',
+        transport: 'registry-mcp',
+        status: 'error',
+        errorMessage: 'The provider refused the sign-in',
+        helperName: 'squire-box',
+        helperId: 'machine-1',
+        useCount: 0,
+      },
+    ]);
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const connect = renderer.root.findByProps({ testID: 'workbench-connect-app' });
+    expect(connect.props.title).toBe('Connect an app');
+    expect(connect.props.tone).toBe('action');
+    act(() => connect.props.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe(
+      '/beeline/settings/workbench/connect-app',
+    );
+    // No route selector and no Composio row anywhere on the page.
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-composio' })).toHaveLength(0);
+    const vercel = renderer.root.findByProps({ testID: 'workbench-app-vercel-head' });
+    expect(vercel.props.title).toBe('Vercel');
+    expect(vercel.props.value).toBe('connected');
+    expect(vercel.props.leading.props.domain).toBe('vercel.com');
+    // The app row holds its key: Keys does not list it again.
+    expect(
+      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
+    ).toHaveLength(0);
+    act(() => vercel.props.onPress());
+    const details = renderer.root.findByProps({ testID: 'workbench-app-vercel-details' });
+    const prose = details
+      .findAll((node: any) => typeof node.props?.children === 'string')
+      .map((node: any) => node.props.children);
+    expect(prose).toContain('Trusty Squire · API key · on squire-box · used 2 times');
+    // Its folded key stays reachable from the app's own row.
+    act(() => renderer.root.findByProps({ testID: 'workbench-app-vercel-key' }).props.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/connection',
+      params: { ref: 'cred_vercel' },
+    });
+    const linear = renderer.root.findByProps({ testID: 'workbench-app-linear-head' });
+    expect(linear.props.value).toBe('error');
+    expect(linear.props.valueTone).toBe('danger');
+    expect(linear.props.description).toBe('The provider refused the sign-in');
+    act(() => linear.props.onPress());
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workbench-app-linear-reconnect' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(source.appRequests).toEqual([
+      { app: 'linear.app', helperId: 'machine-1', reconnect: true },
+    ]);
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workbench-app-vercel-disconnect' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findAllByProps({ testID: 'workbench-app-vercel-head' })).toHaveLength(0);
+  });
+
   it('collapses an expanded cell on a second tap', async () => {
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });

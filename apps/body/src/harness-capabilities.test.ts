@@ -65,7 +65,10 @@ describe('Room session modes', () => {
 
   it('keeps the portable read-only candidates for every other harness', () => {
     for (const osSandbox of [true, false]) {
-      expect(roomModeCandidates('claude-agent-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
+      expect(roomModeCandidates('claude-agent-acp', { osSandbox })).toEqual([
+        'read-only',
+        'readonly',
+      ]);
       expect(roomModeCandidates('pi-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
       expect(roomModeCandidates('custom-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
       expect(roomModeCandidates(undefined, { osSandbox })).toEqual(['read-only', 'readonly']);

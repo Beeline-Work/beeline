@@ -14,6 +14,9 @@ import {
 } from './fixtures/grok-use-tool-permissions.js';
 import { MonolithRoomTurnLoop, roomPermissionDecision } from './monolith-room-turn.js';
 import {
+  CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
+  CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
+  CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
   CLAUDE_ACP_NATIVE_BASH_PERMISSION,
   CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
   CLAUDE_ACP_NATIVE_WRITE_PERMISSION,
@@ -411,6 +414,15 @@ describe('top-level Room native permission policy', () => {
 
   it('leaves Codex MCP permissions on the existing allowlist path', () => {
     expect(decide(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe('allow');
+  });
+
+  it('allows the claude-agent-acp MCP spelling on the same path', () => {
+    // Captured wire payloads: no MCP envelope at all, the fully-qualified
+    // double-underscore name as `title`, kind `other`, the tool's own
+    // arguments as `rawInput`. Same allowlist, same verdict as Codex's.
+    expect(decide(CLAUDE_ACP_MCP_READ_FILE_PERMISSION)).toBe('allow');
+    expect(decide(CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION)).toBe('allow');
+    expect(decide(CLAUDE_ACP_MCP_GIT_LOG_PERMISSION)).toBe('allow');
   });
 
   it('still rejects native reads, writes, edits, deletes, moves, and unstructured requests', () => {

@@ -12,7 +12,17 @@ import {
   GROK_USE_TOOL_OPEN_CORNER_PERMISSION,
   GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE,
 } from './fixtures/grok-use-tool-permissions.js';
-import { MonolithRoomTurnLoop, roomMcpPermissionDecision } from './monolith-room-turn.js';
+import {
+  MonolithRoomTurnLoop,
+  roomMcpPermissionDecision,
+  roomPermissionDecision,
+} from './monolith-room-turn.js';
+import {
+  CLAUDE_ACP_NATIVE_BASH_PERMISSION,
+  CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+  CLAUDE_ACP_NATIVE_WRITE_PERMISSION,
+  CODEX_ACP_MCP_READ_FILE_PERMISSION,
+} from './fixtures/claude-agent-acp-permissions.js';
 import {
   isMountedMcpToolPermissionRequest,
   resolveMountedMcpToolCall,
@@ -322,6 +332,39 @@ describe('top-level Room MCP permission policy', () => {
       expect(roomMcpPermissionDecision({ toolCall: { title: 'use_tool' } })).toBe('reject');
       expect(roomMcpPermissionDecision({})).toBe('reject');
     });
+  });
+});
+
+describe('top-level Room native permission policy', () => {
+  it('allows Claude shell requests inside the Room session sandbox', () => {
+    expect(roomPermissionDecision(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe('allow');
+    expect(
+      roomPermissionDecision({
+        toolCall: {
+          kind: 'other',
+          title: 'execute_command',
+          rawInput: { command: 'curl -I localhost' },
+        },
+      }),
+    ).toBe('allow');
+  });
+
+  it('leaves Codex MCP permissions on the existing allowlist path', () => {
+    expect(roomPermissionDecision(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe('allow');
+  });
+
+  it('still rejects native reads, writes, edits, deletes, moves, and unstructured requests', () => {
+    const refused = [
+      CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+      CLAUDE_ACP_NATIVE_WRITE_PERMISSION.toolCall,
+      { kind: 'delete', title: 'Delete README.md' },
+      { kind: 'move', title: 'Move README.md' },
+      { kind: 'edit', title: 'Bash script edit' },
+    ];
+    for (const toolCall of refused) {
+      expect(roomPermissionDecision({ toolCall })).toBe('reject');
+    }
+    expect(roomPermissionDecision({})).toBe('reject');
   });
 });
 

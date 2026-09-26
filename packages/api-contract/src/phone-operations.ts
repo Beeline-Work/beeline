@@ -10,6 +10,7 @@ import type {
   InviteView,
   MessageBookmarkView,
   MessageReactionEmoji,
+  NeedsYouItemView,
 } from './phone-types.js';
 import type {
   CreateWalletInput,
@@ -41,6 +42,12 @@ export type PhoneOperationMap = {
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
+  /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
+  readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
+  /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
+  countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
+  /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
+  clearNeedsYou: { input: ClearNeedsYouInput; output: void };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -55,7 +62,7 @@ export type PhoneOperationMap = {
   createRoomPoll: { input: CreateRoomPollInput; output: CreateRoomPollResult };
   answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
   skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
-  createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
+  createWorkspace: { input: NamedWorkspaceInput; output: CreateWorkspaceResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
   /** Owner-only: a real cascade delete of the workspace and everything in it.
@@ -81,7 +88,7 @@ export type PhoneOperationMap = {
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
-  leaveRoom: { input: RoomInput; output: void };
+  leaveRoom: { input: RoomInput & { readonly confirmDelete?: true }; output: void };
   closeChat: { input: RoomInput; output: void };
   reopenChat: { input: RoomInput; output: void };
   addRoomMember: { input: RoomMemberInput; output: MembershipResult };
@@ -183,8 +190,14 @@ export type WorkspaceMemberInput = WorkspaceInput & {
 export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };
 export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string };
 export type IdResult = { readonly id: string };
+/** A new Workspace and the public `#general` Room created with it. */
+export type CreateWorkspaceResult = IdResult & { readonly roomId?: string };
 export type MembershipResult = { readonly joined: boolean };
-export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
+export type InviteMembershipResult = MembershipResult & {
+  readonly workspaceId: string;
+  /** The first live top-level Room the viewer can open after joining. */
+  readonly roomId?: string;
+};
 export type MessageWriteResult = { readonly messageId: string };
 /** Active turns that received a server-created command with this human message. */
 export type AgentMessageWriteResult = MessageWriteResult & {
@@ -234,6 +247,9 @@ export type SetMessageBookmarkInput = RoomInput & {
 };
 export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
+export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
+export type NeedsYouCountResult = { readonly count: number };
+export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string };
 /**
  * Stop one turn in progress.
  *
@@ -250,6 +266,13 @@ export type CancelAgentTurnInput = RoomInput & {
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
   readonly appInstallationId?: string;
+  /**
+   * The parent-Room message this corner was opened from (the mobile
+   * swipe-right forward). When it names a message in that Room, the server
+   * writes one `corner-open` card carrying it, which the phone renders as the
+   * marker beneath that message.
+   */
+  readonly sourceMessageId?: string;
 };
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;
@@ -332,7 +355,10 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
   readonly avatar?: string;
 };
 export type UpdateAgentModelInput = WorkspaceAgentInput &
-  Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
+  Omit<AgentModelSelection, 'effort'> & {
+    readonly effort?: string | null;
+    readonly fastMode?: boolean;
+  };
 export type UpdateAgentYoloInput = WorkspaceAgentInput & { readonly enabled: boolean };
 /** The owner's answer to "who may address this agent" (`agent-access.ts`). */
 export type UpdateAgentAccessPolicyInput = WorkspaceAgentInput & {

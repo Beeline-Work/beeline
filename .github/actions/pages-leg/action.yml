@@ -20,6 +20,15 @@ runs:
         cache: npm
     - shell: bash
       run: npm ci
+    # `verify-pages-update.mjs` esbuild-bundles `apps/body/src/self-update.ts`
+    # from source, and that import graph reaches workspace packages whose
+    # `exports` point at their built `dist/`. `npm ci` links them unbuilt, so
+    # the proof needs them compiled first — the same trio `web-app-leg` builds.
+    # Run 36249580309 failed here on a website-only release: the helper leg,
+    # which happens to build them, was skipped.
+    - name: Build the workspace packages the Pages update proof bundles from source
+      shell: bash
+      run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
     - name: Load the durable channel for a website-only deployment
       if: inputs.bundle_dir == ''
       uses: actions/github-script@v7

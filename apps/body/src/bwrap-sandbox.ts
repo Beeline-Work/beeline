@@ -240,6 +240,7 @@ export const KNOWN_CREDENTIAL_MASK_PATHS = [
   '.netrc',
   '.git-credentials',
   '.secrets.env',
+  '.beeline/registry-mcp',
 ] as const;
 
 /** One masked path plus whether it was seen as a directory or a file. */

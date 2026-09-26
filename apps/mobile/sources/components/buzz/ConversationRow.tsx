@@ -30,6 +30,7 @@ export function ConversationRow({
   desktop = false,
   cornersExpanded = false,
   onToggleCorners,
+  onLongPressCorners,
   testID,
 }: {
   item: ChatListItem;
@@ -42,6 +43,8 @@ export function ConversationRow({
   desktop?: boolean;
   cornersExpanded?: boolean;
   onToggleCorners?: () => void;
+  /** Long-press of the corner glyph opens a new corner in this Room. */
+  onLongPressCorners?: () => void;
   testID: string;
 }) {
   const name = roomRowName(item);
@@ -152,7 +155,10 @@ export function ConversationRow({
           accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
           accessibilityRole="button"
           accessibilityState={{ expanded: cornersExpanded }}
+          accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
+          delayLongPress={onLongPressCorners ? 450 : undefined}
           hitSlop={8}
+          onLongPress={onLongPressCorners}
           onPress={onToggleCorners}
           style={[
             styles.cornerToggle,

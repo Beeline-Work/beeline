@@ -7,6 +7,6 @@ export interface AgentModelConfigOption {
 
 const ALLOWED = new Set(['model', 'thought_level', 'effort', 'reasoning_effort']);
 
-export function isAllowedAgentModelConfigCategory(category: string): boolean {
-  return ALLOWED.has(category);
+export function isAllowedAgentModelConfigCategory(category: string, id?: string): boolean {
+  return ALLOWED.has(category) || (category === 'model_config' && id === 'fast-mode');
 }

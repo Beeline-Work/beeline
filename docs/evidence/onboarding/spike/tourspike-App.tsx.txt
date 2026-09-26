@@ -1,0 +1,291 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { AttachStep, SpotlightTourProvider, useSpotlightTour } from 'react-native-spotlight-tour';
+import { TourGuideProvider, TourGuideZone, useTourGuideController } from 'rn-tourguide';
+import { CopilotProvider, CopilotStep, useCopilot, walkthroughable } from 'react-native-copilot';
+
+type Lib = 'spotlight' | 'tourguide' | 'copilot' | 'joyride';
+
+const log: string[] = [];
+function note(line: string) {
+  const stamped = `${new Date().toISOString().slice(11, 19)} ${line}`;
+  log.push(stamped);
+  console.log(`[spike] ${stamped}`);
+}
+
+function Btn({ label, onPress, testID }: { label: string; onPress: () => void; testID?: string }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      nativeID={testID}
+      testID={testID}
+      onPress={onPress}
+      style={{ minHeight: 44, minWidth: 44, padding: 10, margin: 4, backgroundColor: '#333', justifyContent: 'center' }}
+    >
+      <Text style={{ color: '#fff' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Target({ id }: { id: string }) {
+  return (
+    <View nativeID={id} testID={id} style={{ width: 160, height: 56, backgroundColor: '#b08a4a', margin: 12, justifyContent: 'center' }}>
+      <Text style={{ textAlign: 'center' }}>TARGET</Text>
+    </View>
+  );
+}
+
+function Tip({ text, onDone }: { text: string; onDone: () => void }) {
+  return (
+    <View style={{ backgroundColor: '#fff', padding: 12, maxWidth: 260 }} testID="tip">
+      <Text>{text}</Text>
+      <Btn label="Got it" onPress={onDone} testID="tip-done" />
+    </View>
+  );
+}
+
+function Controls({
+  mounted,
+  setMounted,
+  start,
+  stop,
+  openSheet,
+}: {
+  mounted: boolean;
+  setMounted: (next: boolean) => void;
+  start: () => void;
+  stop: () => void;
+  openSheet: () => void;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+      <Btn label={mounted ? 'unmount target' : 'mount target'} onPress={() => setMounted(!mounted)} testID="toggle-target" />
+      <Btn label="start" onPress={start} testID="start" />
+      <Btn label="stop" onPress={stop} testID="stop" />
+      <Btn label="sheet then start" onPress={openSheet} testID="sheet-start" />
+    </View>
+  );
+}
+
+function SheetHost({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  // Stands in for Beeline's HullDialog: the app's own RN Modal sheet.
+  return (
+    <Modal transparent visible={visible} onRequestClose={onClose} animationType="none">
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.3)' }}>
+        <View style={{ backgroundColor: '#222', padding: 24 }} testID="app-sheet">
+          <Text style={{ color: '#fff' }}>APP SHEET (HullDialog stand-in)</Text>
+          <Btn label="close sheet" onPress={onClose} testID="close-sheet" />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SpotlightInner() {
+  const tour = useSpotlightTour();
+  const [mounted, setMounted] = useState(true);
+  const [sheet, setSheet] = useState(false);
+  return (
+    <View>
+      <Controls
+        mounted={mounted}
+        setMounted={setMounted}
+        start={() => {
+          note(`spotlight start (target mounted=${mounted})`);
+          tour.start();
+        }}
+        stop={() => tour.stop()}
+        openSheet={() => {
+          setSheet(true);
+          setTimeout(() => tour.start(), 800);
+        }}
+      />
+      {mounted && (
+        <AttachStep index={0}>
+          <Target id="target" />
+        </AttachStep>
+      )}
+      <Text testID="status">status={tour.status} current={String(tour.current)}</Text>
+      <SheetHost visible={sheet} onClose={() => setSheet(false)} />
+    </View>
+  );
+}
+
+function SpotlightPane() {
+  return (
+    <SpotlightTourProvider
+      steps={[{ render: ({ stop }) => <Tip text="spotlight-tour step" onDone={stop} /> }]}
+      overlayColor="black"
+      overlayOpacity={0.6}
+      shape="rectangle"
+      onBackdropPress="stop"
+      onStop={() => note('spotlight onStop')}
+    >
+      <SpotlightInner />
+    </SpotlightTourProvider>
+  );
+}
+
+function TourGuideInner() {
+  const { canStart, start, stop, eventEmitter } = useTourGuideController();
+  const [mounted, setMounted] = useState(true);
+  const [sheet, setSheet] = useState(false);
+  useEffect(() => {
+    const onStop = () => note('tourguide stop event');
+    eventEmitter?.on('stop', onStop);
+    return () => eventEmitter?.off('stop', onStop);
+  }, [eventEmitter]);
+  return (
+    <View>
+      <Controls
+        mounted={mounted}
+        setMounted={setMounted}
+        start={() => {
+          note(`tourguide start (canStart=${canStart}, target mounted=${mounted})`);
+          start();
+        }}
+        stop={() => stop()}
+        openSheet={() => {
+          setSheet(true);
+          setTimeout(() => start(), 800);
+        }}
+      />
+      {mounted && (
+        <TourGuideZone zone={1} text="rn-tourguide step" shape="rectangle">
+          <Target id="target" />
+        </TourGuideZone>
+      )}
+      <Text testID="status">canStart={String(canStart)}</Text>
+      <SheetHost visible={sheet} onClose={() => setSheet(false)} />
+    </View>
+  );
+}
+
+function TourGuidePane() {
+  return (
+    <TourGuideProvider backdropColor="rgba(0,0,0,0.6)" androidStatusBarVisible>
+      <TourGuideInner />
+    </TourGuideProvider>
+  );
+}
+
+const WalkView = walkthroughable(View);
+
+function CopilotInner() {
+  const { start, stop, visible } = useCopilot();
+  const [mounted, setMounted] = useState(true);
+  const [sheet, setSheet] = useState(false);
+  return (
+    <View>
+      <Controls
+        mounted={mounted}
+        setMounted={setMounted}
+        start={() => {
+          note(`copilot start (target mounted=${mounted})`);
+          void start();
+        }}
+        stop={() => void stop()}
+        openSheet={() => {
+          setSheet(true);
+          setTimeout(() => void start(), 800);
+        }}
+      />
+      {mounted && (
+        <CopilotStep text="copilot step" order={1} name="one">
+          <WalkView>
+            <Target id="target" />
+          </WalkView>
+        </CopilotStep>
+      )}
+      <Text testID="status">visible={String(visible)}</Text>
+      <SheetHost visible={sheet} onClose={() => setSheet(false)} />
+    </View>
+  );
+}
+
+function CopilotPane() {
+  return (
+    <CopilotProvider overlay="svg" androidStatusBarVisible>
+      <CopilotInner />
+    </CopilotProvider>
+  );
+}
+
+function JoyridePane() {
+  const [run, setRun] = useState(false);
+  const [mounted, setMounted] = useState(true);
+  const [sheet, setSheet] = useState(false);
+  const Joyride = useRef<React.ComponentType<Record<string, unknown>> | null>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    void import('react-joyride').then((mod) => {
+      Joyride.current = (mod as unknown as { Joyride: React.ComponentType<Record<string, unknown>> }).Joyride;
+      setReady(true);
+    });
+  }, []);
+  if (Platform.OS !== 'web') return <Text>joyride is web-only</Text>;
+  const J = Joyride.current;
+  return (
+    <View>
+      <Controls
+        mounted={mounted}
+        setMounted={setMounted}
+        start={() => {
+          note(`joyride start (target mounted=${mounted})`);
+          setRun(true);
+        }}
+        stop={() => setRun(false)}
+        openSheet={() => {
+          setSheet(true);
+          setTimeout(() => setRun(true), 800);
+        }}
+      />
+      {mounted && <Target id="target" />}
+      <Text testID="status">run={String(run)}</Text>
+      {ready && J && (
+        <J
+          run={run}
+          continuous
+          steps={[{ target: '#target', content: 'joyride step', disableBeacon: true }]}
+          callback={(data: { status: string; type: string }) => {
+            note(`joyride ${data.type} ${data.status}`);
+            if (data.status === 'finished' || data.status === 'skipped') setRun(false);
+          }}
+        />
+      )}
+      <SheetHost visible={sheet} onClose={() => setSheet(false)} />
+    </View>
+  );
+}
+
+export default function App() {
+  const [lib, setLib] = useState<Lib>('spotlight');
+  const [, force] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <View style={{ flex: 1, paddingTop: 48, backgroundColor: '#14091a' }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {(['spotlight', 'tourguide', 'copilot', 'joyride'] as const).map((entry) => (
+          <Btn key={entry} label={entry === lib ? `[${entry}]` : entry} onPress={() => setLib(entry)} testID={`lib-${entry}`} />
+        ))}
+      </View>
+      <View style={{ flex: 1 }}>
+        {lib === 'spotlight' && <SpotlightPane />}
+        {lib === 'tourguide' && <TourGuidePane />}
+        {lib === 'copilot' && <CopilotPane />}
+        {lib === 'joyride' && <JoyridePane />}
+      </View>
+      <ScrollView style={{ maxHeight: 160, backgroundColor: '#000' }}>
+        {log.slice(-12).map((line, index) => (
+          <Text key={index} style={{ color: '#9f9', fontSize: 11 }}>
+            {line}
+          </Text>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}

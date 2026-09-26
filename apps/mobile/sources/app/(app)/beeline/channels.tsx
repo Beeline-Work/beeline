@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -13,7 +14,10 @@ import {
   saveActiveCommunityId,
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
-import { navigateToRoom } from '@/buzz/corner-navigation';
+import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
+import { agentPairingCommand } from '@/buzz/agent-pairing-command';
+import { loadPendingInvite } from '@/buzz/pending-invite';
+import { deckLanding } from '@/buzz/deck-landing';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
@@ -21,7 +25,9 @@ import {
   useRoomPins,
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
+import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -43,6 +49,7 @@ import {
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -83,7 +90,6 @@ import { StyleSheet } from 'react-native-unistyles';
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
-const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 const ROW_HEIGHT = 64;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /** Match the fixed trailing inset used by Room and corner conversation headers. */
@@ -174,7 +180,10 @@ export default function BuzzChannels() {
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
+  // Only a live read (never a cached one) may say "you have no Workspace".
+  const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +229,6 @@ export default function BuzzChannels() {
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
-  const canLeaveRooms = chatList?.workspace.role === 'member';
   const [query, setQuery] = useState('');
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
@@ -314,14 +322,13 @@ export default function BuzzChannels() {
       }
       const heading = roomRowName(item);
       const title = `${heading.sigil}${heading.name}`;
-      const confirmed = await Modal.confirm(`Leave ${title}?`, 'Other members keep their access.', {
-        cancelText: 'No',
-        confirmText: 'Yes',
-        destructive: true,
-      });
-      if (!confirmed) return;
       try {
-        await transport.leaveRoom(item.room.id);
+        const left = await leaveRoomWithConfirmation(
+          title,
+          item.leaveDeletesRoom === true,
+          (confirmDelete) => transport.leaveRoom(item.room.id, confirmDelete),
+        );
+        if (!left) return;
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         chatScheduler.current?.force();
       } catch (reason) {
@@ -330,15 +337,6 @@ export default function BuzzChannels() {
     },
     [transport],
   );
-
-  const explainRoomLeaveConstraint = useCallback((item: ChatListItem) => {
-    const heading = roomRowName(item);
-    const title = `${heading.sigil}${heading.name}`;
-    Modal.alert(
-      `Cannot leave ${title}`,
-      'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.',
-    );
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -351,6 +349,13 @@ export default function BuzzChannels() {
       const nextIdentity = await loadBuzzIdentity();
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
+        return;
+      }
+      // An invite opened before sign-in outranks every other landing.
+      const pendingInvite = await loadPendingInvite();
+      if (pendingInvite) {
+        if (!cancelled)
+          router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
         return;
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
@@ -397,6 +402,7 @@ export default function BuzzChannels() {
         fetch: () => http.workspaces(),
         apply: (value) => {
           setWorkspaceList(value);
+          setWorkspacesConfirmed(true);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -575,6 +581,25 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
+  const openingCornerRef = useRef(false);
+  const openNewCorner = useCallback(
+    async (roomId: string) => {
+      if (openingCornerRef.current) return;
+      openingCornerRef.current = true;
+      try {
+        await openRoomListCorner({
+          roomId,
+          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title) : null,
+          openCorner: (cornerId, title) =>
+            router.push(cornerHref(cornerId, roomId, title, 'room-list')),
+        });
+      } finally {
+        openingCornerRef.current = false;
+      }
+    },
+    [transport],
+  );
+
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {
       if (!workspaceId) return;
@@ -743,6 +768,19 @@ export default function BuzzChannels() {
     transport,
   ]);
 
+  const landing = deckLanding({
+    workspaces: workspacesConfirmed
+      ? { status: 'ready', count: workspaceList?.workspaces.length ?? 0 }
+      : error
+        ? { status: 'failed' }
+        : { status: 'pending' },
+    chats: chatList ? 'ready' : error ? 'failed' : 'pending',
+  });
+  const noWorkspace = landing.kind === 'choice';
+  useEffect(() => {
+    if (noWorkspace) router.replace('/beeline/community');
+  }, [noWorkspace]);
+
   const connectAgent = useCallback(async () => {
     if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
     setAgentConnectVisible(true);
@@ -753,7 +791,7 @@ export default function BuzzChannels() {
       const pairing = await (
         await transport.ensureClient()
       ).createAgentPairingCode(activeCommunityId);
-      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+      setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
       setPairingError(`Could not create agent invite: ${String(reason)}`);
     } finally {
@@ -792,29 +830,18 @@ export default function BuzzChannels() {
     [activeCommunityId, canManageWorkspace],
   );
 
-  if (workspaceList?.workspaces.length === 0) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]} testID="workspace-list-empty">
-        <Text style={styles.emptyTitle}>No Rooms yet</Text>
-        <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
-        <MonoButton
-          label="CREATE WORKSPACE"
-          onPress={() => router.push('/beeline/community' as Href)}
-          testID="empty-create-workspace"
-        />
-      </View>
-    );
-  }
-  if (!chatList && !error) {
-    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
-  }
-  if (!chatList) {
+  if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{error}</Text>
         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
+  }
+  if (landing.kind !== 'deck' || !chatList) {
+    // Choice: the create-or-join screen is the landing and the effect above
+    // is replacing this one; loader: nothing has answered yet.
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
   }
 
   return (
@@ -870,11 +897,12 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               activeCommunityId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: activeCommunityId },
                     } as never)
                 : undefined
@@ -1007,28 +1035,34 @@ export default function BuzzChannels() {
                   pathname: '/beeline/corners/[roomId]',
                   params: { roomId: item.room.id },
                 } as never);
+              const tourTarget = first && section === chatSections[0] && !viewerIsAgent;
               const row = (
-                <View
-                  style={[
-                    styles.rowSurface,
-                    first && styles.rowSurfaceFirst,
-                    last && styles.rowSurfaceLast,
-                  ]}
-                >
-                  <ConversationRow
-                    item={item}
-                    viewer={chatList.viewer.pubkey}
-                    now={ageNow}
-                    onPress={() => {
-                      swipeableRefs.current.get(item.room.id)?.close();
-                      openRoom(item.room.id);
-                    }}
-                    pinned={pinned.includes(item.room.id)}
-                    onPin={() => void togglePin(item.room.id)}
-                    onToggleCorners={openCorners}
-                    testID={`room-${item.room.id}`}
-                  />
-                </View>
+                <MaybeTourTarget enabled={tourTarget} tip="rooms">
+                  <View
+                    style={[
+                      styles.rowSurface,
+                      first && styles.rowSurfaceFirst,
+                      last && styles.rowSurfaceLast,
+                    ]}
+                  >
+                    <ConversationRow
+                      item={item}
+                      viewer={chatList.viewer.pubkey}
+                      now={ageNow}
+                      onPress={() => {
+                        swipeableRefs.current.get(item.room.id)?.close();
+                        openRoom(item.room.id);
+                      }}
+                      pinned={pinned.includes(item.room.id)}
+                      onPin={() => void togglePin(item.room.id)}
+                      onToggleCorners={openCorners}
+                      onLongPressCorners={
+                        viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                      }
+                      testID={`room-${item.room.id}`}
+                    />
+                  </View>
+                </MaybeTourTarget>
               );
               return (
                 <View style={[styles.roomCell, last && styles.roomCellLast]}>
@@ -1043,7 +1077,7 @@ export default function BuzzChannels() {
                       rightThreshold={ROW_HEIGHT}
                       renderRightActions={() => (
                         <View style={styles.chatActions}>
-                          {!item.directMessage && canLeaveRooms && (
+                          {!item.directMessage && (
                             <View style={styles.swipeAction}>
                               <TouchableOpacity
                                 accessibilityLabel={`Leave ${title}`}
@@ -1052,20 +1086,6 @@ export default function BuzzChannels() {
                                 onPress={() => handleLeaveRoom(item)}
                                 style={styles.swipeActionButton}
                                 testID={`room-leave-action-${item.room.id}`}
-                              >
-                                <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                          {!item.directMessage && canManageWorkspace && (
-                            <View style={styles.swipeAction}>
-                              <TouchableOpacity
-                                accessibilityLabel={`Cannot leave ${title}`}
-                                accessibilityRole="button"
-                                hitSlop={LEAVE_TILE_HIT_SLOP}
-                                onPress={() => explainRoomLeaveConstraint(item)}
-                                style={styles.swipeActionButton}
-                                testID={`room-leave-constraint-${item.room.id}`}
                               >
                                 <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
                               </TouchableOpacity>

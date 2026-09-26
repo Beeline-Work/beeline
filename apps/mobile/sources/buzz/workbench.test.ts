@@ -149,6 +149,18 @@ describe('connector row copy', () => {
     });
   });
 
+  it('offers no Connect on a dynamic Registry row, which has no connect flow', () => {
+    const registryRow = '22222222-2222-4222-8222-222222222222';
+    for (const status of ['error', 'disconnected', undefined] as const) {
+      expect(connectorInstrument(status, registryRow)).toEqual({
+        connect: false,
+        reconnect: false,
+        disconnect: false,
+        revokeGrants: false,
+      });
+    }
+  });
+
   it('takes Squire and YouTube Workbench controls from the typed adapter', () => {
     expect(connectorInstrument(undefined, 'trusty-squire')).toEqual({
       connect: true,

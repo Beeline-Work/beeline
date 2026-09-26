@@ -13,7 +13,7 @@ import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
 } from '@beeline/api-contract/system-identity';
-import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
+import { REVIEW_WORKSPACE_ID } from './review-proof-fixture.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 
 // sha256('github:owner') — the same derivation TokenAuth.exchangeGitHubOidc
@@ -319,8 +319,7 @@ describe('deleteAccount', () => {
     const fresh = await auth.exchangeGitHubOidc('proof');
     expect(fresh.accessToken).toBeTruthy();
     expect(await auth.authenticatePhone(fresh.accessToken)).toBe(OWNER);
-    // A NEW account: no agent, no durable messages (only the join note the
-    // welcome landing writes on its behalf).
+    // A NEW account: no agent and no durable messages.
     await expectRowCount(`SELECT 1 FROM agents WHERE agent_id=$1`, [OWNER], 0);
     await expectRowCount(
       `SELECT 1 FROM messages WHERE author_id=$1 AND presentation='message'`,
@@ -368,13 +367,13 @@ describe('deleteAccount', () => {
     await expectRowCount(
       `SELECT 1 FROM memberships
        WHERE identity_id=$1 AND workspace_id=$2 AND room_id IS NULL AND removed_at IS NULL`,
-      [REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID],
+      [REVIEW_IDENTITY_ID, REVIEW_WORKSPACE_ID],
       1,
     );
     await expectRowCount(
-      `SELECT 1 FROM memberships
-       WHERE identity_id=$1 AND workspace_id=$2 AND room_id=$3 AND removed_at IS NULL`,
-      [REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID],
+      `SELECT 1 FROM memberships m JOIN rooms r ON r.id=m.room_id
+       WHERE m.identity_id=$1 AND r.workspace_id=$2 AND r.name='general' AND m.removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID, REVIEW_WORKSPACE_ID],
       1,
     );
   });

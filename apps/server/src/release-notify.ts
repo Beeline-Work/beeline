@@ -65,11 +65,31 @@ export function composeReleaseNotice(input: {
 }
 
 /**
+ * Where a person's release notice lands: the `@system` DM in the Workspace
+ * they joined first, never the retired shared Welcome Workspace while they
+ * belong to any other (the retirement deletes it and every DM in it). A
+ * person with no Workspace has no deck to read a DM on, so they get none.
+ */
+async function releaseNoticeWorkspaceId(
+  database: SqlDatabase,
+  personId: string,
+): Promise<string | null> {
+  const result = await database.query<{ workspace_id: string }>(
+    `SELECT workspace_id FROM memberships
+     WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL
+     ORDER BY (workspace_id=$2::uuid),joined_at,workspace_id LIMIT 1`,
+    [personId, DEFAULT_WORKSPACE_ID],
+  );
+  return result.rows[0]?.workspace_id ?? null;
+}
+
+/**
  * Posts one release notice to one person. Idempotent: the message id is
  * derived from (version, personId), so a re-run of the same release version
  * hits the `messages` primary key and inserts nothing twice — no separate
  * dedup table needed. Returns whether this call actually posted (false when
- * this person was already notified for this version).
+ * this person was already notified for this version, or belongs to no
+ * Workspace).
  */
 async function notifyPerson(
   database: SqlDatabase,
@@ -81,7 +101,9 @@ async function notifyPerson(
     readonly platforms: ReadonlySet<'android' | 'ios'>;
   },
 ): Promise<boolean> {
-  const roomId = await ensureSystemDirectMessageRoom(database, DEFAULT_WORKSPACE_ID, personId);
+  const workspaceId = await releaseNoticeWorkspaceId(database, personId);
+  if (!workspaceId) return false;
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, personId);
   const id = createHash('sha256')
     .update(`beeline-release-notice:v1:${input.version}:${personId}`)
     .digest('hex');

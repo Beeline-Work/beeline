@@ -1,4 +1,3 @@
-import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 
@@ -19,7 +18,7 @@ export async function queueLatestReleasePush(
        JOIN rooms r ON r.id=m.room_id
        JOIN memberships member ON member.room_id=r.id AND member.identity_id=$1
          AND member.removed_at IS NULL
-       WHERE m.author_id=$3 AND r.workspace_id=$4
+       WHERE m.author_id=$3
          AND r.direct_participants @> jsonb_build_array($1::text,$3::text)
          AND m.card_type IS NULL
        ORDER BY m.created_at DESC,m.id DESC LIMIT 1
@@ -28,7 +27,7 @@ export async function queueLatestReleasePush(
      SELECT $2,$1,m.id FROM latest m
      LEFT JOIN room_read_marks read ON read.room_id=m.room_id AND read.identity_id=$1
      WHERE read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id)`,
-    [identityId, token, SYSTEM_IDENTITY_ID, DEFAULT_WORKSPACE_ID],
+    [identityId, token, SYSTEM_IDENTITY_ID],
   );
   // A confirmed failed send may retry on an explicit registration opportunity.
   // Never clear delivered or in-flight claims, including a racing worker's.

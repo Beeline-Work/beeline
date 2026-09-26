@@ -18,6 +18,9 @@ const openCornerState = vi.hoisted(() => ({
   current: 'working' as 'working' | 'waiting' | 'review',
 }));
 const corners = vi.hoisted(() => vi.fn());
+const createHumanCorner = vi.hoisted(() =>
+  vi.fn(async (_roomId: string, _title: string) => 'corner-new'),
+);
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -119,6 +122,16 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     chats = chats;
     corners = corners;
   },
+}));
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    createHumanCorner = createHumanCorner;
+  },
+}));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('expo-haptics', () => ({
+  notificationAsync: vi.fn(),
+  NotificationFeedbackType: { Success: 'success', Error: 'error' },
 }));
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
@@ -400,7 +413,7 @@ describe('desktop Workspace navigation', () => {
     });
   });
 
-  it('routes the heading glyphs to Members and Bookmarks, with no Workbench sidebar entry', () => {
+  it('routes the heading glyphs to Members and Tray, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 
     openMenu();
@@ -412,9 +425,9 @@ describe('desktop Workspace navigation', () => {
     });
 
     openMenu();
-    act(() => control('workspace-menu-bookmarks').props.onPress());
+    act(() => control('workspace-menu-tray').props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/bookmarks',
+      pathname: '/beeline/tray',
       params: { communityId: 'workspace-a' },
     });
   });
@@ -453,7 +466,7 @@ describe('desktop Workspace navigation', () => {
 
     openMenu();
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
-    expect(control('workspace-menu-bookmarks')).toBeDefined();
+    expect(control('workspace-menu-tray')).toBeDefined();
   });
 
   it('keeps Workspace settings and profile settings from appearing selected together', async () => {
@@ -519,7 +532,7 @@ describe('desktop Workspace navigation', () => {
     openMenu();
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
     expect(control('desktop-new-direct-message')).toBeDefined();
-    expect(control('workspace-menu-bookmarks')).toBeDefined();
+    expect(control('workspace-menu-tray')).toBeDefined();
     expect(control('workspace-menu-members')).toBeDefined();
     expect(control('profile-settings-navigation')).toBeDefined();
   });
@@ -536,28 +549,28 @@ describe('desktop Workspace navigation', () => {
     expect(control('workspace-menu-settings')).toBeDefined();
   });
 
-  it('keeps Bookmarks and profile settings from appearing selected together', async () => {
-    route.pathname = '/beeline/bookmarks';
+  it('keeps Tray and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/tray';
     await act(async () => {
-      tree.update(<SidebarView key="bookmarks-route" />);
+      tree.update(<SidebarView key="tray-route" />);
     });
     await settle();
 
     openMenu();
-    expect(control('workspace-menu-bookmarks').props.selected).toBe(true);
+    expect(control('workspace-menu-tray').props.selected).toBe(true);
     expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
       selected: false,
     });
   });
 
-  it('keeps Bookmarks unselected on the Members route', async () => {
+  it('keeps Tray unselected on the Members route', async () => {
     route.pathname = '/beeline/members';
     await act(async () => {
       tree.update(<SidebarView key="members-route" />);
     });
     await settle();
     openMenu();
-    expect(control('workspace-menu-bookmarks').props.selected).toBe(false);
+    expect(control('workspace-menu-tray').props.selected).toBe(false);
   });
 
   it('exposes the active conversation to assistive technology', async () => {
@@ -601,12 +614,96 @@ describe('desktop Workspace navigation', () => {
     );
   });
 
+  it('opens a Room on a row click without expanding its corners, which only the glyph expands', async () => {
+    act(() => control('desktop-room-room-a').props.onPress());
+    expect(routerNavigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { dangerouslySingular: true },
+    );
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="row-click-opened-room" />);
+    });
+    await settle();
+
+    expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+    expect(
+      tree.root.findAll((node: any) => node.props.testID === 'desktop-room-corners-room-a'),
+    ).toHaveLength(0);
+
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+    expect(control('desktop-corner-corner-a').props.accessibilityLabel).toBe(
+      'Open corner Fix fixture, working',
+    );
+  });
+
+  it('keeps a corner route beneath its expanded parent Room', async () => {
+    route.pathname = '/beeline/chat/corner-a';
+    route.parent = 'room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="corner-route" />);
+    });
+    await settle();
+
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+    expect(control('desktop-corner-corner-a')).toBeDefined();
+  });
+
+  it('opens a new corner from a long press on the Room corner glyph and lands in it', async () => {
+    await act(async () => {
+      await control('desktop-room-room-a-corners').props.onLongPress();
+    });
+
+    expect(createHumanCorner).toHaveBeenCalledOnce();
+    const [roomId, title] = createHumanCorner.mock.calls[0]!;
+    expect(roomId).toBe('room-a');
+    expect(title).toMatch(/ corner$/);
+    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
+      roomId: 'room-a',
+      cornerId: 'corner-new',
+    });
+    expect(routerNavigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { dangerouslySingular: true },
+    );
+    // The long press opened a corner; it did not also toggle the corner list.
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+  });
+
+  it('keeps a tap on the Room corner glyph as the corner-list toggle', () => {
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(createHumanCorner).not.toHaveBeenCalled();
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+  });
+
+  it('offers an agent viewer no corner long press', async () => {
+    viewer.kind = 'agent';
+    await act(async () => {
+      tree.update(<SidebarView key="agent-viewer" />);
+    });
+    await settle();
+    expect(control('desktop-room-room-a-corners').props.onLongPress).toBeUndefined();
+  });
+
   it('lists open corners from the chat list with no per-Room corners read', async () => {
     route.pathname = '/beeline/chat/room-a';
     await act(async () => {
       tree.update(<SidebarView key="room-corners-payload" />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     const glyph = control('desktop-corner-glyph-corner-a');
     expect(glyph.type).toBe('CornerGlyph');
@@ -624,6 +721,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key={`room-corners-${state}`} />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     const label = tree.root.find(
       (node: any) => node.type === 'Text' && node.props.children === state,
@@ -639,6 +737,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="room-corners-ready" />);
     });
     await settle();
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
     expect(control('desktop-corner-glyph-corner-a').props.color).toBeUndefined();
     const label = tree.root.find(

@@ -291,7 +291,8 @@ describe('PhoneService.readRoom latency', () => {
 
     expect(view?.chats.some((chat) => chat.room.id === ROOM)).toBe(true);
     expect(view?.chats.find((chat) => chat.room.id === ROOM)?.unread).toBe(false);
-    expect(warning).toHaveBeenCalledTimes(2);
+    // Presence, read cursor, and corner counts each degrade independently.
+    expect(warning).toHaveBeenCalledTimes(3);
     warning.mockRestore();
   });
 

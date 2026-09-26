@@ -8,8 +8,8 @@ export type OpenRandomNamedCornerInput = {
 };
 
 /**
- * Long-press of the Room corners door: create a human corner whose name is
- * three words ending in `corner`, then open it.
+ * Create a human corner whose name is three words ending in `corner`, then open
+ * it. Each entry point owns its own trigger description.
  */
 export async function openRandomNamedCorner(
   input: OpenRandomNamedCornerInput,

@@ -89,6 +89,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -101,6 +102,8 @@ import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
+import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -200,7 +203,7 @@ const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
-    throw new Error('agent name must be a short spoken name');
+    throw new Error('invalid agent name: must be a short spoken name');
   return name;
 }
 
@@ -268,6 +271,7 @@ interface RoomRow {
   reviewer_agent_id: string | null;
   created_at: Date;
   updated_at: Date;
+  leave_deletes_room?: boolean;
 }
 interface MessageRow {
   id: string;
@@ -420,6 +424,24 @@ function selectedModelLabel(
   const value = selected ?? axis?.currentValue;
   if (!value) return undefined;
   return axis?.options?.find((option) => option.id === value)?.name ?? value;
+}
+/**
+ * The catalog's effort axis: a known effort category first; otherwise the
+ * first axis that is neither the model nor Fast mode, so a harness naming its
+ * effort category differently keeps its effort picker.
+ */
+function effortCatalogAxis(
+  catalog: AgentDetailView['catalog'],
+): AgentDetailView['catalog'][number] | undefined {
+  return (
+    catalog.find((axis) =>
+      ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
+    ) ??
+    catalog.find(
+      (axis) =>
+        axis.category !== 'model' && !(axis.id === 'fast-mode' && axis.category === 'model_config'),
+    )
+  );
 }
 function roomHeader(row: RoomRow, publicOrigin: string) {
   return {
@@ -1069,6 +1091,7 @@ export class PhoneService {
     const rooms = await this.database.query<
       RoomRow & {
         member_count: string;
+        leave_deletes_room: boolean;
         latest_id: string | null;
         latest_text: string | null;
         latest_attachments: MessageRow['attachments'] | null;
@@ -1100,6 +1123,16 @@ export class PhoneService {
       `
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
+        NOT EXISTS (
+          SELECT 1 FROM memberships other_room
+          JOIN memberships other_workspace ON other_workspace.workspace_id=r.workspace_id
+            AND other_workspace.room_id IS NULL
+            AND other_workspace.identity_id=other_room.identity_id
+            AND other_workspace.removed_at IS NULL
+            AND other_workspace.role IN ('owner','admin')
+          WHERE other_room.room_id=r.id AND other_room.removed_at IS NULL
+            AND other_room.identity_id<>$2
+        ) leave_deletes_room,
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
         $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
@@ -1283,6 +1316,10 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        leaveDeletesRoom:
+          !row.direct_participants &&
+          (current.role === 'owner' || current.role === 'admin') &&
+          row.leave_deletes_room,
         ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
@@ -1629,6 +1666,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(messages, attachmentFacts),
+      ...(!room.parent_id ? { leaveDeletesRoom: room.leave_deletes_room === true } : {}),
       ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
@@ -1890,6 +1928,16 @@ export class PhoneService {
         `WITH authorized_room AS (
            SELECT room.*,membership.role viewer_role,
              workspace_member.role workspace_role,
+             (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
+               SELECT 1 FROM memberships other_room
+               JOIN memberships other_workspace ON other_workspace.workspace_id=room.workspace_id
+                 AND other_workspace.room_id IS NULL
+                 AND other_workspace.identity_id=other_room.identity_id
+                 AND other_workspace.removed_at IS NULL
+                 AND other_workspace.role IN ('owner','admin')
+               WHERE other_room.room_id=room.id AND other_room.removed_at IS NULL
+                 AND other_room.identity_id<>$2
+             )) leave_deletes_room,
              NULL::jsonb read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=room.id
@@ -2206,6 +2254,7 @@ export class PhoneService {
         commands: AgentDetailView['commands'];
         selected_model: string | null;
         selected_effort: string | null;
+        fast_mode: boolean;
         model_unavailable: 'model' | 'effort' | 'selection' | null;
         yolo_mode: boolean;
         yolo_forced_off: boolean;
@@ -2220,7 +2269,7 @@ export class PhoneService {
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.model_unavailable,
+        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -2308,6 +2357,19 @@ export class PhoneService {
           }
         : {}),
       catalog: config?.model_catalog ?? [],
+      fastMode: Boolean(
+        config?.fast_mode &&
+        (!config.selected_model ||
+          config.model_catalog?.find((axis) => axis.category === 'model')?.currentValue ===
+            config.selected_model) &&
+        config.model_catalog?.some(
+          (axis) =>
+            axis.id === 'fast-mode' &&
+            axis.category === 'model_config' &&
+            axis.options.some((choice) => choice.id === 'on') &&
+            axis.options.some((choice) => choice.id === 'off'),
+        ),
+      ),
       commands: config?.commands ?? [],
       ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
       ...(config?.selected_model || config?.selected_effort
@@ -2452,15 +2514,30 @@ export class PhoneService {
       expires_at: Date;
       workspace_id: string;
       already_joined: boolean;
+      inviter_name: string;
+      inviter_handle: string | null;
+      inviter_face: string | null;
+      inviter_role: 'owner' | 'admin' | 'member' | 'spectator';
+      people: number;
+      agents: number;
     }>(
       `SELECT w.name,w.avatar,i.expires_at,i.workspace_id,
          EXISTS(SELECT 1 FROM memberships joined
            WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
-             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined,
+         inviter.name inviter_name,inviter.handle inviter_handle,inviter.face_id inviter_face,
+         creator.role inviter_role,
+         (SELECT count(*)::int FROM memberships m JOIN identities member ON member.id=m.identity_id
+          WHERE m.workspace_id=i.workspace_id AND m.room_id IS NULL AND m.removed_at IS NULL
+            AND member.kind='human' AND member.hidden_from_roster=false) people,
+         (SELECT count(*)::int FROM memberships m JOIN identities member ON member.id=m.identity_id
+          WHERE m.workspace_id=i.workspace_id AND m.room_id IS NULL AND m.removed_at IS NULL
+            AND member.kind='agent' AND member.hidden_from_roster=false) agents
        FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
+       JOIN identities inviter ON inviter.id=i.created_by
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
       [hash(rawToken), viewerId],
     );
@@ -2471,6 +2548,14 @@ export class PhoneService {
           ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
           expiresAt: unix(row.expires_at),
           ...(row.already_joined ? { joinedWorkspaceId: row.workspace_id } : {}),
+          inviter: {
+            name: row.inviter_name,
+            ...(row.inviter_handle ? { handle: row.inviter_handle } : {}),
+            ...(row.inviter_face ? { face: row.inviter_face } : {}),
+            role: row.inviter_role,
+          },
+          memberCount: row.people,
+          agentCount: row.agents,
         }
       : null;
   }
@@ -2892,8 +2977,8 @@ export class PhoneService {
    * announcement, run once the wizard's one rename window has closed (kept or
    * renamed). `renameConnectedAgent` may have already retitled the identity by
    * the time this runs, so `joinRooms` reads its final name straight off
-   * `identities` — the same order a human already follows, since GitHub
-   * sign-in seals a person's name before `landInWelcomeWorkspace` ever runs.
+   * `identities` — the same order a human follows, whose name is sealed at
+   * GitHub sign-in before they ever join a Workspace.
    */
   async finishAgentConnectPairing(input: {
     code: string;
@@ -2978,6 +3063,16 @@ export class PhoneService {
           input as Input<'listMessageBookmarks'>,
           viewerId,
         )) as Output<Name>;
+      case 'readNeedsYou':
+        return (await this.readNeedsYou(input as Input<'readNeedsYou'>, viewerId)) as Output<Name>;
+      case 'countNeedsYou':
+        return (await this.countNeedsYou(
+          input as Input<'countNeedsYou'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'clearNeedsYou':
+        await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
+        return undefined as Output<Name>;
       case 'createRoomSchedule':
         return (await this.createRoomSchedule(
           input as Input<'createRoomSchedule'>,
@@ -3094,7 +3189,7 @@ export class PhoneService {
         await this.deleteRoom((input as Input<'deleteRoom'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'leaveRoom':
-        await this.leaveRoom((input as Input<'leaveRoom'>).roomId, viewerId);
+        await this.leaveRoom(input as Input<'leaveRoom'>, viewerId);
         return undefined as Output<Name>;
       case 'closeChat':
         await this.closeChat((input as Input<'closeChat'>).roomId, viewerId);
@@ -3773,6 +3868,69 @@ export class PhoneService {
     });
   }
 
+  /**
+   * The viewer's Needs-you cells (`needs-you.ts` owns the rule). Showing a
+   * cell starts its 24-hour clock once, for every device; a clock already
+   * running is left alone.
+   */
+  private async readNeedsYou(
+    input: Input<'readNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'readNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items, unseen } = await needsYouItems(
+      this.database,
+      input.workspaceId,
+      viewerId,
+      (row) => identity(row, this.publicOrigin),
+    );
+    if (!unseen.length) return { items };
+    const started = await this.database.query<{ message_id: string; first_seen_at: Date }>(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       SELECT $1,message_id,$3 FROM unnest($2::text[]) message_id
+       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
+       RETURNING message_id,first_seen_at`,
+      [viewerId, unseen, input.workspaceId],
+    );
+    const clocks = new Map(started.rows.map((row) => [row.message_id, row.first_seen_at]));
+    return {
+      items: items.map((item) => {
+        const firstSeen = clocks.get(item.messageId);
+        return firstSeen ? { ...item, expiresAt: needsYouExpiresAt(firstSeen) } : item;
+      }),
+    };
+  }
+
+  private async countNeedsYou(
+    input: Input<'countNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'countNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
+      identity(row, this.publicOrigin),
+    );
+    return { count: items.length };
+  }
+
+  /** A tap or a dismissal: the cell is handled, on every device. */
+  private async clearNeedsYou(input: Input<'clearNeedsYou'>, viewerId: string): Promise<void> {
+    if (typeof input.messageId !== 'string' || !input.messageId)
+      throw new Error('messageId is required');
+    const cleared = await this.database.query(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+       SELECT $1,message.id,room.workspace_id,now()
+       FROM messages message
+       JOIN rooms room ON room.id=message.room_id AND room.workspace_id=$3
+       JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
+         AND member.removed_at IS NULL
+       WHERE message.id=$2
+       ON CONFLICT(identity_id,message_id)
+         DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+      [viewerId, input.messageId, input.workspaceId],
+    );
+    if (!cleared.rowCount) throw new Error('message is not available');
+  }
+
   private async listMessageBookmarks(
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
@@ -4354,9 +4512,15 @@ export class PhoneService {
     });
     return { messageId: id };
   }
+  /**
+   * Creates a Workspace owned by the viewer together with its public
+   * `#general` Room (`ensureFirstRoom`), so the creator lands in a live Room.
+   * A retry with the same client-chosen `workspaceId` by its owner is a no-op
+   * that returns the same Room.
+   */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
-    await this.database.transaction(async (db) => {
+    const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
         [id, input.name],
@@ -4368,14 +4532,15 @@ export class PhoneService {
           [id, viewerId],
         );
         if (!owned.rowCount) throw new Error('workspaceId is invalid');
-        return;
+      } else {
+        await db.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+          [id, viewerId],
+        );
       }
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
-        [id, viewerId],
-      );
+      return ensureFirstRoom(db, id, viewerId);
     });
-    return { id };
+    return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.database.transaction(async (database) => {
@@ -4578,8 +4743,8 @@ export class PhoneService {
     const id = randomUUID();
     await this.database.transaction(async (database) => {
       const parent = (
-        await database.query<{ workspace_id: string }>(
-          `SELECT room.workspace_id FROM rooms room
+        await database.query<{ workspace_id: string; viewer_name: string }>(
+          `SELECT room.workspace_id,viewer.name viewer_name FROM rooms room
            JOIN memberships room_member ON room_member.room_id=room.id
              AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -4630,6 +4795,35 @@ export class PhoneService {
           [id, input.appInstallationId, randomUUID(), viewerId],
         );
       }
+      // A corner opened FROM a message (the phone's swipe-right forward) leaves
+      // one durable marker in the parent Room, the same `corner-open` card an
+      // agent's `open_corner` writes, carrying the source message so every
+      // reader anchors it beneath that message. No kind: a person opening a
+      // scratch corner wakes no subscriber. A source that is not a message in
+      // this Room (an unsent outbox row) opens the corner without a marker.
+      const source = input.sourceMessageId
+        ? await database.query(`SELECT 1 FROM messages WHERE id=$1 AND room_id=$2`, [
+            input.sourceMessageId,
+            input.roomId,
+          ])
+        : undefined;
+      if (source?.rowCount) {
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
+          verb: 'opened a corner',
+          object: { text: title, id },
+          presentation: 'card',
+          cardType: 'daemon-fact',
+          card: {
+            type: 'corner-open',
+            cornerId: id,
+            name: title,
+            objective: '',
+            sourceMessageId: input.sourceMessageId,
+          },
+        });
+      }
     });
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
@@ -4658,6 +4852,15 @@ export class PhoneService {
         roomId,
         title,
       ]);
+      // The marker beneath a forwarded message names the corner it opened, so
+      // it follows the corner's current name rather than the random one it was
+      // opened under.
+      await database.query(
+        `UPDATE messages SET card=jsonb_set(card,'{name}',to_jsonb($3::text))
+         WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2
+           AND card->>'sourceMessageId' IS NOT NULL`,
+        [access.parent_id, roomId, title],
+      );
       return access.parent_id;
     });
     this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });
@@ -4765,12 +4968,19 @@ export class PhoneService {
   private async deleteRoom(roomId: string, viewerId: string) {
     const room = await this.requireTopLevelRoom(roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    await this.database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
+    await this.deleteRoomRows(this.database, roomId);
   }
-  private async leaveRoom(roomId: string, viewerId: string) {
+  private async deleteRoomRows(database: SqlDatabase, roomId: string) {
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
+  }
+  private async leaveRoom(input: Input<'leaveRoom'>, viewerId: string) {
+    const { roomId } = input;
     const room = await this.requireTopLevelRoom(roomId);
     const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
+      // Serialize two managers leaving the same Room before checking whether
+      // either departure destroys it.
+      await database.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
       const membership = (
         await database.query<{ workspace_role: 'owner' | 'admin' | 'member' | 'spectator' }>(
           `SELECT workspace_member.role workspace_role
@@ -4787,7 +4997,22 @@ export class PhoneService {
       ).rows[0];
       if (!membership) throw new Error('room membership required');
       if (membership.workspace_role === 'owner' || membership.workspace_role === 'admin') {
-        throw new Error('workspace managers cannot leave Rooms');
+        const others = await database.query(
+          `SELECT 1 FROM memberships room_member
+           JOIN memberships workspace_member ON workspace_member.workspace_id=$2
+             AND workspace_member.room_id IS NULL
+             AND workspace_member.identity_id=room_member.identity_id
+             AND workspace_member.removed_at IS NULL
+             AND workspace_member.role IN ('owner','admin')
+           WHERE room_member.room_id=$1 AND room_member.identity_id<>$3
+             AND room_member.removed_at IS NULL LIMIT 1`,
+          [roomId, room.workspace_id, viewerId],
+        );
+        if (!others.rowCount) {
+          if (input.confirmDelete !== true) throw new Error('last_admin_confirmation_required');
+          await this.deleteRoomRows(database, roomId);
+          return;
+        }
       }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
@@ -5148,7 +5373,10 @@ export class PhoneService {
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
-    if (row.already_joined) return { joined: false, workspaceId: row.workspace_id };
+    if (row.already_joined) {
+      const roomId = await firstAccessibleRoomId(this.database, row.workspace_id, viewerId);
+      return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
+    }
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
@@ -5175,7 +5403,12 @@ export class PhoneService {
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: joined.rowCount > 0,
       });
-      return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
+      const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+      return {
+        joined: joined.rowCount > 0,
+        workspaceId: row.workspace_id,
+        ...(roomId ? { roomId } : {}),
+      };
     });
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
@@ -5217,11 +5450,15 @@ export class PhoneService {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     const hasModel = Object.prototype.hasOwnProperty.call(input, 'model');
     const hasEffort = Object.prototype.hasOwnProperty.call(input, 'effort');
+    const hasFastMode = Object.prototype.hasOwnProperty.call(input, 'fastMode');
+    if (hasFastMode && typeof input.fastMode !== 'boolean')
+      throw new Error('invalid Fast mode value');
     await this.database.transaction(async (database) => {
       const context = (
         await database.query<{
           selected_model: string | null;
           selected_effort: string | null;
+          fast_mode: boolean;
           model_catalog: AgentDetailView['catalog'];
           agent_id: string;
           agent_kind: 'human' | 'agent';
@@ -5232,7 +5469,7 @@ export class PhoneService {
           actor_name: string;
           actor_handle: string | null;
         }>(
-          `SELECT config.selected_model,config.selected_effort,config.model_catalog,
+          `SELECT config.selected_model,config.selected_effort,config.fast_mode,config.model_catalog,
                   agent.id agent_id,agent.kind agent_kind,agent.name agent_name,agent.handle agent_handle,
                   actor.id actor_id,actor.kind actor_kind,actor.name actor_name,actor.handle actor_handle
            FROM agents config JOIN identities agent ON agent.id=config.agent_id
@@ -5248,24 +5485,56 @@ export class PhoneService {
         }
       }
       if (hasEffort && input.effort) {
-        const axis = context.model_catalog.find((candidate) => candidate.category !== 'model');
+        const axis = effortCatalogAxis(context.model_catalog);
         if (!axis?.options.some((choice) => choice.id === input.effort)) {
           throw new Error('effort is not available in the live harness catalog');
         }
       }
+      if (input.fastMode === true) {
+        const axis = context.model_catalog.find(
+          (candidate) => candidate.id === 'fast-mode' && candidate.category === 'model_config',
+        );
+        const modelAxis = context.model_catalog.find((candidate) => candidate.category === 'model');
+        if (
+          !axis?.options.some((choice) => choice.id === 'on') ||
+          !axis.options.some((choice) => choice.id === 'off') ||
+          (hasModel && input.model !== context.selected_model) ||
+          (modelAxis && context.selected_model && modelAxis.currentValue !== context.selected_model)
+        ) {
+          throw new Error('Fast mode is unavailable for the selected model and harness');
+        }
+      }
+      const resetFastMode = hasModel && input.model !== context.selected_model;
       await database.query(
         `UPDATE agents
          SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
              selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
+             fast_mode=CASE WHEN $6 THEN $7 WHEN $8 THEN false ELSE fast_mode END,
              updated_at=now()
          WHERE agent_id=$1`,
-        [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
+        [
+          input.agentId,
+          hasModel,
+          input.model ?? null,
+          hasEffort,
+          input.effort ?? null,
+          hasFastMode,
+          input.fastMode ?? false,
+          resetFastMode,
+        ],
       );
-      const changes: Array<{ axis: 'model' | 'effort'; value: string | null }> = [];
+      const changes: Array<{ axis: 'model' | 'effort' | 'fast mode'; value: string | null }> = [];
       if (hasModel && (input.model ?? null) !== context.selected_model)
         changes.push({ axis: 'model', value: input.model ?? null });
       if (hasEffort && (input.effort ?? null) !== context.selected_effort)
         changes.push({ axis: 'effort', value: input.effort ?? null });
+      const nextFastMode = hasFastMode
+        ? input.fastMode!
+        : resetFastMode
+          ? false
+          : context.fast_mode;
+      if (nextFastMode !== context.fast_mode)
+        changes.push({ axis: 'fast mode', value: nextFastMode ? 'on' : 'off' });
       if (!changes.length) return;
       const rooms = await database.query<{ room_id: string }>(
         `SELECT membership.room_id FROM memberships membership
@@ -5398,7 +5667,7 @@ export class PhoneService {
       );
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
-      await this.settleGrantCard(database, {
+      await settleGrantCard(database, {
         roomId: cardRoomId,
         grantId: input.grantId,
         status,
@@ -5488,50 +5757,6 @@ export class PhoneService {
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
     return this.database.transaction((database) =>
       skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
-    );
-  }
-  /**
-   * Settle one grant's line inside the card the Room already shows. The card
-   * is what the phone renders its ALWAYS/ONCE/NO buttons from, so a rule that
-   * has been decided — or revoked out from under a retired agent — must stop
-   * offering a choice that can no longer be taken. Lines the card has already
-   * settled are left exactly as they are.
-   */
-  private async settleGrantCard(
-    database: SqlDatabase,
-    input: {
-      roomId: string;
-      grantId: string;
-      status: AgentGrantStatus;
-      decidedBy: RoomViewIdentity;
-      decidedAt: Date;
-    },
-  ) {
-    const card = (
-      await database.query<{ id: string; card: { grants: AgentGrantView[] } }>(
-        `SELECT id,card FROM messages
-         WHERE room_id=$1 AND card_type='grant-request'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements(card->'grants') entry WHERE entry->>'grantId'=$2
-           )
-         ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-        [input.roomId, input.grantId],
-      )
-    ).rows[0];
-    if (!card) return;
-    const grants = card.card.grants.map((entry) =>
-      entry.grantId === input.grantId && entry.status === 'pending'
-        ? {
-            ...entry,
-            status: input.status,
-            decidedBy: input.decidedBy,
-            decidedAt: unix(input.decidedAt),
-          }
-        : entry,
-    );
-    await database.query(
-      `UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`,
-      [card.id, JSON.stringify(grants)],
     );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
@@ -5893,62 +6118,14 @@ export class PhoneService {
     await this.requireWorkspaceAgentRemover(input.workspaceId, input.agentId, viewerId);
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.agentId);
-    await this.database.transaction(async (database) => {
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-        [input.workspaceId, input.agentId],
-      );
-      await database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
-        input.agentId,
-      ]);
-      // No surface may draw it as a member again, whatever it reads from.
-      await database.query(
-        `UPDATE identities SET hidden_from_roster=true,updated_at=now()
-         WHERE id=$1 AND kind='agent'`,
-        [input.agentId],
-      );
-      await database.query(
-        `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
-           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-           schedule_ids='[]'::jsonb,
-           yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
-           access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
-         WHERE agent_id=$1`,
-        [input.agentId],
-      );
-      // Nothing may fire for an agent that is gone; occurrences cascade.
-      await database.query(`DELETE FROM agent_schedules WHERE agent_id=$1 AND workspace_id=$2`, [
-        input.agentId,
-        input.workspaceId,
-      ]);
-      const revoked = await database.query<{ id: string; room_id: string; decided_at: Date }>(
-        `UPDATE agent_grants SET status='revoked',decided_by=$3,decided_at=now()
-         WHERE agent_id=$1 AND workspace_id=$2 AND status IN ('pending','approved','once')
-         RETURNING id,room_id,decided_at`,
-        [input.agentId, input.workspaceId, viewerId],
-      );
-      for (const grant of revoked.rows)
-        await this.settleGrantCard(database, {
-          roomId: grant.room_id,
-          grantId: grant.id,
-          status: 'revoked',
-          decidedBy: remover,
-          decidedAt: grant.decided_at,
-        });
-      // Removal retires the helper; it never closes the corners. A corner is
-      // carried by its MEMBERS, and the branch/PR is a shared artifact other
-      // people may still land. The removed agent's `owner_agent_id` stays as
-      // the historical "opened by"; the merge webhook and a human close still
-      // reach the corner, and a later helper can be addressed in it.
-      await workspaceSystemLine(database, {
+    await this.database.transaction((database) =>
+      retireAgentFromWorkspace(database, {
         workspaceId: input.workspaceId,
-        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-        verb: 'removed',
-        object: { text: removed.name, id: removed.pubkey },
-        cardType: 'member-removed',
-        card: { identityId: input.agentId },
-      });
-    });
+        agentId: input.agentId,
+        remover,
+        removed,
+      }),
+    );
   }
   /**
    * Deletes the signed-in person's account and personal data — a real
@@ -6603,6 +6780,10 @@ export class PhoneService {
         signed_in_as: string | null;
         sign_in: ConnectorStatus['signIn'] | null;
         composio_scope: unknown;
+        registry_server_name: string | null;
+        registry_version: string | null;
+        display_name: string | null;
+        website_url: string | null;
         connected_at: Date | null;
         created_at: Date;
       }>(
@@ -6612,7 +6793,8 @@ export class PhoneService {
                           WHERE sibling.machine_id=c.machine_id
                             AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
-                c.signed_in_as,c.sign_in,c.composio_scope,c.connected_at,c.created_at
+                c.signed_in_as,c.sign_in,c.composio_scope,c.registry_server_name,
+                c.registry_version,c.display_name,c.website_url,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
          WHERE c.owner_identity_id=$1
@@ -6733,6 +6915,10 @@ export class PhoneService {
         ...(row.connector_type === 'composio'
           ? { approvedTools: approvedComposioTools(row.composio_scope, viewerId) }
           : {}),
+        ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
+        ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
+        ...(row.display_name ? { displayName: row.display_name } : {}),
+        ...(row.website_url ? { websiteUrl: row.website_url } : {}),
         ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
         createdAt: seconds(row.created_at),
       })),
@@ -6890,7 +7076,8 @@ export class PhoneService {
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps,pairing_generation,composio_scope
        ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1,$8::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id)
+         WHERE connector_type <> 'registry-mcp' DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
            status_steps=EXCLUDED.status_steps,
@@ -7902,6 +8089,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomMessage',
   'setMessageBookmark',
   'listMessageBookmarks',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
@@ -7991,6 +8181,9 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'reopenChat',
   'listMessageBookmarks',
   'setMessageBookmark',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'readWorkbench',
   'readConnectionDetail',
   'readWallet',

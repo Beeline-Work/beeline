@@ -173,6 +173,7 @@ export interface AgentCommandList {
 }
 
 export interface AgentModelConfigInput {
+  fastMode?: boolean;
   /** The chosen `model` option's id. Absent leaves the current model choice alone. */
   model?: string;
   /**

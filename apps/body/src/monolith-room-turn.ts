@@ -1,3 +1,4 @@
+import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -57,6 +58,7 @@ import {
   prepareCodegraphIndex,
 } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
@@ -395,6 +397,12 @@ export class MonolithRoomTurnLoop {
   private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /**
+   * The real size of the last settled prompt, captured while the session that
+   * sent it is still alive — `discardSession` clears both the client and the id,
+   * and the terminal receipt is posted on a path that may run after it.
+   */
+  private turnMetrics: { inputTokens?: number; promptBytes?: number } = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** The one provider re-pinned after an empty completion, until the session ends. */
@@ -554,6 +562,29 @@ export class MonolithRoomTurnLoop {
    * Drop this Room's live harness process. The next activation starts cold.
    * A rotation is a fact about one live session, so the pin goes with it.
    */
+  /**
+   * What this turn really cost and did, read at the moment its prompt settled.
+   *
+   * The token count is the harness's own (pi records it; every other harness
+   * leaves it unknown) and the byte count is the prompt this process handed over
+   * — together they are the only way the rollout budget gate can measure the
+   * institutional block's share of a real prompt instead of a byte estimate.
+   * Missing numbers are omitted rather than zeroed.
+   */
+  private async captureTurnMetrics(): Promise<{
+    inputTokens?: number;
+    promptBytes?: number;
+  }> {
+    const usage = this.sessionId
+      ? await readHarnessTurnUsage({ agentEnv: this.agentEnv, sessionId: this.sessionId })
+      : undefined;
+    const promptBytes = this.client?.lastPromptBytes;
+    return {
+      ...(usage ? { inputTokens: usage.inputTokens } : {}),
+      ...(promptBytes ? { promptBytes } : {}),
+    };
+  }
+
   private async discardSession(): Promise<void> {
     const client = this.client;
     this.client = undefined;
@@ -611,18 +642,26 @@ export class MonolithRoomTurnLoop {
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: [
+              ...grantedHostRoutes,
+              ...registryRoutes.map((route) => route.routeName),
+            ],
+          }),
+          ...registryRoutes.map((route) => route.routeName),
+        ],
         this.sessionCodegraphReady,
       ),
     });
@@ -690,11 +729,17 @@ export class MonolithRoomTurnLoop {
     await mkdir(this.options.cwd, { recursive: true });
     const selectionModel = configuration.model ?? this.options.config.modelSelection?.model;
     const selectionEffort = configuration.effort ?? this.options.config.modelSelection?.effort;
-    const selection =
-      selectionModel || selectionEffort
-        ? { model: selectionModel, effort: selectionEffort }
-        : undefined;
+    const selection = {
+      model: selectionModel,
+      effort: selectionEffort,
+      fastMode: configuration.fastMode,
+    };
     const operatorHome = this.options.config.operatorHome ?? homedir();
+    const registryHostDeclarations = registryMcpHostDeclarations(
+      configuration.registryMcpRoutes,
+      this.commandContext.path,
+    );
+    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -710,7 +755,8 @@ export class MonolithRoomTurnLoop {
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
-          grantedHostRoutes,
+          grantedHostRoutes: mountedHostRoutes,
+          extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
@@ -766,15 +812,19 @@ export class MonolithRoomTurnLoop {
     const fingerprint = sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      fastMode: configuration.fastMode,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
-        expectedMountedImportedMcpServerNames({
-          operatorHome: this.options.config.operatorHome,
-          agentKind: this.options.config.agentKind,
-          grantedHostRoutes,
-        }),
+        [
+          ...expectedMountedImportedMcpServerNames({
+            operatorHome: this.options.config.operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: mountedHostRoutes,
+          }),
+          ...Object.keys(registryHostDeclarations),
+        ],
         codegraphReady,
       ),
     });
@@ -792,8 +842,9 @@ export class MonolithRoomTurnLoop {
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
-            grantedHostRoutes,
+            grantedHostRoutes: mountedHostRoutes,
           }),
+          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
@@ -838,9 +889,9 @@ export class MonolithRoomTurnLoop {
       agentKind: this.options.config.agentKind,
     });
     const grantedRouteServers = grantedHostRouteWires(
-      grantedHostRoutes,
+      mountedHostRoutes,
       operatorHome,
-      hostDeclarations,
+      { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
@@ -869,7 +920,7 @@ export class MonolithRoomTurnLoop {
         operatorHome: this.options.config.operatorHome,
         agentKind: this.options.config.agentKind,
       }),
-      grantedHostRoutes,
+      mountedHostRoutes,
     );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
@@ -1096,6 +1147,12 @@ export class MonolithRoomTurnLoop {
     // Admission is busy before the first awaited receipt write. The updater
     // cannot observe an accepted/queued turn as idle in this window.
     this.busy = true;
+    // A turn starts with no measured cost. Without this reset a turn that throws
+    // before its own prompt settles — the context fetch, `buildPrompt`, a
+    // rejected delivery — would report the PREVIOUS turn's token count and
+    // prompt size on its failure receipt, and the budget gate would read a
+    // number belonging to somebody else's prompt.
+    this.turnMetrics = {};
     const trace = this.beginTurnTrace(item.id);
     // The draft lane, held where the catch below can reach it: a turn that
     // throws never reaches its settle, and only this reference can dissolve
@@ -1284,6 +1341,7 @@ export class MonolithRoomTurnLoop {
                   } catch (error) {
                     promptError = error;
                   }
+                  this.turnMetrics = await this.captureTurnMetrics();
                   const settledSteerTail = active.steerTail;
                   await settledSteerTail;
                   if (settledSteerTail !== active.steerTail) continue;
@@ -1441,6 +1499,8 @@ export class MonolithRoomTurnLoop {
         requestId: item.id,
         status: 'complete',
         generationId: this.commandContext.generationId,
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
@@ -1508,6 +1568,8 @@ export class MonolithRoomTurnLoop {
           requestId: item.id,
           status: 'complete',
           generationId: this.commandContext.generationId,
+          toolCalls: trace.toolCallsTotal,
+          ...this.turnMetrics,
         });
         await trace.finish('complete');
         return;
@@ -1534,6 +1596,8 @@ export class MonolithRoomTurnLoop {
         generationId: this.commandContext.generationId,
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
+        toolCalls: trace.toolCallsTotal,
+        ...this.turnMetrics,
       });
       await trace.finish('failed', reason.text);
       throw error;

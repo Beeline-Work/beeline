@@ -28,8 +28,6 @@ import {
   isRoomView,
   isRoomViewMessage,
   readRoomView,
-  DEFAULT_WORKSPACE_ID,
-  WELCOME_ROOM_ID,
   ROOM_VIEW_MESSAGE_LIMIT,
   type RoomHistoryView,
   type RoomView,
@@ -631,12 +629,12 @@ describe('monolith integration', () => {
     const roomId = 'b1111111-1111-4111-8111-111111111111';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Push test')`,
-      [roomId, DEFAULT_WORKSPACE_ID, otherId],
+      [roomId, WORKSPACE, otherId],
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
         ($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [DEFAULT_WORKSPACE_ID, roomId, HUMAN, otherId],
+      [WORKSPACE, roomId, HUMAN, otherId],
     );
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -676,12 +674,20 @@ describe('monolith integration', () => {
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
+    const createdWorkspace = (await (
+      await operation('createWorkspace', { workspaceId, name: 'Audit' })
+    ).json()) as { id: string; roomId: string };
+    expect(createdWorkspace).toEqual({ id: workspaceId, roomId: expect.any(String) });
+    // A retry is idempotent and returns the same first Room.
     expect(
       await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
-    ).toEqual({ id: workspaceId });
-    expect(
-      await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
-    ).toEqual({ id: workspaceId });
+    ).toEqual(createdWorkspace);
+    const general = (await (
+      await request(`/v1/phone/rooms/${createdWorkspace.roomId}`)
+    ).json()) as {
+      room: { name: string; visibility: string; workspaceId: string };
+    };
+    expect(general.room).toMatchObject({ name: 'general', visibility: 'public', workspaceId });
     expect(
       (
         await operation('updateWorkspace', {
@@ -751,7 +757,7 @@ describe('monolith integration', () => {
       (await operation('removeRoomMember', { roomId: created.id, memberId: aliceId })).status,
     ).toBe(204);
     await operation('addRoomMember', { roomId: created.id, memberId: aliceId });
-    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(403);
+    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(204);
     expect((await operation('deleteRoom', { roomId: created.id })).status).toBe(204);
     expect((await request(`/v1/phone/rooms/${created.id}`)).status).toBe(404);
     const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
@@ -1191,26 +1197,22 @@ describe('monolith integration', () => {
     ).toBe(204);
   });
 
-  it('serves Welcome and makes person invites reusable, retry-safe, and Room-complete', async () => {
+  it('lands new people nowhere and makes person invites reusable, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const bobId = createHash('sha256').update('github:bob').digest('hex');
-    const migratedOwnerWorkspaces = (await (await request('/v1/phone/workspaces')).json()) as {
-      workspaces: Array<{ name: string }>;
-    };
-    expect(migratedOwnerWorkspaces.workspaces).toContainEqual(
-      expect.objectContaining({ name: 'Beeline Welcome' }),
-    );
+    // No shared Welcome Workspace: a new person has no Workspace until they
+    // create one or redeem an invite.
     const aliceWorkspaces = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
     ).json()) as { workspaces: Array<{ name: string }> };
-    expect(aliceWorkspaces.workspaces).toContainEqual(
-      expect.objectContaining({ name: 'Beeline Welcome' }),
-    );
+    expect(aliceWorkspaces.workspaces).toEqual([]);
 
     const workspaceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-    await operation('createWorkspace', { workspaceId, name: 'Invites' });
+    const created = (await (
+      await operation('createWorkspace', { workspaceId, name: 'Invites' })
+    ).json()) as { roomId: string };
     const room = (await (
       await operation('createRoom', { workspaceId, name: 'existing-room' })
     ).json()) as { id: string };
@@ -1219,21 +1221,29 @@ describe('monolith integration', () => {
       expiresAt: number;
     };
     expect(invite.expiresAt).toBeLessThan(10_000_000_000);
+    // The preview names the Workspace, who is inviting, and its size.
     expect(
       await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual(expect.objectContaining({ name: 'Invites' }));
+    ).toEqual({
+      name: 'Invites',
+      expiresAt: invite.expiresAt,
+      inviter: { name: 'Owner', handle: 'owner', role: 'owner' },
+      memberCount: 1,
+      agentCount: 0,
+    });
+    // Redeeming hands back the first Room to open: the Workspace's #general.
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual({ joined: true, workspaceId });
+    ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
     expect(
       await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual(expect.objectContaining({ name: 'Invites', joinedWorkspaceId: workspaceId }));
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual({ joined: false, workspaceId });
+    ).toEqual({ joined: false, workspaceId, roomId: created.roomId });
     expect(
       await (await operation('redeemInvite', { token: invite.token }, bobToken)).json(),
-    ).toEqual({ joined: true, workspaceId });
+    ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
 
     const aliceChats = (await (
       await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, aliceToken)
@@ -1406,7 +1416,9 @@ describe('monolith integration', () => {
     ).json()) as { id: string; created: boolean };
     expect(first).toEqual({ id: retry.id, created: true });
     expect(retry.created).toBe(false);
-    expect((await operation('leaveRoom', { roomId: room.id })).status).toBe(403);
+    const lastManagerLeave = await operation('leaveRoom', { roomId: room.id });
+    expect(lastManagerLeave.status).toBe(400);
+    expect(await lastManagerLeave.json()).toEqual({ error: 'last_admin_confirmation_required' });
     expect((await operation('removeRoomMember', { roomId: room.id, memberId: HUMAN })).status).toBe(
       403,
     );
@@ -1430,7 +1442,9 @@ describe('monolith integration', () => {
     const chat = async (token: string | undefined, roomId: string) => {
       const view = (await (
         await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, token)
-      ).json()) as { chats: Array<{ room: { id: string }; closed?: boolean }> };
+      ).json()) as {
+        chats: Array<{ room: { id: string }; closed?: boolean; leaveDeletesRoom?: boolean }>;
+      };
       return view.chats.find((item) => item.room.id === roomId);
     };
 
@@ -1485,14 +1499,44 @@ describe('monolith integration', () => {
       ).rows,
     ).toEqual([{ active: true }]);
 
-    const ownerLeave = await operation('leaveRoom', { roomId: failedRoom.id });
-    expect(ownerLeave.status).toBe(403);
-    expect(await ownerLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    // A non-last admin can leave without deleting the Room or asking to delete it.
     const adminLeave = await operation('leaveRoom', { roomId: failedRoom.id }, adminToken);
-    expect(adminLeave.status).toBe(403);
-    expect(await adminLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    expect(adminLeave.status).toBe(204);
     expect(await chat(undefined, failedRoom.id)).toBeDefined();
-    expect(await chat(adminToken, failedRoom.id)).toBeDefined();
+    expect(await chat(adminToken, failedRoom.id)).toBeUndefined();
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [failedRoom.id])).rowCount,
+    ).toBe(1);
+
+    // The last manager's first attempt cannot delete before a destructive
+    // confirmation, even if the UI's previous roster snapshot was stale.
+    const unconfirmed = await operation('leaveRoom', { roomId: failedRoom.id });
+    expect(unconfirmed.status).toBe(400);
+    expect(await unconfirmed.json()).toEqual({ error: 'last_admin_confirmation_required' });
+    expect(await chat(aliceToken, failedRoom.id)).toBeDefined();
+    expect(
+      (await operation('leaveRoom', { roomId: failedRoom.id, confirmDelete: true })).status,
+    ).toBe(204);
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [failedRoom.id])).rowCount,
+    ).toBe(0);
+    expect(await chat(aliceToken, failedRoom.id)).toBeUndefined();
+
+    const adminLastRoom = (await (
+      await operation('createRoom', { workspaceId, name: 'admin-last-room' })
+    ).json()) as { id: string };
+    expect((await chat(adminToken, adminLastRoom.id))?.leaveDeletesRoom).toBe(false);
+    expect((await operation('leaveRoom', { roomId: adminLastRoom.id })).status).toBe(204);
+    expect((await chat(adminToken, adminLastRoom.id))?.leaveDeletesRoom).toBe(true);
+    expect((await phone.readRoom(adminLastRoom.id, adminId))?.leaveDeletesRoom).toBe(true);
+    expect(
+      (await operation('leaveRoom', { roomId: adminLastRoom.id, confirmDelete: true }, adminToken))
+        .status,
+    ).toBe(204);
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE id=$1`, [adminLastRoom.id])).rowCount,
+    ).toBe(0);
+    expect(await chat(aliceToken, adminLastRoom.id)).toBeUndefined();
 
     const dm = (await (
       await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
@@ -2213,7 +2257,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('proves send -> read -> daemon prompt -> reply -> WebSocket invalidation and overlays', async () => {
+  it('proves send -> read -> daemon prompt -> reply -> WebSocket delta and overlays', async () => {
     const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
       `bearer.${accessToken}`,
     ]);
@@ -2274,15 +2318,19 @@ describe('monolith integration', () => {
       .items;
     expect(conversationItems.at(-1)?.body).toContain('@bee did not answer @owner');
     expect(conversationItems.at(-2)?.body).toBe('@bee What is your soul?');
-    const invalidated = next(socket, 'invalidate');
+    const delivered = next(socket, 'message-delta');
     const reply = await daemonOperation(
       'postRoomMessage',
       { roomId: ROOM, requestId: threadedMessageId, text: 'I am Terra.' },
       daemonToken,
     );
     expect(reply.status).toBe(200);
-    expect(await invalidated).toEqual(
-      expect.objectContaining({ type: 'invalidate', roomId: ROOM, reason: 'message' }),
+    expect(await delivered).toEqual(
+      expect.objectContaining({
+        type: 'message-delta',
+        roomId: ROOM,
+        message: expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
+      }),
     );
     const answeredRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
       messages: Array<{ requestId?: string; text: string }>;
@@ -4108,8 +4156,11 @@ describe('monolith integration', () => {
     ]);
 
     expect([foreground.status, outbox.status]).toEqual([200, 200]);
-    expect(await foreground.json()).toEqual({ messageId: payload.messageId });
-    expect(await outbox.json()).toEqual({ messageId: payload.messageId });
+    expect(await foreground.json()).toEqual({
+      messageId: payload.messageId,
+      activeSteerAgentIds: [],
+    });
+    expect(await outbox.json()).toEqual({ messageId: payload.messageId, activeSteerAgentIds: [] });
     const stored = await database.query<{ count: string }>(
       `SELECT count(*)::text FROM messages WHERE id=$1`,
       [payload.messageId],
@@ -4164,7 +4215,7 @@ describe('monolith integration', () => {
       recipient.accessToken,
     );
     expect(redeemed.status).toBe(200);
-    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE });
+    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE, roomId: ROOM });
     const membership = await database.query<{ role: string; invited_by: string | null }>(
       `SELECT role,invited_by FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
       [WORKSPACE, recipient.identityId],
@@ -4463,6 +4514,7 @@ describe('monolith integration', () => {
     expect(view.managerSettings).toEqual({
       visibility: expect.any(String),
       rooms: expect.any(Array),
+      roomsTruncated: false,
     });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
@@ -4662,6 +4714,7 @@ describe('monolith integration', () => {
       personId: HUMAN,
       name: 'Owner',
       handle: 'owner',
+      pushLevel: 'mine',
     });
 
     const profile = await operation('updatePersonProfile', {
@@ -5398,6 +5451,75 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.archived,
     ).toBe(true);
+  });
+
+  it('marks the message a human corner was opened from, and follows its rename', async () => {
+    const sourceId = '7'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: ROOM,
+          messageId: sourceId,
+          text: 'Worth its own corner',
+        })
+      ).status,
+    ).toBe(200);
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'quiet amber corner',
+      sourceMessageId: sourceId,
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+
+    const markerFor = async (viewer: string) =>
+      (await phone.readRoom(ROOM, viewer))?.messages.find(
+        (message) => message.daemonFact?.cornerId === cornerId,
+      );
+    const marker = await markerFor(HUMAN);
+    expect(marker).toMatchObject({
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-open',
+        cornerId,
+        name: 'quiet amber corner',
+        objective: '',
+        sourceMessageId: sourceId,
+      },
+    });
+    // Everyone in the Room reads the same marker, not just its opener.
+    expect((await markerFor(AGENT))?.daemonFact?.sourceMessageId).toBe(sourceId);
+    // A person opening a scratch corner wakes nobody.
+    expect(
+      (
+        await database.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1`, [
+          marker!.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+
+    expect(
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright river corner' })).status,
+    ).toBe(204);
+    expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
+      name: 'bright river corner',
+      sourceMessageId: sourceId,
+    });
+
+    // A source that is not a message in this Room opens the corner unmarked.
+    const unmarked = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'stray corner',
+      sourceMessageId: '8'.repeat(64),
+    });
+    expect(unmarked.status).toBe(200);
+    const { id: unmarkedId } = (await unmarked.json()) as { id: string };
+    expect(await markerFor(HUMAN)).toBeDefined();
+    expect(
+      (await phone.readRoom(ROOM, HUMAN))?.messages.some(
+        (message) => message.daemonFact?.cornerId === unmarkedId,
+      ),
+    ).toBe(false);
   });
 
   it('renames a human corner through a name-only updateRoom', async () => {
@@ -6531,7 +6653,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: cornerId,
       messageId: handoff,
-      text: '@Peer can you pick up where Bee left off?',
+      text: '@peer can you pick up where Bee left off?',
       mentions: [peer],
     });
     const peerInbox = (await (
@@ -6575,7 +6697,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: cornerId,
       messageId: '8'.repeat(64),
-      text: '@Stranger take a look',
+      text: '@stranger take a look',
       mentions: [stranger],
     });
     const notes = await database.query<{ text: string; tagged_ids: string[] }>(
@@ -6802,8 +6924,21 @@ describe('monolith integration', () => {
       requestId: 'heartbeat-without-turn',
       status: 'working',
       generationId,
-      heartbeat: true,
     });
+    await database.query(`DELETE FROM agent_turns WHERE request_id='heartbeat-without-turn'`);
+    const missingHeartbeat = await request(
+      '/v1/daemon/operations/postAgentTurnReceipt',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: 'heartbeat-without-turn',
+        status: 'working',
+        generationId,
+        heartbeat: true,
+      },
+      daemonToken,
+    );
+    expect(missingHeartbeat.status).toBe(200);
     expect(
       await database.query(`SELECT 1 FROM agent_turns WHERE request_id='heartbeat-without-turn'`),
     ).toHaveProperty('rowCount', 0);
@@ -7640,6 +7775,11 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: 'corner-room-label',
+      status: 'complete',
+    });
     const roomRow = async () =>
       (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
@@ -10940,7 +11080,7 @@ describe('monolith integration', () => {
     const workspaces = await request('/v1/phone/workspaces', 'GET', undefined, session.accessToken);
     expect(workspaces.status).toBe(200);
     const view = (await workspaces.json()) as { workspaces: { name: string }[] };
-    expect(view.workspaces.map((workspace) => workspace.name)).toContain('Beeline Welcome');
+    expect(view.workspaces.map((workspace) => workspace.name)).toEqual(['Beeline Review']);
 
     // A wrong secret is an ordinary 404 carrying nothing a guesser can use, and
     // it is the same answer for a malformed one and for a missing field.
@@ -11040,21 +11180,32 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('wakes a subscribed Room agent exactly once for a Workspace-scoped arrival', async () => {
+  it('wakes a subscribed Room agent exactly once when an invite brings someone in', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
-    // The greeter subscribed to `joined` in #welcome. System events are
-    // subscribable per Room, so the Workspace arrival's public-Room projection
-    // emits its `joined` event exactly where someone subscribed — no
-    // workspace special case — and the subscriber wakes exactly once.
+    // A greeter subscribed to `joined` in one public Room. System events are
+    // subscribable per Room, so the invite arrival's public-Room projection
+    // emits its `joined` event exactly where someone subscribed and the
+    // subscriber wakes exactly once.
+    const greeterRoom = 'dddddddd-dddd-4ddd-8ddd-dddddddddd02';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,'lobby','public')`,
+      [greeterRoom, WORKSPACE, HUMAN],
+    );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
        VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
-      [DEFAULT_WORKSPACE_ID, WELCOME_AGENT, WELCOME_ROOM_ID],
+      [WORKSPACE, WELCOME_AGENT, greeterRoom],
     );
+    const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
+      token: string;
+    };
+    const newcomer = await auth.exchangeGitHubOidc('greeted-newcomer');
+    expect(
+      (await operation('redeemInvite', { token: invite.token }, newcomer.accessToken)).status,
+    ).toBe(200);
 
-    await redeemReview(REVIEW_SECRET);
     const joined = await database.query<{
       tagged_ids: string[];
       text: string;
@@ -11067,12 +11218,12 @@ describe('monolith integration', () => {
                     WHERE source_message_id=messages.id ORDER BY agent_id) woke
        FROM messages
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
-      [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
+      [greeterRoom, newcomer.identityId],
     );
     expect(joined.rows).toEqual([
       expect.objectContaining({
         tagged_ids: [],
-        text: '@play-review joined',
+        text: '@greeted-newcomer joined · invited by @owner',
         system_event: expect.objectContaining({ kind: 'joined' }),
         event_woken: 1,
         woke: [WELCOME_AGENT],
@@ -11081,45 +11232,40 @@ describe('monolith integration', () => {
 
     const workspaceDms = await database.query<{
       text: string;
-      tagged_ids: string[];
       system_event: { kind?: string };
-      event_woken: number | null;
       woke: string[];
     }>(
-      `SELECT message.text,${taggedIdentityIdsSql('message')} tagged_ids,
-              message.system_event,message.event_woken,
+      `SELECT message.text,message.system_event,
               ARRAY(SELECT agent_id FROM agent_commands
                     WHERE source_message_id=message.id ORDER BY agent_id) woke
        FROM messages message
        JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
          AND message.card_type='workspace-member-joined'`,
-      [DEFAULT_WORKSPACE_ID],
+      [WORKSPACE],
     );
     expect(workspaceDms.rows).toEqual([
       expect.objectContaining({
-        text: '@play-review joined',
-        tagged_ids: [],
         system_event: expect.not.objectContaining({ kind: expect.anything() }),
-        event_woken: null,
         woke: [],
       }),
     ]);
 
-    const otherRoom = await database.query<{ tagged_ids: string[] }>(
-      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids
-       FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
-      [ROOM],
-    );
     // No agent subscribed to `joined` in the ordinary Room, so the projection
     // is silent there: the join event is emitted only where someone listens.
-    expect(otherRoom.rows).toEqual([]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
+          [ROOM, newcomer.identityId],
+        )
+      ).rowCount,
+    ).toBe(0);
   });
 
   it('wakes an ordinary Workspace Room subscriber for a Workspace-scoped arrival', async () => {
-    // The same mechanism in a Workspace that is not the Beeline Welcome
-    // workspace: subscription, not workspace identity, is what surfaces a
-    // join event.
+    // The same mechanism for a manager-added member: subscription, not how
+    // the person arrived, is what surfaces a join event.
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Finch')`, [
       WELCOME_AGENT,
     ]);
@@ -11275,12 +11421,28 @@ describe('monolith integration', () => {
       [WORKSPACE, peer, ROOM],
     );
     // No live receipt: an event is emitted from inside a turn or not at all.
-    const outsideTurn = await daemonOperation('postRoomEvent', {
+    await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
-      kind: 'agent:handoff',
-      consequence: 'the branch is ready',
+      requestId: 'event-without-turn',
+      status: 'working',
     });
-    expect(outsideTurn.status).toBeGreaterThanOrEqual(400);
+    await database.query(
+      `DELETE FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, 'event-without-turn', AGENT],
+    );
+    const outsideTurn = await request(
+      '/v1/daemon/operations/postRoomEvent',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: 'event-without-turn',
+        generationId: 'fixture-generation',
+        kind: 'agent:handoff',
+        consequence: 'the branch is ready',
+      },
+      daemonToken,
+    );
+    expect(outsideTurn.status).toBe(400);
     expect(((await outsideTurn.json()) as { error: string }).error).toMatch(/no turn running/);
 
     const trigger = await operation('sendRoomMessage', {

@@ -55,6 +55,12 @@ import {
 } from './connector-squire.js';
 import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
+import {
+  CEREMONY_EXPIRED,
+  installRegistryMcp,
+  type RegistryInstallResult,
+} from './registry-mcp.js';
+export { CEREMONY_EXPIRED };
 
 export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
 
@@ -69,10 +75,6 @@ export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
  * all and the five-minute interval stays pure recovery.
  */
 export const CONNECT_WATCH_INTERVAL_MS = 2_000;
-
-/** Said once, on the row, when a published ceremony ran out its own clock. */
-export const CEREMONY_EXPIRED =
-  'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one';
 
 type ConnectorApi = Pick<DaemonApiClient, 'execute'>;
 
@@ -99,6 +101,11 @@ export type ConnectorAssignmentLoopOptions = {
   }) => Promise<InstallTailscaleResult>;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
+  /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
+  readonly registryHome?: string;
+  readonly installRegistry?: (
+    input: Parameters<typeof installRegistryMcp>[0],
+  ) => Promise<RegistryInstallResult>;
   /** Override the vault reader. */
   readonly readVault?: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   /** Override the grant revoker. */
@@ -127,7 +134,17 @@ export class ConnectorAssignmentLoop {
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
   private readonly googleHomeDir: string;
+  private readonly registryHomeDir: string;
+  private readonly installRegistry: typeof installRegistryMcp;
   private readonly composioWatches = new Map<string, unknown>();
+  /** When each registry sign-in attempt's SERVER clock ends, so one can time
+   * out. Keyed by connector AND pairing generation: a re-pair re-arms the row
+   * to a new generation, and a ceremony latched to the old one must never
+   * swallow it. */
+  private readonly registryCeremonies = new Map<
+    string,
+    { attemptId: string; endsAt: number; expired?: boolean }
+  >();
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
     mcp: SquireMcpClient,
@@ -152,17 +169,21 @@ export class ConnectorAssignmentLoop {
     this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
-    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress, sharedCredentials) =>
-      installGoogleTool({
-        connectorType,
-        home: this.googleHome(),
-        onProgress,
-        resolvedCredentials: sharedCredentials
-          ? sharedCredentials()
-          : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
-      }));
+    this.installGoogle =
+      options.installGoogle ??
+      ((connectorType, onProgress, sharedCredentials) =>
+        installGoogleTool({
+          connectorType,
+          home: this.googleHome(),
+          onProgress,
+          resolvedCredentials: sharedCredentials
+            ? sharedCredentials()
+            : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
+        }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
+    this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
+    this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
     this.schedule =
@@ -259,9 +280,12 @@ export class ConnectorAssignmentLoop {
       return;
     }
     const youtubeRows = assignments.filter((assignment) =>
-      isAdaptedYoutube(assignment.connectorType));
-    if (youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
-      youtubeRows.every((assignment) => assignment.kind === 'uninstall')) {
+      isAdaptedYoutube(assignment.connectorType),
+    );
+    if (
+      youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
+      youtubeRows.every((assignment) => assignment.kind === 'uninstall')
+    ) {
       clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
     }
     let googleBatch: ConnectorAssignment[] | undefined;
@@ -310,13 +334,17 @@ export class ConnectorAssignmentLoop {
     return (async () => {
       try {
         const grant = await this.api.execute('getGoogleOAuthGrant', {
-          agentId: this.agentId, connectorId,
+          agentId: this.agentId,
+          connectorId,
         });
         if (grant.status === 'ready' && grant.credentials)
           return { source: 'beeline', credentials: grant.credentials };
       } catch (error) {
         this.log(`Google grant lookup failed: ${describe(error)}`);
-        return { source: 'error', reason: 'Beeline could not read the Google grant; retry the connection' };
+        return {
+          source: 'error',
+          reason: 'Beeline could not read the Google grant; retry the connection',
+        };
       }
       return { source: 'pending', reason: 'waiting for Google sign-in' };
     })();
@@ -333,7 +361,9 @@ export class ConnectorAssignmentLoop {
         ? assignment.pairingGeneration
         : undefined;
     if (assignment.kind === 'install') {
-      if (assignment.connectorType === 'composio') {
+      if (assignment.connectorType === 'registry-mcp') {
+        await this.runRegistryMcpInstall(assignment);
+      } else if (assignment.connectorType === 'composio') {
         await this.runComposioInstall(assignment);
       } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
@@ -352,11 +382,102 @@ export class ConnectorAssignmentLoop {
       await this.runRevoke(assignment.connectorId, assignment.reference);
   }
 
+  private ceremonyKey(assignment: Extract<ConnectorAssignment, { kind: 'install' }>): string {
+    return `${assignment.connectorId}:${assignment.pairingGeneration ?? 1}`;
+  }
+
+  private async runRegistryMcpInstall(
+    assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
+  ): Promise<void> {
+    const generation =
+      assignment.pairingGeneration !== undefined
+        ? { pairingGeneration: assignment.pairingGeneration }
+        : {};
+    const ceremonyKey = this.ceremonyKey(assignment);
+    const result = await this.installRegistry({
+      api: this.api as never,
+      agentId: this.agentId,
+      assignment,
+      home: this.registryHomeDir,
+    });
+    const stopWatch = () => {
+      const watch = this.composioWatches.get(assignment.connectorId);
+      if (watch !== undefined) this.cancel(watch);
+      this.composioWatches.delete(assignment.connectorId);
+    };
+    if (result.status === 'connected') {
+      stopWatch();
+      this.registryCeremonies.delete(ceremonyKey);
+      await this.api.execute('installConnector', {
+        agentId: this.agentId,
+        connectorId: assignment.connectorId,
+        ...generation,
+      });
+      return;
+    }
+    if (result.status === 'installing') {
+      const ceremony = this.registryCeremonies.get(ceremonyKey);
+      if (!ceremony || ceremony.attemptId !== result.attemptId) {
+        this.registryCeremonies.set(ceremonyKey, {
+          attemptId: result.attemptId,
+          endsAt: result.attemptExpiresAt,
+        });
+      } else if (ceremony.expired) {
+        // Already ended and already said why. A fresh attempt (a re-pair
+        // mints a new authorization page) starts its own window above.
+        return;
+      } else if (Date.now() >= ceremony.endsAt) {
+        // The SERVER's attempt clock ran out, not a local guess at it: the
+        // helper's ceiling now agrees with the window the row's sign-in is
+        // actually valid for. End the row and say why — Retry re-arms it.
+        stopWatch();
+        this.registryCeremonies.set(ceremonyKey, { ...ceremony, expired: true });
+        await this.api.execute('postConnectorStatus', {
+          agentId: this.agentId,
+          connectorId: assignment.connectorId,
+          steps: [
+            { label: 'Connect provider account', status: 'failed', reason: CEREMONY_EXPIRED },
+          ],
+          signIn: null,
+          errorMessage: CEREMONY_EXPIRED,
+          ...generation,
+        });
+        return;
+      }
+    } else {
+      this.registryCeremonies.delete(ceremonyKey);
+    }
+    await this.api.execute('postConnectorStatus', {
+      agentId: this.agentId,
+      connectorId: assignment.connectorId,
+      steps: result.steps,
+      ...(result.status === 'installing'
+        ? {
+            signIn: {
+              method: 'oauth' as const,
+              url: result.authorizationUrl,
+              attemptId: result.attemptId,
+            },
+          }
+        : { signIn: null, errorMessage: result.errorMessage }),
+      ...generation,
+    });
+    if (result.status === 'installing' && !this.composioWatches.has(assignment.connectorId)) {
+      const watch = this.schedule(() => {
+        this.composioWatches.delete(assignment.connectorId);
+        if (!this.stopped) void this.runOnce();
+      }, CONNECT_WATCH_INTERVAL_MS);
+      this.composioWatches.set(assignment.connectorId, watch);
+    }
+  }
+
   private async runComposioInstall(
     assignment: Extract<ConnectorAssignment, { kind: 'install' }>,
   ): Promise<void> {
-    const generation = assignment.pairingGeneration !== undefined
-      ? { pairingGeneration: assignment.pairingGeneration } : {};
+    const generation =
+      assignment.pairingGeneration !== undefined
+        ? { pairingGeneration: assignment.pairingGeneration }
+        : {};
     try {
       const link = await this.api.execute('getComposioLink', {
         agentId: this.agentId,

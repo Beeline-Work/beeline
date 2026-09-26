@@ -143,6 +143,17 @@ host-side review records sourced Workspace facts and requester-profile preferenc
 receives one relevance-selected, command-bound snapshot capped at 8,000 UTF-8 bytes; failures
 omit the optional block. `propose_memory_item` is the active-command-bound write path. The older
 `BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=true` mode remains measurement-only.
+`search_history` intersects every result with the requester, answering agent, and complete output
+audience. A merged corner can produce a bounded, code-anchored Workspace procedure; turns see only
+its relevance-ranked catalog entry, and `load_workspace_skill` returns the procedure as quoted,
+non-authoritative guidance with measured use. Generated procedures are never installed as native
+harness skills. Serving live memory requires an explicit
+`institutional_memory_workspace_rollouts` row at `pilot`/`live`, and host jobs require one at
+`shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent
+weekly curator ages and retains items, queues audience-partitioned consolidation on authorized user
+hosts, honors Workspace job/token budgets, and advances an opted-in cohort only when its objective
+dashboard clears the rollout gate. `stage` is the one enablement axis: `paused` stops the curator
+without unstaging, and `off` removes the Workspace from every lane.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
@@ -165,6 +176,8 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `request_grant`                                        | Everywhere      | Ask the correct Room manager or resource owner for access     |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
 | `propose_memory_item`                                  | Live memory     | Propose one sourced fact or requester working preference      |
+| `search_history`                                       | Live memory     | Search history visible to the full output audience            |
+| `load_workspace_skill`                                 | Live memory     | Load one restricted merge-derived Workspace procedure         |
 
 ## The app
 

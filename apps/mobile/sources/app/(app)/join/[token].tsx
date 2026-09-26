@@ -1,21 +1,39 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Identity } from '@beeline/buzz-client';
+import type { InviteView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken, resolveCommunityInviteRelayUrl } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
-import { ROOM_LABEL } from '@/buzz/vocabulary';
-import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { inviteSummary, inviterRoleLabel } from '@/buzz/invite-summary';
+import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
+import { clearPendingInvite, savePendingInvite } from '@/buzz/pending-invite';
+import { offerProductTour } from '@/buzz/product-tour';
+import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
+import { BrassButton } from '@/components/buzz/MonoHull';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+
+/**
+ * A verified invite link skips the create-or-join choice entirely: it names
+ * the Workspace and who invited you, one confirmation joins it, and the
+ * first Room you can open opens. Opened before sign-in, the link is kept on
+ * the device and comes back here after sign-in, and it is spent only once the
+ * server has given a verdict: a resolved invite, or a definitive refusal.
+ * A link the server says is gone shows its own repair state; a request that
+ * never reached the server says so and offers a retry, because the invite is
+ * probably still good.
+ */
+/** The server answers 404 for an invite that is missing, expired or used up. */
+const inviteIsGone = (reason: unknown) =>
+  reason instanceof RoomViewHttpError && reason.status === 404;
 
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
@@ -23,20 +41,20 @@ export default function CommunityInviteJoin() {
   const incomingUrl = useURL();
   const token = parseCommunityInviteToken(routeToken);
   const [identity, setIdentity] = useState<Identity | null>(null);
-  const [preview, setPreview] = useState<{ name: string } | null>(null);
-  const [communities, setCommunities] = useState<
-    { communityId: string; name: string; avatar?: string }[]
-  >([]);
+  const [preview, setPreview] = useState<InviteView | null>(null);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<'gone' | 'unreachable' | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const joinInFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (!token) {
-        setError('This invite link is malformed.');
+        await clearPendingInvite();
+        setFailure('gone');
         setLoading(false);
         return;
       }
@@ -45,33 +63,35 @@ export default function CommunityInviteJoin() {
           loadBuzzIdentity(),
           getEffectiveRelayUrl(),
         ]);
-        const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
         if (!currentIdentity) {
+          // Keep the invite through the sign-in ceremony; the deck brings the
+          // person back here once they have an identity.
+          await savePendingInvite(token);
           router.replace('/beeline/onboarding');
           return;
         }
+        const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
         const view = new RoomViewClient({ baseUrl: url, identity: currentIdentity });
         const invite = await view.invite(token);
+        // The server has answered: the parked copy has done its job.
+        await clearPendingInvite();
         if (invite.joinedWorkspaceId) {
           await saveActiveCommunityId(currentIdentity.publicKey, invite.joinedWorkspaceId);
-          if (!cancelled) {
-            router.replace({
-              pathname: '/beeline/channels',
-              params: { communityId: invite.joinedWorkspaceId },
-            });
-          }
+          if (!cancelled) enterWorkspaceRoom(invite.joinedWorkspaceId, null);
           return;
         }
-        const available = await view
-          .workspaces()
-          .then((value) => value.workspaces.map(workspaceRailItem));
         if (!cancelled) {
           setIdentity(currentIdentity);
-          setPreview({ name: invite.name });
-          setCommunities(available);
+          setPreview(invite);
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        // Only a definitive refusal spends the parked invite; a request that
+        // never got an answer leaves it for the next try.
+        if (inviteIsGone(err)) await clearPendingInvite();
+        if (!cancelled) {
+          setError(String(err));
+          setFailure(inviteIsGone(err) ? 'gone' : 'unreachable');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -79,7 +99,7 @@ export default function CommunityInviteJoin() {
     return () => {
       cancelled = true;
     };
-  }, [incomingUrl, token]);
+  }, [attempt, incomingUrl, token]);
 
   const handleJoin = useCallback(async () => {
     if (!token || !preview || !identity || joinInFlight.current) return;
@@ -89,10 +109,8 @@ export default function CommunityInviteJoin() {
     try {
       const redemption = await monolithPhoneOperation('redeemInvite', { token });
       await saveActiveCommunityId(identity.publicKey, redemption.workspaceId);
-      router.replace({
-        pathname: '/beeline/channels',
-        params: { communityId: redemption.workspaceId },
-      });
+      if (redemption.joined) await offerProductTour(identity.publicKey);
+      enterWorkspaceRoom(redemption.workspaceId, redemption.roomId);
     } catch (err) {
       joinInFlight.current = false;
       setError(`Could not join: ${String(err)}`);
@@ -100,183 +118,170 @@ export default function CommunityInviteJoin() {
       setJoining(false);
     }
   }, [identity, preview, token]);
-  const previewName = preview?.name;
 
-  const selectCommunity = useCallback((communityId: string | null) => {
-    if (!communityId) return;
-    router.replace({
-      pathname: '/beeline/channels',
-      params: { communityId },
-    });
+  const otherWay = useCallback(async () => {
+    // Declining is a real way out: the parked copy is spent here, or the deck
+    // would send them straight back to this invite on its next mount.
+    await clearPendingInvite();
+    router.replace('/beeline/community');
   }, []);
+  const retry = () => {
+    setError(null);
+    setFailure(null);
+    setLoading(true);
+    setAttempt((value) => value + 1);
+  };
 
   return (
-    <BuzzCommunityShell
-      communities={communities}
-      activeCommunityId={null}
-      onSelect={selectCommunity}
-      onAdd={() => router.push('/beeline/community' as Href)}
-      onSettings={() => router.push('/beeline/settings' as Href)}
+    <ScrollView
+      contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 48 }]}
+      style={styles.container}
+      testID="invite-join"
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.topbar}>
-          <TouchableOpacity
-            accessibilityLabel="Back"
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
-          </TouchableOpacity>
-          <Text style={styles.topbarTitle}>Invite</Text>
-        </View>
-
-        <View style={styles.content}>
-          {loading ? (
-            <View style={styles.loadingBlock}>
-              <SurfaceGlyphLoader compact testID="invite-loader" />
-              <Text style={styles.loadingText}>verifying signed invite…</Text>
+      <View style={styles.column}>
+        {loading ? (
+          <View style={styles.loadingBlock}>
+            <SurfaceGlyphLoader compact testID="invite-loader" />
+            <Text style={styles.meta}>Checking your invite…</Text>
+          </View>
+        ) : preview ? (
+          <>
+            <View style={styles.badge}>
+              <View style={styles.badgeDot} />
+              <Text style={styles.badgeText}>INVITE VERIFIED</Text>
             </View>
-          ) : preview ? (
-            <>
-              <View style={styles.communityMark}>
-                <Text style={styles.communityMarkText}>
-                  {previewName!.slice(0, 2).toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.title}>Join {previewName}?</Text>
-              <Text style={styles.details}>Open its {ROOM_LABEL}s and work with its Agents.</Text>
-
-              <TouchableOpacity
-                testID="confirm-community-join"
-                style={[styles.primaryButton, joining && styles.disabled]}
-                disabled={joining}
-                onPress={() => void handleJoin()}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {joining ? 'Joining…' : `Join ${previewName}`}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => router.replace('/beeline/channels')}
-              >
-                <Text style={styles.cancelText}>Not now</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <View style={styles.failureBlock}>
-              <Text style={styles.failureTitle}>Invite unavailable</Text>
-              <Text style={styles.details}>{error ?? 'This invite could not be opened.'}</Text>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => router.replace('/beeline/channels')}
-              >
-                <Text style={styles.cancelText}>Return to Beeline</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {preview && error && (
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {error}
+            <IdentityMark
+              avatarUrl={preview.avatar}
+              kind="workspace"
+              name={preview.name}
+              seed={token ?? preview.name}
+              size={68}
+            />
+            <Text accessibilityRole="header" style={styles.title} testID="invite-title">
+              {`Join ${preview.name}`}
             </Text>
-          )}
-        </View>
+            <Text style={styles.body} testID="invite-summary">
+              {inviteSummary(preview)}
+            </Text>
+            {preview.inviter ? (
+              <View style={styles.inviter} testID="invite-inviter">
+                <IdentityMark
+                  face={preview.inviter.face}
+                  kind="human"
+                  name={preview.inviter.name}
+                  seed={preview.inviter.handle ?? preview.inviter.name}
+                  size={42}
+                />
+                <View style={styles.inviterCopy}>
+                  <Text style={styles.inviterName}>{preview.inviter.name}</Text>
+                  <Text style={styles.meta}>
+                    {[
+                      preview.inviter.handle ? `@${preview.inviter.handle}` : null,
+                      inviterRoleLabel(preview.inviter.role),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+            <BrassButton
+              disabled={joining}
+              label={joining ? 'Joining…' : `Join ${preview.name}`}
+              loading={joining}
+              onPress={() => void handleJoin()}
+              style={styles.primary}
+              testID="confirm-community-join"
+            />
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void otherWay()}
+              style={styles.quiet}
+              testID="invite-not-mine"
+            >
+              <Text style={styles.quietText}>This isn’t my invite</Text>
+            </Pressable>
+            {error ? (
+              <Text accessibilityRole="alert" style={styles.error}>
+                {error}
+              </Text>
+            ) : null}
+          </>
+        ) : failure === 'unreachable' ? (
+          <View style={styles.failureBlock} testID="invite-unreachable">
+            <Text accessibilityRole="header" style={styles.title}>
+              Couldn’t reach Beeline
+            </Text>
+            <Text style={styles.body}>
+              Your invite may still be fine — we could not ask the server about it. Check your
+              connection and try again.
+            </Text>
+            {error ? <Text style={styles.meta}>{error}</Text> : null}
+            <BrassButton
+              label="Retry"
+              onPress={retry}
+              style={styles.primary}
+              testID="invite-retry"
+            />
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void otherWay()}
+              style={styles.quiet}
+              testID="invite-other-way"
+            >
+              <Text style={styles.quietText}>Choose another way in</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.failureBlock} testID="invite-unavailable">
+            <Text accessibilityRole="header" style={styles.title}>
+              This invite doesn’t work anymore
+            </Text>
+            <Text style={styles.body}>
+              It may have expired, been used up, or been withdrawn. Ask for a new link, or start
+              your own {WORKSPACE_LABEL.toLowerCase()}.
+            </Text>
+            <BrassButton
+              label="Choose another way in"
+              onPress={() => void otherWay()}
+              style={styles.primary}
+              testID="invite-other-way"
+            />
+          </View>
+        )}
       </View>
-    </BuzzCommunityShell>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
-    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-    topbar: {
-      minHeight: 58,
-      paddingHorizontal: 12,
+    container: { flex: 1, backgroundColor: hull.bgTerminal },
+    scroll: { flexGrow: 1, paddingHorizontal: hull.space.md, paddingBottom: hull.space.xxl },
+    column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.md },
+    loadingBlock: { alignItems: 'center', gap: hull.space.md, paddingTop: hull.space.xxl },
+    badge: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
+    badgeDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: hull.accent },
+    badgeText: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    body: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
+    meta: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
+    inviter: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: groknight.bgBase,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
+      gap: hull.space.md,
+      padding: hull.space.md,
+      borderRadius: hull.radius,
+      borderWidth: 1,
+      borderColor: hull.border,
     },
-    backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
-    backText: { color: groknight.chrome },
-    topbarTitle: {
-      ...Typography.default('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 20,
-      lineHeight: 24,
-    },
-    content: { flex: 1, paddingHorizontal: 22, paddingTop: 48, alignItems: 'center' },
-    loadingBlock: { alignItems: 'center', paddingTop: 54 },
-    loadingText: { marginTop: 13, color: groknight.muted, fontSize: 11 },
-    communityMark: {
-      width: 68,
-      height: 68,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: groknight.selectedBorder,
-      backgroundColor: groknight.bgHighlight,
-    },
-    communityMarkText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 20,
-    },
-    title: {
-      marginTop: 24,
-      color: groknight.textPrimary,
-      fontSize: 24,
-      lineHeight: 30,
-      fontWeight: '900',
-      textAlign: 'center',
-    },
-    details: {
-      maxWidth: 430,
-      marginTop: 10,
-      color: groknight.muted,
-      fontSize: 12,
-      lineHeight: 18,
-      textAlign: 'center',
-    },
-    primaryButton: {
-      alignSelf: 'stretch',
-      minHeight: 48,
-      marginTop: 24,
-      paddingHorizontal: 14,
-      borderRadius: 4,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: groknight.actionFill,
-    },
-    primaryButtonText: {
-      color: groknight.textInverted,
-      fontSize: 13,
-    },
-    disabled: { opacity: 0.42 },
-    cancelButton: {
-      marginTop: 10,
-      minHeight: 40,
-      paddingHorizontal: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cancelText: { color: groknight.steel, fontSize: 12 },
-    errorText: {
-      marginTop: 14,
-      color: groknight.chrome,
-      fontSize: 10,
-      lineHeight: 16,
-      textAlign: 'center',
-    },
-    failureBlock: { alignItems: 'center', paddingTop: 40 },
-    failureTitle: {
-      ...Typography.default('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 20,
-    },
+    inviterCopy: { flex: 1, gap: hull.space.xs },
+    inviterName: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
+    primary: { marginTop: hull.space.sm },
+    quiet: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+    quietText: { ...Typography.default(), ...hull.type.body, color: hull.ledgerQuiet },
+    error: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
+    failureBlock: { gap: hull.space.md },
   };
 });

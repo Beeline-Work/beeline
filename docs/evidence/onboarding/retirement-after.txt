@@ -1,0 +1,8 @@
+welcome_ws|0
+welcome_room|0
+welcome_memberships|0
+greeter_hidden|1
+greeter_live_tokens|0
+greeter_agent_row_kept|1
+people_kept|2
+audit_row|1

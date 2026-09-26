@@ -54,6 +54,17 @@ describe('model catalog probe environment', () => {
 });
 
 describe('agent model catalog filtering', () => {
+  it('publishes the Fast mode axis only for Codex', () => {
+    const axes: AgentModelConfigOption[] = [
+      { id: 'fast-mode', category: 'model_config', options: [{ id: 'off' }, { id: 'on' }] },
+    ];
+    expect(
+      filterAgentModelCatalog({ kind: 'codex', command: 'codex-acp', args: [] }, axes, {}),
+    ).toEqual(axes);
+    expect(
+      filterAgentModelCatalog({ kind: 'claude', command: 'claude-acp', args: [] }, axes, {}),
+    ).toEqual([]);
+  });
   const raw: AgentModelConfigOption[] = [
     {
       id: 'model',

@@ -55,9 +55,7 @@ describe('StateCircle — one visual language per deck state', () => {
   });
 
   it('maps canonical corner tones without changing circle geometry', () => {
-    expect(styleBlock(source, 'stateCircleStrokeBrass')).toContain(
-      'borderColor: groknight.accent',
-    );
+    expect(styleBlock(source, 'stateCircleStrokeBrass')).toContain('borderColor: groknight.accent');
     expect(styleBlock(source, 'stateCircleFillQuiet')).toContain(
       'backgroundColor: groknight.ledgerQuiet',
     );

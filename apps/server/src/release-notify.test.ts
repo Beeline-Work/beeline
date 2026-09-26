@@ -35,12 +35,6 @@ async function fixture() {
     [WORKSPACE, OWNER, OTHER_PERSON, AGENT, ROOM],
   );
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
-  // A real sign-in lands the human in Welcome. Room reads now enforce that
-  // Workspace membership, so the announcement fixture must carry it too.
-  await database.query(
-    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'member')`,
-    [DEFAULT_WORKSPACE_ID, OWNER, OTHER_PERSON],
-  );
   return database;
 }
 
@@ -292,5 +286,35 @@ describe('notifyReleaseDelivered', () => {
     await expect(
       phone.execute('sendRoomMessage', { roomId: resolved.id, text: 'hey back' }, OTHER_PERSON),
     ).resolves.toBeTruthy();
+  });
+
+  it('lands in a real Workspace rather than the retired Welcome, and skips a person with none', async () => {
+    const LONER = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Loner')`, [LONER]);
+    // Welcome still exists and OWNER joined it first: the notice must still
+    // prefer the Workspace the retirement will not delete.
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
+      DEFAULT_WORKSPACE_ID,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role,joined_at)
+       VALUES($1,$2,'member',now()-interval '1 day')`,
+      [DEFAULT_WORKSPACE_ID, OWNER],
+    );
+    const result = await notifyReleaseDelivered(database, {
+      version: 'v0.0.43',
+      sha: 'b'.repeat(40),
+      changelogUrl: 'https://example.test/releases/v0.0.43',
+    });
+    expect(result).toEqual({ notified: 2, skipped: 1 });
+    const rooms = await database.query<{ workspace_id: string }>(
+      `SELECT DISTINCT r.workspace_id FROM messages m JOIN rooms r ON r.id=m.room_id`,
+    );
+    expect(rooms.rows).toEqual([{ workspace_id: WORKSPACE }]);
+    expect(
+      (
+        await database.query(`SELECT 1 FROM rooms WHERE direct_participants::jsonb ? $1`, [LONER])
+      ).rowCount,
+    ).toBe(0);
   });
 });

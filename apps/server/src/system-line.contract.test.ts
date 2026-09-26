@@ -29,10 +29,15 @@ describe('the one system-line producer', () => {
   it('is the only module that inserts a system line or a card header', () => {
     const offenders = serverSources().flatMap((name) => {
       const statements = messageStatements(readFileSync(`${sourceDir}${name}`, 'utf8'));
-      return statements
-        .filter((statement) => /INSERT INTO messages/.test(statement))
-        .filter((statement) => /'system'|'card'/.test(statement))
-        .map((statement) => `${name}: ${statement.replace(/\s+/g, ' ').slice(0, 120)}`);
+      return (
+        statements
+          .filter((statement) => /INSERT INTO messages/.test(statement))
+          .filter((statement) => /'system'|'card'/.test(statement))
+          // Relay cards carry a forwarded conversation or an unanswered ask
+          // report. Their text is the payload, not a system-card header.
+          .filter((statement) => !/'card'\s*,\s*'relay'/.test(statement))
+          .map((statement) => `${name}: ${statement.replace(/\s+/g, ' ').slice(0, 120)}`)
+      );
     });
     expect(offenders).toEqual([]);
   });

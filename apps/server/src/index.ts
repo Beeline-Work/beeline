@@ -25,12 +25,17 @@ import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { GoogleOAuth } from './google-oauth.js';
+import { McpRegistryClient } from './mcp-registry.js';
+import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
+import { runInstitutionalCuratorCycle } from './institutional-curator.js';
+import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
+import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -43,6 +48,13 @@ async function runReleaseMigration(): Promise<void> {
   try {
     await migrate(database);
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    // Armed only by the release owner, once the create-or-join onboarding is
+    // live on every supported client (docs/welcome-retirement.md).
+    const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
+    if (greeterAgentId) {
+      const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
+      console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+    }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
     await markSchemaCurrent(database);
@@ -128,6 +140,7 @@ async function main() {
       webAppOrigins,
     },
   );
+  const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -136,6 +149,7 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
   const githubJobs = githubClients
@@ -146,8 +160,30 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
+  // Generated procedures are anchored to real code, so the curator's staleness
+  // pass needs an installation token and the repository's default branch. With
+  // no GitHub App configured there is no anchor to check and no contradiction to
+  // record, so the pass is skipped rather than guessed at.
+  const institutionalAnchors: InstitutionalSkillAnchorSource | undefined =
+    githubClients && githubJobs
+      ? {
+          resolveRoomRepository: (roomId) => githubJobs.roomAnchorTarget(roomId),
+          // The anchored repository is the one content is compared in — the
+          // token is what comes from the Room. A Room later pointed at another
+          // repository still gets asked about the code the procedure was
+          // actually written against.
+          fileBlobSha: (input) =>
+            githubClients.app.fileBlobSha({
+              accessToken: input.token,
+              fullName: input.repository,
+              path: input.path,
+              ref: input.ref,
+            }),
+        }
+      : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
@@ -182,6 +218,8 @@ async function main() {
           process.env.BEELINE_GOOGLE_TOKEN_KEY,
         )
       : undefined;
+  const mcpRegistry = new McpRegistryClient();
+  const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage
     ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
         storage: objectStorage,
@@ -217,7 +255,9 @@ async function main() {
     process.env.BEELINE_COMPOSIO_API_KEY
       ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
       : undefined,
-    institutionalMemoryShadowConfigFromEnv(),
+    institutionalMemory,
+    mcpRegistry,
+    registryMcpOAuth,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -237,6 +277,7 @@ async function main() {
   const server = createBeelineServer({
     database,
     googleOAuth,
+    registryMcpOAuth,
     healthDatabase,
     auth,
     phone,
@@ -275,6 +316,13 @@ async function main() {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
         await runMaintenance(jobsDatabase);
+        try {
+          await runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
+            ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
+          });
+        } catch (error) {
+          console.error('[server] institutional curator cycle failed:', error);
+        }
         if (githubJobs) {
           try {
             await githubJobs.refreshUnknownMergeability();
@@ -327,8 +375,23 @@ async function main() {
   process.once('SIGTERM', () => void stop());
 }
 
-const migrationMode = process.argv[2] === '--migrate';
-(migrationMode ? runReleaseMigration() : main()).catch((error) => {
+async function runWelcomeRetirementPreflight(): Promise<void> {
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  try {
+    console.log(JSON.stringify(await welcomeRetirementPreflight(database), null, 2));
+  } finally {
+    await database.close();
+  }
+}
+
+const migrationMode =
+  process.argv[2] === '--migrate' || process.argv[2] === '--welcome-retirement-preflight';
+(process.argv[2] === '--welcome-retirement-preflight'
+  ? runWelcomeRetirementPreflight()
+  : migrationMode
+    ? runReleaseMigration()
+    : main()
+).catch((error) => {
   console.error(
     migrationMode ? '[migration] failed:' : '[server] startup failed:',
     error instanceof Error ? error.message : String(error),

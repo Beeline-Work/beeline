@@ -330,16 +330,7 @@ describe('corner message attribution', () => {
       await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
       await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [B]);
       await greenHead(21, '1'.repeat(40));
-      const [review] = await commands(B, C);
-      await claim(review!);
-      const blocked = await daemon.execute(
-        gate,
-        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1' },
-        B,
-      );
-      expect(blocked.allowed).toBe(false);
-      // The server states the wait in the corner, authored by the agent whose
-      // turn stopped, and names the approver for the host gate.
+      const host = gate === 'authorizeHostCall';
       const waiting = () =>
         db
           .query<{ text: string; author_id: string; created_at: Date }>(
@@ -349,30 +340,28 @@ describe('corner message attribution', () => {
             [C],
           )
           .then((r) => r.rows);
-      const lines = await waiting();
-      expect(lines).toHaveLength(1);
-      expect(lines[0]!.author_id).toBe(B);
-      expect(lines[0]!.text).toBe(
-        gate === 'authorizeHostCall'
-          ? '@goosy is waiting for @human to approve host access'
-          : '@goosy is waiting for a Workspace admin to approve repository access',
-      );
-      // The notice never sorts above the message that provoked it.
-      const cause = (
-        await db.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [
-          review!.sourceMessageId,
-        ])
-      ).rows[0]!;
-      expect(lines[0]!.created_at.getTime()).toBeGreaterThanOrEqual(
-        cause.created_at.getTime() + 1_000,
-      );
-      // A retried authorization inside the SAME turn collides on identity.
-      await daemon.execute(
+      const cards = () =>
+        db
+          .query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='grant-request'`, [C])
+          .then((r) => r.rows);
+      const causeOf = (messageId: string) =>
+        db
+          .query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [messageId])
+          .then((r) => r.rows[0]!.created_at.getTime());
+      const [review] = await commands(B, C);
+      await claim(review!);
+      const blocked = await daemon.execute(
         gate,
         { roomId: C, requestId: review!.turnRequestId, generationId: 'g1' },
         B,
       );
-      expect(await waiting()).toHaveLength(1);
+      expect(blocked.allowed).toBe(false);
+      // A fresh repository ask puts its own actionable grant-request card in
+      // this corner, so the server adds no second sentence beside it; a host
+      // ask's card goes to the owner's @system DM, leaving the corner silent
+      // unless the server speaks.
+      expect(await cards()).toHaveLength(host ? 0 : 1);
+      expect(await waiting()).toHaveLength(host ? 1 : 0);
       // The body posts no reply on this path; the turn settles as a plain
       // complete receipt. A system line is never a reviewer verdict, so the
       // worker is not woken and the handback budget is untouched.
@@ -396,8 +385,8 @@ describe('corner message attribution', () => {
           )
         ).rows[0]?.review_handback_count,
       ).toBe(0);
-      // A LATER turn blocked by the same still-pending grant is its own wake,
-      // so it speaks rather than settling silently.
+      // A LATER turn blocked by the same still-pending grant writes no card of
+      // its own, so it speaks rather than settling silently.
       const again = await systemLine(db, {
         roomId: C,
         authorId: H,
@@ -417,7 +406,29 @@ describe('corner message attribution', () => {
         { roomId: C, requestId: next.turnRequestId, generationId: 'g2' },
         B,
       );
-      expect(await waiting()).toHaveLength(2);
+      expect(await cards()).toHaveLength(host ? 0 : 1);
+      const lines = await waiting();
+      expect(lines).toHaveLength(host ? 2 : 1);
+      // The server states the wait in the corner, authored by the agent whose
+      // turn stopped, and names the approver for the host gate.
+      const line = lines.at(-1)!;
+      expect(line.author_id).toBe(B);
+      expect(line.text).toBe(
+        host
+          ? '@goosy is waiting for @human to approve host access'
+          : '@goosy is waiting for a Workspace admin to approve repository access',
+      );
+      // The notice never sorts above the message that provoked it.
+      expect(line.created_at.getTime()).toBeGreaterThanOrEqual(
+        (await causeOf(next.sourceMessageId)) + 1_000,
+      );
+      // A retried authorization inside the SAME turn collides on identity.
+      await daemon.execute(
+        gate,
+        { roomId: C, requestId: next.turnRequestId, generationId: 'g2' },
+        B,
+      );
+      expect(await waiting()).toHaveLength(host ? 2 : 1);
     },
   );
 

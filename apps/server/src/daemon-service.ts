@@ -4833,7 +4833,7 @@ export class DaemonService {
       },
       agentId,
     );
-    if (kind !== 'mcp')
+    if (kind === 'host')
       await this.noteBlockedTurnGate({
         roomId: input.roomId,
         agentId,
@@ -4864,6 +4864,11 @@ export class DaemonService {
    *
    * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
    * already reaches the agent as its tool error, not a turn that never started.
+   * A repository ask that MINTS its grant this turn is excluded too, because
+   * `requestAgentGrant` puts that grant's actionable card in this same corner
+   * one row earlier; only a host ask, whose card goes to the owner's `@system`
+   * DM, and a later turn blocked on an already-pending grant, which writes no
+   * card at all, leave the corner with nothing else to say.
    */
   private async noteBlockedTurnGate(input: {
     readonly roomId: string;

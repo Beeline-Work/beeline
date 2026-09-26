@@ -6,6 +6,13 @@ import { nextDesktopVersion, normalizeDesktopVersion } from './desktop-update.mj
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
 export const RELEASE_BUDGET_MINUTES = 20;
+export const RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60;
+export const RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60;
+// A macOS helper release pays a cold `cargo build --release` of buzz-agent/
+// buzz-dev-mcp ahead of the helper leg on the ONE self-hosted Intel Mac the iOS
+// leg and the Mac PR gate also hold; 150 minutes covers the worst serialized case.
+export const RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS = 150 * 60;
+export const RELEASE_SOFT_LIMIT_SECONDS = 45 * 60;
 export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
 export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
 export const SERVER_CANARY_WINDOW_SECONDS = 300;
@@ -73,6 +80,50 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 function now() { return new Date().toISOString(); }
+
+export function classifyReleaseAttempt({
+  triggerEpoch,
+  finishedEpoch,
+  checkpoints = [],
+  nativeBuildRan = false,
+  helperMacosBuildRan = false,
+  incomplete = '',
+}) {
+  const trigger = Number(triggerEpoch);
+  const finished = Number(finishedEpoch);
+  if (!Number.isFinite(trigger) || !Number.isFinite(finished)) fail('release timing requires finite epoch seconds');
+  const wholeRunElapsedSeconds = Math.max(0, Math.trunc(finished) - Math.trunc(trigger));
+  const otaCompletionCandidates = Array.isArray(checkpoints)
+    ? checkpoints
+      .filter((checkpoint) => checkpoint?.component === 'mobile-ota' && checkpoint.state === 'checked')
+      .map((checkpoint) => Number(checkpoint.completedAt))
+      .filter((completedAt) => Number.isFinite(completedAt) && completedAt >= trigger && completedAt <= finished)
+    : [];
+  const otaCompletedAt = otaCompletionCandidates.length ? Math.max(...otaCompletionCandidates) : undefined;
+  const otaElapsedSeconds = otaCompletedAt === undefined
+    ? wholeRunElapsedSeconds
+    : Math.max(0, Math.trunc(otaCompletedAt) - Math.trunc(trigger));
+  const budgetSeconds = helperMacosBuildRan
+    ? RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS
+    : nativeBuildRan
+      ? RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS
+      : RELEASE_FIX_TO_PHONE_BUDGET_SECONDS;
+  const unfinished = String(incomplete ?? '').trim();
+  const failureClass = otaElapsedSeconds >= budgetSeconds
+    ? 'budget'
+    : unfinished ? `component:${unfinished}` : '';
+  const outcome = failureClass ? 'failure' : 'success';
+  return {
+    outcome,
+    failureClass,
+    otaElapsedSeconds,
+    wholeRunElapsedSeconds,
+    budgetSeconds,
+    softLimitSeconds: RELEASE_SOFT_LIMIT_SECONDS,
+    slow: outcome === 'success' && wholeRunElapsedSeconds > RELEASE_SOFT_LIMIT_SECONDS,
+    ...(otaCompletedAt === undefined ? {} : { otaCompletedAt: Math.trunc(otaCompletedAt) }),
+  };
+}
 
 export function planServerCanaryDeployment(machines, newImageRef) {
   if (!Array.isArray(machines) || machines.length !== 2) {
@@ -563,6 +614,20 @@ async function main(argv) {
     else console.log(`Release notification ${result.state}: ${result.detail}`);
     return;
   }
+  if (command === 'classify-attempt') {
+    const checkpoints = args.checkpoints ? readJson(args.checkpoints) : [];
+    const result = classifyReleaseAttempt({
+      triggerEpoch: args['trigger-epoch'],
+      finishedEpoch: args['finished-epoch'],
+      checkpoints,
+      nativeBuildRan: args['native-build-ran'] === 'true',
+      helperMacosBuildRan: args['helper-macos-build-ran'] === 'true',
+      incomplete: args.incomplete,
+    });
+    if (args.output) writeJson(args.output, result);
+    else console.log(JSON.stringify(result));
+    return;
+  }
   if (command === 'server-deploy-plan') {
     const plan = planServerCanaryDeployment(readJson(args.machines), args.image);
     if (args.output) writeJson(args.output, plan);
@@ -628,7 +693,7 @@ async function main(argv) {
       (state.delivery.unproven ? ` · UNPROVEN: ${state.delivery.unproven}` : ''));
     return;
   }
-  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|server-deploy-plan|server-canary-sample|server-ledger|server-rollback-image|mark-stage|apply-checkpoints|finalize|notify|report>');
+  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|classify-attempt|server-deploy-plan|server-canary-sample|server-ledger|server-rollback-image|mark-stage|apply-checkpoints|finalize|notify|report>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

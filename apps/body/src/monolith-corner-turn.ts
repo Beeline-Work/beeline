@@ -41,7 +41,7 @@ import {
 import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
+import { toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
@@ -421,14 +421,14 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
 }
 
 /**
- * True only for a lane upgrade the harness reports as COMPLETED — the one tool
- * call that hands this turn's authority to the restarted code session.
+ * The lane upgrade keeps no durable activity row: by the time the harness
+ * reports the call settled, `upgradeCornerLane` has already completed this
+ * turn's command, so the write is refused and only logs a failure over work
+ * that succeeded. Whether the upgrade HAPPENED is read from the corner's own
+ * lane, never from this title.
  */
-function upgradedCornerLane(calls: readonly ToolCallEntry[]): boolean {
-  return calls.some(
-    (call) =>
-      /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '') && isCompletedToolCall(call),
-  );
+function isCornerLaneUpgradeCall(call: ToolCallEntry): boolean {
+  return /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '');
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
@@ -1241,6 +1241,26 @@ export class MonolithCornerTurnLoop {
     return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
   }
 
+  /**
+   * Did this corner's lane already move under the running turn?
+   *
+   * The upgrade is a server fact, and only the server can say it happened: a
+   * harness that reports no tool calls at all (`cursor-acp-bridge.ts` emits
+   * message chunks only) would otherwise finish its turn believing it still
+   * owns write authority the upgrade has already spent. One bounded read, and
+   * only where an upgrade is possible — the tool is mounted nowhere else.
+   */
+  private async laneUpgradeCommitted(): Promise<boolean> {
+    if (this.options.lane !== 'no_code' || !this.options.agentMayUpgradeCorner) return false;
+    const state = await this.options.api
+      .execute('getCornerRestoreState', { cornerId: this.options.cornerId })
+      .catch((error) => {
+        console.error(`[thin-core] corner ${this.options.cornerId} lane read failed:`, error);
+        return undefined;
+      });
+    return Boolean(state?.lane && state.lane !== 'no_code');
+  }
+
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
@@ -1514,6 +1534,7 @@ export class MonolithCornerTurnLoop {
                 exceptKey?: string,
               ) => {
                 calls.forEach((call, index) => {
+                  if (isCornerLaneUpgradeCall(call)) return;
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
                     observedToolCalls.add(key);
@@ -1650,7 +1671,6 @@ export class MonolithCornerTurnLoop {
                   undefined,
                   (calls) => {
                     trace.toolCalls(calls);
-                    if (upgradedCornerLane(calls)) laneUpgraded = true;
                     // Observe (snapshot the narration that preceded each newly
                     // seen call) THEN publish: a human watching a corner sees a
                     // tool's row the moment it settles, not batched at the
@@ -1706,6 +1726,7 @@ export class MonolithCornerTurnLoop {
               // re-delivered there. Anything this session still wanted to say
               // would be refused, and the refusal would fail a turn whose work
               // succeeded.
+              laneUpgraded = await this.laneUpgradeCommitted();
               if (laneUpgraded) {
                 console.log(
                   `[thin-core] corner ${cornerId} turn ${requestId} upgraded to the code lane`,
@@ -1896,6 +1917,7 @@ export class MonolithCornerTurnLoop {
       // The upgrade already settled this turn complete. A later stumble in a
       // session the corner is discarding is not a failed turn, and saying so
       // would inscribe "could not answer" over work that succeeded.
+      laneUpgraded ||= await this.laneUpgradeCommitted();
       if (laneUpgraded) {
         console.log(
           `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,

@@ -252,6 +252,8 @@ export async function resolvePendingCornerBriefAttachments(
 const UPGRADE_REQUEST_LENGTH = 16_000;
 const UPGRADE_BUILD_SPEC_LENGTH = 65_536;
 const UPGRADE_CRITERION_LENGTH = 2_000;
+/** Newest messages considered for the build spec; older history is marked, never read. */
+const UPGRADE_DISCUSSION_CANDIDATES = 200;
 
 function upgradeCriterion(request: string): string {
   const text = `Deliver the code change this corner was asked for: ${request.replace(/\s+/g, ' ').trim()}`;
@@ -263,6 +265,7 @@ function upgradeCriterion(request: string): string {
 function upgradeBuildSpec(
   discussion: readonly { name: string; text: string }[],
   request: string,
+  olderHistory: boolean,
 ): string {
   const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
   const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
@@ -274,8 +277,13 @@ function upgradeBuildSpec(
     remaining -= entry.length;
     kept.unshift(entry);
   }
-  const omitted = entries.length - kept.length;
-  const note = omitted ? `\n- _${omitted} message(s) omitted for length._` : '';
+  const dropped = entries.length - kept.length;
+  const note =
+    dropped || olderHistory
+      ? `\n- _${[dropped ? `${dropped} message(s)` : '', olderHistory ? 'earlier history' : '']
+          .filter(Boolean)
+          .join(' and ')} omitted for length._`
+      : '';
   return `${head}${note}${kept.join('')}\n`;
 }
 
@@ -302,19 +310,28 @@ export async function composeCornerUpgradeBrief(
     throw new Error(
       `corner lane upgrade needs the code request written in one message of at most ${UPGRADE_REQUEST_LENGTH} characters — ask again in a shorter message`,
     );
-  const discussion = (
+  // Newest first, bounded in rows AND in bytes per row: a message longer than
+  // the whole build spec can never be rendered, so reading past that length
+  // would only be read to be thrown away.
+  const candidates = (
     await db.query<{ id: string; text: string; name: string }>(
-      `SELECT message.id,message.text,identity.name
+      `SELECT message.id,left(message.text,$2) text,identity.name
        FROM messages message JOIN identities identity ON identity.id=message.author_id
        WHERE message.room_id=$1 AND message.presentation='message'
          AND message.deleted_at IS NULL AND btrim(message.text)<>''
-       ORDER BY message.created_at,message.id`,
-      [cornerId],
+       ORDER BY message.created_at DESC,message.id DESC
+       LIMIT $3`,
+      [cornerId, UPGRADE_BUILD_SPEC_LENGTH + 1, UPGRADE_DISCUSSION_CANDIDATES + 1],
     )
-  ).rows.filter((row) => row.id !== approval.sourceMessageId);
+  ).rows;
+  const olderHistory = candidates.length > UPGRADE_DISCUSSION_CANDIDATES;
+  const discussion = candidates
+    .slice(0, UPGRADE_DISCUSSION_CANDIDATES)
+    .reverse()
+    .filter((row) => row.id !== approval.sourceMessageId);
   return {
     intentVerbatim: [{ sourceMessageId: approval.sourceMessageId, snapshot: approval.snapshot }],
-    buildSpec: upgradeBuildSpec(discussion, approval.snapshot),
+    buildSpec: upgradeBuildSpec(discussion, approval.snapshot, olderHistory),
     criteria: [{ id: 'AC-1', text: upgradeCriterion(approval.snapshot) }],
     references: [],
     approvalBasis: {

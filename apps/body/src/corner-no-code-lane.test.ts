@@ -10,7 +10,7 @@ import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
-import { AcpClient } from './acp.js';
+import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -468,7 +468,18 @@ it('retires a no-code session on the timed restore read when the server already 
   expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-id' });
 });
 
-it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing after it', async () => {
+/**
+ * One upgradeable no-code corner turn whose `upgrade_corner_to_code` call
+ * lands: `commitUpgrade()` stands in for the server-side transaction that
+ * moves the lane and spends this turn's write authority.
+ */
+async function upgradeTurn(
+  answer: (input: {
+    commitUpgrade: () => void;
+    onChunk?: (delta: string, full: string, currentRun?: string) => void;
+    onToolCalls?: (calls: ToolCallEntry[]) => void;
+  }) => Promise<PromptResult>,
+): Promise<{ written: string[]; execute: ReturnType<typeof vi.fn>; onLaneChanged: () => void }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-turn-'));
   roots.push(root);
   const workspace = join(root, 'rooms', 'corner-id', 'scratch');
@@ -520,8 +531,6 @@ it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing aft
     agentDepth: 0,
     source,
   };
-  // The server settles this turn and its command inside the upgrade, and the
-  // corner's lane is what the timed restore read then sees.
   let lane = 'no_code';
   let delivered = false;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
@@ -563,15 +572,14 @@ it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing aft
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
   vi.spyOn(acp, 'sessionPrompt').mockImplementation(
-    async (_session, _prompt, _timeout, onChunk, _onPlan, onToolCalls) => {
-      const text = 'Upgrading this corner so I can edit the renderer.';
-      onChunk?.(text, text, text);
-      const calls = [{ id: 'call-1', title: 'upgrade_corner_to_code', status: 'completed' }];
-      // What the real tool does server-side, observed here as the lane fact.
-      lane = 'code';
-      onToolCalls?.(calls);
-      return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
-    },
+    async (_session, _prompt, _timeout, onChunk, _onPlan, onToolCalls) =>
+      answer({
+        commitUpgrade: () => {
+          lane = 'code';
+        },
+        onChunk,
+        onToolCalls,
+      }),
   );
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const onLaneChanged = vi.fn();
@@ -598,21 +606,58 @@ it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing aft
     createAcpClient: () => acp,
   }).run();
   await scheduler.dispose();
+  return { written: execute.mock.calls.map(([name]) => name as string), execute, onLaneChanged };
+}
 
-  const written = execute.mock.calls.map(([name]) => name);
-  // This session's write authority ended with the upgrade: a closing reply
-  // would be refused, and the refusal would fail a turn that succeeded.
-  expect(written).not.toContain('postRoomMessage');
-  expect(execute).not.toHaveBeenCalledWith(
+/** Every ending this session must NOT write once its authority is spent. */
+function expectTextlessUpgradeEnding(result: {
+  written: string[];
+  execute: ReturnType<typeof vi.fn>;
+}): void {
+  // A closing reply would be refused, and the refusal would fail a turn that
+  // succeeded.
+  expect(result.written).not.toContain('postRoomMessage');
+  expect(result.execute).not.toHaveBeenCalledWith(
     'postAgentTurnReceipt',
     expect.objectContaining({ status: 'failed' }),
   );
-  expect(execute).not.toHaveBeenCalledWith(
+  expect(result.execute).not.toHaveBeenCalledWith(
     'postAgentTurnReceipt',
     expect.objectContaining({ status: 'complete' }),
   );
   // The half-written answer does not stay on the page under a corner that is
   // already restarting.
-  expect(written).toContain('retractAgentLiveOutput');
-  expect(onLaneChanged).toHaveBeenCalledTimes(1);
+  expect(result.written).toContain('retractAgentLiveOutput');
+  // The upgrade call keeps no activity row: that write is refused too, and its
+  // refusal would be the only thing a successful upgrade logged.
+  expect(result.written).not.toContain('postAgentActivity');
+}
+
+it('ends a turn textlessly when the lane upgrade succeeds, and posts nothing after it', async () => {
+  const result = await upgradeTurn(async ({ commitUpgrade, onChunk, onToolCalls }) => {
+    const calls = [{ id: 'call-1', title: 'upgrade_corner_to_code', status: 'completed' }];
+    commitUpgrade();
+    // The call settles before any narration, so nothing holds its row back.
+    onToolCalls?.(calls);
+    const text = 'Upgraded this corner so I can edit the renderer.';
+    onChunk?.(text, text, text);
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+  });
+
+  expectTextlessUpgradeEnding(result);
+  expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
+});
+
+it('ends the same way for a harness that reports no tool calls at all', async () => {
+  // cursor-acp-bridge translates only message chunks, so the upgrade is never
+  // visible in this turn's tool-call stream — the corner's own lane is.
+  const result = await upgradeTurn(async ({ commitUpgrade, onChunk }) => {
+    commitUpgrade();
+    const text = 'Upgraded this corner so I can edit the renderer.';
+    onChunk?.(text, text, text);
+    return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
+  });
+
+  expectTextlessUpgradeEnding(result);
+  expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
 });

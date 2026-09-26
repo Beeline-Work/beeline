@@ -530,3 +530,32 @@ it('keeps the discussion that fits when one message is too long for the brief', 
   expect(brief?.buildSpec).not.toContain('yyyy');
   expect(brief?.buildSpec).toContain('1 message(s) omitted for length');
 });
+
+it('reads only the newest slice of a long corner and says the rest was left out', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  // Past the 200-message candidate window the brief composes from.
+  const rows = Array.from({ length: 220 }, (_, index) => index);
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,created_at)
+     SELECT * FROM unnest($1::text[],$2::uuid[],$3::text[],$4::text[],$5::timestamptz[])`,
+    [
+      rows.map(() => randomBytes(32).toString('hex')),
+      rows.map(() => cornerId),
+      rows.map(() => HUMAN),
+      rows.map((index) => `note ${index}`),
+      rows.map((index) => new Date(Date.now() - (rows.length - index) * 1000).toISOString()),
+    ],
+  );
+  const command = await commissioned(cornerId);
+
+  await daemon.execute(
+    'upgradeCornerLane',
+    { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+    AGENT,
+  );
+
+  const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  expect(brief?.buildSpec).toContain('note 219');
+  expect(brief?.buildSpec).not.toContain('note 0\n');
+  expect(brief?.buildSpec).toContain('earlier history omitted for length');
+});

@@ -10,7 +10,27 @@ export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 8_000;
 export const INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES = 2_500;
 export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
+export const INSTITUTIONAL_CONTEXT_SKILL_INDEX_MAX_BYTES = 1_800;
 export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
+export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
+export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
+export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
+/**
+ * Ranking is bounded to this many matched rows: a broad query in a large
+ * Workspace must never rank (or count) every match it could reach.
+ */
+export const INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX = 200;
+/**
+ * Matching is bounded to this recency window. A GIN index cannot return rows in
+ * recency order, so without a time bound one common term would sort every match
+ * in history before the row bound above could apply.
+ */
+export const INSTITUTIONAL_HISTORY_MAX_AGE_DAYS = 180;
+export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
+export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
+export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
+export const INSTITUTIONAL_REVIEW_FINDING_MAX = 20;
+export const INSTITUTIONAL_CURATOR_ACTION_MAX = 50;
 
 export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
@@ -36,7 +56,7 @@ export interface InstitutionalMemoryJobLedgerEntry {
   readonly leaseOwnerMachineId?: string;
   readonly attempts: number;
   readonly maxAttempts: number;
-  readonly proposal?: InstitutionalMemoryProposal | null;
+  readonly proposal?: InstitutionalMemoryJobProposal | null;
   readonly usage?: InstitutionalMemoryJobUsage;
   readonly error?: string;
 }
@@ -155,6 +175,8 @@ export interface InstitutionalMemoryShadowJob {
   readonly requesterIdentityId: string;
   readonly directMessage: boolean;
   readonly mode: 'shadow' | 'live';
+  readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
+  readonly context?: Readonly<Record<string, unknown>>;
   readonly messages: readonly InstitutionalMemoryShadowMessage[];
   readonly existingItems: readonly Pick<
     InstitutionalMemoryItem,
@@ -171,7 +193,7 @@ export interface CompleteInstitutionalMemoryJobInput {
   readonly jobId: string;
   readonly leaseToken: string;
   /** Null is a valid shadow verdict: the source contained no durable lesson. */
-  readonly proposal: InstitutionalMemoryProposal | null;
+  readonly proposal: InstitutionalMemoryJobProposal | null;
   readonly usage: InstitutionalMemoryJobUsage;
 }
 
@@ -211,6 +233,102 @@ export interface ProposeInstitutionalMemoryResult {
   readonly version: number;
 }
 
+export interface SearchInstitutionalHistoryInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface InstitutionalHistoryResult {
+  readonly messageId: string;
+  readonly roomId: string;
+  readonly roomName: string;
+  readonly authorId: string;
+  readonly createdAt: number;
+  readonly snippet: string;
+  readonly rank: number;
+}
+
+export interface SearchInstitutionalHistoryResult {
+  readonly results: readonly InstitutionalHistoryResult[];
+  /** The recency window searched, in days. */
+  readonly windowDays: number;
+  readonly omitted: number;
+  /** True when matching stopped at INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX, so
+   * `omitted` counts the bounded match set and not every Workspace match. */
+  readonly capped: boolean;
+}
+
+export interface WorkspaceSkillCodeAnchor {
+  readonly repository: string;
+  readonly targetCommit: string;
+  readonly path?: string;
+}
+
+export interface WorkspaceSkillProposal {
+  readonly slug: string;
+  readonly description: string;
+  readonly markdown: string;
+  readonly baseVersion: number | null;
+  readonly anchor: WorkspaceSkillCodeAnchor;
+}
+
+export interface InstitutionalReviewFindingProposal {
+  readonly taxonomy: string;
+  readonly summary: string;
+  readonly severity: 'info' | 'warning' | 'error';
+  readonly confidence: number;
+  readonly path?: string;
+}
+
+export interface InstitutionalMergeReviewProposal {
+  readonly proposalVersion: 1;
+  readonly skill: WorkspaceSkillProposal | null;
+  readonly findings: readonly InstitutionalReviewFindingProposal[];
+}
+
+export interface InstitutionalCuratorAction {
+  readonly action: 'retain' | 'stale' | 'archive' | 'consolidate';
+  readonly targetType: 'memory_item' | 'workspace_skill';
+  readonly targetId: string;
+  readonly baseVersion: number;
+  readonly duplicateIds: readonly string[];
+  readonly body?: string;
+  readonly description?: string;
+  readonly markdown?: string;
+  readonly rationale: string;
+}
+
+export interface InstitutionalCuratorProposal {
+  readonly proposalVersion: 1;
+  readonly partition: string;
+  readonly actions: readonly InstitutionalCuratorAction[];
+}
+
+export type InstitutionalMemoryJobProposal =
+  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
+
+export interface LoadWorkspaceSkillInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly slug: string;
+}
+
+export interface LoadWorkspaceSkillResult {
+  readonly skillId: string;
+  readonly slug: string;
+  readonly description: string;
+  readonly version: number;
+  readonly markdown: string;
+  readonly sourceRoomId: string;
+  readonly anchor: WorkspaceSkillCodeAnchor;
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -225,6 +343,11 @@ function exactKeys(
 ): void {
   const unknown = Object.keys(value).find((key) => !allowed.includes(key));
   if (unknown) throw new Error(`${label} has unknown field ${unknown}`);
+}
+
+/** An optional field a model left inapplicable: absent and explicit null agree. */
+function omitted(value: unknown): boolean {
+  return value === undefined || value === null;
 }
 
 function boundedText(value: unknown, label: string, maximum: number, bytes = false): string {
@@ -382,4 +505,240 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       ...(supersedesItemId ? { supersedesItemId } : {}),
     },
   };
+}
+
+/** Strict parser for one merge-derived, restricted procedure proposal. */
+/**
+ * A path the model can name from its own evidence is kept; an unverifiable value
+ * is DROPPED rather than kept or treated as fatal, because rejecting would
+ * discard a whole valid procedure and its review findings over metadata the
+ * model was told was optional.
+ *
+ * There is no content-digest field: the model is given no file bytes, so any
+ * digest it emitted would be asserted rather than computed. Staling a procedure
+ * on code-anchor mismatch needs a producer that reads the anchored file, which
+ * is not part of this change (see AGENTS.md).
+ */
+function repositoryRelativePath(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 500) return undefined;
+  if (
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    value.split('/').some((segment) => segment === '..' || segment === '')
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function optionalAnchorField(key: 'path', value: string | undefined) {
+  return value === undefined ? {} : { [key]: value };
+}
+
+export function parseInstitutionalMergeReviewProposal(
+  value: unknown,
+): InstitutionalMergeReviewProposal {
+  const proposal = record(value, 'institutional merge review proposal');
+  exactKeys(
+    proposal,
+    ['proposalVersion', 'skill', 'findings'],
+    'institutional merge review proposal',
+  );
+  if (proposal.proposalVersion !== 1) {
+    throw new Error('institutional merge review proposal version is unsupported');
+  }
+  let skill: WorkspaceSkillProposal | null = null;
+  if (!omitted(proposal.skill)) {
+    const rawSkill = record(proposal.skill, 'workspace skill proposal');
+    exactKeys(
+      rawSkill,
+      ['slug', 'description', 'markdown', 'baseVersion', 'anchor'],
+      'workspace skill proposal',
+    );
+    const slug = boundedText(
+      rawSkill.slug,
+      'workspace skill slug',
+      WORKSPACE_SKILL_SLUG_MAX_LENGTH,
+    );
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+      throw new Error('workspace skill slug is invalid');
+    }
+    const anchor = record(rawSkill.anchor, 'workspace skill code anchor');
+    exactKeys(anchor, ['repository', 'targetCommit', 'path'], 'workspace skill code anchor');
+    if (
+      rawSkill.baseVersion !== null &&
+      (!Number.isSafeInteger(rawSkill.baseVersion) || (rawSkill.baseVersion as number) <= 0)
+    ) {
+      throw new Error('workspace skill base version is invalid');
+    }
+    skill = {
+      slug,
+      description: boundedText(
+        rawSkill.description,
+        'workspace skill description',
+        WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
+      ),
+      markdown: boundedText(
+        rawSkill.markdown,
+        'workspace skill markdown',
+        WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+        true,
+      ),
+      baseVersion: rawSkill.baseVersion as number | null,
+      anchor: {
+        repository: boundedText(anchor.repository, 'workspace skill repository', 300),
+        targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
+        ...optionalAnchorField('path', repositoryRelativePath(anchor.path)),
+      },
+    };
+  }
+  if (
+    !Array.isArray(proposal.findings) ||
+    proposal.findings.length > INSTITUTIONAL_REVIEW_FINDING_MAX
+  ) {
+    throw new Error('institutional review findings are invalid');
+  }
+  const findings = proposal.findings.map<InstitutionalReviewFindingProposal>((value) => {
+    const finding = record(value, 'institutional review finding');
+    exactKeys(
+      finding,
+      ['taxonomy', 'summary', 'severity', 'confidence', 'path'],
+      'institutional review finding',
+    );
+    if (
+      finding.severity !== 'info' &&
+      finding.severity !== 'warning' &&
+      finding.severity !== 'error'
+    ) {
+      throw new Error('institutional review finding severity is invalid');
+    }
+    const severity = finding.severity;
+    if (
+      typeof finding.confidence !== 'number' ||
+      !Number.isFinite(finding.confidence) ||
+      finding.confidence < 0 ||
+      finding.confidence > 1
+    ) {
+      throw new Error('institutional review finding confidence is invalid');
+    }
+    return {
+      taxonomy: boundedText(finding.taxonomy, 'institutional review finding taxonomy', 120),
+      summary: boundedText(finding.summary, 'institutional review finding summary', 1_000),
+      severity,
+      confidence: finding.confidence,
+      ...(omitted(finding.path)
+        ? {}
+        : { path: boundedText(finding.path, 'institutional review finding path', 500) }),
+    };
+  });
+  return { proposalVersion: 1, skill, findings };
+}
+
+export function parseInstitutionalCuratorProposal(value: unknown): InstitutionalCuratorProposal {
+  const proposal = record(value, 'institutional curator proposal');
+  exactKeys(
+    proposal,
+    ['proposalVersion', 'partition', 'actions'],
+    'institutional curator proposal',
+  );
+  if (proposal.proposalVersion !== 1) {
+    throw new Error('institutional curator proposal version is unsupported');
+  }
+  const partition = boundedText(proposal.partition, 'institutional curator partition', 300);
+  if (
+    !Array.isArray(proposal.actions) ||
+    proposal.actions.length > INSTITUTIONAL_CURATOR_ACTION_MAX
+  ) {
+    throw new Error('institutional curator actions are invalid');
+  }
+  const actions = proposal.actions.map<InstitutionalCuratorAction>((value) => {
+    const action = record(value, 'institutional curator action');
+    exactKeys(
+      action,
+      [
+        'action',
+        'targetType',
+        'targetId',
+        'baseVersion',
+        'duplicateIds',
+        'body',
+        'description',
+        'markdown',
+        'rationale',
+      ],
+      'institutional curator action',
+    );
+    if (
+      action.action !== 'retain' &&
+      action.action !== 'stale' &&
+      action.action !== 'archive' &&
+      action.action !== 'consolidate'
+    ) {
+      throw new Error('institutional curator action kind is invalid');
+    }
+    if (action.targetType !== 'memory_item' && action.targetType !== 'workspace_skill') {
+      throw new Error('institutional curator target type is invalid');
+    }
+    if (!Number.isSafeInteger(action.baseVersion) || (action.baseVersion as number) <= 0) {
+      throw new Error('institutional curator base version is invalid');
+    }
+    if (
+      !Array.isArray(action.duplicateIds) ||
+      action.duplicateIds.length > 20 ||
+      action.duplicateIds.some((id) => typeof id !== 'string' || !id || id.length > 100)
+    ) {
+      throw new Error('institutional curator duplicate ids are invalid');
+    }
+    if (action.action === 'consolidate' && action.duplicateIds.length === 0) {
+      throw new Error('institutional curator consolidation needs duplicates');
+    }
+    if (action.action !== 'consolidate' && action.duplicateIds.length !== 0) {
+      throw new Error('institutional curator lifecycle action cannot carry duplicates');
+    }
+    const body = omitted(action.body)
+      ? undefined
+      : boundedText(
+          action.body,
+          'institutional curator body',
+          INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+          true,
+        );
+    const description = omitted(action.description)
+      ? undefined
+      : boundedText(
+          action.description,
+          'institutional curator skill description',
+          WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
+        );
+    const markdown = omitted(action.markdown)
+      ? undefined
+      : boundedText(
+          action.markdown,
+          'institutional curator skill markdown',
+          WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+          true,
+        );
+    if (
+      action.action === 'consolidate' &&
+      ((action.targetType === 'memory_item' && (!body || description || markdown)) ||
+        (action.targetType === 'workspace_skill' && (!description || !markdown || body)))
+    ) {
+      throw new Error('institutional curator consolidation content is invalid');
+    }
+    if (action.action !== 'consolidate' && (body || description || markdown)) {
+      throw new Error('institutional curator lifecycle action cannot replace content');
+    }
+    return {
+      action: action.action,
+      targetType: action.targetType,
+      targetId: boundedText(action.targetId, 'institutional curator target id', 100),
+      baseVersion: action.baseVersion as number,
+      duplicateIds: [...new Set(action.duplicateIds as string[])],
+      ...(body ? { body } : {}),
+      ...(description ? { description } : {}),
+      ...(markdown ? { markdown } : {}),
+      rationale: boundedText(action.rationale, 'institutional curator rationale', 500),
+    };
+  });
+  return { proposalVersion: 1, partition, actions };
 }

@@ -507,6 +507,49 @@ export class GitHubAppClient {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  /**
+   * The immutable git blob SHA of ONE file, or undefined when that ref does not
+   * carry that path as a file.
+   *
+   * The contents API answers the blob id directly, so a reader compares content
+   * identity without downloading or re-hashing bytes, and "this code is not
+   * here" (a 404, or a directory, which answers an array) stays distinct from
+   * "the API failed". A code-anchor check turns the first into a stale
+   * procedure and must never turn the second into one, so the two answers may
+   * not collapse into a generic error.
+   */
+  async fileBlobSha(input: {
+    accessToken: string;
+    fullName: string;
+    path: string;
+    ref: string;
+  }): Promise<string | undefined> {
+    const url = new URL(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(input.fullName)}/contents/${input.path
+        .split('/')
+        .map((part) => encodeURIComponent(part))
+        .join('/')}`,
+    );
+    url.searchParams.set('ref', input.ref);
+    const response = await fetch(url, { headers: githubHeaders(input.accessToken) });
+    if (response.status === 404) return undefined;
+    if (!response.ok) throw new GitHubHttpError('GitHub file lookup', response.status);
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error('GitHub file lookup returned invalid JSON');
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+    const file = body as Record<string, unknown>;
+    if (file.type !== 'file') return undefined;
+    const sha = file.sha;
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error('GitHub file lookup returned an invalid blob id');
+    }
+    return sha;
+  }
+
   async dispatchWorkflow(
     accessToken: string,
     fullName: string,

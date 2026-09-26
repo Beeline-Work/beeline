@@ -1,10 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
+import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import {
   assertSchemaCurrent,
   backfillAgentHandles,
+  backfillMessageSearchDocuments,
+  MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
@@ -16,6 +19,7 @@ import {
   markSchemaCurrent,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
+  type SqlDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
@@ -132,6 +136,309 @@ describe('a terminated checked-out connection never wedges the pool', () => {
       connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
       keepAlive: true,
     });
+  });
+});
+
+describe('message search vectors', () => {
+  it('maintains new writes by trigger and fills history in bounded batches', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+    const room = 'dddddddd-dddd-4ddd-dddd-dddddddddddd';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
+      'a'.repeat(64),
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Search')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      room,
+      workspace,
+    ]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text)
+       SELECT 'search-'||lpad(series::text,3,'0'),$1,$2,'release marker '||series
+       FROM generate_series(1,25) series`,
+      [room, 'a'.repeat(64)],
+    );
+
+    const searchable = async () =>
+      Number(
+        (
+          await database.query<{ count: string }>(
+            `SELECT count(*)::text count FROM messages
+             WHERE search_document @@ websearch_to_tsquery('simple','release marker')`,
+          )
+        ).rows[0]?.count ?? 0,
+      );
+    // The trigger indexed every insert without a table rewrite.
+    expect(await searchable()).toBe(25);
+
+    // A row older than the search window can never be returned by a search, so
+    // the release does not pay to vectorize it. This is the whole reason the
+    // backfill is not a full rewrite of the busiest table behind the gate.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('ancient',$1,$2,'release marker ancient',
+              now()-($3+30)*interval '1 day')`,
+      [room, 'a'.repeat(64), INSTITUTIONAL_HISTORY_MAX_AGE_DAYS],
+    );
+
+    // Rows written before the column existed carry no vector until the backfill.
+    await database.query(`UPDATE messages SET search_document=NULL`);
+    expect(await searchable()).toBe(0);
+    expect(await backfillMessageSearchDocuments(database, 10)).toBe(25);
+    expect(await searchable()).toBe(25);
+    expect(
+      (
+        await database.query<{ document: string | null }>(
+          `SELECT search_document::text document FROM messages WHERE id='ancient'`,
+        )
+      ).rows[0]?.document,
+    ).toBe(null);
+
+    // A converged table's single probe must not read the heap. The index is NOT
+    // empty — every out-of-window row above is still in it — so what makes the
+    // probe free is the newest-first range scan stopping at the window edge.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT 'ancient-'||lpad(series::text,4,'0'),$1,$2,'ancient message '||series,
+              now()-($3+series)*interval '1 day'
+       FROM generate_series(1,500) series`,
+      [room, 'a'.repeat(64), INSTITUTIONAL_HISTORY_MAX_AGE_DAYS],
+    );
+    await database.query(`UPDATE messages SET search_document=NULL WHERE id LIKE 'ancient-%'`);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text)
+       SELECT 'bulk-'||lpad(series::text,5,'0'),$1,$2,'bulk message '||series
+       FROM generate_series(1,3000) series`,
+      [room, 'a'.repeat(64)],
+    );
+    await database.query(`ANALYZE messages`);
+    const probePlan = JSON.stringify(
+      (
+        await database.query<Record<string, unknown>>(
+          `EXPLAIN (FORMAT JSON)
+           SELECT id FROM messages
+           WHERE search_document IS NULL AND presentation='message'
+             AND created_at>=now()-${INSTITUTIONAL_HISTORY_MAX_AGE_DAYS}*interval '1 day'
+           ORDER BY created_at DESC LIMIT 2000`,
+        )
+      ).rows[0]?.['QUERY PLAN'],
+    );
+    expect(probePlan).toContain('messages_search_document_backfill_idx');
+    expect(probePlan).not.toContain('"Node Type":"Seq Scan"');
+
+    // A filled table costs one query, not a window walk on every release.
+    let queries = 0;
+    const counted: SqlDatabase = {
+      query: (sql, values) => {
+        queries += 1;
+        return database.query(sql, values);
+      },
+      transaction: (work) => database.transaction(work),
+    };
+    expect(await backfillMessageSearchDocuments(counted, 10)).toBe(0);
+    expect(queries).toBe(1);
+    // Those 500 entries are still in the index and still unfilled: the converged
+    // probe cost one query anyway, which is the whole point of skipping them.
+    expect(
+      Number(
+        (
+          await database.query<{ count: string }>(
+            `SELECT count(*)::text count FROM messages
+             WHERE search_document IS NULL AND presentation='message'`,
+          )
+        ).rows[0]?.count ?? 0,
+      ),
+    ).toBe(501);
+
+    await database.query(`UPDATE messages SET text='unrelated wording' WHERE id='search-001'`);
+    expect(await searchable()).toBe(24);
+    database.close();
+  });
+
+  it('writes an empty vector rather than failing on an oversized or non-chat row', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';
+    const room = 'ffffffff-ffff-4fff-ffff-ffffffffffff';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
+      'a'.repeat(64),
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Search')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      room,
+      workspace,
+    ]);
+
+    // Distinct short tokens are the worst case: to_tsvector's output runs about
+    // 3x its input, so an unbounded call raises past Postgres's hard
+    // 1,048,575-byte vector limit and the INSERT itself fails.
+    const tokens: string[] = [];
+    for (let index = 0, bytes = 0; bytes < 1_200_000; index += 1) {
+      const token = `marker${index.toString(36)}`;
+      tokens.push(token);
+      bytes += token.length + 1;
+    }
+    const oversized = tokens.join(' ');
+    expect(Buffer.byteLength(oversized, 'utf8')).toBeGreaterThan(MESSAGE_SEARCH_DOCUMENT_MAX_BYTES);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('oversized',$1,$2,$3)`,
+      [room, 'a'.repeat(64), oversized],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation)
+       VALUES('a-system-line',$1,$2,'release marker system note','system')`,
+      [room, 'a'.repeat(64)],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('ordinary',$1,$2,'release marker')`,
+      [room, 'a'.repeat(64)],
+    );
+
+    const vectors = new Map(
+      (
+        await database.query<{ id: string; document: string }>(
+          `SELECT id,search_document::text document FROM messages ORDER BY id`,
+        )
+      ).rows.map((row) => [row.id, row.document]),
+    );
+    expect(vectors.get('oversized')).toBe('');
+    expect(vectors.get('a-system-line')).toBe('');
+    expect(vectors.get('ordinary')).not.toBe('');
+
+    // Empty is not NULL, so the drained backfill still converges over them.
+    expect(await backfillMessageSearchDocuments(database, 10)).toBe(0);
+    expect(
+      (
+        await database.query<{ id: string }>(
+          `SELECT id FROM messages
+           WHERE search_document @@ websearch_to_tsquery('simple','release marker')`,
+        )
+      ).rows.map((row) => row.id),
+    ).toEqual(['ordinary']);
+    database.close();
+  });
+});
+
+describe('institutional cascades', () => {
+  it('keeps a consolidated fact when an unrelated Room is deleted', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '11110000-0000-4000-8000-000000000002';
+    const jobRoom = '22220000-0000-4000-8000-000000000002';
+    const factRoom = '22220000-0000-4000-8000-000000000003';
+    const human = 'b'.repeat(64);
+    const job = '33330000-0000-4000-8000-000000000002';
+    const item = '55550000-0000-4000-8000-000000000002';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      human,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Shared')`, [workspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Job room'),($2,$3,'Fact room')`,
+      [jobRoom, factRoom, workspace],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES
+         ('job-room-source',$1,$3,'A source.'),('fact-room-source',$2,$3,'Another source.')`,
+      [jobRoom, factRoom, human],
+    );
+    // The curator queues the workspace-facts partition against whichever Room
+    // its first candidate came from, but consolidates a fact that lives in another.
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,'job-room-source',$4,'workspace_candidate','cross-room')`,
+      [job, workspace, jobRoom, human],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_job_id)
+       VALUES($1,$2,'workspace_fact','cross-room-key','A consolidated fact.',$3,
+              'fact-room-source','workspace',0.9,2,$4)`,
+      [item, workspace, factRoom, job],
+    );
+
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [jobRoom]);
+
+    // The fact survives its own Room's untouched lifetime; only the provenance
+    // pointer to the deleted job is forgotten.
+    expect(
+      (
+        await database.query<{ id: string; state: string; created_by_job_id: string | null }>(
+          `SELECT id,state,created_by_job_id FROM institutional_memory_items WHERE id=$1`,
+          [item],
+        )
+      ).rows[0],
+    ).toMatchObject({ id: item, state: 'active', created_by_job_id: null });
+
+    // Deleting the fact's own Room still removes it.
+    await database.query(`DELETE FROM rooms WHERE id=$1`, [factRoom]);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
+    database.close();
+  });
+
+  it('lets a Workspace delete carry every institutional row with it', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '11110000-0000-4000-8000-000000000001';
+    const room = '22220000-0000-4000-8000-000000000001';
+    const human = 'a'.repeat(64);
+    const job = '33330000-0000-4000-8000-000000000001';
+    const skill = '44440000-0000-4000-8000-000000000001';
+    const item = '55550000-0000-4000-8000-000000000001';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      human,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Doomed')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      room,
+      workspace,
+    ]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('cascade-source',$1,$2,'A source.')`,
+      [room, human],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'merge_review','live',$3,'cascade-source',$4,'workspace_candidate','cascade')`,
+      [job, workspace, room, human],
+    );
+    // A memory item and a skill version both reference that job.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_job_id)
+       VALUES($1,$2,'workspace_fact','cascade-key','A fact.',$3,'cascade-source',
+              'workspace',0.9,1,$4)`,
+      [item, workspace, room, job],
+    );
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit)
+       VALUES($1,$2,'cascade-procedure','A procedure','active',1,1,$3,'owner/repo',$4)`,
+      [skill, workspace, room, 'a'.repeat(40)],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,extractor_version,model)
+       VALUES($1,1,'Body.',$2,$3,ARRAY['cascade-source']::text[],'owner/repo',$4,'test','test')`,
+      [skill, 'b'.repeat(64), job, 'a'.repeat(40)],
+    );
+
+    await expect(
+      database.query(`DELETE FROM workspaces WHERE id=$1`, [workspace]),
+    ).resolves.toBeDefined();
+    expect((await database.query(`SELECT 1 FROM workspace_skill_versions`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
+    database.close();
   });
 });
 

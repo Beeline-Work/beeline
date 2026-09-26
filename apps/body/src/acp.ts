@@ -644,6 +644,14 @@ export class AcpClient extends EventEmitter {
   private supportsSessionLoading = false;
   private supportsImagePrompts = false;
   private alive = false;
+  /**
+   * Byte length of the last prompt handed to the harness, measured here because
+   * this is the boundary that actually sends it. The rollout budget gate turns
+   * the harness's real prompt-token count into the institutional block's share
+   * by dividing through this exact figure, so it may not be estimated anywhere
+   * else.
+   */
+  private lastPromptByteCount: number | undefined;
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
    *  carries the real reason (e.g. a harness's own "missing API key" notice)
    *  instead of just the bare exit code, in the daemon's log. */
@@ -1009,6 +1017,10 @@ export class AcpClient extends EventEmitter {
    * It receives the current lane snapshot; existing callbacks that ignore
    * arguments remain valid.
    */
+  get lastPromptBytes(): number | undefined {
+    return this.lastPromptByteCount;
+  }
+
   async sessionPrompt(
     sessionId: string,
     text: string | readonly AcpPromptBlock[],
@@ -1017,6 +1029,8 @@ export class AcpClient extends EventEmitter {
     onActivity?: AcpStreamHandler,
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
   ): Promise<PromptResult> {
+    this.lastPromptByteCount =
+      typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
     let requestId: number | undefined;

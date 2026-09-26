@@ -36,6 +36,16 @@ describe('direct message helper surface', () => {
     expect(
       agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
     ).toContain('propose_memory_item');
+    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain('search_history');
+    expect(
+      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
+    ).toContain('search_history');
+    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain(
+      'load_workspace_skill',
+    );
+    expect(
+      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
+    ).toContain('load_workspace_skill');
   });
 });
 

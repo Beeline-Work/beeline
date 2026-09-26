@@ -872,10 +872,11 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /stage_server == 'pending'/);
   // A retry whose earlier attempt already produced the complete merged helper
   // artifact skips the cold Mac cargo builds and reuses it; a fresh identity
-  // (no artifact under this name) builds the Mac bundles exactly as before.
+  // (no artifact under this name) builds the Mac bundles exactly as before. The
+  // reuse decision is made once in initialize and consumed everywhere else, so
+  // nothing downstream can reach a second, disagreeing answer.
   const helperReuse = workflow.jobs.initialize.steps.find((step) => step.id === 'helper_reuse');
   assert.match(helperReuse.uses, /actions\/github-script@v7/);
-  assert.match(helperReuse.with.script, /daemon-artifact-\$\{\{ steps\.plan\.outputs\.release_version \}\}-\$\{\{ steps\.plan\.outputs\.release_sha \}\}/);
   assert.match(workflow.jobs.initialize.outputs.helper_reuse_run_id, /steps\.helper_reuse\.outputs\.run_id/);
   assert.match(workflow.jobs.helper_macos.if, /needs\.initialize\.outputs\.helper_reuse_run_id == ''/);
   assert.match(workflow.jobs.helper.if, /needs\.initialize\.outputs\.helper_reuse_run_id != ''/);
@@ -883,7 +884,30 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
   );
   assert.equal(darwinDownloads.length, 2);
-  for (const step of darwinDownloads) assert.match(step.if, /needs\.helper_macos\.result == 'success'/);
+  for (const step of darwinDownloads) assert.match(step.if, /needs\.initialize\.outputs\.helper_reuse_run_id == ''/);
+  // The Mac merge inputs travel only on the build path, so daemon-leg's own
+  // assertion still names them when they are absent.
+  const helperBuild = workflow.jobs.helper.steps.find(
+    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'build',
+  );
+  assert.match(helperBuild.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
+  for (const key of ['darwin_arm64_bundle_dir', 'darwin_x64_bundle_dir']) {
+    assert.match(helperBuild.with[key], /needs\.initialize\.outputs\.helper_reuse_run_id == ''/, key);
+  }
+  const daemonLeg = parse(readFileSync(new URL('../.github/actions/daemon-leg/action.yml', import.meta.url), 'utf8'));
+  assert.equal(daemonLeg.inputs.reuse_run_id.default, '');
+  assert.equal(daemonLeg.runs.steps.filter((step) => step.id === 'reuse').length, 0);
+  const buildSteps = daemonLeg.runs.steps.filter((step) => String(step.if).includes("inputs.phase == 'build'"));
+  // Exactly one build step downloads the reused bytes; every other build step
+  // except the shared artifact upload is the fresh-build path and stays off.
+  assert.deepEqual(
+    buildSteps.map((step) => {
+      if (String(step.if).includes("inputs.reuse_run_id != ''")) return 'reuse';
+      if (String(step.if).includes("inputs.reuse_run_id == ''")) return 'build';
+      return 'always';
+    }),
+    ['reuse', 'build', 'build', 'build', 'build', 'build', 'always'],
+  );
   assert.match(source, /\["pending","built"\][\s\S]*stage_server/);
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);

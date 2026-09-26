@@ -265,15 +265,17 @@ jobs:
             ${{ runner.temp }}/release-component-paths.json
           if-no-files-found: error
           retention-days: 90
-      - name: Find a downloadable daemon artifact for this exact release SHA
-        # The same lookup .github/actions/daemon-leg's `reuse` step runs. A
-        # retry of an already-attempted release identity still has the earlier
-        # attempt's complete, merged three-platform daemon artifact, so
-        # helper_macos (which only exists to feed that merge) can be skipped
-        # and the helper promote/publish path runs on the reused bytes. A
-        # fresh identity has no artifact under this name, so the Mac bundles
-        # build exactly as before. The result is one signal, not a second
-        # notion of "already built".
+      - name: Find a reusable daemon artifact for this exact release SHA
+        # The ONE reuse decision. A retry of an already-attempted release
+        # identity still has the earlier attempt's complete, merged
+        # three-platform daemon artifact, so helper_macos (which only exists to
+        # feed that merge) is skipped and the helper leg runs on the reused
+        # bytes; daemon-leg consumes this run id rather than asking again, so
+        # there is one notion of "already built". A fresh identity has no
+        # artifact under this name, so the Mac bundles build exactly as before.
+        # Every failure — a list error, rate limit, a blip — degrades to that
+        # same fresh path: this lookup must never be what loses a release,
+        # because every other job needs this one.
         if: >-
           inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
           steps.plan.outputs.stage_helper == 'pending'
@@ -282,22 +284,16 @@ jobs:
         with:
           script: |
             const name = `daemon-artifact-${{ steps.plan.outputs.release_version }}-${{ steps.plan.outputs.release_sha }}`;
-            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-            });
-            const artifact = artifacts
-              .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-            if (artifact) {
-              try {
-                await github.rest.actions.downloadArtifact({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  artifact_id: artifact.id, archive_format: 'zip',
-                });
-                core.setOutput('run_id', String(artifact.workflow_run.id));
-              } catch (error) {
-                core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
-              }
+            try {
+              const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+                owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+              });
+              const artifact = artifacts
+                .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+                .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+              if (artifact) core.setOutput('run_id', String(artifact.workflow_run.id));
+            } catch (error) {
+              core.info(`Daemon artifact lookup failed, building every platform: ${error.message}`);
             }
 
   server_deploy_plan:
@@ -512,15 +508,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      # The Mac bundles exist only when initialize decided to build them, so the
+      # downloads and the merge inputs below are gated on that one decision —
+      # daemon-leg's own emptiness check then still names the missing Mac inputs
+      # instead of failing deep inside the merge.
       - uses: actions/download-artifact@v4
         if: >-
-          needs.initialize.outputs.stage_helper == 'pending' && needs.helper_macos.result == 'success'
+          needs.initialize.outputs.stage_helper == 'pending' &&
+          needs.initialize.outputs.helper_reuse_run_id == ''
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
         if: >-
-          needs.initialize.outputs.stage_helper == 'pending' && needs.helper_macos.result == 'success'
+          needs.initialize.outputs.stage_helper == 'pending' &&
+          needs.initialize.outputs.helper_reuse_run_id == ''
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
@@ -530,8 +532,9 @@ jobs:
           phase: build
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          darwin_arm64_bundle_dir: ${{ runner.temp }}/daemon-darwin-arm64
-          darwin_x64_bundle_dir: ${{ runner.temp }}/daemon-darwin-x64
+          reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
+          darwin_arm64_bundle_dir: ${{ needs.initialize.outputs.helper_reuse_run_id == '' && format('{0}/daemon-darwin-arm64', runner.temp) || '' }}
+          darwin_x64_bundle_dir: ${{ needs.initialize.outputs.helper_reuse_run_id == '' && format('{0}/daemon-darwin-x64', runner.temp) || '' }}
       - name: Checkpoint the helper build
         if: needs.initialize.outputs.stage_helper == 'pending'
         run: |

@@ -20,6 +20,8 @@ import {
 } from './media-ttl.js';
 import { ObjectService } from './object-service.js';
 import { ApnsPushError } from './apns-push.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 describe('background advisory-lock ownership', () => {
   it('releases and reconnects after its dedicated connection health check fails', async () => {
@@ -675,6 +677,98 @@ describe('background advisory-lock ownership', () => {
           cornerId: corner,
         }),
       );
+    } finally {
+      await db.close();
+    }
+  });
+  it('names the inline action a notification can answer, and only that one', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        agentDm = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level)
+         VALUES($1,'human','Owner','owner','mine'),($2,'agent','Wren','wren','off')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct',$3::jsonb)`,
+        [agentDm, workspace, JSON.stringify([human, agent].sort())],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member'),($1,$3,$4,'member')`,
+        [workspace, human, agentDm, agent],
+      );
+      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const grant = (id: string, status: string) =>
+        db.query(
+          `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+           VALUES($1,$2,$3,'host','api.stripe.com','checking the webhook',$4,$5,$6)`,
+          [id, agent, workspace, human, agentDm, status],
+        );
+      const pending = '55555555-5555-4555-8555-555555555555',
+        second = '66666666-6666-4666-8666-666666666666',
+        settled = '77777777-7777-4777-8777-777777777777';
+      await grant(pending, 'pending');
+      await grant(second, 'pending');
+      await grant(settled, 'once');
+      const card = (grants: string[]) =>
+        JSON.stringify({
+          agent: { pubkey: agent, name: 'wren' },
+          grants: grants.map((grantId) => ({ grantId, kind: 'host', target: 'api.stripe.com' })),
+        });
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$4::jsonb),
+         ($5,$2,$3,'@wren asked @owner for host api.stripe.com and host b','card','grant-request',$6::jsonb),
+         ($7,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$8::jsonb),
+         ($9,$2,$3,'Beeline 1.2 is out','system',NULL,NULL),
+         ($10,$11,$12,'are you there?','message',NULL,NULL)`,
+        [
+          '1'.repeat(64),
+          systemDm,
+          SYSTEM_IDENTITY_ID,
+          card([pending]),
+          '2'.repeat(64),
+          card([pending, second]),
+          '3'.repeat(64),
+          card([settled]),
+          '4'.repeat(64),
+          '5'.repeat(64),
+          agentDm,
+          agent,
+        ],
+      );
+      expect(await loop.runOnce()).toBe(5);
+      const sent = new Map(
+        send.mock.calls.map(([, message]) => [message.messageId as string, message.action]),
+      );
+      expect(sent.get('1'.repeat(64))).toEqual({
+        kind: 'grant',
+        grantId: pending,
+        grantKind: 'host',
+        grantTarget: 'api.stripe.com',
+        agentName: 'wren',
+      });
+      // Three buttons cannot answer two asks, and a settled ask needs none.
+      expect(sent.get('2'.repeat(64))).toBeUndefined();
+      expect(sent.get('3'.repeat(64))).toBeUndefined();
+      // The @system DM is read-only: no Reply on its lines.
+      expect(sent.get('4'.repeat(64))).toBeUndefined();
+      expect(sent.get('5'.repeat(64))).toEqual({ kind: 'reply', authorName: 'Wren' });
     } finally {
       await db.close();
     }

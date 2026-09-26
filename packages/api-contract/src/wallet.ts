@@ -112,21 +112,20 @@ export type WalletView = {
   /** DELEGATED SIGNING grant (docs.cdp.coinbase.com/wallets/using-wallets/
    *  delegated-signing): the user grants it while present; the backend then
    *  signs with the CDP key pair without a user session. One user-scoped
-   *  delegation is active at a time and it expires (24h default) — an
-   *  expired one is a clear "your agents need permission again" state on
-   *  the wallet screen, never a silent agent failure. */
+   *  delegation is active at a time. New grants stand until revoked; legacy
+   *  time-limited grants retain their original expiry. */
   readonly delegation: WalletDelegationView;
 };
 
 export type WalletDelegationView = {
   readonly active: boolean;
-  /** Absolute Unix ms; meaningful only when `active`. */
+  /** Absolute Unix ms for legacy time-limited grants; null for standing or never granted. */
   readonly expiresAt: number | null;
 };
 
 export type GrantWalletDelegationInput = { readonly workspaceId: string };
 export type GrantWalletDelegationResult = {
-  readonly expiresAt: number;
+  readonly expiresAt: number | null;
 };
 
 export type WalletSendInput = {
@@ -154,7 +153,6 @@ export type WalletInsufficient = {
   readonly available: string;
 };
 
-
 /** The named non-silent refusal when the signing grant has lapsed. */
 export type WalletDelegationExpired = {
   readonly outcome: 'delegation-expired';
@@ -167,10 +165,7 @@ export type WalletFailed = {
 };
 
 export type WalletSendOutcome =
-  | WalletSendResult
-  | WalletInsufficient
-  | WalletDelegationExpired
-  | WalletFailed;
+  WalletSendResult | WalletInsufficient | WalletDelegationExpired | WalletFailed;
 
 /** One ledger line: every transaction, in AND out, with what it left behind. */
 export type WalletLedgerEntry = {
@@ -244,10 +239,13 @@ export type WalletSwapInput = {
   readonly chain?: WalletChainId;
 };
 
-export type WalletSwapResult = {
-  readonly outcome: 'sent';
-  readonly txUrl: string;
-  readonly fromAmountText: string;
-  readonly toAmountText: string;
-  readonly balanceAfterUsd: string;
-} | WalletInsufficient | WalletDelegationExpired;
+export type WalletSwapResult =
+  | {
+      readonly outcome: 'sent';
+      readonly txUrl: string;
+      readonly fromAmountText: string;
+      readonly toAmountText: string;
+      readonly balanceAfterUsd: string;
+    }
+  | WalletInsufficient
+  | WalletDelegationExpired;

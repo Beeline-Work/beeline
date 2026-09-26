@@ -92,10 +92,16 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { connectorAdapter } from '@beeline/api-contract/workbench';
-import { composioScopeForOwner, storedComposioScope } from './composio-config.js';
-import { ComposioClient } from './connector-composio.js';
+import { APP_INPUT_MAX_LENGTH, connectorAdapter } from '@beeline/api-contract/workbench';
 import { McpRegistryClient } from './mcp-registry.js';
+import {
+  appGateFor,
+  armRegistryConnector,
+  backfillRegistryApps,
+  connectApp,
+  readOwnerApps,
+  recordAppUsage,
+} from './app-connections.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import {
   applyVaultList,
@@ -227,7 +233,6 @@ export class DaemonService {
       input: Input<'getPrChecksStatus'>,
     ) => Promise<Output<'getPrChecksStatus'>>,
     private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
-    private readonly composioClient?: ComposioClient,
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
     },
@@ -286,8 +291,8 @@ export class DaemonService {
       'requestAgentGrant',
       'authorizeSquireCall',
       'authorizeResourceCall',
-      'getComposioTools',
-      'executeComposioTool',
+      'authorizeRepositoryCall',
+      'authorizeHostCall',
       'getWalletToolState',
       'getWalletToolBalance',
       'getWalletToolChains',
@@ -296,11 +301,10 @@ export class DaemonService {
       'walletPay',
       'walletSwap',
 
-      'authorizeRepositoryCall',
-      'authorizeHostCall',
       'listTurnAgentGrants',
       'offerConnector',
       'connectMcpServer',
+      'connectApp',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -433,7 +437,6 @@ export class DaemonService {
           this.liveDiagnosticServerInstance,
           this.prChecksStatus,
           this.googleOAuth,
-          this.composioClient,
           this.institutionalMemoryShadow,
           this.mcpRegistry,
           this.registryMcpOAuth,
@@ -449,10 +452,6 @@ export class DaemonService {
           [
             'authorizeSquireCall',
             'authorizeResourceCall',
-            'authorizeRepositoryCall',
-            'authorizeHostCall',
-            'getComposioTools',
-            'executeComposioTool',
             ...[
               'getWalletToolState',
               'getWalletToolBalance',
@@ -832,11 +831,53 @@ export class DaemonService {
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'noteEmptyRoomRepository': {
+        const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
+        const repository = await this.repository(roomId, authenticatedAgentId);
+        if (repository.resolution !== 'repository')
+          throw new Error('Room is not repository-backed');
+        await ensureSystemIdentity(this.database);
+        const line = await systemLine(this.database, {
+          id: createHash('sha256').update(`room-empty-repository:v1:${roomId}`).digest('hex'),
+          roomId,
+          authorId: SYSTEM_IDENTITY_ID,
+          subject: { kind: 'system', name: 'This repository' },
+          verb: "has no commits yet - push a first commit and I'll pick it up.",
+        });
+        return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
+      }
       case 'getRoomGitHubToken': {
         if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
-        return (await this.roomGitHubToken(
-          (input as Input<'getRoomGitHubToken'>).roomId,
-        )) as Output<Name>;
+        const roomId = (input as Input<'getRoomGitHubToken'>).roomId;
+        await this.access(roomId, authenticatedAgentId);
+        try {
+          return (await this.roomGitHubToken(roomId)) as Output<Name>;
+        } catch (error) {
+          // A removed installation or a repository outside its grant is a
+          // Room configuration fact. State it once, in server-owned words;
+          // retries must neither spam the Room nor expose GitHub's 404 text.
+          if (
+            (error instanceof Error &&
+              error.message === 'GitHub repository installation not found') ||
+            (typeof error === 'object' &&
+              error !== null &&
+              'status' in error &&
+              error.status === 404)
+          ) {
+            await ensureSystemIdentity(this.database);
+            await systemLine(this.database, {
+              id: createHash('sha256')
+                .update(`room-github-installation-unavailable:v1:${roomId}`)
+                .digest('hex'),
+              roomId,
+              authorId: SYSTEM_IDENTITY_ID,
+              subject: { kind: 'system', name: 'Install or grant the Beeline GitHub App' },
+              verb: 'to access this repository.',
+            });
+            throw new Error('Room repository access needs the Beeline GitHub App');
+          }
+          throw error;
+        }
       }
       case 'getRoomTargetBranch':
         return (await this.targetBranch(
@@ -971,21 +1012,6 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
-      case 'getComposioLink':
-        return (await this.composioLink(
-          input as Input<'getComposioLink'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'getComposioTools':
-        return (await this.composioTools(
-          input as Input<'getComposioTools'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'executeComposioTool':
-        return (await this.composioExecute(
-          input as Input<'executeComposioTool'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
       case 'getGoogleOAuthGrant': {
         const credentials = await this.googleOAuth?.grantForHelper(
           (input as Input<'getGoogleOAuthGrant'>).connectorId,
@@ -1114,35 +1140,15 @@ export class DaemonService {
         } as Output<Name>;
       }
       case 'authorizeResourceCall':
-        return (await this.authorizeScopedGrant(
+        return (await this.authorizeResource(
           input as Input<'authorizeResourceCall'>,
           authenticatedAgentId,
-          'mcp',
-          (input as Input<'authorizeResourceCall'>).target,
         )) as Output<Name>;
+      case 'authorizeRepositoryCall':
       case 'authorizeHostCall':
-        return (await this.authorizeScopedGrant(
-          input as Input<'authorizeHostCall'>,
-          authenticatedAgentId,
-          'host',
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'authorizeRepositoryCall': {
-        const roomId = (input as Input<'authorizeRepositoryCall'>).roomId;
-        const room = (
-          await this.database.query<{ repository_key: string | null }>(
-            `SELECT COALESCE(parent.repository_key,room.repository_key) repository_key
-           FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$1`,
-            [roomId],
-          )
-        ).rows[0];
-        return (await this.authorizeScopedGrant(
-          input as Input<'authorizeRepositoryCall'>,
-          authenticatedAgentId,
-          'repository',
-          room?.repository_key ?? `scratch:${roomId}`,
-        )) as Output<Name>;
-      }
+        // Old helpers still ask before admitting a corner turn. Turn authority
+        // is checked above; corner entry itself needs no grant or card.
+        return { allowed: true } as Output<Name>;
       case 'authorizeSquireCall':
         return (await this.authorizeSquireCall(
           input as Input<'authorizeSquireCall'>,
@@ -1158,6 +1164,11 @@ export class DaemonService {
       case 'connectMcpServer':
         return (await this.connectMcpServer(
           input as Input<'connectMcpServer'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'connectApp':
+        return (await this.connectAppFrontDoor(
+          input as Input<'connectApp'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'offerConnector':
@@ -1429,202 +1440,6 @@ export class DaemonService {
     return { assignments };
   }
 
-  private async composioLink(
-    input: Input<'getComposioLink'>,
-    agentId: string,
-  ): Promise<Output<'getComposioLink'>> {
-    const row = (
-      await this.database.query<{
-        id: string;
-        owner_identity_id: string;
-        pairing_generation: number;
-        composio_session_id: string | null;
-        composio_link_toolkit: string | null;
-        composio_link_started_at: Date | null;
-        sign_in: { method: string; url: string } | null;
-        composio_scope: unknown;
-      }>(
-        `SELECT c.id,c.owner_identity_id,c.pairing_generation,c.composio_session_id,
-              c.composio_link_toolkit,c.composio_link_started_at,c.sign_in,c.composio_scope
-       FROM workspace_connectors c
-       JOIN agents a ON a.agent_id=c.helper_agent_id
-       JOIN memberships owner_member ON owner_member.workspace_id=c.workspace_id
-         AND owner_member.room_id IS NULL AND owner_member.identity_id=c.owner_identity_id
-         AND owner_member.removed_at IS NULL
-       WHERE c.id=$1::uuid AND c.helper_agent_id=$2 AND c.connector_type='composio'
-         AND c.status='installing' AND c.owner_identity_id=a.owner_id`,
-        [input.connectorId, agentId],
-      )
-    ).rows[0];
-    if (
-      !row ||
-      (input.pairingGeneration !== undefined && row.pairing_generation !== input.pairingGeneration)
-    )
-      throw new Error('connector not found for this helper');
-    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
-    if (!this.composioClient) throw new Error('Composio is not configured');
-    let sessionId: string | null | undefined = row.composio_session_id;
-    if (!sessionId) {
-      const created = await this.composioClient.createSession(scope);
-      const updated = (
-        await this.database.query<{ composio_session_id: string }>(
-          `UPDATE workspace_connectors SET composio_session_id=$3
-         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$4
-           AND status='installing' AND composio_session_id IS NULL
-         RETURNING composio_session_id`,
-          [row.id, agentId, created, row.pairing_generation],
-        )
-      ).rows[0];
-      sessionId =
-        updated?.composio_session_id ??
-        (
-          await this.database.query<{ composio_session_id: string }>(
-            `SELECT composio_session_id FROM workspace_connectors
-           WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
-            [row.id, agentId, row.pairing_generation],
-          )
-        ).rows[0]?.composio_session_id;
-      if (!sessionId) throw new Error('connector pairing changed');
-    }
-    for (const toolkit of scope.toolkits) {
-      if (await this.composioClient.connected(sessionId, toolkit, scope)) continue;
-      if (row.composio_link_toolkit === toolkit && row.sign_in?.url) {
-        if (
-          !row.composio_link_started_at ||
-          Date.now() - row.composio_link_started_at.getTime() > 15 * 60_000
-        )
-          throw new Error('Composio sign-in expired; tap Retry to open a new link');
-        return { status: 'pending', toolkit, url: row.sign_in.url };
-      }
-      const url = await this.composioClient.link(sessionId, toolkit, scope);
-      await this.database.query(
-        `UPDATE workspace_connectors
-         SET composio_link_toolkit=$3,sign_in=$4::jsonb,
-             composio_link_started_at=now(),updated_at=now()
-         WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$5 AND status='installing'`,
-        [
-          row.id,
-          agentId,
-          toolkit,
-          JSON.stringify({ method: 'oauth', url }),
-          row.pairing_generation,
-        ],
-      );
-      return { status: 'pending', toolkit, url };
-    }
-    await this.database.query(
-      `UPDATE workspace_connectors SET composio_ready=true,updated_at=now()
-       WHERE id=$1::uuid AND helper_agent_id=$2 AND pairing_generation=$3 AND status='installing'`,
-      [row.id, agentId, row.pairing_generation],
-    );
-    return { status: 'connected' };
-  }
-
-  private async composioAccess(
-    input: { roomId: string; requestId: string; generationId: string },
-    agentId: string,
-  ): Promise<
-    | {
-        connectorId: string;
-        helperAgentId: string;
-        sessionId: string;
-        scope: ReturnType<typeof storedComposioScope>;
-      }
-    | { status: 'permission-required'; grantId?: string }
-  > {
-    await this.access(input.roomId, agentId);
-    const row = (
-      await this.database.query<{
-        id: string;
-        owner_identity_id: string;
-        helper_agent_id: string;
-        composio_session_id: string;
-        composio_scope: unknown;
-      }>(
-        `SELECT c.id,c.owner_identity_id,c.helper_agent_id,c.composio_session_id,c.composio_scope
-       FROM workspace_connectors c
-       JOIN rooms r ON r.workspace_id=c.workspace_id
-       JOIN agents helper ON helper.agent_id=c.helper_agent_id
-       JOIN agents actor ON actor.agent_id=$2
-         AND actor.owner_id=c.owner_identity_id
-         AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(c.machine_id,c.helper_agent_id)
-       JOIN memberships owner_workspace ON owner_workspace.workspace_id=c.workspace_id
-         AND owner_workspace.room_id IS NULL AND owner_workspace.identity_id=c.owner_identity_id
-         AND owner_workspace.removed_at IS NULL
-       JOIN memberships owner_room ON owner_room.room_id=r.id
-         AND owner_room.identity_id=c.owner_identity_id AND owner_room.removed_at IS NULL
-       WHERE r.id=$1 AND c.connector_type='composio'
-         AND c.status='connected' AND c.owner_identity_id=helper.owner_id
-       ORDER BY c.updated_at DESC LIMIT 1`,
-        [input.roomId, agentId],
-      )
-    ).rows[0];
-    if (!row?.composio_session_id) throw new Error('Composio connector not found (access denied)');
-    const permission = await this.authorizeScopedGrant(input, agentId, 'mcp', 'composio');
-    if (!permission.allowed)
-      return {
-        status: 'permission-required',
-        ...(permission.grantId ? { grantId: permission.grantId } : {}),
-      };
-    const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
-    if (!this.composioClient) throw new Error('Composio is not configured');
-    return {
-      connectorId: row.id,
-      helperAgentId: row.helper_agent_id,
-      sessionId: row.composio_session_id,
-      scope,
-    };
-  }
-
-  private async composioTools(
-    input: Input<'getComposioTools'>,
-    agentId: string,
-  ): Promise<Output<'getComposioTools'>> {
-    const access = await this.composioAccess(input, agentId);
-    if ('status' in access) return access;
-    return {
-      connectorId: access.connectorId,
-      toolkits: access.scope.toolkits,
-      tools: access.scope.tools,
-    };
-  }
-
-  private async composioExecute(
-    input: Input<'executeComposioTool'>,
-    agentId: string,
-  ): Promise<Output<'executeComposioTool'>> {
-    const access = await this.composioAccess(input, agentId);
-    if ('status' in access) return access;
-    if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
-      throw new Error('Composio arguments must be an object');
-    const result = await this.composioClient!.execute(
-      access.sessionId,
-      access.scope,
-      input.toolkit,
-      input.tool,
-      input.arguments,
-    );
-    await receiveConnectionUsage(
-      this.database,
-      {
-        requestId: input.requestId,
-        agentId,
-        roomId: input.roomId,
-        usage: [
-          {
-            ref: `composio:${input.toolkit}`,
-            service: input.toolkit,
-            operation: input.tool,
-            statusCode: 200,
-            bytes: JSON.stringify(result.data ?? null).length,
-          },
-        ],
-      },
-      access.helperAgentId,
-    );
-    return result;
-  }
-
   /**
    * The helper reports it completed (or accepted) an install. `sign_in` is
    * written, not merged: the run that reaches `connected` printed no
@@ -1644,15 +1459,13 @@ export class DaemonService {
           workspace_id: string;
           machine_id: string | null;
           helper_agent_id: string;
-          composio_ready: boolean;
-          composio_scope: unknown;
           install_agent_id: string | null;
           install_room_id: string | null;
           install_command_id: string | null;
           registry_server_name: string | null;
         }>(
           `SELECT id,pairing_generation,connector_type,owner_identity_id,workspace_id,machine_id,
-                  helper_agent_id,composio_ready,composio_scope,install_agent_id,install_room_id,
+                  helper_agent_id,install_agent_id,install_room_id,
                   install_command_id,registry_server_name
            FROM workspace_connectors
             WHERE id=$1::uuid AND helper_agent_id=$2 AND status='installing' FOR UPDATE`,
@@ -1660,8 +1473,6 @@ export class DaemonService {
         )
       ).rows[0];
       if (!row) throw new Error('connector not found for this helper');
-      if (row.connector_type === 'composio' && !row.composio_ready)
-        throw new Error('Composio account is not connected');
       if (
         input.pairingGeneration !== undefined &&
         input.pairingGeneration !== row.pairing_generation
@@ -1682,23 +1493,6 @@ export class DaemonService {
           input.signIn ? JSON.stringify(input.signIn) : null,
         ],
       );
-      if (row.connector_type === 'composio') {
-        const scope = storedComposioScope(row.composio_scope, row.owner_identity_id);
-        await applyVaultList(
-          database,
-          row,
-          scope.toolkits.map((toolkit) => ({
-            reference: `composio:${toolkit}`,
-            service: toolkit,
-            label: `${toolkit} via Composio`,
-            fieldNames: [],
-            allowedHosts: [],
-            createdAt: Math.floor(Date.now() / 1000),
-            stale: false,
-            state: 'active' as const,
-          })),
-        );
-      }
       let registryResume: { roomId: string; agentId: string } | undefined;
       if (
         row.connector_type === 'registry-mcp' &&
@@ -2931,7 +2725,11 @@ export class DaemonService {
           }>(
             `SELECT connector.id,connector.registry_server_name,connector.display_name
              FROM workspace_connectors connector
-             JOIN rooms room ON room.workspace_id=connector.workspace_id AND room.id=$2
+             -- A connected app is the PERSON's (their Workbench spans
+             -- Workspaces), so its server mounts wherever that owner's agent
+             -- runs on the machine that holds it; every call is still
+             -- authorized per Room and requester as app:<key>.
+             JOIN rooms room ON room.id=$2
              JOIN agents actor ON actor.agent_id=$1
                AND actor.owner_id=connector.owner_identity_id
                AND COALESCE(actor.machine_id,actor.agent_id)=COALESCE(connector.machine_id,connector.helper_agent_id)
@@ -4635,10 +4433,10 @@ export class DaemonService {
 
   /**
    * request_grant: the agent raises its hand. Under yolo the grant is approved
-   * on the spot (auto=true) and one quiet system line records it; otherwise a
-   * repository grant asks a Workspace manager in the Room. Personal resources
-   * ask only their owner in a private system or connector DM. Every bypass and
-   * approval is scoped to the active command's original requester. Budget asks are retired.
+   * on the spot (auto=true) and one quiet system line records it. Personal
+   * resources ask only their owner in a private system or connector DM. Every
+   * bypass and approval is scoped to the active command's original requester.
+   * Budget and repository asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -4725,9 +4523,7 @@ export class DaemonService {
     };
     const grantId = randomUUID();
     const auto =
-      context.yolo_mode &&
-      (kind === 'repository' || requesterRow.id === context.owner_id) &&
-      escalations.length === 0;
+      context.yolo_mode && requesterRow.id === context.owner_id && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -4768,33 +4564,30 @@ export class DaemonService {
         auto,
         ...(script ? { script } : {}),
       };
-      let resourceRoomId: string | undefined;
-      if (kind !== 'repository') {
-        const member = await database.query(
-          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL`,
-          [context.workspace_id, context.owner_id],
-        );
-        if (!member.rowCount) throw new Error('resource owner access denied');
-        resourceRoomId = squireRoute
+      const member = await database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL`,
+        [context.workspace_id, context.owner_id],
+      );
+      if (!member.rowCount) throw new Error('resource owner access denied');
+      const resourceRoomId = squireRoute
+        ? await ensureConnectorDirectMessageRoom(
+            database,
+            context.workspace_id,
+            'trusty-squire',
+            context.owner_id,
+          )
+        : kind === 'mcp' && target === 'wallet'
           ? await ensureConnectorDirectMessageRoom(
               database,
               context.workspace_id,
-              'trusty-squire',
+              'wallet',
               context.owner_id,
             )
-          : kind === 'mcp' && target === 'wallet'
-            ? await ensureConnectorDirectMessageRoom(
-                database,
-                context.workspace_id,
-                'wallet',
-                context.owner_id,
-              )
-            : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
-      }
+          : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
       if (auto) {
         await systemLine(database, {
-          roomId: resourceRoomId ?? input.roomId,
+          roomId: resourceRoomId,
           subject: { kind: 'agent', id: agentId, name: agent.name },
           verb: 'was granted',
           object: `${kind} ${target}`,
@@ -4804,90 +4597,48 @@ export class DaemonService {
         });
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
-      if (resourceRoomId) {
-        const dmRoomId = resourceRoomId;
-        const open = (
-          await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
-            `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
+      const dmRoomId = resourceRoomId;
+      const open = (
+        await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
+          `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
            AND card->'requester'->>'pubkey'=$4 AND created_at>now()-interval '2 minutes'
            AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
              JOIN agent_grants g ON g.id=(entry->>'grantId')::uuid WHERE g.status<>'pending')
            ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-            [dmRoomId, agentId, input.roomId, requester.pubkey],
-          )
-        ).rows[0];
-        if (open) {
-          const grants = [...open.card.grants, grantView];
-          await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
-            agent,
-            owner,
-            requester,
-            grants,
-            sourceRoomId: input.roomId,
-            ...(sourceMessageId ? { sourceMessageId } : {}),
-          });
-          return { messageId: open.id, cardRoomId: dmRoomId };
-        }
-        const messageId = id();
-        await systemLine(database, {
-          id: messageId,
-          roomId: dmRoomId,
-          authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
-          ...grantCardPhrase(agent, owner, [grantView]),
-          presentation: 'card',
-          cardType: 'grant-request',
-          card: {
-            agent,
-            owner,
-            requester,
-            grants: [grantView],
-            sourceRoomId: input.roomId,
-            ...(sourceMessageId ? { sourceMessageId } : {}),
-          },
-        });
-        return { messageId, cardRoomId: dmRoomId };
-      }
-      // Several asks in one turn become one card: join this agent's open card
-      // in the Room while every grant on it is still pending and it is recent.
-      const open = (
-        await database.query<{ id: string; card: { grants: unknown[] } }>(
-          `SELECT m.id,m.card FROM messages m
-           WHERE m.room_id=$1 AND m.author_id=$2 AND m.card_type='grant-request'
-             AND m.created_at>now()-interval '2 minutes'
-             AND NOT EXISTS (
-               SELECT 1 FROM jsonb_array_elements(m.card->'grants') entry
-               JOIN agent_grants pending_grant ON pending_grant.id=(entry->>'grantId')::uuid
-               WHERE pending_grant.status<>'pending'
-             )
-           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
-           FOR UPDATE`,
-          [input.roomId, agentId],
+          [dmRoomId, agentId, input.roomId, requester.pubkey],
         )
       ).rows[0];
       if (open) {
-        const grants = [...(open.card.grants ?? []), grantView] as (typeof grantView)[];
+        const grants = [...open.card.grants, grantView];
         await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
           agent,
           owner,
           requester,
           grants,
+          sourceRoomId: input.roomId,
+          ...(sourceMessageId ? { sourceMessageId } : {}),
         });
-        return { messageId: open.id };
+        return { messageId: open.id, cardRoomId: dmRoomId };
       }
       const messageId = id();
       await systemLine(database, {
         id: messageId,
-        roomId: input.roomId,
+        roomId: dmRoomId,
+        authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
         ...grantCardPhrase(agent, owner, [grantView]),
-        // The owner is reached by the card itself in the Room — a card is
-        // outside `background.ts`'s push ceiling — not by a wake: this line
-        // has no kind, so it starts no turn and never did.
         presentation: 'card',
         cardType: 'grant-request',
-        card: { agent, owner, requester, grants: [grantView] },
+        card: {
+          agent,
+          owner,
+          requester,
+          grants: [grantView],
+          sourceRoomId: input.roomId,
+          ...(sourceMessageId ? { sourceMessageId } : {}),
+        },
       });
-      return { messageId };
+      return { messageId, cardRoomId: dmRoomId };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
     if (result.cardRoomId)
@@ -4900,18 +4651,12 @@ export class DaemonService {
       ...(!auto
         ? {
             approval: {
-              destination:
-                kind === 'repository'
-                  ? ('room' as const)
-                  : squireRoute
-                    ? ('trusty-squire-dm' as const)
-                    : kind === 'mcp' && target === 'wallet'
-                      ? ('wallet-dm' as const)
-                      : ('system-dm' as const),
-              authority:
-                kind === 'repository'
-                  ? ('workspace-manager' as const)
-                  : ('resource-owner' as const),
+              destination: squireRoute
+                ? ('trusty-squire-dm' as const)
+                : kind === 'mcp' && target === 'wallet'
+                  ? ('wallet-dm' as const)
+                  : ('system-dm' as const),
+              authority: 'resource-owner' as const,
             },
           }
         : {}),
@@ -5042,7 +4787,7 @@ export class DaemonService {
   private async authorizeScopedGrant(
     input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
-    kind: 'mcp' | 'repository' | 'host',
+    kind: 'mcp',
     target: string,
   ) {
     if (
@@ -5056,11 +4801,10 @@ export class DaemonService {
     const context = (
       await this.database.query<{
         owner_id: string;
-        owner_handle: string | null;
         yolo_mode: boolean;
         owner_present: boolean;
       }>(
-        `SELECT a.owner_id,owner.handle owner_handle,
+        `SELECT a.owner_id,
        EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
@@ -5071,13 +4815,11 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    if (kind !== 'repository' && !context.owner_present)
-      throw new Error('resource owner access denied');
-    if (context.yolo_mode && (kind === 'repository' || requester.id === context.owner_id))
-      return { allowed: true };
+    if (!context.owner_present) throw new Error('resource owner access denied');
+    if (context.yolo_mode && requester.id === context.owner_id) return { allowed: true };
     const listed = await this.listAgentGrants(agentId, input.roomId);
     const scopedGrants = listed.grants.filter((g) => g.roomId === input.roomId);
-    if (kind === 'mcp' && target === 'squire') {
+    if (target === 'squire') {
       const verdict = squireCallAllowed({
         requesterId: requester.id,
         ownerId: context.owner_id,
@@ -5110,94 +4852,22 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) {
-      if (kind !== 'mcp')
-        await this.noteBlockedTurnGate({
-          roomId: input.roomId,
-          agentId,
-          kind,
-          ownerHandle: context.owner_handle,
-          grantId: pending.id,
-        });
-      return { allowed: false, grantId: pending.id, status: 'pending' as const };
-    }
+    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
     const asked = await this.requestAgentGrant(
       {
         ...input,
         kind,
         target,
-        reason:
-          kind === 'repository'
-            ? 'edit this repository'
-            : kind === 'host'
-              ? 'run this corner on your machine with host filesystem and command access'
-              : 'use this resource, including paid calls within this approval scope',
+        reason: 'use this resource, including paid calls within this approval scope',
       },
       agentId,
     );
-    if (kind === 'host')
-      await this.noteBlockedTurnGate({
-        roomId: input.roomId,
-        agentId,
-        kind,
-        ownerHandle: context.owner_handle,
-        grantId: asked.grantId,
-      });
     return {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
-  }
-
-  /**
-   * A gate that stopped a corner turn before its harness could start is a fact
-   * the SERVER states, not prose the agent wrote. Inscribing it here, once per
-   * pending grant per TURN (the derived id carries the grant and the turn
-   * request, so a retried authorization inside one turn collides while a later
-   * turn blocked on the same grant still speaks instead of settling silently),
-   * is what keeps it out of `postRoomMessage`: a system line is never an agent
-   * reply, so it never reaches `routeAgentResult`,
-   * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
-   * writes no message and records a plain `complete` receipt, so neither gate
-   * can settle as the calm `had nothing to add` line.
-   *
-   * `mcp` is excluded: a Squire/resource gate is a mid-turn tool refusal that
-   * already reaches the agent as its tool error, not a turn that never started.
-   * A repository ask that MINTS its grant this turn is excluded too, because
-   * `requestAgentGrant` puts that grant's actionable card in this same corner
-   * one row earlier; only a host ask, whose card goes to the owner's `@system`
-   * DM, and a later turn blocked on an already-pending grant, which writes no
-   * card at all, leave the corner with nothing else to say.
-   */
-  private async noteBlockedTurnGate(input: {
-    readonly roomId: string;
-    readonly agentId: string;
-    readonly kind: 'repository' | 'host';
-    readonly ownerHandle: string | null;
-    readonly grantId: string;
-  }) {
-    const id = createHash('sha256')
-      .update(
-        `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
-      )
-      .digest('hex');
-    await systemLine(this.database, {
-      id,
-      roomId: input.roomId,
-      subject: { kind: 'agent', id: input.agentId, name: 'An agent' },
-      verb: 'asked',
-      object: {
-        text:
-          input.kind === 'host'
-            ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
-            : 'a Workspace admin to approve repository access',
-      },
-      ...(this.authorizedCommand?.source_message_id
-        ? { afterMessageId: this.authorizedCommand.source_message_id }
-        : {}),
-    });
   }
 
   // --- R5: connector offers -------------------------------------------------
@@ -5355,14 +5025,10 @@ export class DaemonService {
         purpose: connectorPurpose(entry.connectorType),
         available:
           entry.available &&
-          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' ||
-            Boolean(composioScopeForOwner(context.owner.pubkey))),
+          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
         offerable:
           entry.available &&
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
-          (entry.connectorType !== 'composio' ||
-            Boolean(composioScopeForOwner(context.owner.pubkey))) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
         ...(row
@@ -5427,6 +5093,14 @@ export class DaemonService {
         state: row.state,
       })),
       registryServers,
+      apps: (await readOwnerApps(this.database, context.owner.pubkey)).map(
+        (app) => ({
+          appKey: app.appKey,
+          name: app.name,
+          transport: app.transport,
+          status: app.status,
+        }),
+      ),
       machine: context.machine,
     };
   }
@@ -5440,6 +5114,81 @@ export class DaemonService {
     if (!Number.isSafeInteger(limit) || limit < 1)
       throw new Error('Registry search limit is invalid');
     return { servers: await this.mcpRegistry.search(query, Math.min(10, limit)) };
+  }
+
+  /**
+   * connect_app: the one front door. The server chooses the route in its
+   * fixed order (`app-connections.ts`) and the agent only follows `next`.
+   */
+  private async connectAppFrontDoor(
+    input: Input<'connectApp'>,
+    agentId: string,
+  ): Promise<Output<'connectApp'>> {
+    const app = typeof input.app === 'string' ? input.app.trim() : '';
+    const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
+    if (!app || app.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
+      throw new Error('app and reason are required');
+    const context = await this.offerContext(input.roomId, agentId);
+    if (context.isCorner)
+      throw new Error('connect_app is invalid: connect an app from the Room, not from a corner');
+    const outcome = await connectApp(this.database, this.mcpRegistry, {
+      workspaceId: context.workspaceId,
+      ownerId: context.owner.pubkey,
+      machineId: context.machine.machineId,
+      helperAgentId: agentId,
+      requestedBy: agentId,
+      app,
+      reconnect: input.reconnect === true,
+      noApi: input.noApi === true,
+      installRoomId: input.roomId,
+      installCommandId: this.authorizedCommand?.id ?? null,
+    });
+    return {
+      status: outcome.status,
+      app: outcome.name ?? outcome.app,
+      next: outcome.next,
+      ...(outcome.appId ? { appId: outcome.appId } : {}),
+      ...(outcome.appKey ? { appKey: outcome.appKey } : {}),
+      ...(outcome.route ? { route: outcome.route } : {}),
+      ...(outcome.transport ? { transport: outcome.transport } : {}),
+      ...(outcome.connectorId ? { connectorId: outcome.connectorId } : {}),
+      ...(outcome.authorizationUrl ? { authorizationUrl: outcome.authorizationUrl } : {}),
+    };
+  }
+
+  /**
+   * The per-call personal-resource gate. A call that belongs to a connected
+   * app is authorized as `app:<key>` — whichever route carries it — and each
+   * authorized call lands in that app's one usage ledger.
+   */
+  private async authorizeResource(input: Input<'authorizeResourceCall'>, agentId: string) {
+    const appKeys = Array.isArray(input.appKeys)
+      ? input.appKeys.filter((key): key is string => typeof key === 'string').slice(0, 8)
+      : undefined;
+    const gate = await appGateFor(this.database, {
+      roomId: input.roomId,
+      agentId,
+      target: typeof input.target === 'string' ? input.target.trim() : '',
+      ...(appKeys ? { appKeys } : {}),
+    });
+    if (gate.kind === 'refuse') return { allowed: false };
+    const result = await this.authorizeScopedGrant(input, agentId, 'mcp', gate.target);
+    if (gate.kind === 'app' && result.allowed && input.consume !== false) {
+      const requester = await this.grantRequester();
+      await recordAppUsage(this.database, {
+        appId: gate.appId,
+        agentId,
+        roomId: input.roomId,
+        requesterId: requester.id,
+        transport: gate.transport,
+        operation:
+          typeof input.operation === 'string' && input.operation.trim()
+            ? input.operation.trim()
+            : 'call',
+        ...(result.grantId ? { grantId: result.grantId } : {}),
+      });
+    }
+    return result;
   }
 
   /** Exact Registry selection, owner+machine row creation, and optional one-link fallback. */
@@ -5468,99 +5217,21 @@ export class DaemonService {
       };
 
     const context = await this.offerContext(input.roomId, agentId);
-    const commandId = this.authorizedCommand?.id ?? null;
-    const row = await this.database.transaction(async (database) => {
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        `registry-mcp:${context.workspaceId}:${context.owner.pubkey}:${context.machine.machineId}:${serverName}`,
-      ]);
-      const existing = (
-        await database.query<{
-          id: string;
-          status: 'installing' | 'connected' | 'error' | 'disconnected';
-          registry_version: string;
-          sign_in: ConnectorStatus['signIn'] | null;
-          registry_handoff_attempt: string | null;
-          registry_squire_relayed_attempt: string | null;
-        }>(
-          `SELECT id,status,registry_version,sign_in,registry_handoff_attempt,
-                  registry_squire_relayed_attempt
-           FROM workspace_connectors
-           WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-             AND connector_type='registry-mcp' AND registry_server_name=$4
-           FOR UPDATE`,
-          [context.workspaceId, context.owner.pubkey, context.machine.machineId, serverName],
-        )
-      ).rows[0];
-      if (existing && existing.registry_version !== version)
-        return { ...existing, versionConflict: true as const, created: false };
-      if (existing) {
-        if (existing.status === 'error' || existing.status === 'disconnected') {
-          await database.query(
-            `UPDATE workspace_connectors SET helper_agent_id=$2,status='installing',
-               status_steps=$3::jsonb,status_error=NULL,sign_in=NULL,
-               registry_manifest=$4::jsonb,display_name=$5,website_url=$6,
-               install_agent_id=$7,install_room_id=$8,install_command_id=$9,
-               registry_handoff_attempt=NULL,registry_squire_relayed_attempt=NULL,
-               pairing_generation=pairing_generation+1,updated_at=now()
-             WHERE id=$1`,
-            [
-              existing.id,
-              agentId,
-              JSON.stringify([
-                { label: 'Discover remote authentication', status: 'pending' },
-                { label: 'Connect provider account', status: 'pending' },
-              ]),
-              JSON.stringify(manifest),
-              manifest.title ?? manifest.name,
-              manifest.websiteUrl ?? null,
-              agentId,
-              input.roomId,
-              commandId,
-            ],
-          );
-          return { ...existing, status: 'installing' as const, sign_in: null, created: true };
-        }
-        return { ...existing, created: false };
-      }
-      const id = randomUUID();
-      await database.query(
-        `INSERT INTO workspace_connectors(
-           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-           status,status_steps,registry_server_name,registry_version,registry_manifest,
-           display_name,website_url,install_agent_id,install_room_id,install_command_id
-         ) VALUES($1,$2,$3,'registry-mcp',$4,$5,'installing',$6::jsonb,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)`,
-        [
-          id,
-          context.workspaceId,
-          context.owner.pubkey,
-          agentId,
-          context.machine.machineId,
-          JSON.stringify([
-            { label: 'Discover remote authentication', status: 'pending' },
-            { label: 'Connect provider account', status: 'pending' },
-          ]),
-          serverName,
-          version,
-          JSON.stringify(manifest),
-          manifest.title ?? manifest.name,
-          manifest.websiteUrl ?? null,
-          agentId,
-          input.roomId,
-          commandId,
-        ],
-      );
-      return {
-        id,
-        status: 'installing' as const,
-        registry_version: version,
-        sign_in: null,
-        registry_handoff_attempt: null,
-        registry_squire_relayed_attempt: null,
-        created: true,
-      };
-    });
+    const row = await this.database.transaction((database) =>
+      armRegistryConnector(database, {
+        workspaceId: context.workspaceId,
+        ownerId: context.owner.pubkey,
+        machineId: context.machine.machineId,
+        helperAgentId: agentId,
+        manifest,
+        installRoomId: input.roomId,
+        installCommandId: this.authorizedCommand?.id ?? null,
+      }),
+    );
 
-    if ('versionConflict' in row)
+    // A server connected by its exact coordinate is still one app.
+    await backfillRegistryApps(this.database, row.id);
+    if (row.versionConflict)
       return {
         status: 'unsupported',
         reason: `This server is already pinned to ${row.registry_version}; automatic upgrades are not supported.`,
@@ -5635,10 +5306,6 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
-    const composioScope =
-      connectorType === 'composio' ? composioScopeForOwner(context.addressee.pubkey) : undefined;
-    if (connectorType === 'composio' && !composioScope)
-      throw new Error('Composio scope is not configured on this Beeline server');
     const connectorName = connectorDisplayName(connectorType);
     const already = (
       await this.database.query<{ status: string }>(
@@ -5705,11 +5372,7 @@ export class DaemonService {
         connectorType,
         connectorName,
         reason,
-        consequence: connectorOfferConsequence(
-          connectorType,
-          reason,
-          connectorType === 'composio' ? Object.values(composioScope!.tools).flat() : undefined,
-        ),
+        consequence: connectorOfferConsequence(connectorType, reason),
         helper: context.machine,
         status: 'pending',
         createdAt: seconds(created.created_at),
@@ -6662,6 +6325,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   waitForCornerWake: true,
   listUntrackedCorners: true,
   getRoomRepositoryState: true,
+  noteEmptyRoomRepository: true,
   getRoomGitHubToken: true,
   getRoomTargetBranch: true,
   getIdentitySuccession: true,
@@ -6692,9 +6356,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
-  getComposioLink: true,
-  getComposioTools: true,
-  executeComposioTool: true,
   getGoogleOAuthGrant: true,
   beginRegistryMcpOAuth: true,
   claimRegistryMcpOAuthCode: true,
@@ -6725,6 +6386,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   readAgentWorkbench: true,
   searchMcpRegistry: true,
   connectMcpServer: true,
+  connectApp: true,
   offerConnector: true,
   createCorner: true,
   upgradeCornerLane: true,

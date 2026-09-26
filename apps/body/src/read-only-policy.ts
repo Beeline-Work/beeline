@@ -268,8 +268,7 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'post_artifact',
   'write_scratch_file',
   'fetch_image',
-  'search_mcp_registry',
-  'connect_mcp_server',
+  'connect_app',
 ] as const;
 
 /**

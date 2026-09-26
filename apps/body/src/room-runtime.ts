@@ -982,7 +982,12 @@ export class RoomRuntimeCoordinator {
 
   private async startRoomOnce(roomId: string): Promise<void> {
     const controller = new AbortController();
-    const cwd = await this.materializeRoomCheckout(roomId);
+    // Repository inspection is enrichment. A missing first commit or App grant
+    // must not prevent the Room's chat loop from accepting its first command.
+    const cwd = await this.materializeRoomCheckout(roomId).catch((error) => {
+      console.warn(`[thin-core] Room ${roomId} checkout unavailable:`, error);
+      return this.roomRoot(roomId);
+    });
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const startedAt = this.now();
     const loop = new MonolithRoomTurnLoop({
@@ -1069,7 +1074,7 @@ export class RoomRuntimeCoordinator {
         maxBuffer: 4 * 1024 * 1024,
       });
     }
-    await execFileAsync(
+    const fetched = await execFileAsync(
       'git',
       [
         '-C',
@@ -1080,7 +1085,21 @@ export class RoomRuntimeCoordinator {
         `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`,
       ],
       { env, maxBuffer: 4 * 1024 * 1024 },
+    ).then(
+      () => true,
+      (error) => {
+        if (isRemoteRefMissing(error)) return false;
+        throw error;
+      },
     );
+    if (!fetched) {
+      void this.options.daemonApi
+        .execute('noteEmptyRoomRepository', { roomId })
+        .catch((error) =>
+          console.warn(`[thin-core] Room ${roomId} empty-repository notice failed:`, error),
+        );
+      return this.roomRoot(roomId);
+    }
     await execFileAsync(
       'git',
       ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`],
@@ -1095,13 +1114,19 @@ export class RoomRuntimeCoordinator {
   private async refreshRoomCheckout(
     roomId: string,
   ): Promise<{ cwd: string; branch?: string; commit?: string }> {
-    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
-    if (repository.resolution !== 'repository' || !repository.remote)
+    try {
+      const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+      if (repository.resolution !== 'repository' || !repository.remote)
+        return { cwd: this.roomRoot(roomId) };
+      const branch = repository.targetBranch || 'main';
+      const cwd = await this.materializeRoomCheckout(roomId, repository);
+      if (cwd === this.roomRoot(roomId)) return { cwd };
+      const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
+      return { cwd, branch, commit: stdout.trim() };
+    } catch (error) {
+      console.warn(`[thin-core] Room ${roomId} checkout refresh unavailable:`, error);
       return { cwd: this.roomRoot(roomId) };
-    const branch = repository.targetBranch || 'main';
-    const cwd = await this.materializeRoomCheckout(roomId, repository);
-    const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
-    return { cwd, branch, commit: stdout.trim() };
+    }
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {

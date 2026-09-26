@@ -206,12 +206,12 @@ describe('ConnectorSignInScreen', () => {
     searchParams.url = 'https://login.tailscale.com/a/test';
   });
 
-  it('switches to the next Composio toolkit link while the overlay stays open', async () => {
-    searchParams.connectorName = 'Composio';
-    searchParams.url = 'https://app.composio.dev/link/first';
+  it('switches to a newer OAuth link while the overlay stays open', async () => {
+    searchParams.connectorName = 'Google Workspace';
+    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=first';
     readInstallState.mockResolvedValue({
       connected: false,
-      signIn: { method: 'oauth', url: 'https://app.composio.dev/link/second' },
+      signIn: { method: 'oauth', url: 'https://accounts.google.com/o/oauth2/v2/auth?state=second' },
     });
     vi.useFakeTimers();
     let renderer!: ReactTestRenderer;
@@ -220,7 +220,9 @@ describe('ConnectorSignInScreen', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
       expect(renderer.root.findByProps({ testID: 'signin-oauth-browser' })).toBeTruthy();
       await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
-      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://app.composio.dev/link/second');
+      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(
+        'https://accounts.google.com/o/oauth2/v2/auth?state=second',
+      );
       expect(router.replace).not.toHaveBeenCalled();
       await act(async () => renderer.unmount());
     } finally {

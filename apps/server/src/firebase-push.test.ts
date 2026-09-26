@@ -7,8 +7,6 @@ import {
 } from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
-// Android's default FCM tap resolves the package launcher trampoline; mobile
-// manifest coverage lives in `androidPushRouting.test.ts`.
 
 describe('Firebase push credentials', () => {
   it('uses an inline service account with cert and its project id', () => {
@@ -115,31 +113,14 @@ describe('Firebase push routing payload', () => {
       channelId,
       ...(cornerId ? { cornerId } : {}),
       messageId: 'message-1',
+      title: 'Beeline',
+      message: 'routing payload',
+      tag: 'message-1',
     });
-    expect(payload.android).toEqual({
-      notification: { tag: roomId },
-    });
+    expect(payload).not.toHaveProperty('notification');
+    expect(payload.android).toEqual({ priority: 'high' });
     expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
     expect(payload.android).not.toHaveProperty('collapseKey');
-  });
-
-  it('never puts a JSON body in data, because Expo Android would rewrite it over the routing fields', () => {
-    // expo-notifications' NotificationSerializer checks the data `body` for a
-    // JSON object and, when it finds one, replaces `content.data` with the
-    // parsed envelope — dropping workspaceId/roomId/channelId/messageId. A
-    // JSON-shaped MESSAGE is fine; a JSON-shaped data `body` is not, so the
-    // routing contract must never publish one.
-    const payload = firebasePushMessage('device-token', {
-      messageId: 'message-json',
-      workspaceId: 'workspace-1',
-      roomId: 'room-1',
-      channelId: 'room-1',
-      target: 'message',
-      type: 'message',
-      text: '{"note":"an agent posted JSON"}',
-    });
-    expect(payload.data).not.toHaveProperty('body');
-    expect(payload.notification?.body).toBe('{"note":"an agent posted JSON"}');
   });
 
   it('carries a workspace join to its exact Workspace and Room', () => {
@@ -153,11 +134,7 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
-      android: {
-        notification: {
-          tag: 'room-welcome',
-        },
-      },
+      android: { priority: 'high' },
       apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
@@ -171,19 +148,74 @@ describe('Firebase push routing payload', () => {
   });
 
   it('routes a Workspace-only join to the exact Workspace without inventing a Room', () => {
-    const payload = firebasePushMessage('device-token', {
-      messageId: 'workspace-join:notification-id',
-      workspaceId: 'workspace-default',
-      type: 'workspace-join',
-      text: 'alice joined Beeline',
-    });
-    expect(payload.data).toEqual({
+    expect(
+      firebasePushMessage('device-token', {
+        messageId: 'workspace-join:notification-id',
+        workspaceId: 'workspace-default',
+        type: 'workspace-join',
+        text: 'alice joined Beeline',
+      }).data,
+    ).toEqual({
       type: 'workspace-join',
       target: 'workspace',
       workspaceId: 'workspace-default',
+      title: 'Beeline',
+      message: 'alice joined Beeline',
+      tag: 'workspace-join:notification-id',
     });
-    expect(payload.android).toEqual({
-      notification: {},
+  });
+});
+
+describe('Firebase push inline actions', () => {
+  const base = {
+    messageId: 'message-1',
+    workspaceId: 'workspace-1',
+    roomId: 'dm-1',
+    channelId: 'dm-1',
+    target: 'message' as const,
+    type: 'message' as const,
+  };
+
+  it('names the grant category and the one pending grant it answers', () => {
+    const payload = firebasePushMessage('device-token', {
+      ...base,
+      text: '@wren asked @charles for host api.stripe.com · checking the invoice webhook',
+      action: {
+        kind: 'grant',
+        grantId: 'grant-1',
+        grantKind: 'host',
+        grantTarget: 'api.stripe.com',
+        agentName: 'wren',
+      },
     });
+    expect(payload.data).toMatchObject({
+      categoryId: 'beeline-grant',
+      grantId: 'grant-1',
+      grantKind: 'host',
+      grantTarget: 'api.stripe.com',
+      agentName: 'wren',
+      messageId: 'message-1',
+      message: '@wren asked @charles for host api.stripe.com · checking the invoice webhook',
+    });
+  });
+
+  it('names the reply category and who is being answered', () => {
+    const payload = firebasePushMessage('device-token', {
+      ...base,
+      text: 'Maya: @charles can you look?',
+      action: { kind: 'reply', authorName: 'Maya' },
+    });
+    expect(payload.data).toMatchObject({
+      categoryId: 'beeline-reply',
+      authorName: 'Maya',
+      channelId: 'dm-1',
+      messageId: 'message-1',
+    });
+  });
+
+  it('adds no category to a push without an action', () => {
+    expect(firebasePushMessage('device-token', { ...base, text: 'hello' }).data).not.toHaveProperty(
+      'categoryId',
+    );
   });
 });

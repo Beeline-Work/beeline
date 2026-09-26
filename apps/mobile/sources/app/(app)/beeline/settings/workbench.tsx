@@ -14,9 +14,12 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
+  appDetailLine,
+  appInstrument,
   connectionCompany,
   connectionDomainsLine,
   connectionInstrument,
@@ -25,6 +28,8 @@ import {
   connectorExpandedActions,
   connectorInstrument,
   isGoogleToolConnectorId,
+  keysOutsideApps,
+  type WorkbenchApp,
   type WorkbenchView,
 } from '@/buzz/workbench';
 
@@ -60,6 +65,7 @@ export default function WorkbenchScreen() {
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletWorkspaceMissing, setWalletWorkspaceMissing] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [foregroundGeneration, setForegroundGeneration] = useState(0);
   const load = useCallback(
@@ -108,7 +114,9 @@ export default function WorkbenchScreen() {
     }, [foregroundGeneration, load]),
   );
 
-  const connections = view ? connectionsForViewer(view, viewerId) : [];
+  const apps = view?.apps ?? [];
+  // A key an app row already holds is stated on that row, not listed twice.
+  const connections = view ? keysOutsideApps(view, connectionsForViewer(view, viewerId)) : [];
   const connectors = view?.connectors ?? [];
   const connectorLogoUrl = (id: string) =>
     `${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${id}.svg`;
@@ -140,11 +148,55 @@ export default function WorkbenchScreen() {
     [disconnectingId, load, workspaceId],
   );
 
-  const openWallet = useCallback(() => {
+  const [appWorking, setAppWorking] = useState<string | null>(null);
+  const openConnectApp = useCallback(() => {
     router.push({
-      pathname: '/beeline/settings/workbench/wallet',
-      params: { workspaceId },
+      pathname: '/beeline/settings/workbench/connect-app',
+      params: { workspaceId, viewerId },
     } as unknown as Href);
+  }, [workspaceId, viewerId]);
+
+  const appAction = useCallback(
+    async (app: WorkbenchApp, action: 'reconnect' | 'disconnect') => {
+      if (appWorking) return;
+      setAppWorking(app.id);
+      setNetworkFailure(null);
+      try {
+        if (action === 'disconnect') {
+          await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id });
+        } else if (app.helperId) {
+          await getWorkbenchSource().connectApp({
+            workspaceId,
+            app: app.domain ?? app.key,
+            helperId: app.helperId,
+            reconnect: true,
+          });
+        }
+        await load();
+      } catch {
+        setNetworkFailure('load');
+      } finally {
+        setAppWorking(null);
+      }
+    },
+    [appWorking, load, workspaceId],
+  );
+
+  const openWallet = useCallback(async () => {
+    try {
+      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      if (!selectedId) {
+        setWalletWorkspaceMissing(true);
+        return;
+      }
+      setWalletWorkspaceMissing(false);
+      router.push({
+        pathname: '/beeline/settings/workbench/wallet',
+        params: { workspaceId: selectedId },
+      } as unknown as Href);
+    } catch {
+      setNetworkFailure('wallet');
+    }
   }, [workspaceId]);
 
   const connectWallet = useCallback(async () => {
@@ -152,14 +204,23 @@ export default function WorkbenchScreen() {
     setWalletConnecting(true);
     setNetworkFailure(null);
     try {
-      await getWalletSource().createWallet({ workspaceId });
-      openWallet();
+      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      if (!selectedId) {
+        setWalletWorkspaceMissing(true);
+        return;
+      }
+      setWalletWorkspaceMissing(false);
+      await getWalletSource().createWallet({ workspaceId: selectedId });
+      router.push({
+        pathname: '/beeline/settings/workbench/wallet',
+        params: { workspaceId: selectedId },
+      } as unknown as Href);
     } catch {
       setNetworkFailure('wallet');
     } finally {
       setWalletConnecting(false);
     }
-  }, [openWallet, walletConnecting, workspaceId]);
+  }, [walletConnecting, workspaceId]);
 
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
@@ -186,6 +247,17 @@ export default function WorkbenchScreen() {
           onRetry={() => void (networkFailure === 'wallet' ? connectWallet() : load())}
           testID="workbench-network-unavailable"
         />
+      </View>
+    );
+  }
+
+  if (walletWorkspaceMissing) {
+    return (
+      <View style={screenStyle}>
+        {header}
+        <Text testID="workbench-wallet-workspace-missing">
+          Join or select a Workspace, then open Wallet again.
+        </Text>
       </View>
     );
   }
@@ -280,6 +352,75 @@ export default function WorkbenchScreen() {
                 onAction={canConnect ? () => connectConnector(connector.id) : undefined}
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
+                value={instrument.value}
+                valueTone={instrument.valueTone}
+              />
+            );
+          })}
+        </View>
+        <View testID="workbench-apps">
+          <Text style={styles.sectionLabel} testID="workbench-apps-head">
+            Apps
+          </Text>
+          <SettingsRow
+            chevron="right"
+            onPress={openConnectApp}
+            testID="workbench-connect-app"
+            title="Connect an app"
+            tone="action"
+          />
+          {apps.map((app) => {
+            const instrument = appInstrument(app.status);
+            return (
+              <ToolDetailsCell
+                key={app.id}
+                detailText={appDetailLine(app)}
+                errorText={app.status === 'error' ? app.errorMessage : undefined}
+                extraActions={[
+                  // The key a Squire route holds lives on this row, so its
+                  // detail (grants, ledger, revoke) is reached from here.
+                  ...(app.connectionReference
+                    ? [
+                        {
+                          label: 'Key details',
+                          testID: `workbench-app-${app.key}-key`,
+                          tone: 'action' as const,
+                          onPress: () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/connection',
+                              params: { workspaceId, viewerId, ref: app.connectionReference },
+                            } as unknown as Href),
+                        },
+                      ]
+                    : []),
+                  ...(app.status === 'error' && app.helperId
+                    ? [
+                        {
+                          label: 'Reconnect',
+                          testID: `workbench-app-${app.key}-reconnect`,
+                          tone: 'action' as const,
+                          disabled: appWorking === app.id,
+                          onPress: () => void appAction(app, 'reconnect'),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: 'Disconnect',
+                    testID: `workbench-app-${app.key}-disconnect`,
+                    tone: 'destructive' as const,
+                    disabled: appWorking === app.id,
+                    onPress: () => void appAction(app, 'disconnect'),
+                  },
+                ]}
+                leading={
+                  <ServiceMark
+                    company={app.name}
+                    domain={app.domain}
+                    testID={`workbench-app-${app.key}-mark`}
+                  />
+                }
+                testID={`workbench-app-${app.key}`}
+                title={app.name}
                 value={instrument.value}
                 valueTone={instrument.valueTone}
               />

@@ -719,7 +719,11 @@ export const WalletCards = React.memo(function WalletCards({
         tier="record"
         identity={identity}
         title="Granted agents permission to sign"
-        subline={`Until ${new Date(delegation.expiresAt).toLocaleString()} · renews in the app`}
+        subline={
+          'standing' in delegation
+            ? 'Stands until revoked'
+            : `Until ${new Date(delegation.expiresAt).toLocaleString()} · renews in the app`
+        }
         sublineTestID="wallet-delegation-subline"
         stamp={stamp}
         testID="wallet-delegation"

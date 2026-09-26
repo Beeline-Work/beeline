@@ -3,10 +3,11 @@ import type { SqlDatabase } from './database.js';
 export type InstitutionalRolloutStage = 'off' | 'shadow' | 'pilot' | 'live' | 'paused';
 
 /**
- * A Workspace with no row is not enrolled. Its stage is the only authority for
- * both serving memory and running host jobs, so the global feature flag can
- * neither enable live memory everywhere at once nor spend host model sessions
- * on a Workspace no turn can read memory from.
+ * Institutional memory is ON by default: a Workspace with no rollout row is
+ * live, and only an explicit `off`/`paused` stage withholds it. The staged
+ * `shadow`/`pilot` values remain readable (an operator can still narrow a
+ * single Workspace) but nothing starts there; the release migration advances
+ * existing rows to `live`.
  */
 export async function institutionalWorkspaceRolloutStage(
   database: SqlDatabase,
@@ -20,10 +21,14 @@ export async function institutionalWorkspaceRolloutStage(
   ).rows[0]?.stage;
 }
 
+/** A missing row is the default: live. Only `off`/`paused` withhold serving. */
 export function rolloutAllowsLive(stage: InstitutionalRolloutStage | undefined): boolean {
-  return stage === 'pilot' || stage === 'live';
+  return stage === undefined || stage === 'pilot' || stage === 'live';
 }
 
+/** A missing row is the default: live. Only `off`/`paused` withhold host jobs. */
 export function rolloutAllowsJobs(stage: InstitutionalRolloutStage | undefined): boolean {
-  return stage === 'shadow' || stage === 'pilot' || stage === 'live';
+  return (
+    stage === undefined || stage === 'shadow' || stage === 'pilot' || stage === 'live'
+  );
 }

@@ -225,6 +225,14 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 }
 
 describe('Workbench identities', () => {
+  it('describes a standing Wallet grant without an end date', () => {
+    const renderer = render(
+      <WalletCards message={message({ walletDelegation: { standing: true } })} stamp="12:00" />,
+    );
+    const subline = renderer.root.findByProps({ testID: 'wallet-delegation-subline' });
+    expect(subline.props.children).toBe('Stands until revoked');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Until ');
+  });
   it('uses the indexed Wallet identity and connector logo on wallet cards', () => {
     const renderer = render(
       <WalletCards

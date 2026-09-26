@@ -294,12 +294,16 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
-  it('arms the recovery reconcile when a pushed apply fails', async () => {
+  it('serves a pushed Room when its repository lookup fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-failed-apply-'));
     roots.push(root);
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const execute = vi.fn(async (name: string) => {
       if (name === 'getRoomRepositoryState') throw new Error('index.lock held by a sibling');
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
       return {};
     });
     let membership: ((event?: RoomMembershipChange) => void) | undefined;
@@ -321,7 +325,37 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     try {
       expect(coordinator.needsFastReconcile()).toBe(false);
       membership?.({ roomId: 'room-1' });
+      await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
+      expect(coordinator.needsFastReconcile()).toBe(false);
+      expect(execute).toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-1' });
+    } finally {
+      await coordinator.shutdown();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('arms the recovery reconcile when a pushed Room start fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-failed-start-'));
+    roots.push(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute: vi.fn(),
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    const startRoom = vi.spyOn(coordinator as never, 'startRoom').mockRejectedValueOnce(new Error('startup failed'));
+    try {
+      coordinator['queueMembershipEvent']({ roomId: 'room-1' });
       await vi.waitFor(() => expect(coordinator.needsFastReconcile()).toBe(true));
+      expect(startRoom).toHaveBeenCalledWith('room-1');
       expect(coordinator.activeRoomIds()).not.toContain('room-1');
     } finally {
       await coordinator.shutdown();

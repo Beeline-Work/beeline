@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import {
@@ -17,14 +18,12 @@ import {
   readConnectionLedger,
   readGrants,
   readVault,
-  reclaimSquireProfileClaim,
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
   revokeGrants,
   SQUIRE_CONNECT_PACKAGE,
   squireConnectProcessEnv,
   squireConnectSession,
-  squireProfileLockPath,
   vaultConnectionMeta,
   type ShellRunner,
   type SquireConnectReport,
@@ -847,286 +846,84 @@ describe('connect session claim', () => {
   });
 });
 
-describe('on-disk profile claim reclaim', () => {
-  function claimDir(): { profileDir: string; lockRoot: string; lockPath: string; cleanup: () => void } {
-    const root = mkdtempSync(join(tmpdir(), 'squire-claim-'));
+describe('Squire connect state', () => {
+  it('pins connect to the helper profile, not a foreign Codex config', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'squire-profile-'));
+    let env: NodeJS.ProcessEnv | undefined;
+    const { run } = scriptedRunner([{ stdout: '1.1.16' }, { stdout: '1.1.16' }]);
+    try {
+      const result = await installSquire({
+        workspaceId: 'ws-1',
+        profileDir,
+        run,
+        streamRun: async (_command, _args, spawnEnv) => {
+          env = spawnEnv;
+          return {
+            stdout: '',
+            stderr: '',
+            report: report({
+              state: 'needs-sign-in',
+              sign_in_url: 'https://squire.example/install?token=x',
+              browser_location: { kind: 'host_screen' },
+            }),
+            abort: () => {},
+          };
+        },
+        mcp: mockSquire({ list_credentials: () => ({}) }).client,
+      });
+      expect(result.status).not.toBe('error');
+      expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(profileDir);
+      expect(env?.XDG_CONFIG_HOME).toMatch(/\.config$/);
+      expect(env?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
+      expect(squireConnectProcessEnv(profileDir).TRUSTY_SQUIRE_PROFILE_DIR).toBe(profileDir);
+      expect(squireConnectProcessEnv(profileDir).TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(
+        /broker\.sock$/,
+      );
+    } finally {
+      rmSync(profileDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses Squire’s connect report even when a live broker owns the profile', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'squire-report-'));
     const profileDir = join(root, 'profile');
     const lockRoot = join(root, 'locks');
     mkdirSync(profileDir);
     mkdirSync(lockRoot);
-    const lockPath = squireProfileLockPath(profileDir, lockRoot);
-    return {
-      profileDir,
-      lockRoot,
-      lockPath,
-      cleanup: () => rmSync(root, { recursive: true, force: true }),
-    };
-  }
-
-  function writeLock(lockPath: string, pid: number, startTime = 'unknown'): void {
+    const digest = createHash('sha256').update(profileDir).digest('hex').slice(0, 24);
+    const lockPath = join(lockRoot, `trusty-squire-profile-${digest}.lock`);
+    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
     writeFileSync(
       lockPath,
-      JSON.stringify({ host: hostname(), pid, start_time: startTime, token: 'test-token' }),
+      JSON.stringify({ host: hostname(), pid: broker.pid, start_time: 'unknown' }),
     );
-  }
-
-  it('reclaims a lock whose owner process is gone', () => {
-    const dir = claimDir();
-    writeLock(dir.lockPath, 2_147_483_647);
-    expect(existsSync(dir.lockPath)).toBe(true);
-    const result = reclaimSquireProfileClaim({
-      profileDir: dir.profileDir,
-      lockRoot: dir.lockRoot,
-    });
-    expect(result.kind).toBe('reclaimed-dead');
-    expect(existsSync(dir.lockPath)).toBe(false);
-    dir.cleanup();
-  });
-
-  it('does not kill a live foreign owner; installSquire fails with an actionable pid', async () => {
-    const dir = claimDir();
-    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
-    writeLock(dir.lockPath, holder.pid!);
-    let streamed = false;
-    const result = await installSquire({
-      workspaceId: 'ws-1',
-      profileDir: dir.profileDir,
-      lockRoot: dir.lockRoot,
-      run: okRunner(),
-      streamRun: async () => {
-        streamed = true;
-        return { stdout: '', stderr: '', abort: () => {} };
-      },
-    });
-    expect(streamed).toBe(false);
-    expect(result.status).toBe('error');
-    expect(result.errorMessage).toContain(String(holder.pid));
-    expect(result.errorMessage).toContain('Finish or close that Trusty Squire session');
-    expect(existsSync(dir.lockPath)).toBe(true);
-    expect(isProcessAlive(holder.pid)).toBe(true);
-    holder.kill();
-    dir.cleanup();
-  });
-
-  it('recognizes the shared broker claim when its vault answers, preserving the browser', async () => {
-    const dir = claimDir();
-    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
-    writeLock(dir.lockPath, broker.pid!);
     const { client, calls } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
     let startedConnect = false;
     try {
       const result = await installSquire({
         workspaceId: 'ws-1',
-        profileDir: dir.profileDir,
-        lockRoot: dir.lockRoot,
-        run: async (command, args) => {
-          expect([command, ...args]).toEqual([
-            'systemctl', '--user', 'show', '--property=MainPID', '--value',
-            'trusty-squire-broker.service',
-          ]);
-          return { code: 0, stdout: String(broker.pid), stderr: '' };
-        },
+        profileDir,
+        // Old Beeline consumed this override and inferred connected from the
+        // fixture lock. New Beeline ignores it and reads Squire's report.
+        ...{ lockRoot },
+        run: okRunner(),
         streamRun: async () => {
           startedConnect = true;
-          return { stdout: '', stderr: '', abort: () => {} };
+          return { stdout: '', stderr: '', report: report({ state: 'busy', terminal: true }), abort: () => {} };
         },
         mcp: client,
       });
-      expect(result.status).toBe('connected');
-      expect(result.signIn).toBeUndefined();
-      expect(result.steps.map(({ status }) => status)).toEqual(['done', 'done', 'done', 'done']);
-      expect(calls).toEqual([{ tool: 'list_credentials', args: { fields: 'summary' } }]);
-      expect(startedConnect).toBe(false);
-      expect(existsSync(dir.lockPath)).toBe(true);
-      expect(isProcessAlive(broker.pid)).toBe(true);
-    } finally {
-      broker.kill();
-      dir.cleanup();
-    }
-  });
-
-  it('reads the shared broker pid from launchd on macOS', async () => {
-    const previousPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-    const dir = claimDir();
-    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
-    writeLock(dir.lockPath, broker.pid!);
-    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
-    try {
-      const result = await installSquire({
-        workspaceId: 'ws-1',
-        profileDir: dir.profileDir,
-        lockRoot: dir.lockRoot,
-        run: async (command, args) => {
-          expect(command).toBe('launchctl');
-          expect(args).toEqual([
-            'print', `gui/${process.getuid?.()}/app.usebeeline.trusty-squire-broker`,
-          ]);
-          return { code: 0, stdout: `state = running\npid = ${broker.pid}\n`, stderr: '' };
-        },
-        mcp: client,
-      });
-      expect(result.status).toBe('connected');
-    } finally {
-      if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
-      broker.kill();
-      dir.cleanup();
-    }
-  });
-
-  it('keeps a broker claim and reports a failed vault probe', async () => {
-    const dir = claimDir();
-    const broker = spawn('sleep', ['30'], { stdio: 'ignore' });
-    writeLock(dir.lockPath, broker.pid!);
-    try {
-      const result = await installSquire({
-        workspaceId: 'ws-1',
-        profileDir: dir.profileDir,
-        lockRoot: dir.lockRoot,
-        run: async () => ({ code: 0, stdout: String(broker.pid), stderr: '' }),
-        mcp: { call: async () => { throw new Error('vault unavailable'); } },
-      });
+      expect(startedConnect).toBe(true);
       expect(result.status).toBe('error');
-      expect(result.errorMessage).toBe('vault unavailable');
-      expect(existsSync(dir.lockPath)).toBe(true);
+      expect(result.errorMessage).toContain('Trusty Squire');
+      expect(result.signIn).toBeUndefined();
+      expect(calls).toEqual([]);
+      expect(existsSync(lockPath)).toBe(true);
       expect(isProcessAlive(broker.pid)).toBe(true);
     } finally {
       broker.kill();
-      dir.cleanup();
+      rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it('releases a lock this helper already claimed without killing a live owner', () => {
-    const dir = claimDir();
-    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
-    writeLock(dir.lockPath, holder.pid!);
-    const result = reclaimSquireProfileClaim({
-      profileDir: dir.profileDir,
-      lockRoot: dir.lockRoot,
-      ourPids: [holder.pid!],
-    });
-    expect(result.kind).toBe('released-ours');
-    expect(existsSync(dir.lockPath)).toBe(false);
-    expect(isProcessAlive(holder.pid)).toBe(true);
-    holder.kill();
-    dir.cleanup();
-  });
-
-  it('releases a live child claim from this helper’s detached connect group on retry', async () => {
-    const dir = claimDir();
-    const childPidPath = join(dir.lockRoot, 'child-pid');
-    const line = reportLine({
-      sign_in_url: 'https://squire.test/vnc#p=1',
-      browser_location: { kind: 'virtual', url: 'https://squire.test/vnc#p=1' },
-    });
-    const first = await defaultStreamedRunner(process.execPath, [
-      '-e',
-      [
-        "const { spawn } = require('node:child_process');",
-        'spawn(process.execPath, ["-e", [',
-        '  "const { writeFileSync } = require(\'node:fs\');",',
-        '  "process.on(\'SIGTERM\', () => {});",',
-        '  "writeFileSync(process.argv[1], String(process.pid));",',
-        '  "setInterval(() => {}, 30_000);",',
-        '].join("\\n"), process.argv[1]], { stdio: "ignore" });',
-        `process.stdout.write(${JSON.stringify(`${line}\n`)});`,
-        'setInterval(() => {}, 30_000);',
-      ].join('\n'),
-      childPidPath,
-    ]);
-    let childPid: number | undefined;
-    try {
-      await until(() => existsSync(childPidPath));
-      childPid = Number(readFileSync(childPidPath, 'utf8'));
-      writeLock(dir.lockPath, childPid);
-      const { run } = scriptedRunner([{ stdout: '1.1.16' }, { stdout: '1.1.16' }]);
-      const result = await installSquire({
-        workspaceId: 'ws-1',
-        profileDir: dir.profileDir,
-        lockRoot: dir.lockRoot,
-        run,
-        streamRun: fakeStreamRunner({
-          report: report({
-            state: 'needs-sign-in',
-            sign_in_url: 'https://squire.example/install?token=x',
-            browser_location: { kind: 'host_screen' },
-          }),
-        }),
-        mcp: mockSquire({ list_credentials: () => ({}) }).client,
-      });
-      expect(isProcessAlive(childPid)).toBe(true);
-      expect(result.status).not.toBe('error');
-      expect(existsSync(dir.lockPath)).toBe(false);
-      await until(() => !isProcessAlive(first.pid));
-    } finally {
-      if (childPid !== undefined && isProcessAlive(childPid)) process.kill(childPid, 'SIGKILL');
-      first.abort();
-      dir.cleanup();
-    }
-  });
-
-  it('clears a dead on-disk lock before connect runs', async () => {
-    const dir = claimDir();
-    writeLock(dir.lockPath, 2_147_483_647);
-    const { run } = scriptedRunner([
-      { stdout: '1.1.16' },
-      { stdout: '1.1.16' },
-    ]);
-    const result = await installSquire({
-      workspaceId: 'ws-1',
-      profileDir: dir.profileDir,
-      lockRoot: dir.lockRoot,
-      run,
-      streamRun: fakeStreamRunner({
-        report: report({
-          state: 'needs-sign-in',
-          sign_in_url: 'https://squire.example/install?token=x',
-          browser_location: { kind: 'host_screen' },
-        }),
-      }),
-      mcp: mockSquire({ list_credentials: () => ({}) }).client,
-    });
-    expect(result.status).not.toBe('error');
-    expect(existsSync(dir.lockPath)).toBe(false);
-    dir.cleanup();
-  });
-
-  it('pins connect to the helper profile so a foreign Codex config cannot steal the claim', async () => {
-    const dir = claimDir();
-    let env: NodeJS.ProcessEnv | undefined;
-    const { run } = scriptedRunner([
-      { stdout: '1.1.16' },
-      { stdout: '1.1.16' },
-    ]);
-    const result = await installSquire({
-      workspaceId: 'ws-1',
-      profileDir: dir.profileDir,
-      lockRoot: dir.lockRoot,
-      run,
-      streamRun: async (_command, _args, spawnEnv) => {
-        env = spawnEnv;
-        return {
-          stdout: '',
-          stderr: '',
-          report: report({
-            state: 'needs-sign-in',
-            sign_in_url: 'https://squire.example/install?token=x',
-            browser_location: { kind: 'host_screen' },
-          }),
-          abort: () => {},
-        };
-      },
-      mcp: mockSquire({ list_credentials: () => ({}) }).client,
-    });
-    expect(result.status).not.toBe('error');
-    expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
-    expect(env?.XDG_CONFIG_HOME).toMatch(/\.config$/);
-    expect(env?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
-    expect(squireConnectProcessEnv(dir.profileDir).TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
-    expect(squireConnectProcessEnv(dir.profileDir).TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(
-      /broker\.sock$/,
-    );
-    dir.cleanup();
   });
 });
 

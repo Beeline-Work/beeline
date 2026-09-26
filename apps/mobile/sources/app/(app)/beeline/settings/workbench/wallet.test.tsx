@@ -4,10 +4,16 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const route = vi.hoisted(() => ({ workspaceId: 'workspace-1' as string | undefined }));
+const workspace = vi.hoisted(() => ({
+  resolve: vi.fn(async (id?: string): Promise<string | null> => id ?? 'workspace-1'),
+}));
+
+vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
 
 vi.mock('expo-router', () => ({
   router: navigation,
-  useLocalSearchParams: () => ({ workspaceId: 'workspace-1' }),
+  useLocalSearchParams: () => ({ workspaceId: route.workspaceId }),
 }));
 
 vi.mock('react-native-unistyles', () => {
@@ -26,7 +32,9 @@ vi.mock('react-native-unistyles', () => {
   return {
     StyleSheet: {
       create: (styles: unknown) =>
-        typeof styles === 'function' ? (styles as (theme: { buzz: typeof hull }) => unknown)({ buzz: hull }) : styles,
+        typeof styles === 'function'
+          ? (styles as (theme: { buzz: typeof hull }) => unknown)({ buzz: hull })
+          : styles,
       hairlineWidth: 1,
     },
     useUnistyles: () => ({ theme: { buzz: hull } }),
@@ -130,6 +138,8 @@ afterAll(() => vi.restoreAllMocks());
 describe('Wallet screens (mock §Screens, pass 4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    route.workspaceId = 'workspace-1';
+    workspace.resolve.mockImplementation(async (id?: string) => id ?? 'workspace-1');
     setWalletSource(new MockWalletSource());
   });
 
@@ -165,6 +175,19 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     // The dashboard carries the address with copy and QR affordances.
     expect(renderer.root.findByProps({ testID: 'wallet-address-copy' })).toBeTruthy();
     expect(renderer.root.findByProps({ testID: 'wallet-address-qr-toggle' })).toBeTruthy();
+  });
+
+  it('does not show Permission expired for a standing grant', async () => {
+    const source = new MockWalletSource();
+    const baseline = await source.readWallet();
+    source.readWallet = async () => ({
+      ...baseline,
+      delegation: { active: true, expiresAt: null },
+    });
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    expect(renderer.root.findAllByProps({ testID: 'wallet-delegation-banner' })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Permission expired');
   });
 
   it('copies the address through expo-clipboard', async () => {
@@ -229,6 +252,42 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+  });
+
+  it('renews from a direct Wallet entry with no route Workspace', async () => {
+    route.workspaceId = undefined;
+    const source = new MockWalletSource();
+    const baseline = await source.readWallet();
+    let active = false;
+    source.readWallet = async () => ({
+      ...baseline,
+      delegation: { active, expiresAt: active ? Date.now() + 86_400_000 : Date.now() - 1_000 },
+    });
+    const grant = vi.spyOn(source, 'grantDelegation').mockImplementation(async () => {
+      active = true;
+      return { expiresAt: Date.now() + 86_400_000 };
+    });
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'wallet-delegation-banner' }).props.onPress();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith(undefined);
+    expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
+    expect(renderer.root.findAllByProps({ testID: 'wallet-delegation-banner' })).toHaveLength(0);
+  });
+
+  it('shows a Workspace action and sends no Wallet request when none exists', async () => {
+    route.workspaceId = undefined;
+    workspace.resolve.mockResolvedValue(null);
+    const source = new MockWalletSource();
+    const grant = vi.spyOn(source, 'grantDelegation');
+    const read = vi.spyOn(source, 'readWallet');
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    expect(renderer.root.findByProps({ testID: 'wallet-workspace-missing' })).toBeTruthy();
+    expect(read).not.toHaveBeenCalled();
+    expect(grant).not.toHaveBeenCalled();
   });
 
   it('shows a real grant refusal on the loaded-wallet banner, not the empty-wallet path', async () => {

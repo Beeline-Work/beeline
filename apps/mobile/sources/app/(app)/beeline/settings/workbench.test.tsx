@@ -8,6 +8,10 @@ const layout = vi.hoisted(() => ({ desktop: false }));
 const searchParams = vi.hoisted(() => ({
   params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } as Record<string, string>,
 }));
+const workspace = vi.hoisted(() => ({
+  resolve: vi.fn(async (id?: string): Promise<string | null> => id || 'workspace-1'),
+}));
+vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
 const focus = vi.hoisted(() => ({
   effect: undefined as undefined | (() => void | (() => void)),
 }));
@@ -123,6 +127,7 @@ beforeEach(() => {
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
+  workspace.resolve.mockImplementation(async (id?: string) => id || 'workspace-1');
 });
 
 async function render(): Promise<ReactTestRenderer> {
@@ -236,9 +241,7 @@ describe('Workbench settings screen', () => {
     );
     expect(squire.props.value).toBeUndefined();
     expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe(
-      'workbench-connector-trusty-squire-connect',
-    );
+    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.leading.props.avatarUrl).toBe(
       'https://server.example.test/v1/connectors/logo/wallet.svg',
@@ -290,6 +293,85 @@ describe('Workbench settings screen', () => {
     const push = navigation.push.mock.calls.at(-1)![0];
     expect(push.pathname).toBe('/beeline/settings/workbench/connect');
     expect(push.params.connectorId).toBe('google-gmail');
+  });
+
+  it('shows one Connect an app action and one row per app, with its key folded in', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([
+      {
+        id: 'app-vercel',
+        key: 'vercel',
+        name: 'Vercel',
+        domain: 'vercel.com',
+        transport: 'squire-api',
+        status: 'connected',
+        helperName: 'squire-box',
+        helperId: 'machine-1',
+        connectionReference: 'cred_vercel',
+        useCount: 2,
+      },
+      {
+        id: 'app-linear',
+        key: 'linear',
+        name: 'Linear',
+        domain: 'linear.app',
+        transport: 'registry-mcp',
+        status: 'error',
+        errorMessage: 'The provider refused the sign-in',
+        helperName: 'squire-box',
+        helperId: 'machine-1',
+        useCount: 0,
+      },
+    ]);
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const connect = renderer.root.findByProps({ testID: 'workbench-connect-app' });
+    expect(connect.props.title).toBe('Connect an app');
+    expect(connect.props.tone).toBe('action');
+    act(() => connect.props.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe(
+      '/beeline/settings/workbench/connect-app',
+    );
+    // No route selector and no Composio row anywhere on the page.
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-composio' })).toHaveLength(0);
+    const vercel = renderer.root.findByProps({ testID: 'workbench-app-vercel-head' });
+    expect(vercel.props.title).toBe('Vercel');
+    expect(vercel.props.value).toBe('connected');
+    expect(vercel.props.leading.props.domain).toBe('vercel.com');
+    // The app row holds its key: Keys does not list it again.
+    expect(
+      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
+    ).toHaveLength(0);
+    act(() => vercel.props.onPress());
+    const details = renderer.root.findByProps({ testID: 'workbench-app-vercel-details' });
+    const prose = details
+      .findAll((node: any) => typeof node.props?.children === 'string')
+      .map((node: any) => node.props.children);
+    expect(prose).toContain('Trusty Squire · API key · on squire-box · used 2 times');
+    // Its folded key stays reachable from the app's own row.
+    act(() => renderer.root.findByProps({ testID: 'workbench-app-vercel-key' }).props.onPress());
+    expect(navigation.push.mock.calls.at(-1)![0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/connection',
+      params: { ref: 'cred_vercel' },
+    });
+    const linear = renderer.root.findByProps({ testID: 'workbench-app-linear-head' });
+    expect(linear.props.value).toBe('error');
+    expect(linear.props.valueTone).toBe('danger');
+    expect(linear.props.description).toBe('The provider refused the sign-in');
+    act(() => linear.props.onPress());
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workbench-app-linear-reconnect' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(source.appRequests).toEqual([
+      { app: 'linear.app', helperId: 'machine-1', reconnect: true },
+    ]);
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workbench-app-vercel-disconnect' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findAllByProps({ testID: 'workbench-app-vercel-head' })).toHaveLength(0);
   });
 
   it('collapses an expanded cell on a second tap', async () => {
@@ -420,6 +502,57 @@ describe('Workbench settings screen', () => {
     });
   });
 
+  it('resolves a Workspace for the personal Settings entry before opening Wallet', async () => {
+    searchParams.params = { viewerId: 'human-dani' };
+    const renderer = await render();
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
+    await act(async () => {
+      await wallet.props.trailingPress.onPress();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith('');
+    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
+  });
+
+  it('opens an already connected Wallet from a Workspace-bearing chat entry', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => {
+      const view = await read(input);
+      return {
+        ...view,
+        connectors: view.connectors.map((connector) =>
+          connector.id === 'wallet' ? { ...connector, status: 'connected' as const } : connector,
+        ),
+      };
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith('workspace-1');
+    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
+  });
+
+  it('does not create or open Wallet when the viewer has no Workspace', async () => {
+    searchParams.params = { viewerId: 'human-dani' };
+    workspace.resolve.mockResolvedValue(null);
+    const source = new MockWalletSource();
+    const createWallet = vi.spyOn(source, 'createWallet');
+    setWalletSource(source);
+    const renderer = await render();
+    await act(async () => {
+      await renderer.root
+        .findByProps({ testID: 'workbench-connector-wallet-head' })
+        .props.trailingPress.onPress();
+    });
+    expect(createWallet).not.toHaveBeenCalled();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-wallet-workspace-missing' }),
+    ).toBeTruthy();
+  });
+
   it('opens a connection detail on a connection row', async () => {
     const renderer = await render();
     act(() => {
@@ -454,9 +587,11 @@ describe('Workbench settings screen', () => {
         .title,
     ).toBe('Disconnect');
     await act(async () => {
-      renderer.root.findByProps({
-        testID: 'workbench-connector-trusty-squire-disconnect',
-      }).props.onPress();
+      renderer.root
+        .findByProps({
+          testID: 'workbench-connector-trusty-squire-disconnect',
+        })
+        .props.onPress();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

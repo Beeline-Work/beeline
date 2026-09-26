@@ -23,8 +23,10 @@
  *   - `claude-agent-acp` (@agentclientprotocol/claude-agent-acp): routes every
  *     tool through the SDK's `canUseTool` -> `session/request_permission`. It
  *     advertises no read-only mode, so a Room stays in `default`, which asks —
- *     our handler then denies. Corners select its ACP `bypassPermissions` mode.
- *     No built-in OS sandbox; Room enforcement is the callback alone.
+ *     our handler approves its mounted MCP calls and, while bwrap wraps the
+ *     session, the `execute`-kind shell it requests, and denies native reads and
+ *     writes. Corners select its ACP `bypassPermissions` mode. No built-in OS
+ *     sandbox; Room enforcement is the daemon callback plus bubblewrap.
  *   - `pi-acp` (pi-acp, driving @earendil-works/pi-coding-agent): **never** calls
  *     `requestPermission` for a tool. Its only permission requests are pi's own
  *     extension-UI `select`/`confirm` events; read/write/edit/bash are emitted
@@ -288,16 +290,21 @@ export type RoomShellCapability = 'runs' | 'refused' | 'unknown';
  * Does this harness stamp the exact ACP `execute` kind on a shell permission
  * request — the one thing the Room shell gate reads?
  *
- * Only claude-agent-acp is measured: its native `Bash` request carries
- * `kind: 'execute'`, captured verbatim in
- * `fixtures/claude-agent-acp-permissions.ts`. Other asking harnesses are left
- * unclaimed rather than assumed from the protocol — grok's captured frames
- * arrive titled `use_tool` with no kind at all, and a harness told a shell is
- * available that the gate then refuses spends every turn retrying it.
+ * Two harnesses are measured. `claude-agent-acp`'s native `Bash` request
+ * carries `kind: 'execute'`, captured verbatim in
+ * `fixtures/claude-agent-acp-permissions.ts`; a live `grok agent stdio` session
+ * sent its own `kind: 'execute'` permission request for a shell command and
+ * resumed on the selected option (the same live check recorded in this file's
+ * profile note). grok's `use_tool` fixtures are its MCP DISPATCH route, not a
+ * shell frame, so they say nothing about this test. Every other asking harness
+ * is left unclaimed rather than assumed from the protocol — a harness told a
+ * shell is available that the gate then refuses spends every turn retrying it.
  */
 function harnessDeclaresShellExecuteKind(agentCommand: string | undefined): boolean {
   return Boolean(
-    agentCommand && /(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand),
+    agentCommand &&
+    (/(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand) ||
+      /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)),
   );
 }
 

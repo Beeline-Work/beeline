@@ -53,8 +53,20 @@ function workerOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe('institutional memory shadow worker', () => {
-  it('is dark by default', () => {
-    expect(institutionalMemoryShadowEnabled({})).toBe(false);
+  it('is on by default and off only when both flags are explicitly false', () => {
+    expect(institutionalMemoryShadowEnabled({})).toBe(true);
+    expect(
+      institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'false' }),
+    ).toBe(true);
+    expect(
+      institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'false' }),
+    ).toBe(true);
+    expect(
+      institutionalMemoryShadowEnabled({
+        BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'false',
+        BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'false',
+      }),
+    ).toBe(false);
     expect(
       institutionalMemoryShadowEnabled({ BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'true' }),
     ).toBe(true);

@@ -8,6 +8,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
+import { backfillRegistryApps } from './app-connections.js';
 import {
   backfillInheritedCornerMemberships,
   syncTopLevelSharedRoomRoles,
@@ -122,7 +123,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 8;
+export const REQUIRED_SCHEMA_VERSION = 9;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1106,7 +1107,7 @@ CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
 
 CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
-  stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
+  stage text NOT NULL DEFAULT 'live' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
@@ -1117,6 +1118,11 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   CHECK (archive_after_days > stale_after_days),
   CHECK (retention_days >= archive_after_days)
 );
+-- Institutional memory is on by default. 'off'/'paused' are the explicit off
+-- switches; nothing starts in 'shadow'/'pilot', and the release migration
+-- (backfillInstitutionalMemoryRollout) advances any existing staged rows to
+-- 'live' and enrolls every Workspace that has no row yet.
+ALTER TABLE institutional_memory_workspace_rollouts ALTER COLUMN stage SET DEFAULT 'live';
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
 
@@ -1757,11 +1763,19 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_session_id text;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_toolkit text;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_ready boolean NOT NULL DEFAULT false;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_link_started_at timestamptz;
-ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS composio_scope jsonb;
+-- Composio is retired: apps connect through the one front door
+-- (\`connect_app\`). A persisted Composio row is only a pointer to a session at
+-- Composio, and no helper can serve it any more — a surviving \`installing\`
+-- row would even reach a new helper as an unknown install — so the row, its
+-- synthetic \`composio:<toolkit>\` connections and their receipts go. Every
+-- other connector's rows, keys and receipts are untouched, and the retired
+-- identity's receipt DMs stay readable (\`RETIRED_CONNECTOR_KINDS\`).
+DELETE FROM workspace_connectors WHERE connector_type='composio';
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_session_id;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_toolkit;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_ready;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_started_at;
+ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_scope;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
@@ -1897,6 +1911,56 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
+-- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
+-- person, whatever serves it: an official hosted MCP server (its Registry
+-- connector row), or Trusty Squire through an API key or the browser. The
+-- route decisions and every authorized use are ledgers of their own.
+CREATE TABLE IF NOT EXISTS workspace_apps (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  app_key text NOT NULL,
+  display_name text NOT NULL,
+  domain text,
+  transport text NOT NULL
+    CHECK (transport IN ('registry-mcp','squire-api','squire-browser')),
+  route text NOT NULL
+    CHECK (route IN ('workbench','registry-mcp','squire-api','squire-browser')),
+  connector_id uuid REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  machine_id text,
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','disconnected')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- The Workbench is the person's across Workspaces: one app, one row, one
+  -- permission decision. workspace_id is where its route was last chosen.
+  UNIQUE (owner_identity_id, app_key)
+);
+CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
+CREATE TABLE IF NOT EXISTS workspace_app_routes (
+  id uuid PRIMARY KEY,
+  app_id uuid NOT NULL REFERENCES workspace_apps(id) ON DELETE CASCADE,
+  route text NOT NULL,
+  transport text NOT NULL,
+  reason text NOT NULL,
+  requested_by text REFERENCES identities(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_app_routes_app_idx
+  ON workspace_app_routes(app_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS workspace_app_usage (
+  id uuid PRIMARY KEY,
+  app_id uuid NOT NULL REFERENCES workspace_apps(id) ON DELETE CASCADE,
+  agent_id text REFERENCES identities(id) ON DELETE SET NULL,
+  room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,
+  requester_id text,
+  transport text NOT NULL,
+  operation text NOT NULL,
+  grant_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_app_usage_app_idx
+  ON workspace_app_usage(app_id, created_at DESC);
+
 -- Wallet connector: the binding row (this account owns that wallet), never a
 -- secret. The one app-wide Coinbase credential lives in server secrets, and
 -- cdp_user_id holds the deterministic CDP account name (server-wallet model, not
@@ -1907,10 +1971,10 @@ CREATE TABLE IF NOT EXISTS wallet_bindings (
   cdp_user_id text NOT NULL,
   eoa_address text NOT NULL,
   solana_address text,
-  -- Delegated signing grant: the backend signs with the CDP key pair while
-  -- this stands; one user-scoped delegation at a time, expiring by default
-  -- in 24h. NULL until the user grants it the first time.
+  -- NULL expiry means either never granted or standing; the separate flag
+  -- distinguishes them. Legacy time-limited grants keep their timestamps.
   delegation_expires_at timestamptz,
+  delegation_standing boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1940,6 +2004,9 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await database.query(
+    `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
+  );
   await database.query(AGENT_COMMAND_SCHEMA);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
@@ -2005,9 +2072,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   );
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
+  await backfillInstitutionalMemoryRollout(database);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
+  await backfillRegistryApps(database);
   await upgradeGrantPolicy(database);
 }
 
@@ -2144,6 +2213,31 @@ export async function backfillAgentHandles(database: SqlDatabase): Promise<numbe
     console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
     return changed;
   });
+}
+
+/**
+ * Institutional memory is on by default, so every Workspace is enrolled at the
+ * `live` stage unless an operator explicitly turned it `off`/`paused`. Existing
+ * staged rows migrate to `live`; a Workspace with no row gets one. Idempotent:
+ * the explicit off switches survive, and re-running touches nothing else.
+ */
+export async function backfillInstitutionalMemoryRollout(database: SqlDatabase): Promise<number> {
+  const advanced = await database.query(
+    `UPDATE institutional_memory_workspace_rollouts
+     SET stage='live',updated_at=now()
+     WHERE stage IN ('shadow','pilot')`,
+  );
+  const enrolled = await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
+     SELECT id,'live' FROM workspaces
+     ON CONFLICT (workspace_id) DO NOTHING`,
+  );
+  const changed = advanced.rowCount + enrolled.rowCount;
+  if (changed)
+    console.log(
+      `backfillInstitutionalMemoryRollout: advanced ${advanced.rowCount}, enrolled ${enrolled.rowCount} Workspace rollout(s)`,
+    );
+  return changed;
 }
 
 /**

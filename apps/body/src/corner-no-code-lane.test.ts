@@ -537,8 +537,6 @@ async function upgradeTurn(
   let closeAfterReceipt = false;
   let delivered = false;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-    if (name === 'authorizeRepositoryCall' || name === 'authorizeHostCall')
-      return { allowed: true };
     if (name === 'getAgentCommands') {
       if (delivered) return { commandProtocol: 1, commands: [] };
       delivered = true;

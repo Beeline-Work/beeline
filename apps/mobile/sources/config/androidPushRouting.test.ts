@@ -117,7 +117,7 @@ function forwardedIntentFlags(activitySource: string): {
   const model = { always: [] as string[], whenColdPush: [] as string[] };
   let state: keyof typeof model = 'always';
   for (const line of activitySource.split('\n').map((entry) => entry.trim())) {
-    if (line.includes('intent?.hasExtra("google.message_id")') && line.includes('!PushRoutingState.mainActivityIsLive')) {
+    if (line.includes('if (pushTap && !PushRoutingState.mainActivityIsLive)')) {
       state = 'whenColdPush';
       continue;
     }
@@ -219,6 +219,9 @@ describe('Android push routing generated sources', () => {
     expect(sources['PushNotificationActivity.kt']).toContain(
       'Intent(this, MainActivity::class.java)',
     );
+    expect(sources['PushNotificationActivity.kt']).toContain('intent?.hasExtra("google.message_id") == true');
+    expect(sources['PushNotificationActivity.kt']).toContain('intent?.hasExtra("notificationResponse") == true');
+    expect(sources['PushNotificationActivity.kt']).toContain('intent?.hasExtra("textInputNotificationResponse") == true');
     expect(sources['PushNotificationActivity.kt']).toContain('putExtras(extras)');
   });
 });

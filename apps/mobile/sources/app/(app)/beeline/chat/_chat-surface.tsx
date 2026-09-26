@@ -2825,6 +2825,7 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
+      const dragSequence = dragEndSequenceRef.current;
       scheduleAnimationFrame(() => {
         if (desktopTranscript) {
           desktopRowNodesRef.current
@@ -2838,6 +2839,29 @@ export function BuzzChatSurface({
           viewPosition: 0.5,
           animated: false,
         });
+        // A first scroll can mount a distant variable-height row with its
+        // provisional frame. Once native measures that row, center the same
+        // durable id again; otherwise a sliver at the viewport edge can
+        // count as viewable while the message itself remains clipped.
+        for (const delay of [400, 1200]) {
+          setTimeout(() => {
+            if (
+              messageAnchorIdRef.current !== messageId ||
+              dragEndSequenceRef.current !== dragSequence ||
+              userDraggingRef.current
+            ) return;
+            const measuredIndex = transcriptMessagesRef.current.findIndex(
+              (message) => message.id === messageId || message.relayId === messageId,
+            );
+            if (measuredIndex >= 0) {
+              flatListRef.current?.scrollToIndex({
+                index: measuredIndex,
+                viewPosition: 0.5,
+                animated: false,
+              });
+            }
+          }, delay);
+        }
       });
       handledNotificationAnchorRef.current = anchorKey;
       return;

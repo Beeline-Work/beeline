@@ -1156,7 +1156,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      "Raise your hand for reach outside the sandbox: kind repository|path|host|secret|device|command|mcp with one target and the reason. Under yolo repository permissions skip prompts; personal resources skip prompts only for their owner as the original requester. Repository cards go to the Room for a Workspace admin or master; personal resource cards go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget prompt. Otherwise a card goes to the authorized approver and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
+      "Raise your hand for reach outside the sandbox: kind path|host|secret|device|command|mcp with one target and the reason. Opening and working in a corner, including its isolated checkout and shell, needs no grant. Personal resources skip prompts under yolo only for their owner as the original requester; otherwise cards go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget prompt. Otherwise a card goes to the authorized approver and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -1191,52 +1191,29 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
-    name: 'search_mcp_registry',
+    name: 'connect_app',
     description:
-      'Search the official MCP Registry by a concrete provider or product name. Returns bounded registry coordinates, presentation, provenance, transports, and declared secret-input NAMES only. Free to call and changes nothing. Search is name-based; try at most three concrete terms.',
+      'The ONE way to connect an app (a SaaS product or service) to the Workbench of the owner you run for. Name the app; the server chooses the route in a fixed order — an app already connected in Workbench, else the app’s official hosted MCP server, else Trusty Squire with an API key, else Squire in a browser — records it, and returns `next`: follow it exactly. Trusty Squire handles every sign-in, sign-up and payment; never paste a sign-in link or a key into chat. Call again after each step it asks for; repeating a call is safe. Whatever the route, every use is authorized as app:<key> and a refusal is final for that call — do not try another route instead. This is setup, not permission.',
     inputSchema: {
       type: 'object',
-      required: ['query'],
+      required: ['app', 'reason'],
       properties: {
-        query: { type: 'string', minLength: 1, maxLength: 120 },
-        limit: { type: 'integer', minimum: 1, maximum: 10 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'connect_mcp_server',
-    description:
-      'Connect the exact MCP Registry server name and version returned by search. The server freshly re-fetches that entry and ignores URLs or package commands from the model. This is setup, not permission. On needs_sign_in try the owner’s connected Trusty Squire browser first; use handoffToOwner only when Squire is unavailable or unable without emitting its own link.',
-    inputSchema: {
-      type: 'object',
-      required: ['serverName', 'version', 'reason'],
-      properties: {
-        serverName: { type: 'string', minLength: 1, maxLength: 240 },
-        version: { type: 'string', minLength: 1, maxLength: 120 },
+        app: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description: 'The app’s product name or website, e.g. "Linear" or "linear.app".',
+        },
         reason: { type: 'string', minLength: 1, maxLength: 500 },
-        handoffToOwner: { type: 'boolean' },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'composio_tools',
-    description:
-      'List the Composio tools approved for the owner of this active turn. Only a connected owner-owned Workbench connector can answer.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'composio_execute',
-    description:
-      'Run one approved Composio tool for the owner of this active turn. Call composio_tools first for the exact toolkit and tool slug. The server checks the owner, live connection and tool allowlist, then records a Workbench receipt.',
-    inputSchema: {
-      type: 'object',
-      required: ['toolkit', 'tool', 'arguments'],
-      properties: {
-        toolkit: { type: 'string' },
-        tool: { type: 'string' },
-        arguments: { type: 'object' },
+        reconnect: {
+          type: 'boolean',
+          description: 'Resolve an app in error again from the top of the route order.',
+        },
+        noApi: {
+          type: 'boolean',
+          description:
+            'Only after Squire established that the app offers no API: serve it through the browser instead.',
+        },
       },
       additionalProperties: false,
     },
@@ -1388,7 +1365,7 @@ export function agentToolsFor(
   reviewer = false,
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
-  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
@@ -1408,8 +1385,7 @@ export function agentToolsFor(
     if (
       tool.name === 'workbench_status' ||
       tool.name === 'offer_connector' ||
-      tool.name === 'search_mcp_registry' ||
-      tool.name === 'connect_mcp_server'
+      tool.name === 'connect_app'
     )
       return !cornerTurn;
     if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
@@ -1433,7 +1409,7 @@ const TOOLS = youtubeSurface
       process.env.BEELINE_CORNER_REVIEWER === '1',
       Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
       process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
-      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED === 'true',
+      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
       process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
     );
 
@@ -3024,15 +3000,7 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
-    registryServers?: Array<{
-      connectorId: string;
-      serverName: string;
-      version: string;
-      displayName: string;
-      status: string;
-      websiteUrl?: string;
-      onThisMachine: boolean;
-    }>;
+    apps?: Array<{ appKey: string; name: string; transport: string; status: string }>;
     machine?: { machineId: string; name: string };
   };
   const who = view.owner?.handle
@@ -3064,16 +3032,11 @@ export async function workbenchStatus(
     lines.push(
       `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
     );
-  lines.push('', 'Registry MCP servers:');
-  const registryServers = view.registryServers ?? [];
-  if (!registryServers.length) lines.push('- none');
-  for (const server of registryServers) {
-    lines.push(
-      `- ${server.displayName} (${server.serverName}@${server.version}): ${server.status}` +
-        `${server.onThisMachine ? ' on your machine' : ' on another machine'}` +
-        `${server.websiteUrl ? ` · ${server.websiteUrl}` : ''}`,
-    );
-  }
+  lines.push('', 'Apps (connect_app; each use is authorized as app:<key>):');
+  const apps = view.apps ?? [];
+  if (!apps.length) lines.push('- none');
+  for (const app of apps)
+    lines.push(`- ${app.name} (app:${app.appKey}) via ${app.transport}: ${app.status}`);
   if (deps.tailscaleReach) {
     const enabled = Boolean(
       view.catalog?.some(
@@ -3603,57 +3566,18 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
-    case 'search_mcp_registry': {
-      if (typeof args.query !== 'string' || !args.query.trim())
-        throw new Error('query must be a non-empty provider or product name');
-      const limit = args.limit === undefined ? undefined : Number(args.limit);
-      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10))
-        throw new Error('limit must be an integer from 1 to 10');
-      return JSON.stringify(
-        await daemonExecute('searchMcpRegistry', {
-          roomId: agentScheduleRoomId(),
-          query: args.query.trim(),
-          ...(limit !== undefined ? { limit } : {}),
-        }),
-      );
-    }
-    case 'connect_mcp_server': {
-      const serverName = stringArg(args, 'serverName')?.trim();
-      const version = stringArg(args, 'version')?.trim();
+    case 'connect_app': {
+      const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();
-      if (!serverName || !version || !reason)
-        throw new Error('serverName, version and reason are required');
+      if (!app || !reason) throw new Error('app and reason are required');
       const context = await activeCommandContext();
       return JSON.stringify(
-        await daemonExecute('connectMcpServer', {
+        await daemonExecute('connectApp', {
           ...context,
-          serverName,
-          version,
+          app,
           reason,
-          ...(args.handoffToOwner === true ? { handoffToOwner: true } : {}),
-        }),
-      );
-    }
-    case 'composio_tools': {
-      const context = await activeCommandContext();
-      return JSON.stringify(await daemonExecute('getComposioTools', context));
-    }
-    case 'composio_execute': {
-      const context = await activeCommandContext();
-      if (
-        typeof args.toolkit !== 'string' ||
-        typeof args.tool !== 'string' ||
-        !args.arguments ||
-        typeof args.arguments !== 'object' ||
-        Array.isArray(args.arguments)
-      )
-        throw new Error('Composio toolkit, tool and arguments are required');
-      return JSON.stringify(
-        await daemonExecute('executeComposioTool', {
-          ...context,
-          toolkit: args.toolkit,
-          tool: args.tool,
-          arguments: args.arguments,
+          ...(args.reconnect === true ? { reconnect: true } : {}),
+          ...(args.noApi === true ? { noApi: true } : {}),
         }),
       );
     }

@@ -843,10 +843,16 @@ export async function runInstitutionalCuratorCycle(
     archive_after_days: number;
     retention_days: number;
   }>(
-    `SELECT workspace_id,stage,auto_advance,stale_after_days,archive_after_days,retention_days
-     FROM institutional_memory_workspace_rollouts
-     WHERE stage IN ('shadow','pilot','live')
-     ORDER BY workspace_id`,
+    `SELECT workspace.id workspace_id,COALESCE(rollout.stage,'live') stage,
+            COALESCE(rollout.auto_advance,false) auto_advance,
+            COALESCE(rollout.stale_after_days,30) stale_after_days,
+            COALESCE(rollout.archive_after_days,90) archive_after_days,
+            COALESCE(rollout.retention_days,365) retention_days
+     FROM workspaces workspace
+     LEFT JOIN institutional_memory_workspace_rollouts rollout
+       ON rollout.workspace_id=workspace.id
+     WHERE COALESCE(rollout.stage,'live') IN ('shadow','pilot','live')
+     ORDER BY workspace.id`,
   );
   const week = utcWeekKey(now);
   let queued = 0;

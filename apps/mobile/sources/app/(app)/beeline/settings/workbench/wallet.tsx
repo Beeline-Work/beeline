@@ -12,6 +12,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
@@ -41,7 +42,9 @@ function activityStamp(createdAt: number, now: number = Date.now()): string {
  */
 export default function WalletScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
-  const workspaceId = firstParam(params.workspaceId) ?? '';
+  const routeWorkspaceId = firstParam(params.workspaceId);
+  const [workspaceId, setWorkspaceId] = useState<string | null | undefined>(undefined);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [history, setHistory] = useState<WalletLedgerEntry[] | null>(null);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
@@ -52,7 +55,23 @@ export default function WalletScreen() {
   const [copied, setCopied] = useState(false);
   const insets = useSafeAreaInsets();
 
+  useEffect(() => {
+    let cancelled = false;
+    void resolveWalletWorkspaceId(routeWorkspaceId)
+      .then((id) => {
+        if (!cancelled) setWorkspaceId(id);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setWorkspaceError('Could not verify your Workspace. Try opening Wallet again.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routeWorkspaceId]);
+
   const load = useCallback(async () => {
+    if (!workspaceId) return;
     try {
       const view = await getWalletSource().readWallet({ workspaceId });
       setWallet(view);
@@ -75,6 +94,7 @@ export default function WalletScreen() {
   }, [load]);
 
   const grant = useCallback(async () => {
+    if (!workspaceId) return;
     setGranting(true);
     setGrantError(null);
     try {
@@ -115,6 +135,17 @@ export default function WalletScreen() {
   );
   const screenStyle = [styles.container, { paddingTop: insets.top }];
 
+  if (workspaceId === null || workspaceError) {
+    return (
+      <View style={screenStyle}>
+        {header}
+        <Text testID="wallet-workspace-missing">
+          {workspaceError ?? 'Join or select a Workspace, then open Wallet again.'}
+        </Text>
+      </View>
+    );
+  }
+
   if (error && wallet === null) {
     return (
       <View style={screenStyle}>
@@ -144,9 +175,7 @@ export default function WalletScreen() {
             {needsGrant ? (
               <SettingsRow
                 action={granting ? undefined : 'grant'}
-                description={
-                  grantError ?? 'Your agents need permission again to spend.'
-                }
+                description={grantError ?? 'Your agents need permission again to spend.'}
                 descriptionTone={grantError ? 'danger' : undefined}
                 onPress={grant}
                 statusGlyph={granting ? 'pulse' : undefined}
@@ -340,7 +369,12 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
+    centered: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: hull.space.xl,
+      gap: hull.space.md,
+    },
     activityLoading: { alignItems: 'flex-start', paddingVertical: hull.space.sm },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.space.xs, paddingBottom: hull.space.xxl },

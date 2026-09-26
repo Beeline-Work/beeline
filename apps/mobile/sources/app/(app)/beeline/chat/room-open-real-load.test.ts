@@ -101,5 +101,9 @@ describe('Room open paints a Room, not the last message', () => {
     expect(failedIndex).toContain('notification.messageId');
     expect(failedIndex).toContain('scrollToOffset');
     expect(failedIndex).toContain('scrollToIndex');
+    // The first native frame can report a clipped sliver as viewable. A
+    // measured re-center keeps that provisional frame from ending the jump.
+    expect(surface).toContain('for (const delay of [400, 1200])');
+    expect(surface).toContain('dragEndSequenceRef.current !== dragSequence');
   });
 });

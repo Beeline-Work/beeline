@@ -8,7 +8,6 @@ import {
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { GoogleOAuth } from './google-oauth.js';
-import { approvedComposioTools, composioScopeForOwner } from './composio-config.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
@@ -146,7 +145,10 @@ import type {
   ConnectorStatus,
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
+import { connectApp, disconnectApp, readOwnerApps } from './app-connections.js';
+import { McpRegistryClient } from './mcp-registry.js';
 import {
+  APP_INPUT_MAX_LENGTH,
   CONNECTOR_ADAPTER_DENIED,
   connectorAdapter,
   connectorRequesterRole,
@@ -721,6 +723,7 @@ export class PhoneService {
     private readonly enrichmentDatabase: SqlDatabase = database,
     private readonly objects?: ObjectService,
     private readonly googleOAuth?: GoogleOAuth,
+    private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -3031,6 +3034,15 @@ export class PhoneService {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
     const scope = input as { workspaceId?: string; roomId?: string };
+    // The spectator guard below casts nonempty scope ids to uuid. Wallet
+    // grants need a plain input error before that generic SQL gate runs.
+    if (
+      name === 'grantWalletDelegation' &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        scope.workspaceId ?? '',
+      )
+    )
+      throw new Error('valid Workspace ID required');
     if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name)) {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
@@ -3366,6 +3378,14 @@ export class PhoneService {
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
         return undefined as Output<Name>;
+      case 'connectWorkbenchApp':
+        return (await this.connectWorkbenchApp(
+          input as Input<'connectWorkbenchApp'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'disconnectWorkbenchApp':
+        await this.disconnectWorkbenchApp(input as Input<'disconnectWorkbenchApp'>, viewerId);
+        return undefined as Output<Name>;
       case 'createWallet':
         return (await createWallet(
           this.database,
@@ -3386,6 +3406,12 @@ export class PhoneService {
           input as unknown as Input<'sendFromWallet'>,
         )) as Output<Name>;
       case 'grantWalletDelegation':
+        // The wallet is human-owned, but its receipt must stay in a Workspace
+        // where that human is currently a member.
+        await this.requireWorkspaceMember(
+          (input as Input<'grantWalletDelegation'>).workspaceId,
+          viewerId,
+        );
         return (await grantWalletDelegation(
           this.database,
           viewerId,
@@ -6779,7 +6805,6 @@ export class PhoneService {
         squire_version: string | null;
         signed_in_as: string | null;
         sign_in: ConnectorStatus['signIn'] | null;
-        composio_scope: unknown;
         registry_server_name: string | null;
         registry_version: string | null;
         display_name: string | null;
@@ -6793,7 +6818,7 @@ export class PhoneService {
                           WHERE sibling.machine_id=c.machine_id
                             AND sibling.owner_id=c.owner_identity_id),i.name) helper_name,
                 c.squire_version,
-                c.signed_in_as,c.sign_in,c.composio_scope,c.registry_server_name,
+                c.signed_in_as,c.sign_in,c.registry_server_name,
                 c.registry_version,c.display_name,c.website_url,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
@@ -6861,32 +6886,32 @@ export class PhoneService {
       )
     ).rows;
 
+    const apps = await readOwnerApps(this.database, viewerId);
     const walletRow = (
-      await this.database.query<{ created_at: Date; delegation_expires_at: Date | null }>(
-        `SELECT created_at,delegation_expires_at FROM wallet_bindings WHERE identity_id=$1`,
+      await this.database.query<{
+        created_at: Date;
+        delegation_expires_at: Date | null;
+        delegation_standing: boolean;
+      }>(
+        `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
       catalog: connectorCatalog().map((entry) =>
-        (isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth) ||
-        (entry.connectorType === 'composio' && !composioScopeForOwner(viewerId))
+        isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
           ? { ...entry, available: false }
-          : entry.connectorType === 'composio'
-            ? {
-                ...entry,
-                approvedTools: Object.values(composioScopeForOwner(viewerId)!.tools).flat(),
-              }
-            : entry,
+          : entry,
       ),
       ...(walletRow
         ? {
             wallet: {
               createdAt: seconds(walletRow.created_at),
               delegationActive:
-                walletRow.delegation_expires_at !== null &&
-                walletRow.delegation_expires_at.getTime() > Date.now(),
+                walletRow.delegation_standing ||
+                (walletRow.delegation_expires_at !== null &&
+                  walletRow.delegation_expires_at.getTime() > Date.now()),
               delegationExpiresAt: walletRow.delegation_expires_at
                 ? seconds(walletRow.delegation_expires_at)
                 : null,
@@ -6898,6 +6923,7 @@ export class PhoneService {
         name: row.name,
         online: row.online,
       })),
+      apps,
       connectors: connectors.map((row) => ({
         connectorId: row.id,
         connectorType: row.connector_type,
@@ -6912,9 +6938,6 @@ export class PhoneService {
           ...(row.status_error ? { errorMessage: row.status_error } : {}),
         } as ConnectorStatus,
         helperAgentId: row.helper_agent_id,
-        ...(row.connector_type === 'composio'
-          ? { approvedTools: approvedComposioTools(row.composio_scope, viewerId) }
-          : {}),
         ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
         ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
         ...(row.display_name ? { displayName: row.display_name } : {}),
@@ -6952,12 +6975,13 @@ export class PhoneService {
     };
   }
 
-  async pairConnector(
-    input: Input<'pairConnector'>,
-    viewerId: string,
-  ): Promise<Output<'pairConnector'>> {
-    if (!isConnectableConnector(input.connectorType))
-      throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
+  /**
+   * One of the viewer's own machines, as the connector queue needs it: the
+   * machine, the agent on it with the freshest live presence, and a Workspace
+   * the viewer shares with that agent.
+   */
+  private async resolveViewerHelper(helperAgentId: string, viewerId: string) {
+    const input = { helperAgentId };
     // The input helperAgentId may be a machine_id (from a new client) or an
     // agent_id (back-compat from an older client). Resolve it to a machine:
     // if it matches an agent's machine_id, use that machine; otherwise treat
@@ -7009,6 +7033,88 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
+    return { matched, machineId, ws };
+  }
+
+  /**
+   * Workbench → Connect an app: the one front door, from a person. The server
+   * resolves and records the route exactly as `connect_app` does, then hands
+   * any sign-in or sign-up to the chosen machine's agent as the viewer's own
+   * request in their DM with it — that agent completes it through Trusty
+   * Squire at the owner's approval boundary, so no ceremony link is ever
+   * handed out here.
+   */
+  async connectWorkbenchApp(
+    input: Input<'connectWorkbenchApp'>,
+    viewerId: string,
+  ): Promise<Output<'connectWorkbenchApp'>> {
+    const app = typeof input.app === 'string' ? input.app.trim() : '';
+    if (!app || app.length > APP_INPUT_MAX_LENGTH) throw new Error('app name is required');
+    const { matched, machineId, ws } = await this.resolveViewerHelper(
+      input.helperAgentId,
+      viewerId,
+    );
+    const dm = await this.resolveDirectMessage(
+      { workspaceId: ws.workspace_id, participantId: matched.agent_id },
+      viewerId,
+    );
+    const outcome = await connectApp(this.database, this.mcpRegistry, {
+      workspaceId: ws.workspace_id,
+      ownerId: viewerId,
+      machineId,
+      helperAgentId: matched.agent_id,
+      requestedBy: viewerId,
+      app,
+      reconnect: input.reconnect === true,
+      installRoomId: dm.id,
+      installCommandId: null,
+    });
+    if (outcome.status === 'unavailable') throw new Error(outcome.next);
+    if (!outcome.appId || !outcome.transport) throw new Error(outcome.next);
+    if (outcome.status === 'connecting' || outcome.status === 'needs_sign_in') {
+      const agent = (
+        await this.database.query<{ handle: string | null }>(
+          `SELECT handle FROM identities WHERE id=$1`,
+          [matched.agent_id],
+        )
+      ).rows[0];
+      const verb = input.reconnect ? 'Reconnect' : 'Connect';
+      await this.sendMessage(
+        {
+          roomId: dm.id,
+          text: `${agent?.handle ? `@${agent.handle} ` : ''}${verb} ${outcome.name ?? app} to my Workbench.`,
+        },
+        viewerId,
+      );
+    }
+    return {
+      appId: outcome.appId,
+      status: outcome.derived ?? 'connecting',
+      transport: outcome.transport,
+      ...(outcome.route ? { route: outcome.route } : {}),
+    };
+  }
+
+  async disconnectWorkbenchApp(
+    input: Input<'disconnectWorkbenchApp'>,
+    viewerId: string,
+  ): Promise<void> {
+    // `workspaceId` is accepted for wire compatibility; an app is the
+    // viewer's own across Workspaces, so ownership is the whole check.
+    const result = await disconnectApp(this.database, { ownerId: viewerId, appId: input.appId });
+    if (result.helperAgentId) await notifyConnectorAssignment(this.database, result.helperAgentId);
+  }
+
+  async pairConnector(
+    input: Input<'pairConnector'>,
+    viewerId: string,
+  ): Promise<Output<'pairConnector'>> {
+    if (!isConnectableConnector(input.connectorType))
+      throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
+    const { matched, machineId, ws } = await this.resolveViewerHelper(
+      input.helperAgentId,
+      viewerId,
+    );
     return this.database.transaction((database) =>
       this.armConnectorPairing(database, {
         workspaceId: ws.workspace_id,
@@ -7039,10 +7145,6 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
-    const composioScope =
-      input.connectorType === 'composio' ? composioScopeForOwner(input.ownerIdentityId) : undefined;
-    if (input.connectorType === 'composio' && !composioScope)
-      throw new Error('Composio scope is not configured on this Beeline server');
     if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
       throw new Error('Google OAuth is not configured on this Beeline server');
     const adapter = connectorAdapter(input.connectorType);
@@ -7074,8 +7176,8 @@ export class PhoneService {
     await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-         status,status_steps,pairing_generation,composio_scope
-       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1,$8::jsonb)
+         status,status_steps,pairing_generation
+       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb,1)
        ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id)
          WHERE connector_type <> 'registry-mcp' DO UPDATE
        SET helper_agent_id=EXCLUDED.helper_agent_id,
@@ -7086,12 +7188,6 @@ export class PhoneService {
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,
-           composio_session_id=CASE WHEN EXCLUDED.connector_type='composio'
-             THEN NULL ELSE workspace_connectors.composio_session_id END,
-           composio_link_toolkit=NULL,
-           composio_ready=false,
-           composio_link_started_at=NULL,
-           composio_scope=EXCLUDED.composio_scope,
            pairing_generation=workspace_connectors.pairing_generation + 1,
            updated_at=now()`,
       [
@@ -7101,15 +7197,7 @@ export class PhoneService {
         input.connectorType,
         matched.agent_id,
         machineId,
-        JSON.stringify(
-          input.connectorType === 'composio'
-            ? [
-                { label: 'Prepare Composio session', status: 'pending' },
-                { label: 'Link account', status: 'pending' },
-              ]
-            : defaultConnectorSteps(),
-        ),
-        composioScope ? JSON.stringify(composioScope) : null,
+        JSON.stringify(defaultConnectorSteps()),
       ],
     );
     // A conflicting row (a previous pairing of the same connector on the same
@@ -8164,6 +8252,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWorkbench',
   'pairConnector',
   'unpairConnector',
+  'connectWorkbenchApp',
+  'disconnectWorkbenchApp',
   'readConnectionDetail',
   'revokeConnectionGrants',
   'createWallet',

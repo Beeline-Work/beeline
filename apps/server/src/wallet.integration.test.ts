@@ -1,7 +1,7 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
@@ -92,6 +92,7 @@ describe('wallet over the fake CDP seam', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (database) await database.close();
   });
@@ -178,6 +179,120 @@ describe('wallet over the fake CDP seam', () => {
       avatar: 'http://placeholder/v1/connectors/logo/wallet.svg',
     });
     expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
+  });
+
+  it('rejects missing, malformed, and inaccessible grant Workspaces before changing expiry', async () => {
+    await createdWallet();
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=now() - interval '1 hour' WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(false);
+    const otherWorkspace = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    for (const [payload, expected] of [
+      [{}, 'valid Workspace ID required'],
+      [{ workspaceId: '' }, 'valid Workspace ID required'],
+      [{ workspaceId: 'not-a-uuid' }, 'valid Workspace ID required'],
+      [{ workspaceId: otherWorkspace }, 'workspace membership required'],
+    ] as const) {
+      const response = await fetch(`${origin}/v1/phone/operations/grantWalletDelegation`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe(expected);
+      const expiry = (
+        await database.query<{ active: boolean }>(
+          `SELECT delegation_expires_at > now() AS active FROM wallet_bindings WHERE identity_id=$1`,
+          [HUMAN],
+        )
+      ).rows[0];
+      expect(expiry?.active).toBe(false);
+    }
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(true);
+    const expiry = (
+      await database.query<{ active: boolean; expires_at: Date | null }>(
+        `SELECT delegation_standing AS active,delegation_expires_at AS expires_at FROM wallet_bindings WHERE identity_id=$1`,
+        [HUMAN],
+      )
+    ).rows[0];
+    expect(expiry?.active).toBe(true);
+    expect(expiry?.expires_at).toBeNull();
+  });
+
+  it('distinguishes never granted, legacy timed, expired, standing, and revoked states', async () => {
+    await createdWallet();
+    const read = async () =>
+      (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+        delegation: { active: boolean; expiresAt: number | null };
+      };
+    expect((await read()).delegation).toEqual({ active: false, expiresAt: null });
+
+    const legacyExpiry = new Date(Date.now() + 3_600_000);
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=$2 WHERE identity_id=$1`,
+      [HUMAN, legacyExpiry],
+    );
+    expect((await read()).delegation).toEqual({ active: true, expiresAt: legacyExpiry.getTime() });
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=now() - interval '1 hour' WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect((await read()).delegation.active).toBe(false);
+
+    expect(await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE })).toEqual({
+      expiresAt: null,
+    });
+    expect((await read()).delegation).toEqual({ active: true, expiresAt: null });
+    const grantCard = (
+      await database.query<{ text: string; card: { standing: boolean } }>(
+        `SELECT text,card FROM messages WHERE card_type='wallet-delegation' ORDER BY created_at DESC LIMIT 1`,
+      )
+    ).rows[0];
+    expect(grantCard?.text).toContain('until revoked');
+    expect(grantCard?.card).toEqual({ standing: true });
+    const workbench = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      wallet: { delegationActive: boolean; delegationExpiresAt: number | null };
+    };
+    expect(workbench.wallet).toMatchObject({ delegationActive: true, delegationExpiresAt: null });
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_standing=false WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect((await read()).delegation).toEqual({ active: false, expiresAt: null });
+    expect(
+      (
+        (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+          wallet: { delegationActive: boolean };
+        }
+      ).wallet.delegationActive,
+    ).toBe(false);
+    expect(
+      (
+        await daemonOperation('walletPay', {
+          agentId: HELPER,
+          chain: 'base',
+          asset: 'usdc',
+          amount: '1',
+          to: '0xabc',
+        })
+      ).body.outcome,
+    ).toBe('delegation-expired');
   });
 
   it('a failing history read does not break createWallet or readWallet', async () => {
@@ -276,6 +391,32 @@ describe('wallet over the fake CDP seam', () => {
       totalUsd: string;
     };
     expect(after.totalUsd).toBe(view.totalUsd === '$0.00' ? '$380.00' : after.totalUsd);
+  });
+
+  it('a grant still authorizes agent send and swap after 24 hours', async () => {
+    await createdWallet();
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const grantedAt = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(grantedAt + 25 * 3_600_000);
+
+    const pay = await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '10',
+      to: '0xabc',
+    });
+    expect(pay.body.outcome).toBe('sent');
+
+    const swap = await daemonOperation('walletSwap', {
+      agentId: HELPER,
+      chain: 'base',
+      fromAsset: 'usdc',
+      toAsset: 'eth',
+      amount: '10',
+    });
+    expect(swap.body.outcome).toBe('sent');
   });
 
   it('every @wallet DM line is authored by the wallet connector identity, never the agent', async () => {

@@ -35,7 +35,13 @@ class PushNotificationActivity : Activity() {
     super.onCreate(savedInstanceState)
     val destination = Intent(this, MainActivity::class.java)
     destination.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    if (intent?.hasExtra("google.message_id") == true && !PushRoutingState.mainActivityIsLive) {
+    // FCM notification-block taps carry google.message_id. Expo's data-only
+    // delivery uses NotificationForwarderActivity and marshals the response
+    // under notificationResponse instead; either form is an actual push tap.
+    val pushTap = intent?.hasExtra("google.message_id") == true ||
+      intent?.hasExtra("notificationResponse") == true ||
+      intent?.hasExtra("textInputNotificationResponse") == true
+    if (pushTap && !PushRoutingState.mainActivityIsLive) {
       destination.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
     }
     val extras = intent?.extras

@@ -131,38 +131,7 @@ describe('MonolithWorkbenchSource connections', () => {
     expect(view.connections[0].faviconDomain).toBeUndefined();
   });
 
-  it('shows the paired Composio scope even after the server catalog changes', async () => {
-    const dto = workbenchDto([]);
-    state.readWorkbenchOutput = {
-      ...dto,
-      catalog: [
-        ...dto.catalog,
-        {
-          connectorType: 'composio',
-          name: 'Composio',
-          available: true,
-        approvedTools: ['GITHUB_DELETE_REPO'],
-        },
-      ],
-      connectors: [
-        {
-          connectorId: 'composio-row',
-          connectorType: 'composio',
-        status: { status: 'connected', steps: [] },
-        approvedTools: ['GITHUB_GET_AN_ISSUE'],
-        },
-      ],
-    };
-    const view = await new MonolithWorkbenchSource().readWorkbench({
-      workspaceId: 'ws1',
-      viewerId: 'human-dani',
-    });
-    expect(view.connectors.find((connector) => connector.id === 'composio')?.description).toContain(
-      'Approved tools: GITHUB_GET_AN_ISSUE.',
-    );
-  });
-
-  it('appends dynamic Registry servers after the fixed catalog and keys them by connector row', async () => {
+  it('shows each app as one row, whatever serves it, and no Registry row of its own', async () => {
     const dto = workbenchDto([]);
     state.readWorkbenchOutput = {
       ...dto,
@@ -173,8 +142,22 @@ describe('MonolithWorkbenchSource connections', () => {
           registryServerName: 'app.linear/linear',
           registryVersion: '1.0.1',
           displayName: 'Linear',
-          websiteUrl: 'https://linear.app/',
           status: { status: 'connected', steps: [], signIn: null },
+        },
+      ],
+      apps: [
+        {
+          appId: 'app-linear',
+          appKey: 'linear',
+          name: 'Linear',
+          domain: 'linear.app',
+          transport: 'registry-mcp',
+          route: 'registry-mcp',
+          status: 'connected',
+          helperName: 'Owner laptop',
+          helperId: 'machine-one',
+          useCount: 3,
+          createdAt: 1,
         },
       ],
     };
@@ -182,14 +165,58 @@ describe('MonolithWorkbenchSource connections', () => {
       workspaceId: 'ws1',
       viewerId: 'human-dani',
     });
-    expect(view.connectors.at(-1)).toEqual(
-      expect.objectContaining({
-        id: 'registry-row-uuid',
+    expect(view.connectors.map((connector) => connector.id)).not.toContain('registry-row-uuid');
+    expect(view.apps).toEqual([
+      {
+        id: 'app-linear',
+        key: 'linear',
         name: 'Linear',
+        domain: 'linear.app',
+        transport: 'registry-mcp',
         status: 'connected',
-        description: 'app.linear/linear@1.0.1 · https://linear.app/',
-      }),
-    );
+        helperName: 'Owner laptop',
+        helperId: 'machine-one',
+        useCount: 3,
+      },
+    ]);
+  });
+
+  it('reads an older server with no apps as none', async () => {
+    state.readWorkbenchOutput = workbenchDto([]);
+    const view = await new MonolithWorkbenchSource().readWorkbench({
+      workspaceId: 'ws1',
+      viewerId: 'human-dani',
+    });
+    expect(view.apps).toEqual([]);
+  });
+});
+
+describe('MonolithWorkbenchSource apps', () => {
+  afterEach(() => {
+    state.calls.length = 0;
+  });
+
+  it('connects through the one front door and disconnects by app id', async () => {
+    const source = new MonolithWorkbenchSource();
+    await source.connectApp({ workspaceId: 'ws1', app: 'Linear', helperId: 'machine-one' });
+    await source.connectApp({
+      workspaceId: 'ws1',
+      app: 'linear',
+      helperId: 'machine-one',
+      reconnect: true,
+    });
+    await source.disconnectApp({ workspaceId: 'ws1', appId: 'app-linear' });
+    expect(state.calls).toEqual([
+      {
+        op: 'connectWorkbenchApp',
+        input: { workspaceId: 'ws1', app: 'Linear', helperAgentId: 'machine-one' },
+      },
+      {
+        op: 'connectWorkbenchApp',
+        input: { workspaceId: 'ws1', app: 'linear', helperAgentId: 'machine-one', reconnect: true },
+      },
+      { op: 'disconnectWorkbenchApp', input: { workspaceId: 'ws1', appId: 'app-linear' } },
+    ]);
   });
 });
 

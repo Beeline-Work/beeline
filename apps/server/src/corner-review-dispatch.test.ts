@@ -112,9 +112,7 @@ class FailOnce implements SqlDatabase {
     return this.inner.query<Row>(sql, values);
   }
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.inner.transaction((inner) =>
-      work(new FailOnce(inner, this.match, this.owner)),
-    );
+    return this.inner.transaction((inner) => work(new FailOnce(inner, this.match, this.owner)));
   }
 }
 
@@ -342,19 +340,39 @@ describe('corner message attribution', () => {
       expect(blocked.allowed).toBe(false);
       // The server states the wait in the corner, authored by the agent whose
       // turn stopped, and names the approver for the host gate.
-      const line = (
-        await db.query<{ text: string; author_id: string; presentation: string }>(
-          `SELECT text,author_id,presentation FROM messages
-           WHERE room_id=$1 AND presentation='system' AND text LIKE '%is waiting for%'`,
-          [C],
-        )
-      ).rows[0]!;
-      expect(line.author_id).toBe(B);
-      expect(line.text).toBe(
+      const waiting = () =>
+        db
+          .query<{ text: string; author_id: string; created_at: Date }>(
+            `SELECT text,author_id,created_at FROM messages
+           WHERE room_id=$1 AND presentation='system' AND text LIKE '%is waiting for%'
+           ORDER BY created_at`,
+            [C],
+          )
+          .then((r) => r.rows);
+      const lines = await waiting();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.author_id).toBe(B);
+      expect(lines[0]!.text).toBe(
         gate === 'authorizeHostCall'
           ? '@goosy is waiting for @human to approve host access'
           : '@goosy is waiting for a Workspace admin to approve repository access',
       );
+      // The notice never sorts above the message that provoked it.
+      const cause = (
+        await db.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [
+          review!.sourceMessageId,
+        ])
+      ).rows[0]!;
+      expect(lines[0]!.created_at.getTime()).toBeGreaterThanOrEqual(
+        cause.created_at.getTime() + 1_000,
+      );
+      // A retried authorization inside the SAME turn collides on identity.
+      await daemon.execute(
+        gate,
+        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1' },
+        B,
+      );
+      expect(await waiting()).toHaveLength(1);
       // The body posts no reply on this path; the turn settles as a plain
       // complete receipt. A system line is never a reviewer verdict, so the
       // worker is not woken and the handback budget is untouched.
@@ -378,6 +396,28 @@ describe('corner message attribution', () => {
           )
         ).rows[0]?.review_handback_count,
       ).toBe(0);
+      // A LATER turn blocked by the same still-pending grant is its own wake,
+      // so it speaks rather than settling silently.
+      const again = await systemLine(db, {
+        roomId: C,
+        authorId: H,
+        subject: { kind: 'person', id: H, name: 'Human' },
+        verb: 'requested work',
+      });
+      await createAgentCommand(db, {
+        roomId: C,
+        agentId: B,
+        sourceMessageId: again.id,
+        reason: 'corner_objective',
+      });
+      const next = (await commands(B, C)).find((command) => command.id !== review!.id)!;
+      await claim(next, 'g2');
+      await daemon.execute(
+        gate,
+        { roomId: C, requestId: next.turnRequestId, generationId: 'g2' },
+        B,
+      );
+      expect(await waiting()).toHaveLength(2);
     },
   );
 
@@ -406,10 +446,9 @@ describe('corner message attribution', () => {
     expect(await stored(verdict)).toBe(0);
     expect(
       (
-        await db.query<{ state: string }>(
-          `SELECT state FROM agent_commands WHERE id=$1`,
-          [review!.id],
-        )
+        await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          review!.id,
+        ])
       ).rows[0]?.state,
     ).toBe('claimed');
     expect(await commands(A, C)).toEqual([]);
@@ -429,28 +468,40 @@ describe('corner message attribution', () => {
     await greenHead(19, '1'.repeat(40));
     const [firstReview] = await commands(B, C);
     await claim(firstReview!);
-    await result(firstReview!, 'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.');
+    await result(
+      firstReview!,
+      'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.',
+    );
     const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
     expect(repair).toBeDefined();
     await claim(repair!);
     await result(repair!, 'Fixed F1; the agreed label is present and the affected check passed.');
-    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [C])).rowCount).toBe(0);
+    expect(
+      (await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [C])).rowCount,
+    ).toBe(0);
 
     await greenHead(19, '2'.repeat(40));
     const [secondReview] = await commands(B, C);
     expect(secondReview).toBeDefined();
     await claim(secondReview!);
     await expect(
-      daemon.execute('approveCornerMerge', {
-        cornerId: C,
-        headSha: '2'.repeat(40),
-        briefRevision: 1,
-      }, B),
+      daemon.execute(
+        'approveCornerMerge',
+        {
+          cornerId: C,
+          headSha: '2'.repeat(40),
+          briefRevision: 1,
+        },
+        B,
+      ),
     ).resolves.toMatchObject({ status: 'approved', headSha: '2'.repeat(40) });
     expect(
-      (await db.query<{ head_sha: string; brief_revision: number }>(
-        `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`, [C],
-      )).rows,
+      (
+        await db.query<{ head_sha: string; brief_revision: number }>(
+          `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows,
     ).toEqual([{ head_sha: '2'.repeat(40), brief_revision: 1 }]);
   });
 
@@ -655,7 +706,11 @@ describe('corner message attribution', () => {
           JSON.stringify({
             checks: 'passing',
             lifecycle: 'in-review',
-            pr: { number: 10, url: 'https://github.com/acme/repo/pull/10', headSha: '4'.repeat(40) },
+            pr: {
+              number: 10,
+              url: 'https://github.com/acme/repo/pull/10',
+              headSha: '4'.repeat(40),
+            },
           }),
         ],
       );

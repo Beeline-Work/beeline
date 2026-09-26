@@ -4817,12 +4817,7 @@ export class DaemonService {
           ownerHandle: context.owner_handle,
           grantId: pending.id,
         });
-      return {
-        allowed: false,
-        grantId: pending.id,
-        status: 'pending' as const,
-        ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
-      };
+      return { allowed: false, grantId: pending.id, status: 'pending' as const };
     }
     const asked = await this.requestAgentGrant(
       {
@@ -4851,7 +4846,6 @@ export class DaemonService {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
-      ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
   }
@@ -4859,9 +4853,11 @@ export class DaemonService {
   /**
    * A gate that stopped a corner turn before its harness could start is a fact
    * the SERVER states, not prose the agent wrote. Inscribing it here, once per
-   * pending grant (the derived id makes a retried turn collide instead of
-   * repeating), is what keeps it out of `postRoomMessage`: a system line is
-   * never an agent reply, so it never reaches `routeAgentResult`,
+   * pending grant per TURN (the derived id carries the grant and the turn
+   * request, so a retried authorization inside one turn collides while a later
+   * turn blocked on the same grant still speaks instead of settling silently),
+   * is what keeps it out of `postRoomMessage`: a system line is never an agent
+   * reply, so it never reaches `routeAgentResult`,
    * `queueCornerWorkerAfterReview` or the review-handback limit. The daemon
    * writes no message and records a plain `complete` receipt, so neither gate
    * can settle as the calm `had nothing to add` line.
@@ -4878,7 +4874,9 @@ export class DaemonService {
     readonly grantId: string;
   }) {
     const id = createHash('sha256')
-      .update(`blocked-corner-gate:v1:${input.grantId}`)
+      .update(
+        `blocked-corner-gate:v1:${input.grantId}:${this.authorizedCommand?.turn_request_id ?? ''}`,
+      )
       .digest('hex');
     const line = await systemLine(this.database, {
       id,
@@ -4891,6 +4889,9 @@ export class DaemonService {
             ? `${input.ownerHandle ? `@${input.ownerHandle}` : 'its owner'} to approve host access`
             : 'a Workspace admin to approve repository access',
       },
+      ...(this.authorizedCommand?.source_message_id
+        ? { afterMessageId: this.authorizedCommand.source_message_id }
+        : {}),
     });
     if (line.inserted)
       this.live.publish({

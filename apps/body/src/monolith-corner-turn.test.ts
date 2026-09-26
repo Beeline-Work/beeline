@@ -188,7 +188,7 @@ describe('corner merge instructions', () => {
       const agent = stored('11'.repeat(32), 'Bee');
       const execute = vi.fn(async (name: string) =>
         name === gate
-          ? { allowed: false, status: 'pending', ownerHandle: 'moonscannerai' }
+          ? { allowed: false, status: 'pending' }
           : { allowed: true, id: 'write', createdAt: 1 },
       );
       const scheduler = new SessionScheduler({ maxLiveSessions: 1 });

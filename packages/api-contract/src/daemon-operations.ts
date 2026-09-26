@@ -991,8 +991,6 @@ export type AuthorizeSquireCallResult = {
   readonly grantId?: string;
   readonly status?: AgentGrantStatus;
   readonly messageId?: string;
-  /** Handle of the human whose private approval can unblock a pending personal-resource grant. */
-  readonly ownerHandle?: string;
 };
 
 // ── Connector offers (R5) ─────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
   INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
@@ -18,9 +19,41 @@ type SearchRow = {
   text: string;
   created_at: Date;
   rank: number;
-  total_count: string;
-  authorized_room_count: string;
+  matched_count: string;
 };
+
+/**
+ * Params: $1 output Room, $2 durable requester, $3 Workspace, $4 answering agent.
+ * A source Room qualifies only when the requester, the agent, and every current
+ * human of the output Room can all read it.
+ */
+const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
+         SELECT source.id
+         FROM rooms source
+         WHERE source.workspace_id=$3
+           AND EXISTS (
+             SELECT 1 FROM memberships member
+             WHERE member.room_id=source.id AND member.identity_id=$4
+               AND member.removed_at IS NULL
+           )
+           AND EXISTS (
+             SELECT 1 FROM memberships member
+             WHERE member.room_id=source.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM memberships output_member
+             JOIN identities human ON human.id=output_member.identity_id AND human.kind='human'
+             WHERE output_member.room_id=$1 AND output_member.removed_at IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM memberships source_member
+                 WHERE source_member.room_id=source.id
+                   AND source_member.identity_id=output_member.identity_id
+                   AND source_member.removed_at IS NULL
+               )
+           )
+       )`;
 
 function boundedQuery(value: unknown): string {
   if (typeof value !== 'string' || value.includes('\0')) {
@@ -82,8 +115,10 @@ export async function searchInstitutionalHistory(
         `SELECT output.workspace_id,root.author_id requester_identity_id
          FROM rooms output
          JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+         JOIN rooms root_room ON root_room.id=root.room_id
+           AND root_room.workspace_id=output.workspace_id
          JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
-         WHERE output.id=$1 AND root.room_id=output.id`,
+         WHERE output.id=$1`,
         [command.room_id, command.root_source_message_id],
       )
     ).rows[0];
@@ -92,35 +127,23 @@ export async function searchInstitutionalHistory(
       throw new Error('institutional history is not enabled for this Workspace');
     }
 
+    const authorizedRoomCount = Number(
+      (
+        await db.query<{ count: string }>(
+          `WITH ${AUTHORIZED_ROOMS_CTE} SELECT count(*)::text count FROM authorized_rooms`,
+          [
+            command.room_id,
+            authority.requester_identity_id,
+            authority.workspace_id,
+            command.agent_id,
+          ],
+        )
+      ).rows[0]?.count ?? 0,
+    );
+
     const rows = await db.query<SearchRow>(
-      `WITH search_query AS (
-         SELECT websearch_to_tsquery('simple',$4) query
-       ), authorized_rooms AS (
-         SELECT source.id
-         FROM rooms source
-         WHERE source.workspace_id=$3
-           AND EXISTS (
-             SELECT 1 FROM memberships member
-             WHERE member.room_id=source.id AND member.identity_id=$5
-               AND member.removed_at IS NULL
-           )
-           AND EXISTS (
-             SELECT 1 FROM memberships member
-             WHERE member.room_id=source.id AND member.identity_id=$2
-               AND member.removed_at IS NULL
-           )
-           AND NOT EXISTS (
-             SELECT 1
-             FROM memberships output_member
-             JOIN identities human ON human.id=output_member.identity_id AND human.kind='human'
-             WHERE output_member.room_id=$1 AND output_member.removed_at IS NULL
-               AND NOT EXISTS (
-                 SELECT 1 FROM memberships source_member
-                 WHERE source_member.room_id=source.id
-                   AND source_member.identity_id=output_member.identity_id
-                   AND source_member.removed_at IS NULL
-               )
-           )
+      `WITH ${AUTHORIZED_ROOMS_CTE}, search_query AS (
+         SELECT websearch_to_tsquery('simple',$5) query
        ), matches AS (
          SELECT message.id message_id,message.room_id,room.name room_name,
                 message.author_id,message.text,message.created_at,
@@ -131,25 +154,24 @@ export async function searchInstitutionalHistory(
          JOIN rooms room ON room.id=message.room_id
          WHERE message.deleted_at IS NULL AND message.presentation='message'
            AND length(trim(message.text))>0
-       ), counted AS (
-         SELECT matches.*,count(*) OVER() total_count FROM matches
+         LIMIT $6
        )
-       SELECT counted.*,
-              (SELECT count(*)::text FROM authorized_rooms) authorized_room_count
-       FROM counted
+       SELECT matches.*,count(*) OVER() matched_count
+       FROM matches
        ORDER BY rank DESC,created_at DESC,message_id DESC
-       LIMIT $6`,
+       LIMIT $7`,
       [
         command.room_id,
         authority.requester_identity_id,
         authority.workspace_id,
-        query,
         command.agent_id,
+        query,
+        INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
         limit,
       ],
     );
-    const total = Number(rows.rows[0]?.total_count ?? 0);
-    const authorizedRoomCount = Number(rows.rows[0]?.authorized_room_count ?? 0);
+    const matched = Number(rows.rows[0]?.matched_count ?? 0);
+    const capped = matched >= INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX;
     const result = rows.rows.map((row) => ({
       messageId: row.message_id,
       roomId: row.room_id,
@@ -162,8 +184,9 @@ export async function searchInstitutionalHistory(
     await db.query(
       `INSERT INTO institutional_history_searches
        (id,workspace_id,output_room_id,request_id,requester_identity_id,agent_id,
-        query_hash,result_message_ids,authorized_room_count,result_count,omitted_count,latency_ms)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        query_hash,result_message_ids,authorized_room_count,result_count,omitted_count,
+        matches_capped,latency_ms)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         randomUUID(),
         authority.workspace_id,
@@ -175,10 +198,11 @@ export async function searchInstitutionalHistory(
         result.map((item) => item.messageId),
         authorizedRoomCount,
         result.length,
-        Math.max(0, total - result.length),
+        Math.max(0, matched - result.length),
+        capped,
         Math.max(0, Math.round(performance.now() - started)),
       ],
     );
-    return { results: result, omitted: Math.max(0, total - result.length) };
+    return { results: result, omitted: Math.max(0, matched - result.length), capped };
   });
 }

@@ -618,8 +618,23 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by text REFERENCES identities(id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_document tsvector
-  GENERATED ALWAYS AS (to_tsvector('simple',coalesce(text,''))) STORED;
+-- A GENERATED ... STORED column rewrites every row of the busiest table under
+-- ACCESS EXCLUSIVE, so the release migration would stall the live fleet before
+-- the machine roll. An ordinary nullable column is metadata-only; the trigger
+-- maintains it from the moment the schema lands and
+-- backfillMessageSearchDocuments fills the history in bounded batches.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_document tsvector;
+CREATE OR REPLACE FUNCTION messages_search_document_refresh() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.search_document := to_tsvector('simple',coalesce(NEW.text,''));
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS messages_search_document_trg ON messages;
+CREATE TRIGGER messages_search_document_trg
+  BEFORE INSERT OR UPDATE OF text ON messages
+  FOR EACH ROW EXECUTE FUNCTION messages_search_document_refresh();
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a
@@ -902,9 +917,12 @@ CREATE TABLE IF NOT EXISTS institutional_history_searches (
   authorized_room_count integer NOT NULL CHECK (authorized_room_count >= 0),
   result_count integer NOT NULL CHECK (result_count BETWEEN 0 AND 10),
   omitted_count integer NOT NULL CHECK (omitted_count >= 0),
+  matches_capped boolean NOT NULL DEFAULT false,
   latency_ms integer NOT NULL CHECK (latency_ms >= 0),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE institutional_history_searches
+  ADD COLUMN IF NOT EXISTS matches_capped boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS institutional_history_searches_workspace_created_idx
   ON institutional_history_searches(workspace_id,created_at,id);
 
@@ -1792,6 +1810,9 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
+  const searchDocuments = await backfillMessageSearchDocuments(database);
+  if (searchDocuments)
+    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_search_document_idx
      ON messages USING GIN(search_document)
@@ -1820,6 +1841,37 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
   await upgradeGrantPolicy(database);
+}
+
+export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
+
+/**
+ * Fill `messages.search_document` for rows written before the trigger existed,
+ * one bounded primary-key window at a time so no statement holds the table for
+ * longer than a batch.
+ */
+export async function backfillMessageSearchDocuments(
+  database: SqlDatabase,
+  batchSize = MESSAGE_SEARCH_BACKFILL_BATCH,
+): Promise<number> {
+  let cursor = '';
+  let filled = 0;
+  for (;;) {
+    const window = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE id>$1 ORDER BY id LIMIT $2`,
+      [cursor, batchSize],
+    );
+    const last = window.rows.at(-1)?.id;
+    if (!last) return filled;
+    const updated = await database.query(
+      `UPDATE messages SET search_document=to_tsvector('simple',coalesce(text,''))
+       WHERE id>$1 AND id<=$2 AND search_document IS NULL`,
+      [cursor, last],
+    );
+    filled += updated.rowCount;
+    cursor = last;
+    if (window.rows.length < batchSize) return filled;
+  }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

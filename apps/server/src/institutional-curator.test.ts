@@ -6,6 +6,7 @@ import {
   completeInstitutionalMemoryJob,
 } from './institutional-memory-shadow.js';
 import {
+  INSTITUTIONAL_CONTEXT_TOKEN_TARGET,
   INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES,
   applyInstitutionalCuratorProposal,
   institutionalObjectiveDashboard,
@@ -230,11 +231,34 @@ describe('weekly institutional curator', () => {
         [randomUUID(), WORKSPACE, ROOM, MESSAGE, HUMAN, `shadow-proof:${index}`, NOW],
       );
     }
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key,status,updated_at)
+       VALUES($1,$2,'turn_review','shadow',$3,$4,$5,'workspace_candidate','old-dead','dead',
+              now()-interval '3 days')`,
+      [randomUUID(), WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
     expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
       completedJobs: 20,
+      deadJobs: 0,
       shadowReady: true,
       rolloutReady: false,
     });
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key,status,updated_at)
+       VALUES($1,$2,'turn_review','shadow',$3,$4,$5,'workspace_candidate','fresh-dead','dead',now())`,
+      [randomUUID(), WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      deadJobs: 1,
+      shadowReady: false,
+    });
+    await database.query(
+      `DELETE FROM institutional_memory_jobs WHERE idempotency_key='fresh-dead'`,
+    );
     await runInstitutionalCuratorCycle(database, liveConfig, NOW);
     expect(
       (
@@ -252,6 +276,116 @@ describe('weekly institutional curator', () => {
         )
       ).rows[0]?.stage,
     ).toBe('pilot');
+  });
+
+  it('counts anchor-superseded procedures as the cycle stale-skill metric', async () => {
+    // Two archived items pass retention, so a metric that counted their
+    // tombstones instead of anchor mismatches would report 2, not 1.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_command_id,updated_at)
+       VALUES($1,$2,'workspace_fact','second-expired','Another expired fact.','archived',$3,$4,
+              'workspace',0.5,1,'seed-archived-2',$5::timestamptz-interval '150 days')`,
+      ['30000000-0000-4000-8000-000000000306', WORKSPACE, ROOM, MESSAGE, NOW],
+    );
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,current_version,revision,source_room_id,
+        repository,target_commit,path,code_content_hash,updated_at)
+       VALUES
+        ($1,$3,'older-anchor','Older anchored procedure',1,1,$4,'Beeline-Work/beeline',$5,
+         'apps/server/src/database.ts',$6,$8::timestamptz-interval '1 day'),
+        ($2,$3,'newer-anchor','Newer anchored procedure',1,1,$4,'Beeline-Work/beeline',$5,
+         'apps/server/src/database.ts',$7,$8::timestamptz)`,
+      [
+        SKILL,
+        DUPLICATE_SKILL,
+        WORKSPACE,
+        ROOM,
+        'f'.repeat(40),
+        'a'.repeat(64),
+        'b'.repeat(64),
+        NOW,
+      ],
+    );
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+
+    // The archived item past retention is tombstoned but is not a stale skill.
+    expect(
+      (
+        await database.query<{ deleted_at: Date | null }>(
+          `SELECT deleted_at FROM institutional_memory_items WHERE id=$1`,
+          [ARCHIVED],
+        )
+      ).rows[0]?.deleted_at,
+    ).toBeInstanceOf(Date);
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE id=$1`, [
+          SKILL,
+        ])
+      ).rows[0]?.state,
+    ).toBe('stale');
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE id=$1`, [
+          DUPLICATE_SKILL,
+        ])
+      ).rows[0]?.state,
+    ).toBe('active');
+    expect(
+      (
+        await database.query<{
+          stale_skills: number;
+          stale_items: number;
+          archived_items: number;
+        }>(
+          `SELECT stale_skills,stale_items,archived_items FROM institutional_curator_cycles
+           WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows[0],
+    ).toMatchObject({ stale_skills: 1, stale_items: 1, archived_items: 1 });
+  });
+
+  it('holds a pilot cohort while the per-turn token budget is exceeded', async () => {
+    for (let index = 0; index < 20; index += 1) {
+      const serveId = randomUUID();
+      await database.query(
+        `INSERT INTO institutional_context_serves
+         (id,workspace_id,room_id,request_id,requester_identity_id,snapshot_revision,
+          mode,served,total_bytes,estimated_tokens,actual_input_tokens)
+         VALUES($1,$2,$3,$4,$5,1,'live',true,7900,1975,$6)`,
+        [
+          serveId,
+          WORKSPACE,
+          ROOM,
+          `token-proof:${index}`,
+          HUMAN,
+          INSTITUTIONAL_CONTEXT_TOKEN_TARGET * 3,
+        ],
+      );
+      await database.query(
+        `INSERT INTO institutional_memory_outcomes
+         (id,workspace_id,serve_id,room_id,request_id,kind,success)
+         VALUES($1,$2,$3,$4,$5,'turn_completed',true)`,
+        [randomUUID(), WORKSPACE, serveId, ROOM, `token-proof:${index}`],
+      );
+    }
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      completedTurns: 20,
+      successfulTurns: 20,
+      p95ContextTokens: INSTITUTIONAL_CONTEXT_TOKEN_TARGET * 3,
+      rolloutReady: false,
+    });
+
+    await database.query(`UPDATE institutional_context_serves SET actual_input_tokens=900`);
+    expect(await institutionalObjectiveDashboard(database, WORKSPACE)).toMatchObject({
+      p95ContextTokens: 900,
+      rolloutReady: true,
+    });
   });
 
   it('keeps weekly curator jobs inside the shared daily Workspace cap', async () => {

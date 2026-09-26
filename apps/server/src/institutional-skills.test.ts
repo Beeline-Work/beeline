@@ -167,6 +167,21 @@ describe('merge-derived restricted Workspace procedures', () => {
     const context = await getInstitutionalContext(database, command);
     expect(context.text).toContain('safe-release-migrations');
     expect(context.text).not.toContain('# Safe release migrations');
+    // Catalog exposure is not use: only an explicit load advances last_served_at.
+    expect(
+      (
+        await database.query<{ last_served_at: Date | null }>(
+          `SELECT last_served_at FROM workspace_skills WHERE slug='safe-release-migrations'`,
+        )
+      ).rows[0]?.last_served_at,
+    ).toBeNull();
+    expect(
+      (
+        await database.query<{ skill_candidates: string[] }>(
+          `SELECT skill_candidates FROM institutional_context_serves ORDER BY created_at DESC LIMIT 1`,
+        )
+      ).rows[0]?.skill_candidates,
+    ).toContain('safe-release-migrations');
     const loaded = await loadWorkspaceSkill(database, command, {
       agentId: OTHER_AGENT,
       roomId: ROOM,
@@ -180,6 +195,23 @@ describe('merge-derived restricted Workspace procedures', () => {
     });
     expect((await database.query(`SELECT 1 FROM workspace_skill_uses`)).rowCount).toBe(1);
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(1);
+    expect(
+      (
+        await database.query<{ last_served_at: Date | null }>(
+          `SELECT last_served_at FROM workspace_skills WHERE slug='safe-release-migrations'`,
+        )
+      ).rows[0]?.last_served_at,
+    ).toBeInstanceOf(Date);
+
+    // A corner work turn carries the parent Room's durable request as its root.
+    const cornerCommand: CommandRow = { ...command, id: 'corner-command', room_id: CORNER };
+    await expect(
+      loadWorkspaceSkill(database, cornerCommand, {
+        agentId: OTHER_AGENT,
+        roomId: CORNER,
+        slug: 'safe-release-migrations',
+      }),
+    ).resolves.toMatchObject({ slug: 'safe-release-migrations' });
 
     await database.transaction((db) =>
       enqueueInstitutionalMemoryMergeReview(db, {

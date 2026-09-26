@@ -15,6 +15,11 @@ export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
+/**
+ * Ranking is bounded to this many matched rows: a broad query in a large
+ * Workspace must never rank (or count) every match it could reach.
+ */
+export const INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX = 200;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
@@ -244,6 +249,9 @@ export interface InstitutionalHistoryResult {
 export interface SearchInstitutionalHistoryResult {
   readonly results: readonly InstitutionalHistoryResult[];
   readonly omitted: number;
+  /** True when matching stopped at INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX, so
+   * `omitted` counts the bounded match set and not every Workspace match. */
+  readonly capped: boolean;
 }
 
 export interface WorkspaceSkillCodeAnchor {

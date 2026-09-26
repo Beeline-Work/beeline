@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
+import { INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX } from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -10,6 +11,7 @@ const OUTPUT = '20000000-0000-4000-8000-000000000101';
 const SHARED = '20000000-0000-4000-8000-000000000102';
 const PRIVATE = '20000000-0000-4000-8000-000000000103';
 const OTHER = '20000000-0000-4000-8000-000000000104';
+const CORNER = '20000000-0000-4000-8000-000000000105';
 const REQUESTER = 'a'.repeat(64);
 const OTHER_HUMAN = 'b'.repeat(64);
 const AGENT = 'c'.repeat(64);
@@ -57,6 +59,10 @@ beforeEach(async () => {
     [OUTPUT, SHARED, PRIVATE, OTHER, WORKSPACE, OTHER_WORKSPACE],
   );
   await database.query(
+    `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Fix login')`,
+    [CORNER, WORKSPACE, OUTPUT],
+  );
+  await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
        ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
        ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),
@@ -64,6 +70,11 @@ beforeEach(async () => {
        ($1,$7,$2,'owner'),($1,$7,$4,'member'),
        ($8,NULL,$2,'owner'),($8,$9,$2,'owner'),($8,$9,$4,'member')`,
     [WORKSPACE, REQUESTER, OTHER_HUMAN, AGENT, OUTPUT, SHARED, PRIVATE, OTHER_WORKSPACE, OTHER],
+  );
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+    [WORKSPACE, CORNER, REQUESTER, AGENT],
   );
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
@@ -110,6 +121,67 @@ describe('authorized institutional history search', () => {
     expect(privateVisible.results.map((result) => result.messageId).sort()).toEqual(
       ['private-result', 'shared-result'].sort(),
     );
+  });
+
+  it('answers a corner turn whose durable request lives in the parent Room', async () => {
+    const cornerCommand: CommandRow = { ...command, id: 'command-2', room_id: CORNER };
+    const corner = await searchInstitutionalHistory(database, cornerCommand, {
+      agentId: AGENT,
+      roomId: CORNER,
+      query: 'release marker',
+      limit: 10,
+    });
+    // The corner's own human audience is the requester, so both readable
+    // sources qualify; what the corner proves is that authority resolves at all.
+    expect(corner.results.map((result) => result.messageId).sort()).toEqual(
+      ['private-result', 'shared-result'].sort(),
+    );
+  });
+
+  it('records the authorized Room count when the query matched nothing', async () => {
+    const empty = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'nonexistentterm',
+      limit: 10,
+    });
+    expect(empty).toMatchObject({ results: [], omitted: 0, capped: false });
+    const telemetry = (
+      await database.query<{ result_count: number; authorized_room_count: number }>(
+        `SELECT result_count,authorized_room_count FROM institutional_history_searches`,
+      )
+    ).rows[0];
+    expect(telemetry?.result_count).toBe(0);
+    expect(telemetry?.authorized_room_count).toBeGreaterThanOrEqual(2);
+  });
+
+  it('caps matching work and reports omitted against that bound', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT 'bulk-'||lpad(series::text,4,'0'),$1,$2,'Release marker bulk '||series,
+              now()-interval '1 hour'+series*interval '1 second'
+       FROM generate_series(1,$3::integer) series`,
+      [SHARED, REQUESTER, INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX + 25],
+    );
+    const capped = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    expect(capped.results).toHaveLength(10);
+    expect(capped.capped).toBe(true);
+    expect(capped.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10);
+    expect(
+      (
+        await database.query<{ matches_capped: boolean; omitted_count: number }>(
+          `SELECT matches_capped,omitted_count FROM institutional_history_searches`,
+        )
+      ).rows[0],
+    ).toMatchObject({
+      matches_capped: true,
+      omitted_count: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10,
+    });
   });
 
   it('bounds input and records content-free telemetry', async () => {

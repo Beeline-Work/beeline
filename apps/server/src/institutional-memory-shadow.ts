@@ -1350,11 +1350,6 @@ export async function getInstitutionalContext(
         [selected.map((item) => item.id)],
       );
     }
-    if (skills.selected.length) {
-      await db.query(`UPDATE workspace_skills SET last_served_at=now() WHERE id=ANY($1::uuid[])`, [
-        skills.selected.map((skill) => skill.id),
-      ]);
-    }
     return {
       snapshotRevision,
       text,

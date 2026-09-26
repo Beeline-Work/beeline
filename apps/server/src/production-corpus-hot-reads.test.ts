@@ -7,6 +7,9 @@ import { ConnectionPresence } from './connection-presence.js';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
+import { searchInstitutionalHistory } from './institutional-history.js';
+import { INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX } from '@beeline/api-contract/daemon';
+import type { CommandRow } from './agent-command.js';
 import {
   assertHotRead,
   explainHotRead,
@@ -46,13 +49,45 @@ const matchers: ReadonlyArray<readonly [HotReadName, (sql: string) => boolean]> 
   ],
   ['push-candidates', (sql) => sql.includes('WITH recent_messages AS MATERIALIZED')],
   ['corner-facts', (sql) => sql.includes('FROM rooms c LEFT JOIN corner_facts f')],
+  ['history-search', (sql) => sql.includes('authorized_rooms AS') && sql.includes('matched_count')],
 ];
 
-class HotReadDatabase implements SqlDatabase {
-  readonly results = new Map<HotReadName, HotReadResult>();
-  readonly pending = new Set<Promise<void>>();
+// A human-authored corpus row: the durable root requester of the search turn.
+const REQUESTER_MESSAGE = 'corpus-message-000001';
 
-  constructor(private readonly database: SqlDatabase) {}
+const searchCommand: CommandRow = {
+  id: 'corpus-search-command',
+  room_id: ROOM,
+  agent_id: AGENT,
+  source_message_id: REQUESTER_MESSAGE,
+  turn_request_id: 'corpus-search-request',
+  action: 'input',
+  reason: 'corpus',
+  root_command_id: 'corpus-search-command',
+  parent_command_id: null,
+  root_source_message_id: REQUESTER_MESSAGE,
+  agent_depth: 0,
+  state: 'claimed',
+  generation_id: 'corpus-generation',
+  lease_expires_at: new Date(Date.now() + 60_000),
+  result_message_id: null,
+  hiccup_attempts: 0,
+  lifecycle_before: null,
+  restart_confirmed_at: null,
+};
+
+class HotReadDatabase implements SqlDatabase {
+  // A hot read measured inside a transaction still belongs to the outer run.
+  readonly results: Map<HotReadName, HotReadResult>;
+  readonly pending: Set<Promise<void>>;
+
+  constructor(
+    private readonly database: SqlDatabase,
+    shared?: HotReadDatabase,
+  ) {
+    this.results = shared?.results ?? new Map<HotReadName, HotReadResult>();
+    this.pending = shared?.pending ?? new Set<Promise<void>>();
+  }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
@@ -74,7 +109,7 @@ class HotReadDatabase implements SqlDatabase {
   }
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.database.transaction((database) => work(new HotReadDatabase(database)));
+    return this.database.transaction((database) => work(new HotReadDatabase(database, this)));
   }
 }
 
@@ -198,6 +233,12 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     await phone.readHistory(ROOM, VIEWER);
     await phone.readLiveDelta(ROOM, VIEWER, { type: 'message', messageId: LIVE_MESSAGE });
     await phone.readCorners(ROOM, VIEWER);
+    await searchInstitutionalHistory(measured, searchCommand, {
+      agentId: AGENT,
+      roomId: ROOM,
+      query: 'fresh',
+      limit: 10,
+    });
     await presence.observe(ROOM);
     await presence.stop();
     await push.runOnce();
@@ -215,6 +256,31 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
       );
     }
     console.info(`\nPRODUCTION-CORPUS REPLAY timings\n${timingTable(results)}`);
+  }, 120_000);
+
+  it('bounds a Workspace-wide history search instead of ranking every match', async () => {
+    const startedAt = performance.now();
+    const broad = await searchInstitutionalHistory(database, searchCommand, {
+      agentId: AGENT,
+      roomId: ROOM,
+      query: 'production corpus message',
+      limit: 10,
+    });
+    const wallMs = performance.now() - startedAt;
+
+    expect(broad.results).toHaveLength(10);
+    expect(broad.capped).toBe(true);
+    expect(broad.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - broad.results.length);
+    expect(wallMs).toBeLessThan(HOT_READ_BUDGETS_MS['history-search']);
+    const telemetry = (
+      await database.query<{ omitted_count: number; matches_capped: boolean }>(
+        `SELECT omitted_count,matches_capped FROM institutional_history_searches
+         WHERE request_id=$1 ORDER BY created_at DESC LIMIT 1`,
+        [searchCommand.turn_request_id],
+      )
+    ).rows[0];
+    expect(telemetry?.matches_capped).toBe(true);
+    expect(telemetry?.omitted_count).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10);
   }, 120_000);
 
   it('turns red for the #1120 correlated per-message tag shape and prints its plan', async () => {

@@ -220,20 +220,6 @@ export async function applyWorkspaceSkillProposal(
       input.usage.model,
     ],
   );
-  if (input.proposal.anchor.path && input.proposal.anchor.contentHash) {
-    await database.query(
-      `UPDATE workspace_skills SET state='stale',updated_at=now()
-       WHERE workspace_id=$1 AND id<>$2 AND state='active' AND repository=$3 AND path=$4
-         AND code_content_hash IS NOT NULL AND code_content_hash<>$5`,
-      [
-        input.workspaceId,
-        skillId,
-        input.proposal.anchor.repository,
-        input.proposal.anchor.path,
-        input.proposal.anchor.contentHash,
-      ],
-    );
-  }
   return { skillId, version };
 }
 
@@ -252,8 +238,10 @@ export async function loadWorkspaceSkill(
         `SELECT room.workspace_id,root.author_id requester_identity_id
          FROM rooms room
          JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+         JOIN rooms root_room ON root_room.id=root.room_id
+           AND root_room.workspace_id=room.workspace_id
          JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
-         WHERE room.id=$1 AND root.room_id=room.id`,
+         WHERE room.id=$1`,
         [command.room_id, command.root_source_message_id],
       )
     ).rows[0];

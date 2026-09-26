@@ -14,6 +14,8 @@ import {
 export const DEFAULT_CURATOR_WEEKLY_JOB_LIMIT = 20;
 export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
 export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
+/** The per-turn institutional context budget the rollout gate holds p95 to. */
+export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
 
 const PROHIBITED_CURATOR_SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
@@ -63,6 +65,7 @@ export interface InstitutionalObjectiveDashboard {
   readonly completedTurns: number;
   readonly successfulTurns: number;
   readonly p95ContextBytes: number;
+  readonly p95ContextTokens: number;
   readonly skillCandidatesServed: number;
   readonly skillsLoaded: number;
   readonly searches: number;
@@ -89,6 +92,7 @@ export async function institutionalObjectiveDashboard(
       completed_turns: string;
       successful_turns: string;
       p95_context_bytes: string;
+      p95_context_tokens: string;
       skill_candidates_served: string;
       skills_loaded: string;
       searches: string;
@@ -105,12 +109,16 @@ export async function institutionalObjectiveDashboard(
           WHERE workspace_id=$1 AND kind='turn_completed' AND success) successful_turns,
          COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY total_bytes)
           FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_bytes,
+         COALESCE((SELECT percentile_disc(0.95) WITHIN GROUP (
+            ORDER BY COALESCE(actual_input_tokens,estimated_tokens))
+          FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) p95_context_tokens,
          COALESCE((SELECT sum(cardinality(skill_candidates))
           FROM institutional_context_serves WHERE workspace_id=$1 AND mode='live'),0) skill_candidates_served,
          (SELECT count(*) FROM workspace_skill_uses WHERE workspace_id=$1) skills_loaded,
          (SELECT count(*) FROM institutional_history_searches WHERE workspace_id=$1) searches,
          (SELECT count(*) FROM institutional_memory_jobs
-          WHERE workspace_id=$1 AND status='dead') dead_jobs`,
+          WHERE workspace_id=$1 AND status='dead'
+            AND updated_at>=now()-interval '24 hours') dead_jobs`,
       [workspaceId],
     )
   ).rows[0];
@@ -119,6 +127,7 @@ export async function institutionalObjectiveDashboard(
   const completedTurns = Number(row?.completed_turns ?? 0);
   const successfulTurns = Number(row?.successful_turns ?? 0);
   const p95ContextBytes = Number(row?.p95_context_bytes ?? 0);
+  const p95ContextTokens = Number(row?.p95_context_tokens ?? 0);
   const deadJobs = Number(row?.dead_jobs ?? 0);
   return {
     workspaceId,
@@ -127,6 +136,7 @@ export async function institutionalObjectiveDashboard(
     completedTurns,
     successfulTurns,
     p95ContextBytes,
+    p95ContextTokens,
     skillCandidatesServed: Number(row?.skill_candidates_served ?? 0),
     skillsLoaded: Number(row?.skills_loaded ?? 0),
     searches: Number(row?.searches ?? 0),
@@ -135,7 +145,7 @@ export async function institutionalObjectiveDashboard(
     rolloutReady:
       completedTurns >= 20 &&
       successfulTurns / Math.max(1, completedTurns) >= 0.9 &&
-      p95ContextBytes <= 8_000 &&
+      p95ContextTokens <= INSTITUTIONAL_CONTEXT_TOKEN_TARGET &&
       deadJobs === 0,
   };
 }
@@ -167,7 +177,7 @@ async function deterministicLifecycle(
        AND (item.last_served_at IS NULL OR item.last_served_at<$2::timestamptz-$3*interval '1 day')`,
     [workspaceId, now, archiveAfterDays],
   );
-  const anchorStaleSkills = await database.query(
+  await database.query(
     `UPDATE institutional_memory_items item
      SET body='',deleted_at=$2,updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='archived' AND item.deleted_at IS NULL
@@ -175,8 +185,9 @@ async function deterministicLifecycle(
     [workspaceId, now, retentionDays],
   );
 
-  // A newer checked content hash for the same code surface supersedes the old anchor.
-  await database.query(
+  // A newer checked content hash for the same code surface supersedes the old
+  // anchor. This pass is the only owner of that rule.
+  const anchorStaleSkills = await database.query(
     `UPDATE workspace_skills older SET state='stale',updated_at=$2
      WHERE older.workspace_id=$1 AND older.state='active' AND older.path IS NOT NULL
        AND older.code_content_hash IS NOT NULL

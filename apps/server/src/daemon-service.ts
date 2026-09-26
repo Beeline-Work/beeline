@@ -5201,9 +5201,9 @@ export class DaemonService {
         parent.repository_resolution === 'repository' ||
         Boolean(parent.repository_key));
     if (repositoryWork && !input.brief)
-      throw new Error('repository and research corners require a structured brief');
+      throw new Error('a structured brief is required for repository and research corners');
     if (input.brief && !isStructuredCornerBrief(input.brief))
-      throw new Error('new corners cannot use the legacy opaque brief format');
+      throw new Error('the legacy opaque brief format is invalid for new corners');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {

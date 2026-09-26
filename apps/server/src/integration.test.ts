@@ -8193,8 +8193,10 @@ describe('monolith integration', () => {
         repository: 'example/repository',
         fixtureOmitBrief: true,
       });
-      expect(response.status).not.toBe(200);
-      expect(await response.text()).toContain('require a structured brief');
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain(
+        'a structured brief is required for repository and research corners',
+      );
     }
     expect(
       (

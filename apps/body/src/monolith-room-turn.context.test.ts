@@ -230,7 +230,7 @@ describe('monolith Room turn context', () => {
       'Before opening a corner, consult beeline-triage and beeline-spec',
     );
     expect(systemPrompts[0]).toContain(
-      'Pass a brief in open_corner for every new assignment',
+      'Pass the typed brief authority contract in open_corner for every repository or research assignment',
     );
 
     for (const prompt of prompts) {

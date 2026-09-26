@@ -14,6 +14,8 @@ import type {
   CompleteInstitutionalMemoryJobInput,
   FailInstitutionalMemoryJobInput,
   InstitutionalContextSnapshot,
+  LoadWorkspaceSkillInput,
+  LoadWorkspaceSkillResult,
   ProposeInstitutionalMemoryInput,
   ProposeInstitutionalMemoryResult,
   SearchInstitutionalHistoryInput,
@@ -129,6 +131,8 @@ export type DaemonOperationMap = {
     SearchInstitutionalHistoryInput,
     SearchInstitutionalHistoryResult
   >;
+  /** Load one merge-derived restricted procedure after rechecking its source audience. */
+  loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }

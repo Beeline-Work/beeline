@@ -143,6 +143,7 @@ import {
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
+import { loadWorkspaceSkill } from './institutional-skills.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -281,6 +282,7 @@ export class DaemonService {
       'getInstitutionalContext',
       'proposeInstitutionalMemory',
       'searchInstitutionalHistory',
+      'loadWorkspaceSkill',
     ]);
     if (
       !this.commandTransaction &&
@@ -632,6 +634,18 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'searchInstitutionalHistory'>,
+        )) as Output<Name>;
+      case 'loadWorkspaceSkill':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workspace skill load requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await loadWorkspaceSkill(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'loadWorkspaceSkill'>,
         )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
@@ -6068,6 +6082,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getInstitutionalContext: true,
   proposeInstitutionalMemory: true,
   searchInstitutionalHistory: true,
+  loadWorkspaceSkill: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

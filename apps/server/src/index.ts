@@ -128,6 +128,7 @@ async function main() {
       webAppOrigins,
     },
   );
+  const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -136,6 +137,7 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
   const githubJobs = githubClients
@@ -146,6 +148,7 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
+        institutionalMemory,
       )
     : undefined;
   const pushSender =
@@ -217,7 +220,7 @@ async function main() {
     process.env.BEELINE_COMPOSIO_API_KEY
       ? new ComposioClient(process.env.BEELINE_COMPOSIO_API_KEY)
       : undefined,
-    institutionalMemoryShadowConfigFromEnv(),
+    institutionalMemory,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

@@ -19,6 +19,7 @@ const job: InstitutionalMemoryShadowJob = {
   requesterIdentityId: 'human-1',
   directMessage: false,
   mode: 'shadow',
+  triggerKind: 'turn_review',
   messages: [{ id: 'message-1', authorId: 'human-1', createdAt: 1_700_000_000, text: 'Use pnpm.' }],
   existingItems: [],
 };

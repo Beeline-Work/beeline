@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+  parseInstitutionalMergeReviewProposal,
   parseInstitutionalMemoryProposal,
 } from './institutional-memory.js';
 
@@ -81,5 +82,49 @@ describe('institutional memory proposal contract', () => {
         body: '🐝'.repeat(INSTITUTIONAL_MEMORY_BODY_MAX_BYTES / 2 + 1),
       }),
     ).toThrow(/body/);
+  });
+});
+
+describe('institutional merge review contract', () => {
+  const proposal = {
+    proposalVersion: 1,
+    skill: {
+      slug: 'release-migrations',
+      description: 'Safely ship release-owned database changes',
+      markdown: '# Release migrations\n\nWrite the schema marker last.',
+      baseVersion: null,
+      anchor: { repository: 'Beeline-Work/beeline', targetCommit: 'a'.repeat(40) },
+    },
+    findings: [
+      {
+        taxonomy: 'database.release-order',
+        summary: 'Schema readiness must be marked only after every migration succeeds.',
+        severity: 'warning',
+        confidence: 0.98,
+        path: 'apps/server/src/database.ts',
+      },
+    ],
+  } as const;
+
+  it('accepts one bounded restricted procedure and structured findings', () => {
+    expect(parseInstitutionalMergeReviewProposal(proposal)).toEqual(proposal);
+  });
+
+  it('rejects unknown fields, invalid slugs, and descriptions over 60 characters', () => {
+    expect(() => parseInstitutionalMergeReviewProposal({ ...proposal, native: true })).toThrow(
+      /unknown field native/,
+    );
+    expect(() =>
+      parseInstitutionalMergeReviewProposal({
+        ...proposal,
+        skill: { ...proposal.skill, slug: 'Native Skill' },
+      }),
+    ).toThrow(/slug/);
+    expect(() =>
+      parseInstitutionalMergeReviewProposal({
+        ...proposal,
+        skill: { ...proposal.skill, description: 'x'.repeat(61) },
+      }),
+    ).toThrow(/description/);
   });
 });

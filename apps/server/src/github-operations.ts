@@ -21,6 +21,10 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
+import {
+  enqueueInstitutionalMemoryMergeReview,
+  type InstitutionalMemoryShadowConfig,
+} from './institutional-memory-shadow.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -215,6 +219,7 @@ export class GitHubOperations {
     clientSecret: string,
     private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
     private readonly onRoomChanged?: (roomId: string) => void,
+    private readonly institutionalMemory: InstitutionalMemoryShadowConfig = { enabled: false },
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -1564,7 +1569,7 @@ export class GitHubOperations {
         kind: 'merged',
         object: { text: pullRequest.title, url: pullRequest.url },
       };
-      await systemLine(database, {
+      const mergeNote = await systemLine(database, {
         id: hash(`beeline:${target.corner_id}:${mergeKey}`),
         roomId: target.corner_id,
         authorId: target.author_id,
@@ -1572,6 +1577,21 @@ export class GitHubOperations {
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
       });
+      const targetCommit = pullRequest.mergeCommitSha ?? pullRequest.headSha;
+      if (targetCommit) {
+        await enqueueInstitutionalMemoryMergeReview(database, {
+          cornerId: target.corner_id,
+          sourceMessageId: mergeNote.id,
+          repository: pullRequest.repository,
+          targetCommit,
+          pullRequestUrl: pullRequest.url,
+          pullRequestTitle: pullRequest.title,
+          objective: target.summary,
+          commits: pullRequest.commits,
+          files: pullRequest.files,
+          config: this.institutionalMemory,
+        });
+      }
       const summary = target.summary.trim() || pullRequest.title;
       // The merge summary card in the parent Room: a tap opens the pull request.
       await systemLine(database, {

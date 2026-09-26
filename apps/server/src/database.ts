@@ -734,6 +734,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
+ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS context jsonb;
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
   ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
   WHERE status IN ('pending','retry','claimed');
@@ -851,7 +852,7 @@ ALTER TABLE institutional_memory_outcomes
 ALTER TABLE institutional_memory_outcomes
   ADD CONSTRAINT institutional_memory_outcomes_kind_check CHECK (kind IN (
     'shadow_extracted','memory_extracted','turn_completed','ci_green','merged',
-    'repeat_correction','repeat_review_finding'
+    'procedure_extracted','repeat_correction','repeat_review_finding'
   ));
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
@@ -905,6 +906,76 @@ CREATE TABLE IF NOT EXISTS institutional_history_searches (
 );
 CREATE INDEX IF NOT EXISTS institutional_history_searches_workspace_created_idx
   ON institutional_history_searches(workspace_id,created_at,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skills (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  slug text NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug)<=64),
+  description text NOT NULL CHECK (length(description) BETWEEN 1 AND 60),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+  current_version integer NOT NULL CHECK (current_version > 0),
+  revision bigint NOT NULL CHECK (revision > 0),
+  source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  repository text NOT NULL,
+  target_commit text NOT NULL,
+  path text,
+  code_content_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  last_served_at timestamptz,
+  UNIQUE(workspace_id,slug)
+);
+CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
+  ON workspace_skills(workspace_id,state,updated_at DESC,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skill_versions (
+  skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
+  version integer NOT NULL CHECK (version > 0),
+  markdown text NOT NULL CHECK (octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768),
+  content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+  source_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  source_message_ids text[] NOT NULL CHECK (cardinality(source_message_ids)>0),
+  repository text NOT NULL,
+  target_commit text NOT NULL,
+  path text,
+  code_content_hash text,
+  extractor_version text NOT NULL,
+  model text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(skill_id,version)
+);
+
+CREATE TABLE IF NOT EXISTS institutional_review_findings (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
+  source_corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  taxonomy text NOT NULL CHECK (length(taxonomy) BETWEEN 1 AND 120),
+  summary text NOT NULL CHECK (length(summary) BETWEEN 1 AND 1000),
+  severity text NOT NULL CHECK (severity IN ('info','warning','error')),
+  path text,
+  classifier_version text NOT NULL,
+  confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS institutional_review_findings_repeat_idx
+  ON institutional_review_findings(workspace_id,taxonomy,path,created_at,id);
+
+CREATE TABLE IF NOT EXISTS workspace_skill_uses (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
+  skill_version integer NOT NULL,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text,
+  requester_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(skill_id,skill_version)
+    REFERENCES workspace_skill_versions(skill_id,version) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
+  ON workspace_skill_uses(workspace_id,created_at,id);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

@@ -10,10 +10,15 @@ export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 8_000;
 export const INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES = 2_500;
 export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
+export const INSTITUTIONAL_CONTEXT_SKILL_INDEX_MAX_BYTES = 1_800;
 export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
+export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
+export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
+export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
+export const INSTITUTIONAL_REVIEW_FINDING_MAX = 20;
 
 export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
@@ -39,7 +44,7 @@ export interface InstitutionalMemoryJobLedgerEntry {
   readonly leaseOwnerMachineId?: string;
   readonly attempts: number;
   readonly maxAttempts: number;
-  readonly proposal?: InstitutionalMemoryProposal | null;
+  readonly proposal?: InstitutionalMemoryJobProposal | null;
   readonly usage?: InstitutionalMemoryJobUsage;
   readonly error?: string;
 }
@@ -158,6 +163,8 @@ export interface InstitutionalMemoryShadowJob {
   readonly requesterIdentityId: string;
   readonly directMessage: boolean;
   readonly mode: 'shadow' | 'live';
+  readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
+  readonly context?: Readonly<Record<string, unknown>>;
   readonly messages: readonly InstitutionalMemoryShadowMessage[];
   readonly existingItems: readonly Pick<
     InstitutionalMemoryItem,
@@ -174,7 +181,7 @@ export interface CompleteInstitutionalMemoryJobInput {
   readonly jobId: string;
   readonly leaseToken: string;
   /** Null is a valid shadow verdict: the source contained no durable lesson. */
-  readonly proposal: InstitutionalMemoryProposal | null;
+  readonly proposal: InstitutionalMemoryJobProposal | null;
   readonly usage: InstitutionalMemoryJobUsage;
 }
 
@@ -236,6 +243,56 @@ export interface InstitutionalHistoryResult {
 export interface SearchInstitutionalHistoryResult {
   readonly results: readonly InstitutionalHistoryResult[];
   readonly omitted: number;
+}
+
+export interface WorkspaceSkillCodeAnchor {
+  readonly repository: string;
+  readonly targetCommit: string;
+  readonly path?: string;
+  readonly contentHash?: string;
+}
+
+export interface WorkspaceSkillProposal {
+  readonly slug: string;
+  readonly description: string;
+  readonly markdown: string;
+  readonly baseVersion: number | null;
+  readonly anchor: WorkspaceSkillCodeAnchor;
+}
+
+export interface InstitutionalReviewFindingProposal {
+  readonly taxonomy: string;
+  readonly summary: string;
+  readonly severity: 'info' | 'warning' | 'error';
+  readonly confidence: number;
+  readonly path?: string;
+}
+
+export interface InstitutionalMergeReviewProposal {
+  readonly proposalVersion: 1;
+  readonly skill: WorkspaceSkillProposal | null;
+  readonly findings: readonly InstitutionalReviewFindingProposal[];
+}
+
+export type InstitutionalMemoryJobProposal =
+  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal;
+
+export interface LoadWorkspaceSkillInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly slug: string;
+}
+
+export interface LoadWorkspaceSkillResult {
+  readonly skillId: string;
+  readonly slug: string;
+  readonly description: string;
+  readonly version: number;
+  readonly markdown: string;
+  readonly sourceRoomId: string;
+  readonly anchor: WorkspaceSkillCodeAnchor;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -409,4 +466,115 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       ...(supersedesItemId ? { supersedesItemId } : {}),
     },
   };
+}
+
+/** Strict parser for one merge-derived, restricted procedure proposal. */
+export function parseInstitutionalMergeReviewProposal(
+  value: unknown,
+): InstitutionalMergeReviewProposal {
+  const proposal = record(value, 'institutional merge review proposal');
+  exactKeys(
+    proposal,
+    ['proposalVersion', 'skill', 'findings'],
+    'institutional merge review proposal',
+  );
+  if (proposal.proposalVersion !== 1) {
+    throw new Error('institutional merge review proposal version is unsupported');
+  }
+  let skill: WorkspaceSkillProposal | null = null;
+  if (proposal.skill !== null) {
+    const rawSkill = record(proposal.skill, 'workspace skill proposal');
+    exactKeys(
+      rawSkill,
+      ['slug', 'description', 'markdown', 'baseVersion', 'anchor'],
+      'workspace skill proposal',
+    );
+    const slug = boundedText(
+      rawSkill.slug,
+      'workspace skill slug',
+      WORKSPACE_SKILL_SLUG_MAX_LENGTH,
+    );
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+      throw new Error('workspace skill slug is invalid');
+    }
+    const anchor = record(rawSkill.anchor, 'workspace skill code anchor');
+    exactKeys(
+      anchor,
+      ['repository', 'targetCommit', 'path', 'contentHash'],
+      'workspace skill code anchor',
+    );
+    if (
+      rawSkill.baseVersion !== null &&
+      (!Number.isSafeInteger(rawSkill.baseVersion) || (rawSkill.baseVersion as number) <= 0)
+    ) {
+      throw new Error('workspace skill base version is invalid');
+    }
+    skill = {
+      slug,
+      description: boundedText(
+        rawSkill.description,
+        'workspace skill description',
+        WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
+      ),
+      markdown: boundedText(
+        rawSkill.markdown,
+        'workspace skill markdown',
+        WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+        true,
+      ),
+      baseVersion: rawSkill.baseVersion as number | null,
+      anchor: {
+        repository: boundedText(anchor.repository, 'workspace skill repository', 300),
+        targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
+        ...(anchor.path === undefined
+          ? {}
+          : { path: boundedText(anchor.path, 'workspace skill path', 500) }),
+        ...(anchor.contentHash === undefined
+          ? {}
+          : {
+              contentHash: boundedText(anchor.contentHash, 'workspace skill content hash', 128),
+            }),
+      },
+    };
+  }
+  if (
+    !Array.isArray(proposal.findings) ||
+    proposal.findings.length > INSTITUTIONAL_REVIEW_FINDING_MAX
+  ) {
+    throw new Error('institutional review findings are invalid');
+  }
+  const findings = proposal.findings.map<InstitutionalReviewFindingProposal>((value) => {
+    const finding = record(value, 'institutional review finding');
+    exactKeys(
+      finding,
+      ['taxonomy', 'summary', 'severity', 'confidence', 'path'],
+      'institutional review finding',
+    );
+    if (
+      finding.severity !== 'info' &&
+      finding.severity !== 'warning' &&
+      finding.severity !== 'error'
+    ) {
+      throw new Error('institutional review finding severity is invalid');
+    }
+    const severity = finding.severity;
+    if (
+      typeof finding.confidence !== 'number' ||
+      !Number.isFinite(finding.confidence) ||
+      finding.confidence < 0 ||
+      finding.confidence > 1
+    ) {
+      throw new Error('institutional review finding confidence is invalid');
+    }
+    return {
+      taxonomy: boundedText(finding.taxonomy, 'institutional review finding taxonomy', 120),
+      summary: boundedText(finding.summary, 'institutional review finding summary', 1_000),
+      severity,
+      confidence: finding.confidence,
+      ...(finding.path === undefined
+        ? {}
+        : { path: boundedText(finding.path, 'institutional review finding path', 500) }),
+    };
+  });
+  return { proposalVersion: 1, skill, findings };
 }

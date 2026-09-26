@@ -47,8 +47,13 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Recover missed merge','feature/recovery',$2::jsonb)`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner')`,
+      [workspace, HUMAN, room, corner],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,feature_branch,lifecycle)
+       VALUES($1,$3,'Recover missed merge','feature/recovery',$2::jsonb)`,
       [
         corner,
         JSON.stringify({
@@ -63,6 +68,7 @@ describe('GitHub phone operations', () => {
             mergeability: 'clean',
           },
         }),
+        HUMAN,
       ],
     );
     const app = {
@@ -79,7 +85,15 @@ describe('GitHub phone operations', () => {
       })),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const operations = new GitHubOperations(
+      database,
+      {} as GitHubOAuthClient,
+      app,
+      'secret',
+      undefined,
+      undefined,
+      { enabled: true, live: true },
+    );
     const deletedPush = {
       installation: { id: 77 },
       repository: { full_name: 'owner/widgets' },
@@ -143,6 +157,13 @@ describe('GitHub phone operations', () => {
       ).rowCount,
     ).toBe(1);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await database.query<{ trigger_kind: string; context: { targetCommit: string } }>(
+          `SELECT trigger_kind,context FROM institutional_memory_jobs`,
+        )
+      ).rows[0],
+    ).toMatchObject({ trigger_kind: 'merge_review', context: { targetCommit: 'f'.repeat(40) } });
   });
   it('mints a token only for the exact active repository bound to a top-level Room', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';

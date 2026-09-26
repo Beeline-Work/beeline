@@ -12,7 +12,6 @@ import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   AcpRequestTimeoutError,
-  isMutatingPermissionRequest,
   isPureRetryNarration,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
@@ -61,6 +60,7 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
   isHostMcpPermissionRequest,
+  isMcpShapedPermissionRequest,
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
@@ -116,16 +116,11 @@ type HumanMessage = Pick<
 >;
 
 /**
- * Every MCP tool call from a server the host mounted into the Room session is
- * approved. Shell/execute requests are handled separately by
- * `roomPermissionDecision` and run inside whatever OS sandbox already wraps
- * the Room session; native reads/writes and unstructured requests do not
- * cross. Any session sandbox remains the filesystem boundary; this permission
- * gate does not create one. A
- * host-classified server is kept out of the isolated harness home until an
- * owner grant rewrites the route in; a call that reaches an ungated host
- * identity stays refused here. Granted names drop out of that host list so
- * every capability on that server crosses.
+ * Rooms and corners share one rule for MCP: every tool call from a server the
+ * host mounted into the session is approved. A host-classified server is kept
+ * out of the isolated harness home until an owner grant rewrites the route in;
+ * a call that reaches an ungated host identity stays refused here. Granted
+ * names drop out of that host list so every capability on that server crosses.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
@@ -136,42 +131,53 @@ export function isRoomMcpPermissionRequest(
   return isMountedMcpToolPermissionRequest(request, mountedServers);
 }
 
-/** The Room ACP client applies this host-owned MCP allowlist fail-closed. */
-export function roomMcpPermissionDecision(
+/**
+ * A shell command, read from the only thing that identifies one: the `execute`
+ * kind the harness itself declares. claude-agent-acp marks its native `Bash`
+ * that way, which is the whole of what a Room shell needs; a title or a command
+ * line that happens to contain the word `bash` is prose, not an identity, and
+ * classifying on it moved the boundary with the user's wording. An MCP-shaped
+ * request is never re-read as a shell: it was already decided above, so a
+ * command line wearing an inspection tool's title stays refused instead of
+ * crossing as the shell it also is.
+ */
+function isRoomShellPermissionRequest(
   request: AcpPermissionRequest,
-  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
-  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
-): AcpPermissionDecision {
-  return isRoomMcpPermissionRequest(request, mountedServers, hostServers) ? 'allow' : 'reject';
+  hostServers: readonly string[],
+): boolean {
+  if (request.toolCall?.kind !== 'execute') return false;
+  return !isMcpShapedPermissionRequest(request, hostServers);
 }
 
 /**
- * Harnesses normally identify shell work with ACP's `execute` kind. Some only
- * put the concrete tool name in the title or raw input, so retain the same
- * fallback vocabulary as `isMutatingPermissionRequest` while excluding every
- * explicit non-execute kind.
+ * The Room ACP client applies this host-owned decision fail-closed: a mounted
+ * MCP tool call is approved, a shell command is approved while the OS sandbox
+ * wraps this session, and nothing else crosses (native reads/writes,
+ * unstructured requests).
+ *
+ * Shell is conditioned on the sandbox because the sandbox IS the Room's
+ * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
+ * and masks no credential path, so an approved command would write anywhere the
+ * daemon account can. Codex keeps its own offline read-only mode in exactly
+ * that case (`harness-capabilities.ts`), so requiring the wrap is what parity
+ * means. `ensureBwrapSandbox` installs bubblewrap at daemon start so this is a
+ * capability the host gains rather than a refusal it lives with, and the
+ * session primer states the outcome either way.
  */
-function isRoomShellPermissionRequest(request: AcpPermissionRequest): boolean {
-  const kind = request.toolCall?.kind?.toLowerCase();
-  if (kind === 'execute') return true;
-  if (kind && kind !== 'other') return false;
-  if (!isMutatingPermissionRequest(request)) return false;
-  const description = [request.toolCall?.title, request.toolCall?.rawInput]
-    .filter((value) => value !== undefined)
-    .map((value) => (typeof value === 'string' ? value : JSON.stringify(value)))
-    .join(' ')
-    .toLowerCase();
-  return /(^|[^a-z])(shell|bash|execute)([^a-z]|$)/.test(description);
-}
-
-/** Room permissions add shell execution without weakening the MCP allowlist. */
 export function roomPermissionDecision(
   request: AcpPermissionRequest,
-  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
-  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
+  options: {
+    mountedServers?: readonly string[];
+    hostServers?: readonly string[];
+    /** `config.bwrapPath`, set only when the sandbox self-test passed. */
+    shellSandboxed?: boolean;
+  } = {},
 ): AcpPermissionDecision {
+  const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
+  const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
   if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
-  return isRoomShellPermissionRequest(request) ? 'allow' : 'reject';
+  if (!options.shellSandboxed) return 'reject';
+  return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
 }
 
 /**
@@ -875,9 +881,12 @@ export class MonolithRoomTurnLoop {
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
-      permissionHandler: async (request) => {
-        return roomPermissionDecision(request, mountedServers, hostServers);
-      },
+      permissionHandler: async (request) =>
+        roomPermissionDecision(request, {
+          mountedServers,
+          hostServers,
+          shellSandboxed: Boolean(this.options.config.bwrapPath),
+        }),
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,
@@ -919,6 +928,14 @@ export class MonolithRoomTurnLoop {
       command,
       repositoryInfo,
       directMessage,
+      this.options.config.bwrapPath
+        ? { available: true }
+        : {
+            available: false,
+            ...(this.options.config.sandboxUnavailableDetail
+              ? { detail: this.options.config.sandboxUnavailableDetail }
+              : {}),
+          },
     );
     this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
       ? ''

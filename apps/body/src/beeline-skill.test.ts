@@ -83,6 +83,41 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).not.toContain('open_corner');
   });
 
+  /**
+   * The permission gate approves a shell only inside the OS sandbox, so the
+   * session prompt is what keeps the model from asking for one it cannot have
+   * and from calling a refusal silence. The fix line rides the same sentence.
+   */
+  it('states whether this session can run shell commands, and why not when it cannot', () => {
+    expect(beelinePrimer(undefined, false, { available: true })).toContain(
+      'Shell commands are available in this session',
+    );
+    const blocked = beelinePrimer(undefined, false, {
+      available: false,
+      detail: 'bwrap is not on PATH; run `sudo apt-get install -y bubblewrap` and restart.',
+    });
+    expect(blocked).toContain('Shell commands are NOT available in this session');
+    expect(blocked).toContain('Say that plainly in your reply');
+    expect(blocked).toContain('sudo apt-get install -y bubblewrap');
+    // A DM runs the same harness under the same sandbox, so it carries the fact too.
+    expect(beelinePrimer(undefined, true, { available: true })).toContain(
+      'Shell commands are available in this session',
+    );
+    expect(
+      beelineCapabilityContextForHarness('codex-acp', undefined, false, { available: true })
+        .sessionPrompt,
+    ).toContain('Shell commands are available in this session');
+  });
+
+  it('no longer claims a scratch file is the only way to write one', () => {
+    for (const primer of [beelinePrimer(), beelinePrimer(undefined, true)]) {
+      expect(primer).not.toContain('this Room has no other way to write one');
+      expect(primer).toContain(
+        'To create a file you can send, call beeline-agent write_scratch_file',
+      );
+    }
+  });
+
   it('names the bound repository and branch when the Room has one', () => {
     const primer = beelinePrimer({ name: 'Beeline-Work/beeline', branch: 'main' });
     expect(primer).toContain(

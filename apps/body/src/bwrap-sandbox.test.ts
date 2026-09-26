@@ -29,9 +29,11 @@ import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import {
+  BUBBLEWRAP_INSTALL_FIX,
   buildBwrapArgv,
   credentialMaskPaths,
   detectBwrapSandbox,
+  ensureBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
   sandboxMountPlan,
@@ -579,6 +581,142 @@ describe('feature detection falls back rather than failing the daemon', () => {
         env: { PATH: '/nonexistent', BUZZY_BODY_SANDBOX: 'bwrap' },
       }).advisory,
     ).toMatch(/UNAVAILABLE/);
+  });
+
+  /**
+   * A Room shell is approved only inside this sandbox, so a host that is simply
+   * missing the package is worth one install attempt rather than a helper that
+   * quietly has no shell. The self-test after it is the verdict, never the
+   * install's own exit code.
+   */
+  describe('bubblewrap on first need', () => {
+    const missing = { advisory: 'UNAVAILABLE: bwrap (bubblewrap) is not on PATH' };
+    const usable = { path: '/usr/bin/bwrap', advisory: 'ENABLED' };
+    // Hermetic: no well-known directory is searched, so the verdict does not
+    // depend on whether this host happens to have bwrap installed.
+    const noBwrap = { PATH: '/nonexistent', BEELINE_HARNESS_PATH_AUGMENT: '0' };
+
+    it('installs the package, then re-runs the real self-test', async () => {
+      const commands: string[][] = [];
+      let detections = 0;
+      const result = await ensureBwrapSandbox({
+        env: noBwrap,
+        platform: 'linux',
+        getuid: () => 1000,
+        detect: () => {
+          detections += 1;
+          return detections === 1 ? missing : usable;
+        },
+        run: async (command, args) => {
+          commands.push([command, ...args]);
+          return { code: 0, output: '' };
+        },
+      });
+      expect(commands).toEqual([['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap']]);
+      expect(detections).toBe(2);
+      expect(result.path).toBe('/usr/bin/bwrap');
+    });
+
+    it('installs as root without sudo', async () => {
+      const commands: string[][] = [];
+      await ensureBwrapSandbox({
+        env: noBwrap,
+        platform: 'linux',
+        getuid: () => 0,
+        detect: () => missing,
+        run: async (command, args) => {
+          commands.push([command, ...args]);
+          return { code: 0, output: '' };
+        },
+      });
+      expect(commands).toEqual([['apt-get', 'install', '-y', 'bubblewrap']]);
+    });
+
+    it('reports the failure and the one-line fix when it cannot install', async () => {
+      const result = await ensureBwrapSandbox({
+        env: noBwrap,
+        platform: 'linux',
+        getuid: () => 1000,
+        detect: () => missing,
+        run: async () => ({ code: 1, output: 'sudo: a password is required' }),
+      });
+      expect(result.path).toBeUndefined();
+      expect(result.advisory).toContain('sudo: a password is required');
+      expect(result.advisory).toContain(BUBBLEWRAP_INSTALL_FIX);
+      expect(result.advisory).toContain('A Room shell stays refused');
+    });
+
+    it('still reports unavailable when the installed copy fails its self-test', async () => {
+      const result = await ensureBwrapSandbox({
+        env: noBwrap,
+        platform: 'linux',
+        getuid: () => 1000,
+        detect: () => ({ advisory: 'UNAVAILABLE: /usr/bin/bwrap self-test failed (exit 1)' }),
+        run: async () => ({ code: 0, output: '' }),
+      });
+      expect(result.path).toBeUndefined();
+      expect(result.advisory).toContain('self-test failed');
+    });
+
+    it('installs nothing when the operator turned the sandbox off', async () => {
+      let ran = false;
+      const result = await ensureBwrapSandbox({
+        policy: 'off',
+        env: noBwrap,
+        platform: 'linux',
+        detect: () => ({ advisory: 'DISABLED by configuration (sandbox=off)' }),
+        run: async () => {
+          ran = true;
+          return { code: 0, output: '' };
+        },
+      });
+      expect(ran).toBe(false);
+      expect(result.path).toBeUndefined();
+      expect(result.advisory).toContain('DISABLED by configuration');
+    });
+
+    it('installs nothing when bwrap is present but failed its self-test', async () => {
+      const dir = mkdtempSync(resolve(tmpdir(), 'beeline-bwrap-present-'));
+      try {
+        writeFileSync(resolve(dir, 'bwrap'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        let ran = false;
+        const result = await ensureBwrapSandbox({
+          env: { PATH: dir, BEELINE_HARNESS_PATH_AUGMENT: '0' },
+          platform: 'linux',
+          detect: () => ({ advisory: 'UNAVAILABLE: self-test failed (exit 1)' }),
+          run: async () => {
+            ran = true;
+            return { code: 0, output: '' };
+          },
+        });
+        expect(ran).toBe(false);
+        expect(result.advisory).toContain('self-test failed');
+        expect(result.advisory).not.toContain(BUBBLEWRAP_INSTALL_FIX);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('skips the install on a platform the package does not serve', async () => {
+      const result = await ensureBwrapSandbox({
+        env: noBwrap,
+        platform: 'darwin',
+        detect: () => missing,
+        run: async () => ({ code: 0, output: '' }),
+      });
+      expect(result.path).toBeUndefined();
+      expect(result.advisory).toContain('Linux only');
+    });
+
+    it('returns the detected sandbox untouched when the host already has one', async () => {
+      const result = await ensureBwrapSandbox({
+        detect: () => usable,
+        run: async () => {
+          throw new Error('must not install');
+        },
+      });
+      expect(result).toEqual(usable);
+    });
   });
 
   it('validates the persisted policy value', () => {

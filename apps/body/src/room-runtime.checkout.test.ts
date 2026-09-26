@@ -37,6 +37,7 @@ it('fetches a new target commit for each Room turn and reports the checked out S
           secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
         },
         communityId: 'workspace',
+        rooms: [],
         supervisorRoot: root,
         transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
       } as AgentRuntimeRecord,
@@ -77,6 +78,68 @@ it('fetches a new target commit for each Room turn and reports the checked out S
     expect(await readFile(join(cwd, 'code.txt'), 'utf8')).toBe('second\n');
   } finally {
     vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('serves an empty remote from Room state, then takes its first default-branch commit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-empty-room-checkout-'));
+  try {
+    const remote = join(root, 'remote.git');
+    const seed = join(root, 'seed');
+    await git('git', ['init', '--bare', '-b', 'main', remote]);
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async () => ({
+      resolution: 'repository',
+      key: 'fixture/empty',
+      remote: `file://${remote}`,
+      targetBranch: 'main',
+    }));
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: {
+          name: 'Bee',
+          publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+        },
+        communityId: 'workspace',
+        rooms: [],
+        supervisorRoot: root,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as AgentRuntimeRecord,
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const checkout = coordinator as unknown as {
+      refreshRoomCheckout(
+        roomId: string,
+      ): Promise<{ cwd: string; branch?: string; commit?: string }>;
+    };
+    const first = await checkout.refreshRoomCheckout('room-1');
+    expect(first.branch).toBeUndefined();
+    expect(first.commit).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith('noteEmptyRoomRepository', { roomId: 'room-1' });
+    await git('git', ['clone', remote, seed]);
+    await writeFile(join(seed, 'README.md'), '# empty\n');
+    await git('git', ['-C', seed, 'add', 'README.md']);
+    await git('git', [
+      '-C',
+      seed,
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      'commit',
+      '-m',
+      'first',
+    ]);
+    await git('git', ['-C', seed, 'push', 'origin', 'main']);
+    const next = await checkout.refreshRoomCheckout('room-1');
+    expect(next.branch).toBe('main');
+    expect(next.commit).toMatch(/^[a-f0-9]{40}$/);
+    expect(await readFile(join(next.cwd, 'README.md'), 'utf8')).toBe('# empty\n');
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -201,6 +201,7 @@ describe('fresh Room discovery through the live membership wake', () => {
   let live: LiveHub;
   let listener: PostgresLiveListener;
   let auth: TokenAuth;
+  let deniedRoomId: string | undefined;
 
   class PgliteListenClient extends EventEmitter implements LivePgClient {
     private release?: () => Promise<void>;
@@ -226,6 +227,7 @@ describe('fresh Room discovery through the live membership wake', () => {
   }
 
   beforeEach(async () => {
+    deniedRoomId = undefined;
     database = PgliteDatabase.fromSnapshot(DATABASE_SNAPSHOT);
     auth = new TokenAuth(database, async (proof) => ({
       subject: proof === 'proof' ? 'owner' : proof,
@@ -234,10 +236,10 @@ describe('fresh Room discovery through the live membership wake', () => {
     }));
     const phone = new PhoneService(database, 'http://placeholder');
     live = new LiveHub();
-    const daemon = new DaemonService(database, live, async () => ({
-      token: 'test-room-token',
-      expiresAt: Date.now() + 60_000,
-    }));
+    const daemon = new DaemonService(database, live, async (roomId) => {
+      if (roomId === deniedRoomId) throw new Error('GitHub repository installation not found');
+      return { token: 'test-room-token', expiresAt: Date.now() + 60_000 };
+    });
     server = createBeelineServer({ database, auth, phone, daemon, live });
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 50);
     void listener.run();
@@ -336,6 +338,141 @@ describe('fresh Room discovery through the live membership wake', () => {
       messages: Array<{ authorId?: string; text?: string }>;
     };
 
+  const startRepositoryRoom = async (roomId: string, remote: string) => {
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_target_branch)
+       VALUES($1,$2,'Repository',$3,$4,'main')`,
+      [roomId, WORKSPACE, 'github:123', remote],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, roomId, HUMAN, AGENT],
+    );
+    const runtime = (
+      core as unknown as { roomRuntime: { startRoom(roomId: string): Promise<void> } }
+    ).roomRuntime;
+    await runtime.startRoom(roomId);
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(roomId), { timeout: 10_000 });
+  };
+
+  it(
+    'answers from an externally empty repository, states one remedy, and checks out the first commit',
+    { timeout: 60_000 },
+    async () => {
+      const roomId = '44444444-4444-4444-8444-444444444444';
+      const remote = resolve(supervisorRoot, 'empty-origin.git');
+      const seed = resolve(supervisorRoot, 'empty-seed');
+      const git = promisify(execFile);
+      await git('git', ['init', '--bare', '-b', 'main', remote]);
+      await startRepositoryRoom(roomId, `file://${remote}`);
+      await operation('sendRoomMessage', {
+        roomId,
+        messageId: '8'.repeat(64),
+        text: '@bee hello empty',
+      });
+      await vi.waitFor(
+        async () => {
+          const room = await readRoom(roomId);
+          expect(room.messages.some((message) => message.text?.includes('ECHO REPLY'))).toBe(true);
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+      const notice =
+        "This repository has no commits yet - push a first commit and I'll pick it up.";
+      await vi.waitFor(
+        async () => {
+          const room = await readRoom(roomId);
+          expect(room.messages.filter((message) => message.text === notice)).toHaveLength(1);
+        },
+        { timeout: 10_000, interval: 300 },
+      );
+      await git('git', ['clone', remote, seed]);
+      await writeFile(resolve(seed, 'README.md'), '# Repository\n');
+      await git('git', ['-C', seed, 'add', 'README.md']);
+      await git('git', [
+        '-C',
+        seed,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '-m',
+        'first',
+      ]);
+      await git('git', ['-C', seed, 'push', 'origin', 'main']);
+      await operation('sendRoomMessage', {
+        roomId,
+        messageId: '9'.repeat(64),
+        text: '@bee hello committed',
+      });
+      await vi.waitFor(
+        async () => {
+          const room = await readRoom(roomId);
+          expect(
+            room.messages.filter((message) => message.text?.includes('ECHO REPLY')),
+          ).toHaveLength(2);
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+      const checkoutRoot = resolve(supervisorRoot, 'beeline', 'room-checkouts');
+      const { readdir, readFile } = await import('node:fs/promises');
+      const checkouts = await readdir(checkoutRoot);
+      expect(checkouts.length).toBeGreaterThan(0);
+      expect(await readFile(resolve(checkoutRoot, checkouts[0]!, 'README.md'), 'utf8')).toBe(
+        '# Repository\n',
+      );
+      expect(
+        (await readRoom(roomId)).messages.filter((message) => message.text === notice),
+      ).toHaveLength(1);
+    },
+  );
+
+  it(
+    'answers with one App install or grant line when token lookup returns installation 404',
+    { timeout: 60_000 },
+    async () => {
+      const roomId = '55555555-5555-4555-8555-555555555555';
+      deniedRoomId = roomId;
+      await startRepositoryRoom(roomId, 'https://github.com/Beeline-Work/ungranted.git');
+      await operation('sendRoomMessage', {
+        roomId,
+        messageId: 'a'.repeat(64),
+        text: '@bee hello denied',
+      });
+      await vi.waitFor(
+        async () => {
+          const room = await readRoom(roomId);
+          expect(room.messages.some((message) => message.text?.includes('ECHO REPLY'))).toBe(true);
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+      await operation('sendRoomMessage', { roomId, messageId: 'b'.repeat(64), text: '@bee again' });
+      await vi.waitFor(
+        async () => {
+          const room = await readRoom(roomId);
+          expect(
+            room.messages.filter((message) => message.text?.includes('ECHO REPLY')),
+          ).toHaveLength(2);
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+      const room = await readRoom(roomId);
+      expect(
+        room.messages.filter(
+          (message) =>
+            message.text === 'Install or grant the Beeline GitHub App to access this repository.',
+        ),
+      ).toHaveLength(1);
+      expect(
+        room.messages.some((message) =>
+          /installation not found|HTTP 404/i.test(message.text ?? ''),
+        ),
+      ).toBe(false);
+    },
+  );
+
   it('agent replies in a freshly created room without a reconciliation heartbeat', { timeout: 60_000 }, async () => {
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
     const created = (await (
@@ -397,10 +534,7 @@ describe('fresh Room discovery through the live membership wake', () => {
 
   it('a corner still acts when a sibling Room cannot materialize its checkout', { timeout: 120_000 }, async () => {
     // A second top-level Room whose repository checkout can NEVER materialize.
-    // startRoom runs before the corner-start pass in reconcile(); without
-    // per-Room isolation this deterministic failure aborts every reconcile
-    // before any corner starts — the agent keeps serving its running Rooms and
-    // looks healthy, while the freshly opened corner never acts.
+    // Its chat loop still starts, and the corner-start pass must continue.
     const brokenRoom = '33333333-3333-4333-8333-333333333333';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_target_branch)
@@ -439,8 +573,8 @@ describe('fresh Room discovery through the live membership wake', () => {
       },
       { timeout: 30_000, interval: 500 },
     );
-    // The broken Room itself never becomes active.
-    expect(core.activeRoomIds()).not.toContain(brokenRoom);
+    // Repository inspection is optional, so the broken Room still serves chat.
+    expect(core.activeRoomIds()).toContain(brokenRoom);
   });
 
   it('agent works a freshly opened repository corner without a reconciliation heartbeat', { timeout: 120_000 }, async () => {

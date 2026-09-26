@@ -676,6 +676,41 @@ describe('GitHub-only account and repository access', () => {
       ),
     ).resolves.toMatchObject({ installationId: 77, fullName: 'acme/new-repo' });
     expect(fetchMock.mock.calls[1]![0]).toBe('https://api.github.com/orgs/acme/repos');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({
+      name: 'new-repo',
+      private: true,
+      auto_init: true,
+    });
+  });
+
+  it('initializes a personal repository with its first README commit too', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 11,
+          name: 'new-repo',
+          full_name: 'owner/new-repo',
+          clone_url: 'https://github.com/owner/new-repo.git',
+          default_branch: 'main',
+        }),
+        { status: 201 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline-app' });
+    await expect(
+      app.createRepository(
+        77,
+        { login: 'owner', type: 'User' },
+        { name: 'new-repo' },
+        'user-token',
+      ),
+    ).resolves.toMatchObject({ fullName: 'owner/new-repo', defaultBranch: 'main' });
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.github.com/user/repos');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1].body))).toEqual({
+      name: 'new-repo',
+      auto_init: true,
+    });
   });
 
   it('parses GET /app/installations as the bare array GitHub actually returns, never an envelope', async () => {

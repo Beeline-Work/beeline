@@ -905,7 +905,10 @@ export class GitHubAppClient {
       await fetch(`${this.#config.apiBaseUrl}${path}`, {
         method: 'POST',
         headers: { ...githubHeaders(token), 'content-type': 'application/json' },
-        body: JSON.stringify(input),
+        // GitHub creates README.md and the default-branch first commit in the
+        // same repository creation request. The Room can then fetch main on
+        // its first start, including for a selected installation account.
+        body: JSON.stringify({ ...input, auto_init: true }),
       }),
       'GitHub repository creation',
     );

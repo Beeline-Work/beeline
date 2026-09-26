@@ -16,7 +16,9 @@ import {
   recordWorkspaceHostAvailability,
   runInstitutionalCuratorCycle,
 } from './institutional-curator.js';
+import { WORKSPACE_SKILL_ACTIVE_BYTES_MAX } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
+import type { QueryResult, SqlDatabase } from './database.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const ROOM = '20000000-0000-4000-8000-000000000301';
@@ -101,6 +103,172 @@ afterEach(async () => {
 });
 
 describe('weekly institutional curator', () => {
+  async function seedConsolidatableSkills(fillerBytes: number): Promise<void> {
+    const secondMessage = 'curator-second-source';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Second source')`,
+      [secondMessage, ROOM, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES
+        ($1,$4,'merge_review','live',$5,$6,$7,'workspace_candidate','skill-source-1'),
+        ($2,$4,'merge_review','live',$5,$8,$7,'workspace_candidate','skill-source-2'),
+        ($3,$4,'curator','live',$5,$6,$7,'workspace_candidate','skill-curator')`,
+      [SKILL_JOB, DUPLICATE_SKILL_JOB, CURATOR_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN, secondMessage],
+    );
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,current_version,revision,source_room_id,
+        repository,target_commit)
+       VALUES
+        ($1,$3,'release-safety','Release safely',1,1,$4,'Beeline-Work/beeline',$5),
+        ($2,$3,'safe-releases','Safely release',1,1,$4,'Beeline-Work/beeline',$5)`,
+      [SKILL, DUPLICATE_SKILL, WORKSPACE, ROOM, 'f'.repeat(40)],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,extractor_version,model)
+       VALUES
+        ($1,1,repeat('x',$9::integer),$5,$3,ARRAY[$7]::text[],'Beeline-Work/beeline',$6,
+         'test','test'),
+        ($2,1,repeat('y',$9::integer),$5,$4,ARRAY[$8]::text[],'Beeline-Work/beeline',$6,
+         'test','test')`,
+      [
+        SKILL,
+        DUPLICATE_SKILL,
+        SKILL_JOB,
+        DUPLICATE_SKILL_JOB,
+        'a'.repeat(64),
+        'f'.repeat(40),
+        MESSAGE,
+        secondMessage,
+        fillerBytes,
+      ],
+    );
+  }
+
+  function consolidateProposal(markdown: string) {
+    return {
+      workspaceId: WORKSPACE,
+      jobId: CURATOR_JOB,
+      sourceMessageId: MESSAGE,
+      context: {
+        partition: `workspace-skills:${ROOM}`,
+        candidates: [
+          {
+            id: SKILL,
+            targetType: 'workspace_skill' as const,
+            version: 1,
+            state: 'active' as const,
+            key: 'release-safety',
+            text: 'Release safely',
+            sourceRoomId: ROOM,
+            sourceMessageId: MESSAGE,
+            requesterIdentityId: HUMAN,
+          },
+          {
+            id: DUPLICATE_SKILL,
+            targetType: 'workspace_skill' as const,
+            version: 1,
+            state: 'active' as const,
+            key: 'safe-releases',
+            text: 'Safely release',
+            sourceRoomId: ROOM,
+            sourceMessageId: 'curator-second-source',
+            requesterIdentityId: HUMAN,
+          },
+        ],
+      },
+      proposal: {
+        proposalVersion: 1 as const,
+        partition: `workspace-skills:${ROOM}`,
+        actions: [
+          {
+            action: 'consolidate' as const,
+            targetType: 'workspace_skill' as const,
+            targetId: SKILL,
+            baseVersion: 1,
+            duplicateIds: [DUPLICATE_SKILL],
+            description: 'Release safely and consistently',
+            markdown,
+            rationale: 'These procedures have the same reusable purpose.',
+          },
+        ],
+      },
+      usage: { inputBytes: 10, outputBytes: 10, model: 'test', extractorVersion: 'test' },
+    };
+  }
+
+  it('consolidates at the byte cap, counting the duplicates it retires as freed', async () => {
+    // A Workspace filled exactly to the cap holds two 16 KiB duplicates. The
+    // merged 24 KiB procedure is bigger than either one, so it only fits if the
+    // duplicates it retires stop counting — which is the whole point.
+    const duplicateBytes = 16 * 1024;
+    const fillerBytes = 32 * 1024;
+    const merged = 'm'.repeat(24 * 1024);
+    const fillerRows = (WORKSPACE_SKILL_ACTIVE_BYTES_MAX - duplicateBytes * 2) / fillerBytes;
+    expect(Number.isInteger(fillerRows)).toBe(true);
+    await seedConsolidatableSkills(duplicateBytes);
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,current_version,revision,source_room_id,
+          repository,target_commit)
+       SELECT gen_random_uuid(),$1,'filler-'||series,'Filler',1,1,$2,'Beeline-Work/beeline',$3
+       FROM generate_series(1,$4::integer) series`,
+      [WORKSPACE, ROOM, 'f'.repeat(40), fillerRows],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,extractor_version,model)
+       SELECT id,1,repeat('f',$5::integer),$2,$3,ARRAY[$4]::text[],'Beeline-Work/beeline',
+              $6,'test','test'
+       FROM workspace_skills WHERE workspace_id=$1 AND slug LIKE 'filler-%'`,
+      [WORKSPACE, 'c'.repeat(64), SKILL_JOB, MESSAGE, fillerBytes, 'f'.repeat(40)],
+    );
+
+    await expect(
+      database.transaction((db) =>
+        applyInstitutionalCuratorProposal(db, consolidateProposal(merged)),
+      ),
+    ).resolves.toMatchObject({ consolidatedSkills: 1 });
+    expect(
+      (
+        await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE id=$1`, [
+          DUPLICATE_SKILL,
+        ])
+      ).rows[0]?.state,
+    ).toBe('stale');
+  });
+
+  it('takes the per-slug advisory lock before locking the skill row', async () => {
+    await seedConsolidatableSkills(64);
+    const statements: string[] = [];
+    const recorded = (inner: SqlDatabase): SqlDatabase => ({
+      query: <Row extends Record<string, unknown>>(sql: string, values?: unknown[]) => {
+        statements.push(sql);
+        return inner.query(sql, values) as Promise<QueryResult<Row>>;
+      },
+      transaction: (work) => inner.transaction((db) => work(recorded(db))),
+    });
+
+    await database.transaction((db) =>
+      applyInstitutionalCuratorProposal(recorded(db), consolidateProposal('Merged guidance.')),
+    );
+
+    // applyWorkspaceSkillProposal locks advisory-then-row, so the curator must
+    // not take the row lock first: that ordering deadlocks against a merge.
+    const advisory = statements.findIndex((sql) => sql.includes('pg_advisory_xact_lock'));
+    const rowLock = statements.findIndex((sql) => sql.includes('FOR UPDATE OF skill'));
+    expect(advisory).toBeGreaterThanOrEqual(0);
+    expect(rowLock).toBeGreaterThanOrEqual(0);
+    expect(advisory).toBeLessThan(rowLock);
+  });
+
   it('consolidates skill duplicates without losing either source', async () => {
     const secondMessage = 'curator-second-source';
     await database.query(

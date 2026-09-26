@@ -277,6 +277,69 @@ describe('message search vectors', () => {
   });
 });
 
+describe('institutional cascades', () => {
+  it('lets a Workspace delete carry every institutional row with it', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '11110000-0000-4000-8000-000000000001';
+    const room = '22220000-0000-4000-8000-000000000001';
+    const human = 'a'.repeat(64);
+    const job = '33330000-0000-4000-8000-000000000001';
+    const skill = '44440000-0000-4000-8000-000000000001';
+    const item = '55550000-0000-4000-8000-000000000001';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      human,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Doomed')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      room,
+      workspace,
+    ]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('cascade-source',$1,$2,'A source.')`,
+      [room, human],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'merge_review','live',$3,'cascade-source',$4,'workspace_candidate','cascade')`,
+      [job, workspace, room, human],
+    );
+    // A memory item and a skill version both reference that job.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_job_id)
+       VALUES($1,$2,'workspace_fact','cascade-key','A fact.',$3,'cascade-source',
+              'workspace',0.9,1,$4)`,
+      [item, workspace, room, job],
+    );
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit)
+       VALUES($1,$2,'cascade-procedure','A procedure','active',1,1,$3,'owner/repo',$4)`,
+      [skill, workspace, room, 'a'.repeat(40)],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,extractor_version,model)
+       VALUES($1,1,'Body.',$2,$3,ARRAY['cascade-source']::text[],'owner/repo',$4,'test','test')`,
+      [skill, 'b'.repeat(64), job, 'a'.repeat(40)],
+    );
+
+    await expect(
+      database.query(`DELETE FROM workspaces WHERE id=$1`, [workspace]),
+    ).resolves.toBeDefined();
+    expect((await database.query(`SELECT 1 FROM workspace_skill_versions`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
+    database.close();
+  });
+});
+
 describe('release-owned schema readiness', () => {
   it('fails boot clearly until the release migration writes its final marker', async () => {
     const database = new PgliteDatabase();

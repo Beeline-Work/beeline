@@ -789,7 +789,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   confidence double precision NOT NULL CHECK (confidence BETWEEN 0 AND 1),
   version integer NOT NULL CHECK (version > 0),
   supersedes_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL,
-  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  created_by_job_id uuid REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
   created_by_command_id text,
   repository text,
   target_commit text,
@@ -811,6 +811,13 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   )
 );
 ALTER TABLE institutional_memory_items ALTER COLUMN created_by_job_id DROP NOT NULL;
+-- RESTRICT here aborts DELETE FROM workspaces: the jobs cascade fires before
+-- the items cascade has removed the referencing row, so the whole delete fails.
+ALTER TABLE institutional_memory_items
+  DROP CONSTRAINT IF EXISTS institutional_memory_items_created_by_job_id_fkey;
+ALTER TABLE institutional_memory_items
+  ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
+  FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
@@ -972,7 +979,7 @@ CREATE TABLE IF NOT EXISTS workspace_skill_versions (
   version integer NOT NULL CHECK (version > 0),
   markdown text NOT NULL,
   content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
-  source_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE RESTRICT,
+  source_job_id uuid NOT NULL REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE,
   source_message_ids text[] NOT NULL CHECK (cardinality(source_message_ids)>0),
   repository text NOT NULL,
   target_commit text NOT NULL,

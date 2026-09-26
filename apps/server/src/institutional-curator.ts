@@ -817,6 +817,19 @@ export async function applyInstitutionalCuratorProposal(
         }
       }
     } else {
+      // applyWorkspaceSkillProposal takes the per-slug advisory lock BEFORE its
+      // own row lock, so this branch must too: locking the row first is an ABBA
+      // inversion against every merge-review writing the same slug.
+      const slug = (
+        await database.query<{ slug: string }>(
+          `SELECT slug FROM workspace_skills WHERE workspace_id=$1 AND id=$2`,
+          [input.workspaceId, action.targetId],
+        )
+      ).rows[0]?.slug;
+      if (!slug) throw new Error('institutional curator skill target is unavailable');
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `workspace-skill:${input.workspaceId}:${slug}`,
+      ]);
       const rows = await database.query<{
         id: string;
         slug: string;
@@ -872,6 +885,14 @@ export async function applyInstitutionalCuratorProposal(
           findings: [],
         };
         assertRestrictedWorkspaceSkillSafe(restricted);
+        // Retire the duplicates first: the caps applyWorkspaceSkillProposal
+        // checks sum ACTIVE bytes, so counting rows this consolidation is about
+        // to stale would refuse the merge exactly when it would free space.
+        await database.query(
+          `UPDATE workspace_skills SET state='stale',curated_at=now(),updated_at=now()
+           WHERE id=ANY($1::uuid[])`,
+          [action.duplicateIds],
+        );
         await applyWorkspaceSkillProposal(database, {
           workspaceId: input.workspaceId,
           sourceRoomId: current.source_room_id,
@@ -885,11 +906,6 @@ export async function applyInstitutionalCuratorProposal(
           usage: input.usage,
           proposal: restricted.skill,
         });
-        await database.query(
-          `UPDATE workspace_skills SET state='stale',curated_at=now(),updated_at=now()
-           WHERE id=ANY($1::uuid[])`,
-          [action.duplicateIds],
-        );
         await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
           current.id,
         ]);

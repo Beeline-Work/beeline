@@ -28,6 +28,10 @@ describe('GitHub phone operations', () => {
     const headSha = '1'.repeat(40);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
     await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`,
+      [workspace],
+    );
+    await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
        VALUES(77,$1,'42','owner','User','selected','active')`,
       [HUMAN],

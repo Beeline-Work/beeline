@@ -148,9 +148,12 @@ its relevance-ranked catalog entry, and `load_workspace_skill` returns the proce
 non-authoritative guidance with measured use. Generated procedures are never installed as native
 harness skills. Serving live memory requires an explicit
 `institutional_memory_workspace_rollouts` row at `pilot`/`live`, and host jobs require one at
-`shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent weekly curator ages and retains items,
-queues audience-partitioned consolidation on authorized user hosts, honors Workspace job/token
-budgets, and advances an opted-in cohort only when its objective dashboard clears the rollout gate.
+`shadow` or above, so the global flag alone never enables a Workspace. The server's idempotent
+weekly curator ages and retains items, queues audience-partitioned consolidation on authorized user
+hosts, honors Workspace job/token budgets, and advances an opted-in cohort only when its objective
+dashboard clears the rollout gate. That curator is behind its own kill switch: it runs only for a
+Workspace whose row also sets `curator_enabled`, so staging a Workspace never starts aging by
+itself and clearing one column stops it without unstaging.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 

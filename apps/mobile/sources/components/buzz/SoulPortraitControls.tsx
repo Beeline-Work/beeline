@@ -120,7 +120,7 @@ export function SoulPortraitControls({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { gap: theme.buzz.space.md, marginTop: theme.buzz.space.md },
+  container: { gap: theme.buzz.space.sm },
   title: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   copy: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
 }));

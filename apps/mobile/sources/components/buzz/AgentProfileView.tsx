@@ -357,6 +357,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },
   section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
-  readMore: { minHeight: 44, justifyContent: 'center' },
+  readMore: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: theme.buzz.space.sm,
+  },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
 }));

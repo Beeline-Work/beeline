@@ -30,7 +30,11 @@ in the live bundle: list 220px tall, 12 rows, 528px of scroll content.
 The list is the helper's own live harness catalog. Charles's runtime is
 **Cursor** (`agentKind: cursor`), not Claude Code, and Cursor genuinely runs
 GPT models beside Claude ones, so filtering them out would hide models the
-agent can use. The helper now reports its harness kind with each catalog, the
+agent can use. That is read off the operator machine's own helper runtime
+record, `~/.local/state/beeline/agents/9c874349…/runtime.json`, which records
+`agentKind: "cursor"` with command `cursor-agent-acp` and model
+`claude-opus-5-thinking-high` — a Claude model on a Cursor harness, which is
+why the offered list carries GPT entries too. The helper now reports its harness kind with each catalog, the
 server keeps it (`agents.harness_kind`) and the phone labels the row
 `Model · Cursor` (`Model · Claude Code` for Candy). Display only.
 

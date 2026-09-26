@@ -20,11 +20,20 @@ describe('filterAgentModelOptions', () => {
 });
 
 describe('agentHarnessName', () => {
-  it('names each helper harness kind, and capitalises one it does not know', () => {
+  it('names each helper harness kind', () => {
     expect(agentHarnessName('claude')).toBe('Claude Code');
+    expect(agentHarnessName('codex')).toBe('Codex');
     expect(agentHarnessName('cursor')).toBe('Cursor');
+    expect(agentHarnessName('goose')).toBe('Goose');
+    expect(agentHarnessName('grok')).toBe('Grok');
     expect(agentHarnessName('opencode')).toBe('OpenCode');
-    expect(agentHarnessName('hermes')).toBe('Hermes');
+    expect(agentHarnessName('pi')).toBe('Pi');
+  });
+
+  it('names nothing for a kind that is not a runtime', () => {
+    expect(agentHarnessName('reference')).toBeUndefined();
+    expect(agentHarnessName('custom')).toBeUndefined();
+    expect(agentHarnessName('hermes')).toBeUndefined();
     expect(agentHarnessName(undefined)).toBeUndefined();
   });
 });

@@ -16,12 +16,12 @@ const HARNESS_NAMES: Readonly<Record<string, string>> = {
 /**
  * The runtime name the Model row shows beside its label, so a catalog reads as
  * that harness's own list (a Cursor agent offers GPT models as well as
- * Claude). `kind` is the helper-reported harness; an unlisted one is shown
- * capitalised rather than hidden.
+ * Claude). `kind` is the helper-reported harness. Only a harness this table
+ * names is shown: `reference`, `custom` and anything unknown are not runtimes,
+ * so the row keeps its bare `Model` label rather than naming a non-runtime.
  */
 export function agentHarnessName(kind: string | undefined): string | undefined {
-  if (!kind) return undefined;
-  return HARNESS_NAMES[kind] ?? kind.charAt(0).toUpperCase() + kind.slice(1);
+  return kind ? HARNESS_NAMES[kind] : undefined;
 }
 
 /**

@@ -46,6 +46,7 @@ import {
   isAgentKind,
   isServerEventKind,
   MESSAGE_REACTION_EMOJIS,
+  readHarnessKind,
   type ServerEventKind,
 } from '@beeline/api-contract/phone';
 import {
@@ -4177,9 +4178,7 @@ export class DaemonService {
         input.selection?.model ?? null,
         input.selection?.effort ?? null,
         input.unavailable ?? null,
-        typeof input.harness === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(input.harness)
-          ? input.harness
-          : null,
+        readHarnessKind(input.harness) ?? null,
       ],
     );
     return this.writeResult();

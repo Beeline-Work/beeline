@@ -1500,7 +1500,10 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
-    expect(control.findAllByType('Text')[0].props.children).toBe('Remove from Workspace');
+    const word = control.findAllByType('Text')[0];
+    expect(word.props.children).toBe('Remove from Workspace');
+    // One full-width destructive button, its words centred like a button.
+    expect(word.props.style).toEqual(expect.objectContaining({ textAlign: 'center' }));
 
     await press(renderer, 'remove-agent');
 

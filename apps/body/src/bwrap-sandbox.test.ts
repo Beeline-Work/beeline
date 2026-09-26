@@ -713,6 +713,44 @@ describe('feature detection falls back rather than failing the daemon', () => {
       }
     });
 
+    /**
+     * An install that exits 0 leaves two different states, and the sentence the
+     * model is told to relay into a Room has to name the one that happened.
+     */
+    it('names the reason the install left behind, not always a failed self-test', async () => {
+      const absent = hostPath(['apt-get']);
+      try {
+        const result = await ensureBwrapSandbox({
+          env: absent.env,
+          platform: 'linux',
+          detect: () => missing,
+          run: async () => ({ code: 0, output: '' }),
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('bubblewrap is not installed');
+        expect(result.shellDetail).toContain(BUBBLEWRAP_INSTALL_FIX);
+      } finally {
+        absent.cleanup();
+      }
+
+      const landed = hostPath(['apt-get']);
+      try {
+        const result = await ensureBwrapSandbox({
+          env: landed.env,
+          platform: 'linux',
+          detect: () => ({ advisory: 'UNAVAILABLE: /usr/bin/bwrap self-test failed (exit 1)' }),
+          run: async (command, args) => {
+            if (args.includes('install')) landed.install('bwrap');
+            return { code: 0, output: '' };
+          },
+        });
+        expect(result.path).toBeUndefined();
+        expect(result.shellDetail).toContain('failed its start-up self-test');
+      } finally {
+        landed.cleanup();
+      }
+    });
+
     it('reports the failure and the one-line fix when it cannot install', async () => {
       const host = hostPath(['apt-get']);
       try {

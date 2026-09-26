@@ -928,7 +928,7 @@ export class MonolithRoomTurnLoop {
     // the sandbox: Codex executes them in its own read-only mode with no wrap at
     // all, while a harness that asks depends on the gate above. An unmeasured
     // harness states nothing (`roomShellCapability`).
-    const shellCapability = roomShellCapability(command, {
+    const shellCapability = roomShellCapability(harnessLabel, {
       osSandbox: Boolean(this.options.config.bwrapPath),
     });
     const capabilityContext = beelineCapabilityContextForHarness(

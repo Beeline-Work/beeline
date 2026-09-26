@@ -950,5 +950,10 @@ export async function ensureBwrapSandbox(
     return failed(installed.reason);
   }
   clearInstallFailure(options.stateDir);
-  return { advisory: `${after.advisory} ${shellConsequence}`, shellDetail: SHELL_DETAIL_SELF_TEST };
+  return {
+    advisory: `${after.advisory} ${shellConsequence}`,
+    shellDetail: executableOnPath('bwrap', env)
+      ? SHELL_DETAIL_SELF_TEST
+      : shellDetailNotInstalled(support.fix),
+  };
 }

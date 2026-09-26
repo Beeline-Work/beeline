@@ -496,8 +496,9 @@ export function displayRoomMessage(
 
 /**
  * One identity source for Room and corner composers/transcripts.
- * Message authorship refreshes membership presentation from the current
- * server view; the newest loaded row wins over any label painted from disk.
+ * Message authorship refreshes membership labels from the current server
+ * view. Member artwork stays authoritative because older transcript pages can
+ * come from disk with the face or generated avatar an agent wore previously.
  */
 export function conversationIdentityByPubkey(
   members: readonly RoomViewMember[],
@@ -508,6 +509,18 @@ export function conversationIdentityByPubkey(
     if (message.authorIdentity) {
       identities.set(message.authorIdentity.pubkey, message.authorIdentity);
     }
+  }
+  for (const member of members) {
+    const indexed = identities.get(member.identity.pubkey);
+    if (!indexed) continue;
+    identities.set(member.identity.pubkey, {
+      pubkey: indexed.pubkey,
+      kind: indexed.kind,
+      name: indexed.name,
+      ...(indexed.handle ? { handle: indexed.handle } : {}),
+      ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
+      ...(member.identity.face ? { face: member.identity.face } : {}),
+    });
   }
   return identities;
 }

@@ -220,7 +220,9 @@ function modelSelectionInput(
     return axisValue(detail, 'model', undefined) === model ? { model } : { model, effort: null };
   }
   if (axis.currentValue !== model) return { model, effort: null };
-  const effortAxis = detail.catalog.find((candidate) => candidate.category !== 'model');
+  const effortAxis = detail.catalog.find((candidate) =>
+    ['thought_level', 'effort', 'reasoning_effort'].includes(candidate.category),
+  );
   const effort = effortAxis?.currentValue;
   return effort && effortAxis.options.some((choice) => choice.id === effort)
     ? { model, effort }
@@ -784,6 +786,25 @@ export default function BuzzMembers({
     }
   };
 
+  const setFastMode = async (enabled: boolean) => {
+    if (!selectedAgent || !ownsSelectedAgent || !modelAxes.fast) return;
+    setWorking('model-config');
+    setError(null);
+    try {
+      const pubkey = selectedAgent.agent.identity.pubkey;
+      const client = await writeClient();
+      await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, { fastMode: enabled });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.fastMode === enabled,
+      );
+    } catch (reason) {
+      setError(`Could not set Fast mode: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const toggleModelAxis = async (
     kind: ModelAxisKind,
     open: boolean,
@@ -937,7 +958,8 @@ export default function BuzzMembers({
       Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
     const live =
       selectedAgent?.catalog.filter(
-        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+        (axis) =>
+          isAllowedAgentModelConfigCategory(axis.category, axis.id) && axis.options.length > 0,
       ) ?? [];
     return {
       model: live.find((axis) => axis.category === 'model'),
@@ -946,7 +968,18 @@ export default function BuzzMembers({
       // matches the persisted human selection.
       effort: awaitingSelectedModelCatalog
         ? undefined
-        : live.find((axis) => axis.category !== 'model'),
+        : live.find((axis) =>
+            ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
+          ),
+      fast: awaitingSelectedModelCatalog
+        ? undefined
+        : live.find(
+            (axis) =>
+              axis.id === 'fast-mode' &&
+              axis.category === 'model_config' &&
+              axis.options.some((choice) => choice.id === 'on') &&
+              axis.options.some((choice) => choice.id === 'off'),
+          ),
     };
   }, [selectedAgent]);
 
@@ -1109,6 +1142,33 @@ export default function BuzzMembers({
                       </View>
                     );
                   })}
+                  {modelAxes.fast && (
+                    <View style={styles.axisBlock} testID="fast-mode-setting">
+                      <Text style={styles.profileSettingLabel}>Fast mode</Text>
+                      <Text style={styles.profileSettingCopy}>
+                        Faster responses use more ChatGPT credits where available.
+                      </Text>
+                      {([false, true] as const).map((enabled) => (
+                        <TouchableOpacity
+                          key={String(enabled)}
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            disabled: busy,
+                            selected: selectedAgent.fastMode === enabled,
+                          }}
+                          disabled={busy}
+                          onPress={() => void setFastMode(enabled)}
+                          style={styles.choice}
+                          testID={`fast-mode-${enabled ? 'on' : 'off'}`}
+                        >
+                          <Text style={styles.choiceText}>{enabled ? 'On' : 'Off'}</Text>
+                          {selectedAgent.fastMode === enabled && (
+                            <Text style={styles.choiceText}>✓</Text>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
               {ownsSelectedAgent && (

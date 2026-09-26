@@ -541,6 +541,7 @@ CREATE TABLE IF NOT EXISTS agents (
   soul jsonb,
   selected_model text,
   selected_effort text,
+  fast_mode boolean NOT NULL DEFAULT false,
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
   model_unavailable text CHECK (model_unavailable IN ('model','effort','selection')),
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -555,6 +556,7 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT t
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;

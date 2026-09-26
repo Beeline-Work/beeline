@@ -587,6 +587,7 @@ export type AgentConfigurationResult = {
   readonly soul?: { readonly name: string; readonly instructions: string };
   readonly model?: string;
   readonly effort?: string;
+  readonly fastMode?: boolean;
   readonly commands: readonly { readonly name: string; readonly description?: string }[];
   /** The agent "yolo" switch: grant requests are approved without asking. */
   readonly yoloMode: boolean;
@@ -1464,7 +1465,7 @@ export type DaemonAgentToolMandate = {
 };
 export type DaemonModelConfigOption = {
   readonly id: string;
-  readonly category: 'model' | 'thought_level' | 'effort' | 'reasoning_effort';
+  readonly category: 'model' | 'thought_level' | 'effort' | 'reasoning_effort' | 'model_config';
   readonly currentValue?: string;
   readonly options: readonly { readonly id: string; readonly name?: string }[];
 };

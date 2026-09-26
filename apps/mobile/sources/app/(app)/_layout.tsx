@@ -77,7 +77,7 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="beeline/bookmarks"
+          name="beeline/tray"
           options={{
             headerShown: false,
             contentStyle: { backgroundColor: theme.buzz.bgBase },

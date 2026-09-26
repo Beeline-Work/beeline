@@ -58,7 +58,7 @@ function hostModule(...names: string[]) {
     names.map((name) => [name, (props: any) => React.createElement(name, props, props?.children)]),
   );
 }
-vi.mock('@/components/buzz/BookmarksGlyph', () => hostModule('BookmarksGlyph'));
+vi.mock('@/components/buzz/TrayGlyph', () => hostModule('TrayGlyph'));
 vi.mock('@/components/buzz/ChevronGlyph', () => ({
   CHEVRON_ROW_SIZE: 16,
   ChevronGlyph: () => null,

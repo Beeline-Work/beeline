@@ -1,3 +1,4 @@
+import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
@@ -341,7 +342,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
-  const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
+  const traySelected = pathname.startsWith('/beeline/tray');
+  const needsYouCount = useNeedsYouCount(workspaceId, surface);
   const profileSettingsSelected =
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
@@ -463,11 +465,11 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <WorkspaceActionsMenu
-                    bookmarksSelected={bookmarksSelected}
+                    traySelected={traySelected}
                     canManageWorkspace={canManageWorkspace}
-                    onBookmarks={() =>
+                    onTray={() =>
                       router.push({
-                        pathname: '/beeline/bookmarks',
+                        pathname: '/beeline/tray',
                         params: { communityId: workspaceId },
                       } as Href)
                     }
@@ -561,13 +563,14 @@ export const SidebarView = React.memo(function SidebarView() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            bookmarksSelected={bookmarksSelected}
+            traySelected={traySelected}
             counts={counts}
-            onBookmarks={
+            needsYouCount={needsYouCount}
+            onTray={
               workspaceId
                 ? () =>
                     router.push({
-                      pathname: '/beeline/bookmarks',
+                      pathname: '/beeline/tray',
                       params: { communityId: workspaceId },
                     } as Href)
                 : undefined

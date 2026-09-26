@@ -353,6 +353,36 @@ export type MessageBookmarkView = {
   readonly text?: string;
 };
 
+/**
+ * One cell in the viewer's "Needs you" tray. A message qualifies when it tags
+ * the viewer AND asks (ends with `?`, or says please/approve/feedback); a
+ * pending agent-grant card the viewer can decide qualifies as it is. The
+ * server owns the whole projection — which items, their text, and when they
+ * leave — so every device shows the same tray.
+ */
+export type NeedsYouItemView = {
+  readonly messageId: string;
+  readonly workspaceId: string;
+  readonly roomId: string;
+  /** Room or corner name; for a DM, the other participant's name. */
+  readonly roomName: string;
+  readonly roomKind: 'room' | 'corner' | 'direct';
+  /**
+   * The asking sentence, the viewer's own tag removed, already shortened by
+   * the server (a long sentence keeps its END behind a leading `…`).
+   */
+  readonly text: string;
+  /** When the source message was written (Unix seconds). */
+  readonly createdAt: number;
+  /**
+   * When the cell leaves the tray on its own (Unix seconds): 24 hours after
+   * the viewer first saw it on any device. Absent for a pending approval,
+   * which never expires.
+   */
+  readonly expiresAt?: number;
+  readonly author?: RoomViewIdentity;
+};
+
 export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;
 export type MessageReactionEmoji = (typeof MESSAGE_REACTION_EMOJIS)[number];
 export type MessageReactionView = {

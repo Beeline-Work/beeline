@@ -105,9 +105,9 @@ describe('write permission corner outcome', () => {
     expect(link).toBeDefined();
     expect(allowed.root.findAllByType('Svg' as never)).toHaveLength(1);
     expect(allowed.root.findAllByType('Polygon' as never)[0]!.props.fill).toBe(brand.mark);
-    expect(String(allowed.root.findAllByType('Text').map((node) => node.props.children))).not.toContain(
-      '◇',
-    );
+    expect(
+      String(allowed.root.findAllByType('Text').map((node) => node.props.children)),
+    ).not.toContain('◇');
     act(() => link!.props.onPress());
     expect(onOpen).toHaveBeenCalledOnce();
 

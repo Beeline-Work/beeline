@@ -89,6 +89,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -2978,6 +2979,16 @@ export class PhoneService {
           input as Input<'listMessageBookmarks'>,
           viewerId,
         )) as Output<Name>;
+      case 'readNeedsYou':
+        return (await this.readNeedsYou(input as Input<'readNeedsYou'>, viewerId)) as Output<Name>;
+      case 'countNeedsYou':
+        return (await this.countNeedsYou(
+          input as Input<'countNeedsYou'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'clearNeedsYou':
+        await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
+        return undefined as Output<Name>;
       case 'createRoomSchedule':
         return (await this.createRoomSchedule(
           input as Input<'createRoomSchedule'>,
@@ -3771,6 +3782,69 @@ export class PhoneService {
       );
       return { bookmarked: true };
     });
+  }
+
+  /**
+   * The viewer's Needs-you cells (`needs-you.ts` owns the rule). Showing a
+   * cell starts its 24-hour clock once, for every device; a clock already
+   * running is left alone.
+   */
+  private async readNeedsYou(
+    input: Input<'readNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'readNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items, unseen } = await needsYouItems(
+      this.database,
+      input.workspaceId,
+      viewerId,
+      (row) => identity(row, this.publicOrigin),
+    );
+    if (!unseen.length) return { items };
+    const started = await this.database.query<{ message_id: string; first_seen_at: Date }>(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       SELECT $1,message_id,$3 FROM unnest($2::text[]) message_id
+       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
+       RETURNING message_id,first_seen_at`,
+      [viewerId, unseen, input.workspaceId],
+    );
+    const clocks = new Map(started.rows.map((row) => [row.message_id, row.first_seen_at]));
+    return {
+      items: items.map((item) => {
+        const firstSeen = clocks.get(item.messageId);
+        return firstSeen ? { ...item, expiresAt: needsYouExpiresAt(firstSeen) } : item;
+      }),
+    };
+  }
+
+  private async countNeedsYou(
+    input: Input<'countNeedsYou'>,
+    viewerId: string,
+  ): Promise<Output<'countNeedsYou'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
+      identity(row, this.publicOrigin),
+    );
+    return { count: items.length };
+  }
+
+  /** A tap or a dismissal: the cell is handled, on every device. */
+  private async clearNeedsYou(input: Input<'clearNeedsYou'>, viewerId: string): Promise<void> {
+    if (typeof input.messageId !== 'string' || !input.messageId)
+      throw new Error('messageId is required');
+    const cleared = await this.database.query(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+       SELECT $1,message.id,room.workspace_id,now()
+       FROM messages message
+       JOIN rooms room ON room.id=message.room_id AND room.workspace_id=$3
+       JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
+         AND member.removed_at IS NULL
+       WHERE message.id=$2
+       ON CONFLICT(identity_id,message_id)
+         DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+      [viewerId, input.messageId, input.workspaceId],
+    );
+    if (!cleared.rowCount) throw new Error('message is not available');
   }
 
   private async listMessageBookmarks(
@@ -7902,6 +7976,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomMessage',
   'setMessageBookmark',
   'listMessageBookmarks',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
@@ -7991,6 +8068,9 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'reopenChat',
   'listMessageBookmarks',
   'setMessageBookmark',
+  'readNeedsYou',
+  'countNeedsYou',
+  'clearNeedsYou',
   'readWorkbench',
   'readConnectionDetail',
   'readWallet',

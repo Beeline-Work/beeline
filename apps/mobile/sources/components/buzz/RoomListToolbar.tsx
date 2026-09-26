@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { BookmarksGlyph } from './BookmarksGlyph';
+import { TrayGlyph } from './TrayGlyph';
+import { compactNeedsYouCount } from '@/buzz/needs-you';
 import type { RoomListFilter } from '@/buzz/room-list-preferences';
 
 export function RoomListToolbar({
@@ -10,24 +11,27 @@ export function RoomListToolbar({
   onFilter,
   query,
   onQuery,
-  onBookmarks,
+  onTray,
+  needsYouCount = 0,
   searchRef,
   searchOpen: controlledSearchOpen,
   onSearchOpenChange,
   desktop = false,
-  bookmarksSelected = false,
+  traySelected = false,
   counts,
 }: {
   filter: RoomListFilter;
   onFilter: (filter: RoomListFilter) => void;
   query: string;
   onQuery: (query: string) => void;
-  onBookmarks?: () => void;
+  onTray?: () => void;
+  /** The badge on the tray mark; absent at zero. */
+  needsYouCount?: number;
   searchRef?: React.RefObject<TextInput | null>;
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
   desktop?: boolean;
-  bookmarksSelected?: boolean;
+  traySelected?: boolean;
   counts?: { all: number; unread: number; pinned: number };
 }) {
   const localSearchRef = useRef<TextInput>(null);
@@ -62,16 +66,26 @@ export function RoomListToolbar({
       >
         <Ionicons name="search-outline" size={21} color={styles.label.color} />
       </Pressable>
-      {onBookmarks && (
+      {onTray && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Bookmarks"
-          accessibilityState={{ selected: bookmarksSelected }}
-          onPress={onBookmarks}
+          accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
+          accessibilityState={{ selected: traySelected }}
+          onPress={onTray}
           style={styles.action}
-          testID={desktop ? 'desktop-bookmarks' : 'workspace-bookmarks'}
+          testID={desktop ? 'desktop-tray' : 'workspace-tray'}
         >
-          <BookmarksGlyph size={21} color={styles.bookmark.color} filled={bookmarksSelected} />
+          <TrayGlyph
+            size={22}
+            color={styles.tray.color}
+            cutColor={styles.tray.backgroundColor}
+            filled={traySelected}
+          />
+          {needsYouCount > 0 ? (
+            <View style={styles.needsCount} testID="tray-needs-you-count">
+              <Text style={styles.needsCountText}>{compactNeedsYouCount(needsYouCount)}</Text>
+            </View>
+          ) : null}
         </Pressable>
       )}
     </>
@@ -159,7 +173,27 @@ const styles = StyleSheet.create((theme) => ({
     height: 1,
     backgroundColor: theme.buzz.accent,
   },
-  bookmark: { color: theme.buzz.accent },
+  tray: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
+  needsCount: {
+    position: 'absolute',
+    top: 2,
+    right: 1,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: theme.buzz.bgBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.buzz.accent,
+  },
+  needsCountText: {
+    ...theme.buzz.type.sectionHead,
+    letterSpacing: 0,
+    color: theme.buzz.textInverted,
+    fontVariant: ['tabular-nums'],
+  },
   searchFocused: { borderBottomColor: theme.buzz.accent },
   search: {
     ...theme.buzz.type.body,

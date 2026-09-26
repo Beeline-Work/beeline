@@ -22,9 +22,7 @@ vi.mock('react-native-unistyles', () => ({
   // The picker's factory reads only `theme.buzz` tokens; a stub palette keeps
   // StyleSheet.create resolvable without pulling the real theme module.
   StyleSheet: {
-    create: (
-      factory: (theme: { buzz: Record<string, unknown> }) => unknown,
-    ) =>
+    create: (factory: (theme: { buzz: Record<string, unknown> }) => unknown) =>
       factory({
         buzz: {
           border: '#000',
@@ -138,9 +136,7 @@ describe('SlashVerbPicker agent command palette', () => {
     expect(restart).toHaveLength(1);
     restart[0].props.onPress();
     expect(onCommand).toHaveBeenCalledWith('restart');
-    expect(insertAgentSlashCommand('@bee /res', onCommand.mock.calls[0][0])).toBe(
-      '@bee /restart ',
-    );
+    expect(insertAgentSlashCommand('@bee /res', onCommand.mock.calls[0][0])).toBe('@bee /restart ');
   });
 
   it('renders ONLY from the published command list handed to it — never a hardcoded inventory', () => {

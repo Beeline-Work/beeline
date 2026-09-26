@@ -29,11 +29,13 @@ function seatShims(mobile: string): Record<string, string> {
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) });`,
     '@/buzz/avatar-upload': 'export const pickAndUploadAvatar = async () => undefined;',
-    '@/buzz/runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true });',
+    '@/buzz/runtime-config':
+      'export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true });',
     '@/sync/transport': `export class BuzzRigTransport {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
     }`,
-    '@/sync/transport/monolith-operation': 'export const monolithPhoneOperation = async () => undefined;',
+    '@/sync/transport/monolith-operation':
+      'export const monolithPhoneOperation = async () => undefined;',
     // The one Workspace the proof reads, wearing the loud picture the rails wear.
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async workspace() {

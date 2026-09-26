@@ -365,8 +365,9 @@ The Room list uses the approved Previews layout in Obsidian and Bone. The
 workspace name and existing bezel avatar head the list; the workspace menu
 (Members and authorized Workspace settings) sits beside that identity, with
 compose in the same header. The search field stays visible below the conversation
-toolbar on phone and desktop; its Search action focuses that field. Bookmarks is
-a separate brass action beside Search. All, Unread, and Pinned text filters
+toolbar on phone and desktop; its Search action focuses that field. The tray
+(`TrayGlyph`) is a separate brass action beside Search; it wears a brass count,
+compacting to `9+`, only while something needs the viewer. All, Unread, and Pinned text filters
 the list without removing access to quiet Rooms. The Messages section remains
 in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
 on All.
@@ -390,7 +391,16 @@ Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
 Mobile has no selected Room state: pressing a conversation navigates away.
 Long press immediately toggles pin/unpin; pins are device-local and scoped to viewer and
 workspace, separate from server-backed saved-message bookmarks.
-The Pinned filter uses text, while pinned rows show the pin glyph. At the
+The Pinned filter uses text, while pinned rows show the pin glyph.
+
+The tray holds exactly two sections, Needs you then Saved, each under a
+`sectionHead` with its brass count. A Needs-you cell is the asking sentence
+(never the viewer's own tag) over one `meta` line of source and age, with
+`expires in Nh` only in its last six hours. Every cell has the same weight:
+no dot, ring, type label or box. A quiet chevron marks the tap. A phone
+swipes right onto a brass-wash DISMISS rail; a desktop pointer swaps the
+chevron for DISMISS on the source line. Each section has its own empty
+state, so one never hides the other. At the
 default desktop sidebar width, all filters and both actions fit on the first
 toolbar row; the visible search field stays below it. An empty Pinned view is
 one shared component (`PinnedConversationsEmpty.tsx`) on phone and desktop: a
@@ -458,8 +468,8 @@ the gutter. Every screen that mounts the rail routes there. Jumping past it
 straight into `settings/identity` is what stranded the hub, and the product's
 only sign-out with it.
 
-**A Settings child names its parent as the eyebrow.** Bookmarks already
-does this (workspace name over large Bookmarks); the standalone corners
+**A Settings child names its parent as the eyebrow.** The tray already
+does this (workspace name over large Tray); the standalone corners
 list does it (Room name over the noun). Workbench is the same ladder:
 small Settings over large Workbench, and each tool or key page is small
 Workbench over the large tool or key name. `PageHeader` is the one

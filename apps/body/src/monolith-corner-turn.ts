@@ -1370,7 +1370,16 @@ export class MonolithCornerTurnLoop {
           // cannot authorize that personal resource, including on a reused session.
           const hostPermission = await api.execute('authorizeHostCall', { roomId: cornerId });
           if (!hostPermission.allowed) {
-            deliberateNoReply = true;
+            await api.execute('postRoomMessage', {
+              roomId: cornerId,
+              requestId,
+              text:
+                hostPermission.status === 'pending'
+                  ? `I'm waiting for ${hostPermission.ownerHandle ? `@${hostPermission.ownerHandle}` : 'my owner'} to approve the pending host-access request, so I haven't started this corner yet.`
+                  : "Host access was not authorized, so I couldn't start this corner.",
+              presentation: 'message',
+              ...(requestedById ? { triggerMessageId: requestId } : {}),
+            });
             return;
           }
           trace.noteScheduler('queue', this.options.scheduler.snapshot());

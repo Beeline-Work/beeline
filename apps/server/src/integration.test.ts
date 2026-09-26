@@ -9085,6 +9085,7 @@ describe('monolith integration', () => {
       const host = await (await daemonOperation('authorizeHostCall', context)).json();
       expect(host.allowed).toBe(yolo && ownerRequester);
       if (!host.allowed) {
+        expect(host.ownerHandle).toBe('owner');
         expect(
           (
             await operation(

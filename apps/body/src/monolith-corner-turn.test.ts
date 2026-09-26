@@ -182,49 +182,57 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
-  it.each(['authorizeRepositoryCall', 'authorizeHostCall'])(
-    'does not start an autonomous harness while %s is pending',
-    async (gate) => {
-      const agent = stored('11'.repeat(32), 'Bee');
-      const execute = vi.fn(async (name: string) =>
-        name === gate
-          ? { allowed: false, status: 'pending' }
-          : { allowed: true, id: 'write', createdAt: 1 },
-      );
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
-      const schedule = vi.spyOn(scheduler, 'run');
-      const createAcpClient = vi.fn();
-      const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
-      roots.push(root);
-      const loop = new MonolithCornerTurnLoop({
-        cornerId: 'corner-id',
-        parentRoomId: 'room-id',
-        workspaceId: 'workspace',
-        objective: 'Edit the repository',
-        worktreePath: root,
-        runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
-        config: { agentHomeRoot: root } as BodyConfig,
-        api: { execute } as unknown as DaemonApiClient,
-        scheduler,
-        onPoll: vi.fn(),
-        onFailure: vi.fn(),
-        onCloseRequested: vi.fn(),
-        createAcpClient,
-      });
-      await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
-        'request',
-        'work',
-      );
-      expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
-      expect(schedule).not.toHaveBeenCalled();
-      expect(createAcpClient).not.toHaveBeenCalled();
-      expect(execute).toHaveBeenCalledWith(
-        'postAgentTurnReceipt',
-        expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }),
-      );
-      await scheduler.dispose();
-    },
-  );
+  it('reports the owner wait instead of a no-reply completion while host access is pending', async () => {
+    const agent = stored('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) =>
+      name === 'authorizeHostCall'
+        ? { allowed: false, status: 'pending', ownerHandle: 'moonscannerai' }
+        : { allowed: true, id: 'write', createdAt: 1 },
+    );
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+    const schedule = vi.spyOn(scheduler, 'run');
+    const createAcpClient = vi.fn();
+    const root = await mkdtemp(join(tmpdir(), 'corner-approval-'));
+    roots.push(root);
+    const loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Edit the repository',
+      worktreePath: root,
+      runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
+      config: { agentHomeRoot: root } as BodyConfig,
+      api: { execute } as unknown as DaemonApiClient,
+      scheduler,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(),
+      createAcpClient,
+    });
+    await (loop as unknown as { prompt(id: string, trigger: string): Promise<void> }).prompt(
+      'request',
+      'work',
+    );
+    expect(execute).toHaveBeenCalledWith('authorizeRepositoryCall', { roomId: 'corner-id' });
+    expect(schedule).not.toHaveBeenCalled();
+    expect(createAcpClient).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith(
+      'postRoomMessage',
+      expect.objectContaining({
+        requestId: 'request',
+        text: "I'm waiting for @moonscannerai to approve the pending host-access request, so I haven't started this corner yet.",
+      }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      'postAgentTurnReceipt',
+      expect.objectContaining({ status: 'complete' }),
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      'postAgentTurnReceipt',
+      expect.objectContaining({ completionKind: 'no-reply' }),
+    );
+    await scheduler.dispose();
+  });
 
   it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));

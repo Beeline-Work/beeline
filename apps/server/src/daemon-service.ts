@@ -4749,11 +4749,18 @@ export class DaemonService {
     target = target.trim();
     const requester = await this.grantRequester();
     const context = (
-      await this.database.query<{ owner_id: string; yolo_mode: boolean; owner_present: boolean }>(
-        `SELECT a.owner_id,EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
+      await this.database.query<{
+        owner_id: string;
+        owner_handle: string | null;
+        yolo_mode: boolean;
+        owner_present: boolean;
+      }>(
+        `SELECT a.owner_id,owner.handle owner_handle,
+       EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=w.id
          AND m.room_id IS NULL AND m.identity_id=a.owner_id AND m.removed_at IS NULL) owner_present,
        (a.yolo_mode AND w.visibility<>'public') yolo_mode
-       FROM agents a JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
+       FROM agents a JOIN identities owner ON owner.id=a.owner_id
+       JOIN rooms r ON r.id=$1 JOIN workspaces w ON w.id=r.workspace_id
        WHERE a.agent_id=$2`,
         [input.roomId, agentId],
       )
@@ -4798,7 +4805,13 @@ export class DaemonService {
         [agentId, input.roomId, kind, target, requester.id],
       )
     ).rows[0];
-    if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
+    if (pending)
+      return {
+        allowed: false,
+        grantId: pending.id,
+        status: 'pending' as const,
+        ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
+      };
     const asked = await this.requestAgentGrant(
       {
         ...input,
@@ -4817,6 +4830,7 @@ export class DaemonService {
       allowed: false,
       grantId: asked.grantId,
       status: asked.status,
+      ...(context.owner_handle ? { ownerHandle: context.owner_handle } : {}),
       ...(asked.messageId ? { messageId: asked.messageId } : {}),
     };
   }

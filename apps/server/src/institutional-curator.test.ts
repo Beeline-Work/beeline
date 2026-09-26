@@ -70,9 +70,10 @@ beforeEach(async () => {
   );
   await database.query(
     `INSERT INTO institutional_memory_workspace_rollouts
-       (workspace_id,stage,auto_advance,curator_enabled,stale_after_days,archive_after_days,retention_days)
-     VALUES($1,'pilot',true,true,30,60,120)`,
-    [WORKSPACE],
+       (workspace_id,stage,auto_advance,curator_enabled,stale_after_days,archive_after_days,
+        retention_days,availability_observed_at)
+     VALUES($1,'pilot',true,true,30,60,120,$2)`,
+    [WORKSPACE, NOW],
   );
   await database.query(
     `INSERT INTO institutional_memory_items
@@ -427,7 +428,10 @@ describe('weekly institutional curator', () => {
        VALUES($1,$2,'presence','presence',$3::jsonb,$4)`,
       [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: resumed.getTime() }), resumed],
     );
-    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, resumed)).toBe(true);
+    // One sample standing in for 31 days of continuous 60-second observation.
+    expect(
+      await recordWorkspaceHostAvailability(database, WORKSPACE, resumed, 32 * 86_400_000),
+    ).toBe(true);
     expect(
       (
         await database.query(
@@ -440,6 +444,119 @@ describe('weekly institutional curator', () => {
     await runInstitutionalCuratorCycle(database, liveConfig, resumed);
     expect(await stateOf('institutional_memory_items', DUPLICATE)).toBe('stale');
     expect(await stateOf('workspace_skills', SKILL)).toBe('stale');
+  });
+
+  it('never credits unobserved time to the aging clock', async () => {
+    const created = new Date(NOW.getTime() - 200 * 86_400_000);
+    await database.query(`UPDATE workspaces SET created_at=$2 WHERE id=$1`, [WORKSPACE, created]);
+    await database.query(
+      `UPDATE institutional_memory_workspace_rollouts SET availability_observed_at=NULL
+       WHERE workspace_id=$1`,
+      [WORKSPACE],
+    );
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+       VALUES($1,$2,'presence','presence',$3::jsonb,$4)`,
+      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: NOW.getTime() }), NOW],
+    );
+
+    // A host is online at the first sample, but nothing watched the 200 days before it.
+    expect(await recordWorkspaceHostAvailability(database, WORKSPACE, NOW)).toBe(true);
+    expect(
+      (
+        await database.query<{ started_at: Date; ended_at: Date }>(
+          `SELECT started_at,ended_at FROM institutional_host_availability_gaps
+           WHERE workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rows,
+    ).toEqual([{ started_at: created, ended_at: NOW }]);
+
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    const itemState = async (id: string) =>
+      (
+        await database.query<{ state: string }>(
+          `SELECT state FROM institutional_memory_items WHERE id=$1`,
+          [id],
+        )
+      ).rows[0]?.state;
+    expect(await itemState(DUPLICATE)).toBe('active');
+    expect(await itemState(STALE)).toBe('stale');
+  });
+
+  it('records a curator retain without restarting the staleness clock', async () => {
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','retain-proof')`,
+      [CURATOR_JOB, WORKSPACE, ROOM, MESSAGE, HUMAN],
+    );
+    const before = (
+      await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM institutional_memory_items WHERE id=$1`,
+        [DUPLICATE],
+      )
+    ).rows[0]?.updated_at;
+
+    await database.transaction((db) =>
+      applyInstitutionalCuratorProposal(db, {
+        workspaceId: WORKSPACE,
+        jobId: CURATOR_JOB,
+        sourceMessageId: MESSAGE,
+        context: {
+          partition: 'workspace-facts',
+          candidates: [
+            {
+              id: DUPLICATE,
+              targetType: 'memory_item',
+              version: 1,
+              state: 'active',
+              key: 'schema-marker',
+              text: 'The schema marker is written last.',
+              sourceRoomId: ROOM,
+              sourceMessageId: MESSAGE,
+              requesterIdentityId: HUMAN,
+            },
+          ],
+        },
+        proposal: {
+          proposalVersion: 1,
+          partition: 'workspace-facts',
+          actions: [
+            {
+              action: 'retain',
+              targetType: 'memory_item',
+              targetId: DUPLICATE,
+              baseVersion: 1,
+              duplicateIds: [],
+              rationale: 'This release invariant still reads as current.',
+            },
+          ],
+        },
+        usage: { inputBytes: 10, outputBytes: 10, model: 'test', extractorVersion: 'test' },
+      }),
+    );
+
+    expect(
+      (
+        await database.query<{ updated_at: Date; curated_at: Date | null; state: string }>(
+          `SELECT updated_at,curated_at,state FROM institutional_memory_items WHERE id=$1`,
+          [DUPLICATE],
+        )
+      ).rows[0],
+    ).toMatchObject({ updated_at: before, curated_at: expect.any(Date), state: 'active' });
+
+    // The deterministic pass still ages it: retain is curation, not a serve.
+    await runInstitutionalCuratorCycle(database, liveConfig, NOW);
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT state FROM institutional_memory_items WHERE id=$1`,
+          [DUPLICATE],
+        )
+      ).rows[0]?.state,
+    ).toBe('stale');
   });
 
   it('keeps weekly curator jobs inside the shared daily Workspace cap', async () => {

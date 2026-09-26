@@ -122,6 +122,8 @@ describe('merge-derived restricted Workspace procedures', () => {
         objective: 'Make release migrations safe',
         commits: 2,
         files: 3,
+        checks: 'passing',
+        headSha: TARGET_COMMIT,
         config: liveConfig,
       }),
     );
@@ -133,7 +135,6 @@ describe('merge-derived restricted Workspace procedures', () => {
         repository: 'Beeline-Work/beeline',
         targetCommit: TARGET_COMMIT,
         checks: 'passing',
-        outcome: 'landed',
         reviewerVerdict: {
           approvedBy: WORKER,
           force: false,
@@ -241,6 +242,8 @@ describe('merge-derived restricted Workspace procedures', () => {
         objective: 'Make another release migration safe',
         commits: 1,
         files: 1,
+        checks: 'passing',
+        headSha: TARGET_COMMIT,
         config: liveConfig,
       }),
     );
@@ -311,6 +314,8 @@ describe('merge-derived restricted Workspace procedures', () => {
         objective: 'Make release migrations safe',
         commits: 1,
         files: 1,
+        checks: 'passing',
+        headSha: TARGET_COMMIT,
         config: liveConfig,
       }),
     );

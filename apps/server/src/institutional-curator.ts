@@ -4,6 +4,7 @@ import {
   type InstitutionalCuratorProposal,
   type InstitutionalMemoryJobUsage,
 } from '@beeline/api-contract/daemon';
+import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
 import type { SqlDatabase } from './database.js';
 import type { InstitutionalMemoryShadowConfig } from './institutional-memory-shadow.js';
 import {
@@ -16,8 +17,12 @@ export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
 export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
 /** The per-turn institutional context budget the rollout gate holds p95 to. */
 export const INSTITUTIONAL_CONTEXT_TOKEN_TARGET = 2_000;
-/** How long one presence observation still counts as an available helper host. */
-export const HOST_AVAILABILITY_EVIDENCE_MS = 90_000;
+/**
+ * A sample covers at most this much time. The curator samples on the server's
+ * reconciliation cadence, so a longer span means nothing watched the host and
+ * the span must not be credited as available.
+ */
+export const AVAILABILITY_OBSERVATION_MAX_MS = 10 * 60_000;
 
 /**
  * An authorized helper host that could serve this Workspace right now: a
@@ -32,7 +37,7 @@ const WORKSPACE_HOST_AVAILABLE_SQL = `EXISTS (
       ON presence.agent_id=member.identity_id AND presence.kind='presence'
     WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
       AND presence.body->>'status'='online'
-      AND presence.updated_at>=$2::timestamptz-interval '${HOST_AVAILABILITY_EVIDENCE_MS} milliseconds'
+      AND presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds'
   )`;
 
 /** Seconds since `anchor` in which no authorized helper host was available. */
@@ -55,25 +60,33 @@ const SKILL_AGE_ANCHOR = `GREATEST(skill.updated_at,COALESCE(skill.last_served_a
 
 /**
  * Sample whether an authorized helper host can serve this Workspace and record
- * the span since the previous sample when it could not. One contiguous outage
- * stays one row.
+ * every span that cannot be credited as available: an unavailable host, the
+ * unobserved history before the first sample, and any span longer than the
+ * sampling cadence. One contiguous span stays one row.
  */
 export async function recordWorkspaceHostAvailability(
   database: SqlDatabase,
   workspaceId: string,
   now: Date,
+  maxObservationMs = AVAILABILITY_OBSERVATION_MAX_MS,
 ): Promise<boolean> {
   const state = (
-    await database.query<{ available: boolean; observed_at: Date | null }>(
-      `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,rollout.availability_observed_at observed_at
+    await database.query<{ available: boolean; observed_at: Date | null; created_at: Date }>(
+      `SELECT ${WORKSPACE_HOST_AVAILABLE_SQL} available,
+              rollout.availability_observed_at observed_at,workspace.created_at
        FROM institutional_memory_workspace_rollouts rollout
+       JOIN workspaces workspace ON workspace.id=rollout.workspace_id
        WHERE rollout.workspace_id=$1`,
       [workspaceId, now],
     )
   ).rows[0];
   if (!state) return true;
-  const since = state.observed_at;
-  if (!state.available && since && since.getTime() < now.getTime()) {
+  const since = state.observed_at ?? state.created_at;
+  const credited =
+    state.available &&
+    state.observed_at !== null &&
+    now.getTime() - since.getTime() <= maxObservationMs;
+  if (!credited && since.getTime() < now.getTime()) {
     const extended = await database.query(
       `UPDATE institutional_host_availability_gaps SET ended_at=$3
        WHERE id=(SELECT id FROM institutional_host_availability_gaps
@@ -687,18 +700,15 @@ export async function applyInstitutionalCuratorProposal(
           [nextId, allIds],
         );
         consolidatedItems += 1;
+      } else if (action.action === 'retain') {
+        await database.query(`UPDATE institutional_memory_items SET curated_at=now() WHERE id=$1`, [
+          current.id,
+        ]);
       } else {
         await database.query(
           `UPDATE institutional_memory_items SET state=$2,curated_at=now(),updated_at=now()
            WHERE id=$1`,
-          [
-            current.id,
-            action.action === 'retain'
-              ? current.state
-              : action.action === 'stale'
-                ? 'stale'
-                : 'archived',
-          ],
+          [current.id, action.action === 'stale' ? 'stale' : 'archived'],
         );
       }
     } else {
@@ -776,17 +786,14 @@ export async function applyInstitutionalCuratorProposal(
           [action.duplicateIds],
         );
         consolidatedSkills += 1;
+      } else if (action.action === 'retain') {
+        await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
+          current.id,
+        ]);
       } else {
         await database.query(
           `UPDATE workspace_skills SET state=$2,curated_at=now(),updated_at=now() WHERE id=$1`,
-          [
-            current.id,
-            action.action === 'retain'
-              ? current.state
-              : action.action === 'stale'
-                ? 'stale'
-                : 'archived',
-          ],
+          [current.id, action.action === 'stale' ? 'stale' : 'archived'],
         );
       }
     }

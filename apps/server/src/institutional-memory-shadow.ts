@@ -195,6 +195,10 @@ export async function enqueueInstitutionalMemoryMergeReview(
     objective: string;
     commits: number;
     files: number;
+    /** The check state last observed BEFORE the merge overwrote the lifecycle. */
+    checks: string | undefined;
+    /** The head that merged; a reviewer verdict counts only for this exact head. */
+    headSha: string | undefined;
     config: InstitutionalMemoryShadowConfig;
   },
 ): Promise<string | undefined> {
@@ -203,8 +207,6 @@ export async function enqueueInstitutionalMemoryMergeReview(
     await database.query<{
       workspace_id: string;
       requester_identity_id: string;
-      checks: string | null;
-      outcome: string | null;
       approved_by: string | null;
       approved_head_sha: string | null;
       approved_pull_request_number: number | null;
@@ -213,7 +215,6 @@ export async function enqueueInstitutionalMemoryMergeReview(
     }>(
       `SELECT corner.workspace_id,
               COALESCE(fact.commissioned_by,requester.identity_id) requester_identity_id,
-              fact.lifecycle->>'checks' checks,fact.lifecycle->>'outcome' outcome,
               approval.approved_by,approval.head_sha approved_head_sha,
               approval.pull_request_number approved_pull_request_number,
               approval.approved_at,approval.force approved_force
@@ -291,19 +292,19 @@ export async function enqueueInstitutionalMemoryMergeReview(
     pullRequestTitle: input.pullRequestTitle,
     commits: input.commits,
     files: input.files,
-    checks: source.checks ?? 'unknown',
-    ...(source.outcome ? { outcome: source.outcome } : {}),
-    reviewerVerdict: source.approved_by
-      ? {
-          approvedBy: source.approved_by,
-          approvedAt: Math.floor((source.approved_at?.getTime() ?? 0) / 1_000),
-          force: source.approved_force ?? false,
-          ...(source.approved_head_sha ? { headSha: source.approved_head_sha } : {}),
-          ...(source.approved_pull_request_number !== null
-            ? { pullRequestNumber: source.approved_pull_request_number }
-            : {}),
-        }
-      : null,
+    checks: input.checks ?? 'unknown',
+    reviewerVerdict:
+      source.approved_by && input.headSha && source.approved_head_sha === input.headSha
+        ? {
+            approvedBy: source.approved_by,
+            approvedAt: Math.floor((source.approved_at?.getTime() ?? 0) / 1_000),
+            force: source.approved_force ?? false,
+            headSha: source.approved_head_sha,
+            ...(source.approved_pull_request_number !== null
+              ? { pullRequestNumber: source.approved_pull_request_number }
+              : {}),
+          }
+        : null,
     ...(priorSkill
       ? {
           priorSkill: {

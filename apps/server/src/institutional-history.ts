@@ -74,11 +74,14 @@ function boundedLimit(value: unknown): number {
   return Math.min(value as number, INSTITUTIONAL_HISTORY_RESULT_MAX);
 }
 
+const CLIP_MARK = '…';
+
 function clipUtf8(value: string, maximum: number): string {
   if (Buffer.byteLength(value, 'utf8') <= maximum) return value;
-  let end = Math.min(value.length, maximum);
-  while (end > 0 && Buffer.byteLength(value.slice(0, end), 'utf8') > maximum) end -= 1;
-  return `${value.slice(0, Math.max(0, end - 1)).trimEnd()}…`;
+  const budget = maximum - Buffer.byteLength(CLIP_MARK, 'utf8');
+  let end = Math.min(value.length, budget);
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), 'utf8') > budget) end -= 1;
+  return `${value.slice(0, end).trimEnd()}${CLIP_MARK}`;
 }
 
 function snippet(text: string, query: string): string {

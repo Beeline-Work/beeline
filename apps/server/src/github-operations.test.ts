@@ -58,7 +58,7 @@ describe('GitHub phone operations', () => {
         corner,
         JSON.stringify({
           lifecycle: 'in-review',
-          checks: 'passing',
+          checks: 'failing',
           pr: {
             number: 42,
             url: 'https://github.com/owner/widgets/pull/42',
@@ -94,6 +94,12 @@ describe('GitHub phone operations', () => {
       undefined,
       { enabled: true, live: true },
     );
+    // A reviewer approved an earlier head; the merged head is a different one.
+    await database.query(
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number)
+       VALUES($1,$2,$3,42)`,
+      [corner, HUMAN, '9'.repeat(40)],
+    );
     const deletedPush = {
       installation: { id: 77 },
       repository: { full_name: 'owner/widgets' },
@@ -109,7 +115,7 @@ describe('GitHub phone operations', () => {
           [corner],
         )
       ).rows[0]?.lifecycle,
-    ).toMatchObject({ checks: 'passing', pr: { headSha } });
+    ).toMatchObject({ checks: 'failing', pr: { headSha } });
     expect(
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [corner])).rowCount,
     ).toBe(0);
@@ -157,13 +163,19 @@ describe('GitHub phone operations', () => {
       ).rowCount,
     ).toBe(1);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
+    // The merge overwrote lifecycle.checks to 'passing'; the job must carry the
+    // state last observed before that, and must not present a stale approval.
     expect(
       (
-        await database.query<{ trigger_kind: string; context: { targetCommit: string } }>(
-          `SELECT trigger_kind,context FROM institutional_memory_jobs`,
-        )
+        await database.query<{
+          trigger_kind: string;
+          context: { targetCommit: string; checks: string; reviewerVerdict: unknown };
+        }>(`SELECT trigger_kind,context FROM institutional_memory_jobs`)
       ).rows[0],
-    ).toMatchObject({ trigger_kind: 'merge_review', context: { targetCommit: 'f'.repeat(40) } });
+    ).toMatchObject({
+      trigger_kind: 'merge_review',
+      context: { targetCommit: 'f'.repeat(40), checks: 'failing', reviewerVerdict: null },
+    });
   });
   it('mints a token only for the exact active repository bound to a top-level Room', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';

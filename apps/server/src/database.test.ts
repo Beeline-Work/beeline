@@ -17,6 +17,7 @@ import {
   markSchemaCurrent,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
+  type SqlDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
@@ -174,7 +175,17 @@ describe('message search vectors', () => {
     expect(await searchable()).toBe(0);
     expect(await backfillMessageSearchDocuments(database, 10)).toBe(25);
     expect(await searchable()).toBe(25);
-    expect(await backfillMessageSearchDocuments(database, 10)).toBe(0);
+    // A filled table costs one query, not a window walk on every release.
+    let queries = 0;
+    const counted: SqlDatabase = {
+      query: (sql, values) => {
+        queries += 1;
+        return database.query(sql, values);
+      },
+      transaction: (work) => database.transaction(work),
+    };
+    expect(await backfillMessageSearchDocuments(counted, 10)).toBe(0);
+    expect(queries).toBe(1);
 
     await database.query(`UPDATE messages SET text='unrelated wording' WHERE id='search-001'`);
     expect(await searchable()).toBe(24);

@@ -1874,7 +1874,7 @@ export async function backfillMessageSearchDocuments(
   let filled = 0;
   for (;;) {
     const window = await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE id>$1 ORDER BY id LIMIT $2`,
+      `SELECT id FROM messages WHERE id>$1 AND search_document IS NULL ORDER BY id LIMIT $2`,
       [cursor, batchSize],
     );
     const last = window.rows.at(-1)?.id;

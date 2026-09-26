@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
-import { INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX } from '@beeline/api-contract/daemon';
+import {
+  INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
+  INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
+} from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -205,6 +208,25 @@ describe('authorized institutional history search', () => {
       matches_capped: true,
       omitted_count: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10,
     });
+  });
+
+  it('keeps a clipped snippet inside the declared byte cap', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('long-result',$1,$2,'Release marker '||repeat('x ',600),now())`,
+      [SHARED, REQUESTER],
+    );
+    const long = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    const snippet = long.results.find((result) => result.messageId === 'long-result')?.snippet;
+    expect(snippet?.endsWith('…')).toBe(true);
+    expect(Buffer.byteLength(snippet ?? '', 'utf8')).toBeLessThanOrEqual(
+      INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
+    );
   });
 
   it('bounds input and records content-free telemetry', async () => {

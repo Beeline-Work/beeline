@@ -1517,6 +1517,7 @@ export class GitHubOperations {
         )
       ).rows[0]?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
+      const observedChecks = currentLifecycle?.checks;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =
         currentPr ??
@@ -1589,6 +1590,8 @@ export class GitHubOperations {
           objective: target.summary,
           commits: pullRequest.commits,
           files: pullRequest.files,
+          checks: observedChecks,
+          headSha: mergedPr?.headSha ?? pullRequest.headSha,
           config: this.institutionalMemory,
         });
       }

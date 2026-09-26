@@ -513,6 +513,24 @@ describe('Tray Needs you', () => {
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
   });
 
+  it('an open tray drops a cell cleared on another device at its next re-read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      serve({ needs: [need()] });
+      const tree = await renderTray();
+      expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
+      serve({ needs: [] });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('puts a cell back when the server refuses to clear it', async () => {
     layout.os = 'ios';
     layout.width = 390;

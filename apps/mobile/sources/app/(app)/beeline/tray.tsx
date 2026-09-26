@@ -27,6 +27,9 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 
+/** How often an open tray re-reads its sections. */
+const TRAY_REFRESH_MS = 60_000;
+
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
 }
@@ -97,9 +100,13 @@ export default function TrayScreen() {
     setLoading(false);
   }, [workspaceId]);
 
+  // An open tray keeps re-reading: another device may clear a cell, and a
+  // cell's 24-hour clock may run out while this screen stays up.
   useFocusEffect(
     useCallback(() => {
       void load();
+      const timer = setInterval(() => void load(), TRAY_REFRESH_MS);
+      return () => clearInterval(timer);
     }, [load]),
   );
 

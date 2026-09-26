@@ -660,7 +660,12 @@ export type RegistryMcpTurnContext = {
 
 /** The existing per-call resource gate (`authorizeResourceCall`), nothing new. */
 export type RegistryMcpCallAuthorizer = (
-  input: RegistryMcpTurnContext & { readonly target: string; readonly consume: boolean },
+  input: RegistryMcpTurnContext & {
+    readonly target: string;
+    readonly consume: boolean;
+    /** The MCP tool (or method) being called, for the app usage ledger. */
+    readonly operation?: string;
+  },
 ) => Promise<boolean>;
 
 export const REGISTRY_MCP_APPROVAL_REFUSAL =
@@ -707,6 +712,18 @@ function jsonRpcMethod(line: string): string {
   return method;
 }
 
+/** A `tools/call` names its tool; anything else is its own method. */
+function jsonRpcToolName(line: string): string | undefined {
+  try {
+    const message = JSON.parse(line) as { method?: unknown; params?: { name?: unknown } };
+    return message.method === 'tools/call' && typeof message.params?.name === 'string'
+      ? message.params.name.slice(0, 120)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function brokerSocketPath(home = homedir()): string {
   return join(home, '.beeline', 'registry-mcp-broker', `${process.pid}.sock`);
 }
@@ -745,7 +762,7 @@ export class RegistryMcpHostBroker {
     let state = readState(path);
     if (state?.status !== 'connected') throw new Error('Registry MCP connection is unavailable');
     const method = jsonRpcMethod(line);
-    await this.authorizeCall(state, method, turn);
+    await this.authorizeCall(state, method, turn, jsonRpcToolName(line));
     const refreshed = await refresh(state, this.transport);
     if (refreshed !== state) {
       state = refreshed;
@@ -790,6 +807,7 @@ export class RegistryMcpHostBroker {
     state: ConnectedState,
     method: string,
     turn: RegistryMcpTurnContext | undefined,
+    tool?: string,
   ): Promise<void> {
     const context = readTurnContext(turn);
     if (!this.authorize || !context) throw new RegistryMcpRefusal();
@@ -797,6 +815,7 @@ export class RegistryMcpHostBroker {
       ...context,
       target: `registry-mcp:${state.serverName}`,
       consume: !NON_CONSUMING.has(method),
+      operation: tool ?? method,
     });
     if (!allowed) throw new RegistryMcpRefusal();
   }

@@ -46,11 +46,24 @@ describe('institutional context fetch', () => {
     ]);
   });
 
-  it('is dark without the live host flag', async () => {
-    const execute = vi.fn();
-    await expect(institutionalContextForTurn({ execute } as never, 'room-1')).resolves.toEqual(
-      EMPTY_INSTITUTIONAL_CONTEXT,
-    );
-    expect(execute).not.toHaveBeenCalled();
+  it('fetches by default without any host flag', async () => {
+    const execute = vi.fn().mockResolvedValue(EMPTY_INSTITUTIONAL_CONTEXT);
+    await expect(
+      institutionalContextForTurn({ execute } as never, 'room-1'),
+    ).resolves.toEqual(EMPTY_INSTITUTIONAL_CONTEXT);
+    expect(execute).toHaveBeenCalledWith('getInstitutionalContext', { roomId: 'room-1' });
+  });
+
+  it('is off only when the live host flag is explicitly false', async () => {
+    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'false');
+    try {
+      const execute = vi.fn();
+      await expect(institutionalContextForTurn({ execute } as never, 'room-1')).resolves.toEqual(
+        EMPTY_INSTITUTIONAL_CONTEXT,
+      );
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

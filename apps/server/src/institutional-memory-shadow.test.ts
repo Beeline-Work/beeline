@@ -180,8 +180,14 @@ async function enrollLive(workspaceId = WORKSPACE): Promise<void> {
 }
 
 describe('institutional memory phase-0 shadow capture', () => {
-  it('is dark by default and enqueues each completed turn at most once when enabled', async () => {
-    expect(institutionalMemoryShadowConfigFromEnv({})).toMatchObject({ enabled: false });
+  it('is on by default and enqueues each completed turn at most once when enabled', async () => {
+    expect(institutionalMemoryShadowConfigFromEnv({})).toMatchObject({ enabled: true, live: true });
+    expect(
+      institutionalMemoryShadowConfigFromEnv({
+        BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'false',
+        BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'false',
+      }),
+    ).toMatchObject({ enabled: false, live: false });
     await database.transaction((db) =>
       enqueueInstitutionalMemoryTurnReview(db, {
         roomId: ROOM,
@@ -279,7 +285,7 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).rejects.toThrow(/live institutional memory is disabled/);
   });
 
-  it('serves no live memory to a Workspace nobody enrolled', async () => {
+  it('serves no live memory to a Workspace whose rollout is off', async () => {
     await enrollLive();
     await database.transaction((db) =>
       enqueueInstitutionalMemoryTurnReview(db, {
@@ -303,9 +309,9 @@ describe('institutional memory phase-0 shadow capture', () => {
       liveConfig,
     );
 
-    // Withdrawing the enrollment leaves the live env flag on by itself.
+    // Switching the rollout off leaves the live env flag on by itself.
     await database.query(
-      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='off' WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     const command = await createAgentCommand(database, {
@@ -324,22 +330,22 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(context).toMatchObject({ text: '', itemIds: [], totalBytes: 0 });
   });
 
-  it('spends no host session on a Workspace nobody enrolled', async () => {
+  it('spends no host session on a Workspace whose rollout is off', async () => {
     await database.query(
-      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='off' WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     await expect(enqueue()).resolves.toBeUndefined();
     expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
 
-    // A job queued while enrolled is not claimable once enrollment is withdrawn.
+    // A job queued while enrolled is not claimable once the rollout is off.
     await database.query(
-      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'shadow')`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='shadow' WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     await expect(enqueue()).resolves.toMatch(/^[0-9a-f-]{36}$/);
     await database.query(
-      `DELETE FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      `UPDATE institutional_memory_workspace_rollouts SET stage='off' WHERE workspace_id=$1`,
       [WORKSPACE],
     );
     await expect(claimInstitutionalMemoryJob(database, AGENT, liveConfig)).resolves.toBeUndefined();

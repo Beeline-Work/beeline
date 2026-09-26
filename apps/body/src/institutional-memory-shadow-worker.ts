@@ -13,6 +13,7 @@ import {
 import type { AgentCommand } from './agent-command.js';
 import { AcpClient } from './acp.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { institutionalMemoryFlagEnabled } from './institutional-context.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -25,10 +26,12 @@ export const INSTITUTIONAL_MEMORY_SHADOW_POLL_MS = 30_000;
 export const INSTITUTIONAL_MEMORY_SHADOW_HEARTBEAT_MS = 60_000;
 export const INSTITUTIONAL_MEMORY_SHADOW_EXTRACTOR_VERSION = 'institutional-shadow-v1';
 
+/** Institutional memory is ON by default. Each flag is an OFF switch, so only an
+ *  explicit `false` disables it; both must be `false` to stop the host worker. */
 export function institutionalMemoryShadowEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return (
-    env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] === 'true' ||
-    env[INSTITUTIONAL_MEMORY_LIVE_FLAG] === 'true'
+    institutionalMemoryFlagEnabled(env, INSTITUTIONAL_MEMORY_SHADOW_FLAG) ||
+    institutionalMemoryFlagEnabled(env, INSTITUTIONAL_MEMORY_LIVE_FLAG)
   );
 }
 

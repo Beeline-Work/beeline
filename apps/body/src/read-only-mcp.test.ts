@@ -29,23 +29,23 @@ describe('direct message helper surface', () => {
     );
   });
 
-  it('advertises the memory proposal tool only when live memory is enabled', () => {
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain(
-      'propose_memory_item',
+  it('advertises the memory tools by default and hides them only when explicitly disabled', () => {
+    const byDefault = agentToolsFor(true, false).map((tool) => tool.name);
+    expect(byDefault).toContain('propose_memory_item');
+    expect(byDefault).toContain('search_history');
+    expect(byDefault).toContain('load_workspace_skill');
+    const disabled = agentToolsFor(true, false, false, false, true, false, false).map(
+      (tool) => tool.name,
     );
-    expect(
-      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
-    ).toContain('propose_memory_item');
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain('search_history');
-    expect(
-      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
-    ).toContain('search_history');
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain(
-      'load_workspace_skill',
+    expect(disabled).not.toContain('propose_memory_item');
+    expect(disabled).not.toContain('search_history');
+    expect(disabled).not.toContain('load_workspace_skill');
+    const enabled = agentToolsFor(true, false, false, false, true, false, true).map(
+      (tool) => tool.name,
     );
-    expect(
-      agentToolsFor(true, false, false, false, true, false, true).map((tool) => tool.name),
-    ).toContain('load_workspace_skill');
+    expect(enabled).toContain('propose_memory_item');
+    expect(enabled).toContain('search_history');
+    expect(enabled).toContain('load_workspace_skill');
   });
 });
 

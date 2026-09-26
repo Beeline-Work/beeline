@@ -1106,7 +1106,7 @@ CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
 
 CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
-  stage text NOT NULL DEFAULT 'off' CHECK (stage IN ('off','shadow','pilot','live','paused')),
+  stage text NOT NULL DEFAULT 'live' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
@@ -1117,6 +1117,11 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   CHECK (archive_after_days > stale_after_days),
   CHECK (retention_days >= archive_after_days)
 );
+-- Institutional memory is on by default. 'off'/'paused' are the explicit off
+-- switches; nothing starts in 'shadow'/'pilot', and the release migration
+-- (backfillInstitutionalMemoryRollout) advances any existing staged rows to
+-- 'live' and enrolls every Workspace that has no row yet.
+ALTER TABLE institutional_memory_workspace_rollouts ALTER COLUMN stage SET DEFAULT 'live';
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
 
@@ -2005,6 +2010,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   );
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
+  await backfillInstitutionalMemoryRollout(database);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
@@ -2144,6 +2150,33 @@ export async function backfillAgentHandles(database: SqlDatabase): Promise<numbe
     console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
     return changed;
   });
+}
+
+/**
+ * Institutional memory is on by default, so every Workspace is enrolled at the
+ * `live` stage unless an operator explicitly turned it `off`/`paused`. Existing
+ * staged rows migrate to `live`; a Workspace with no row gets one. Idempotent:
+ * the explicit off switches survive, and re-running touches nothing else.
+ */
+export async function backfillInstitutionalMemoryRollout(
+  database: SqlDatabase,
+): Promise<number> {
+  const advanced = await database.query(
+    `UPDATE institutional_memory_workspace_rollouts
+     SET stage='live',updated_at=now()
+     WHERE stage IN ('shadow','pilot')`,
+  );
+  const enrolled = await database.query(
+    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
+     SELECT id,'live' FROM workspaces
+     ON CONFLICT (workspace_id) DO NOTHING`,
+  );
+  const changed = advanced.rowCount + enrolled.rowCount;
+  if (changed)
+    console.log(
+      `backfillInstitutionalMemoryRollout: advanced ${advanced.rowCount}, enrolled ${enrolled.rowCount} Workspace rollout(s)`,
+    );
+  return changed;
 }
 
 /**

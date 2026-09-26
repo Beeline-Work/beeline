@@ -8,6 +8,7 @@ import {
   backfillAgentHandles,
   backfillMessageSearchDocuments,
   MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
+  backfillInstitutionalMemoryRollout,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
@@ -764,6 +765,64 @@ describe('the yolo default migration', () => {
       [FRESH_AGENT],
     );
     expect(rows.rows).toEqual([{ yolo_mode: true }]);
+  });
+});
+
+describe('the institutional memory rollout migration', () => {
+  const STAGED = '10000000-0000-4000-8000-000000000011';
+  const PAUSED = '10000000-0000-4000-8000-000000000012';
+  const OFF = '10000000-0000-4000-8000-000000000013';
+  const PLAIN = '10000000-0000-4000-8000-000000000014';
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+  afterEach(() => database.close());
+
+  it('enrolls every Workspace live, advances staged rows, and keeps the off switches', async () => {
+    await database.query(
+      `INSERT INTO workspaces(id,name) VALUES($1,'Staged'),($2,'Paused'),($3,'Off'),($4,'Plain')`,
+      [STAGED, PAUSED, OFF, PLAIN],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES
+         ($1,'shadow'),($2,'paused'),($3,'off')`,
+      [STAGED, PAUSED, OFF],
+    );
+
+    // One staged row advances to live and one Workspace with no row is enrolled.
+    await expect(backfillInstitutionalMemoryRollout(database)).resolves.toBe(2);
+    const stages = await database.query<{ workspace_id: string; stage: string }>(
+      `SELECT workspace_id,stage FROM institutional_memory_workspace_rollouts
+       WHERE workspace_id=ANY($1::uuid[]) ORDER BY workspace_id`,
+      [[STAGED, PAUSED, OFF, PLAIN]],
+    );
+    expect(new Map(stages.rows.map((row) => [row.workspace_id, row.stage]))).toEqual(
+      new Map([
+        [STAGED, 'live'],
+        [PAUSED, 'paused'],
+        [OFF, 'off'],
+        [PLAIN, 'live'],
+      ]),
+    );
+
+    // A second run has nothing left to do.
+    await expect(backfillInstitutionalMemoryRollout(database)).resolves.toBe(0);
+  });
+
+  it('defaults a newly inserted rollout row to live', async () => {
+    const NEW = '10000000-0000-4000-8000-000000000015';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'New')`, [NEW]);
+    await database.query(
+      `INSERT INTO institutional_memory_workspace_rollouts(workspace_id) VALUES($1)`,
+      [NEW],
+    );
+    const stage = await database.query<{ stage: string }>(
+      `SELECT stage FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`,
+      [NEW],
+    );
+    expect(stage.rows[0]?.stage).toBe('live');
   });
 });
 

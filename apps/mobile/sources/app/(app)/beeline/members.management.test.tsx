@@ -481,8 +481,8 @@ beforeEach(() => {
         requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
         decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
         roomId: '22222222-2222-4222-8222-222222222222',
-        createdAt: 1,
-        decidedAt: 2,
+        createdAt: 1_756_900_000,
+        decidedAt: 1_756_900_060,
         auto: false,
         agent: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
       },
@@ -734,12 +734,40 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'person-role-editor' })).toHaveLength(0);
   });
 
-  it('shows the profiled member grants as a read-only Settings list', async () => {
+  it('shows the profiled member grants as a read-only ledger row that discloses its detail', async () => {
+    state.workspace = {
+      ...state.workspace,
+      managerSettings: {
+        visibility: 'invite-only',
+        rooms: [
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            name: 'ship-the-slab',
+            visibility: 'public',
+            createdAt: 1,
+          },
+        ],
+      },
+    };
     const renderer = await personProfile();
-    const grant = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
-    expect(grant.props.title).toBe('beeline-work/beeline');
-    expect(grant.props.description).toBe('@clara · repository · approved');
-    expect(grant.props.onPress).toBeUndefined();
+    const head = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
+    expect(head.props.title).toBe('beeline-work/beeline');
+    // The agent's stated reason sits on its own line, then the provenance line.
+    expect(head.props.description).toBe('ship the profile pass');
+    expect(head.props.descriptionDetail).toContain('approved by Viewer,');
+    expect(head.props.descriptionDetail).toContain('· standing');
+    // A disclosure, never a decision: nothing is written from this row.
+    expect(
+      renderer.root.findAllByProps({ testID: 'member-grant-member-grant-details' }),
+    ).toHaveLength(0);
+    await press(renderer, 'member-grant-member-grant');
+    const detail = renderer.root.findByProps({ testID: 'member-grant-member-grant-details' });
+    const lines = detail
+      .findAllByType('Text' as any)
+      .map((node: any) => String(node.props.children));
+    expect(lines).toContain('Requested by Builder');
+    expect(lines).toContain('Room ship-the-slab');
+    expect(phoneOperation).not.toHaveBeenCalled();
   });
 
   it('keeps peers and owners outside admin role and ban authority', async () => {

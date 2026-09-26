@@ -245,11 +245,18 @@ for (const [workspace, room, identity, role] of members) {
   );
 }
 
+// The profile's read-only grant ledger shows the profiled member's settled
+// grants: a repository grant is Workspace-visible, a personal-resource grant
+// only to the agent's owner. One standing, one yolo-approved with an expiry,
+// and one consumed `once`, so the row's provenance vocabulary is exercised.
 await database.query(
   `INSERT INTO agent_grants(
-     id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at
-   ) VALUES($1,$2,$3,'repository','lunchboxfortwo/beeline','ship the profile audit',$4,$5,'approved',$6,now())`,
-  [uuid(), AGENT_NIGLET, WORKSPACE, PEER, ROOM, VIEWER],
+     id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,decided_by,decided_at,expires_at,auto
+   ) VALUES
+     ($1,$4,$5,'repository','lunchboxfortwo/beeline','ship the profile audit',$6,$7,'approved',$8,now() - interval '2 days',NULL,false),
+     ($2,$4,$5,'repository','Beeline-Work/beeline-web','open the docs PR without another card',$6,$7,'approved',$8,now() - interval '1 hour',now() + interval '6 hours',true),
+     ($3,$4,$5,'repository','lunchboxfortwo/scratch','run the one-off migration once',$6,$7,'once',$8,now() - interval '30 minutes',NULL,false)`,
+  [uuid(), uuid(), uuid(), AGENT_NIGLET, WORKSPACE, PEER, ROOM, VIEWER],
 );
 
 // ---- transcript -----------------------------------------------------------

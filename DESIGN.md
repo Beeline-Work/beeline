@@ -420,7 +420,10 @@ desktop it toggles an inline list, waiting first, with each corner independently
 selectable and draggable. Opening a Room row leaves its corner list collapsed;
 opening a corner directly expands its parent Room. Explicit per-Room expansion
 choices persist. Expanded rows use the canonical waiting/working/review/idle
-vocabulary rather than inventing an ambiguous “needs you” state.
+vocabulary rather than inventing an ambiguous “needs you” state. Long-pressing
+that same summary — never the row, which still pins — opens a new, randomly
+named corner in the Room and lands the viewer in it. The long press is offered
+to a human viewer only; an agent's client gets no such affordance.
 
 **The standalone corners list is that same index, full height.** The screen
 opened from the Room header's corners door (`corners/[roomId]`) is chrome on

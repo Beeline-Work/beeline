@@ -17,6 +17,7 @@ import {
   useRoomPins,
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
+import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -32,6 +33,7 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import {
@@ -361,6 +363,34 @@ export const SidebarView = React.memo(function SidebarView() {
     },
     [router],
   );
+  const openCornerInRoom = React.useCallback(
+    (roomId: string, cornerId: string) => {
+      selectDesktopWorkCorner({ roomId, cornerId });
+      if (activeRoomId !== roomId) openRoom(roomId);
+    },
+    [activeRoomId, openRoom],
+  );
+  // The sidebar reads through RoomViewClient only, so the one write it makes
+  // builds the monolith transport on demand, as the Room composer does.
+  const openingCornerRef = React.useRef(false);
+  const openNewCorner = React.useCallback(
+    async (roomId: string) => {
+      if (openingCornerRef.current) return;
+      openingCornerRef.current = true;
+      try {
+        const identity = await loadBuzzIdentity();
+        const transport = identity ? new BuzzRigTransport(identity) : null;
+        await openRoomListCorner({
+          roomId,
+          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title) : null,
+          openCorner: (cornerId) => openCornerInRoom(roomId, cornerId),
+        });
+      } finally {
+        openingCornerRef.current = false;
+      }
+    },
+    [openCornerInRoom],
+  );
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -663,6 +693,9 @@ export const SidebarView = React.memo(function SidebarView() {
                           }
                           pinned={pinned.includes(item.room.id)}
                           onPin={() => void togglePin(item.room.id)}
+                          onLongPressCorners={
+                            viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                          }
                           onPress={() => openRoom(item.room.id)}
                           testID={`desktop-room-${item.room.id}`}
                         />
@@ -672,10 +705,7 @@ export const SidebarView = React.memo(function SidebarView() {
                             <DesktopRoomCorners
                               key={`${workspaceId}/${item.room.id}`}
                               item={item}
-                              onOpen={(cornerId) => {
-                                selectDesktopWorkCorner({ roomId: item.room.id, cornerId });
-                                if (activeRoomId !== item.room.id) openRoom(item.room.id);
-                              }}
+                              onOpen={(cornerId) => openCornerInRoom(item.room.id, cornerId)}
                               renderDrag={(cornerId, children) => (
                                 <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
                                   {children}

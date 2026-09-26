@@ -18,6 +18,9 @@ const openCornerState = vi.hoisted(() => ({
   current: 'working' as 'working' | 'waiting' | 'review',
 }));
 const corners = vi.hoisted(() => vi.fn());
+const createHumanCorner = vi.hoisted(() =>
+  vi.fn(async (_roomId: string, _title: string) => 'corner-new'),
+);
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -119,6 +122,16 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     chats = chats;
     corners = corners;
   },
+}));
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    createHumanCorner = createHumanCorner;
+  },
+}));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('expo-haptics', () => ({
+  notificationAsync: vi.fn(),
+  NotificationFeedbackType: { Success: 'success', Error: 'error' },
 }));
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
@@ -642,6 +655,46 @@ describe('desktop Workspace navigation', () => {
       expanded: true,
     });
     expect(control('desktop-corner-corner-a')).toBeDefined();
+  });
+
+  it('opens a new corner from a long press on the Room corner glyph and lands in it', async () => {
+    await act(async () => {
+      await control('desktop-room-room-a-corners').props.onLongPress();
+    });
+
+    expect(createHumanCorner).toHaveBeenCalledOnce();
+    const [roomId, title] = createHumanCorner.mock.calls[0]!;
+    expect(roomId).toBe('room-a');
+    expect(title).toMatch(/ corner$/);
+    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
+      roomId: 'room-a',
+      cornerId: 'corner-new',
+    });
+    expect(routerNavigate).toHaveBeenCalledWith(
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { dangerouslySingular: true },
+    );
+    // The long press opened a corner; it did not also toggle the corner list.
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: false,
+    });
+  });
+
+  it('keeps a tap on the Room corner glyph as the corner-list toggle', () => {
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(createHumanCorner).not.toHaveBeenCalled();
+    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+  });
+
+  it('offers an agent viewer no corner long press', async () => {
+    viewer.kind = 'agent';
+    await act(async () => {
+      tree.update(<SidebarView key="agent-viewer" />);
+    });
+    await settle();
+    expect(control('desktop-room-room-a-corners').props.onLongPress).toBeUndefined();
   });
 
   it('lists open corners from the chat list with no per-Room corners read', async () => {

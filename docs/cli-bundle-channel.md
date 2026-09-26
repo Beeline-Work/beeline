@@ -17,7 +17,10 @@ When helper code or a shared helper contract is selected,
 `.github/actions/daemon-leg/action.yml` combines install-verified native
 `linux-x64`, `darwin-arm64`, and `darwin-x64` bundles under the release's exact
 version and source SHA. The macOS builds run natively: Apple silicon on GitHub's
-hosted macOS runner and Intel on the repository's self-hosted macOS runner.
+hosted macOS runner and Intel on the repository's self-hosted macOS runner. They
+run only while this release identity still owes merged bytes; a retry that
+already has that merged artifact promotes those exact bytes instead of
+rebuilding them (see [the release pipeline](./release-pipeline.md)).
 Other selective releases carry the last successful helper version, SHA, and
 artifact reference.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to

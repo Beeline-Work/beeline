@@ -595,9 +595,9 @@ describe('feature detection falls back rather than failing the daemon', () => {
     const usable = { path: '/usr/bin/bwrap', advisory: 'ENABLED' };
 
     /**
-     * `apt-get update` losing the lists lock, verbatim: three lines whose LAST
-     * one never says "could not get lock", which is why the verdict is read from
-     * the whole output.
+     * apt losing the lists lock to another apt process, verbatim: three lines
+     * whose LAST one never says "could not get lock", which is why the verdict is
+     * read from the whole output.
      */
     const APT_LISTS_LOCK_HELD = [
       'E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4711 (apt-get)',
@@ -777,23 +777,66 @@ describe('feature detection falls back rather than failing the daemon', () => {
       }
     });
 
-    it('stops at the failed refresh rather than installing against a stale cache', async () => {
+    /**
+     * One unreachable third-party repo exits `apt-get update` non-zero on a host
+     * where bubblewrap installs fine from the base archive, so the refresh is a
+     * courtesy and only the install's own result is the verdict.
+     */
+    it('installs anyway when the index refresh fails', async () => {
       const host = hostPath(['apt-get']);
+      const state = stateDir();
       try {
         const commands: string[][] = [];
+        let detections = 0;
         const result = await ensureBwrapSandbox({
           env: host.env,
           platform: 'linux',
-          detect: () => missing,
+          stateDir: state.path,
+          detect: () => {
+            detections += 1;
+            return detections === 1 ? missing : usable;
+          },
           run: async (command, args) => {
             commands.push([command, ...args]);
-            return { code: 100, output: 'Could not resolve host: archive.example' };
+            return args.includes('update')
+              ? { code: 100, output: 'E: Some index files failed to download' }
+              : { code: 0, output: '' };
           },
         });
-        expect(commands).toEqual([['sudo', '-n', 'apt-get', 'update']]);
-        expect(result.path).toBeUndefined();
-        expect(result.advisory).toContain('Could not resolve host');
+        expect(commands).toEqual([
+          ['sudo', '-n', 'apt-get', 'update'],
+          ['sudo', '-n', 'apt-get', 'install', '-y', 'bubblewrap'],
+        ]);
+        expect(result.path).toBe('/usr/bin/bwrap');
+        expect(state.markedAt()).toBeUndefined();
       } finally {
+        state.cleanup();
+        host.cleanup();
+      }
+    });
+
+    it('arms the day-long skip on the install, never on the refresh', async () => {
+      const host = hostPath(['apt-get']);
+      const state = stateDir();
+      try {
+        const result = await ensureBwrapSandbox({
+          env: host.env,
+          platform: 'linux',
+          stateDir: state.path,
+          now: () => 7_000,
+          detect: () => missing,
+          run: async (command, args) =>
+            args.includes('update')
+              ? { code: 100, output: 'E: Some index files failed to download' }
+              : { code: 100, output: 'E: Unable to locate package bubblewrap' },
+        });
+        expect(result.path).toBeUndefined();
+        // The reason a person reads is the install's, not the refresh's.
+        expect(result.advisory).toContain('Unable to locate package');
+        expect(result.advisory).not.toContain('index files');
+        expect(state.markedAt()).toBe(7_000);
+      } finally {
+        state.cleanup();
         host.cleanup();
       }
     });
@@ -1025,10 +1068,9 @@ describe('feature detection falls back rather than failing the daemon', () => {
           // The real detection is what decides; here it answers from the same
           // PATH the sibling's install lands on.
           detect: () => (existsSync(resolve(host.dir, 'bwrap')) ? usable : missing),
-          run: async (command, args) =>
-            args.includes('update')
-              ? { code: 100, output: APT_LISTS_LOCK_HELD }
-              : { code: 0, output: '' },
+          // The sibling holds the lock for the whole window, so every stage this
+          // helper runs loses it.
+          run: async () => ({ code: 100, output: APT_LISTS_LOCK_HELD }),
         });
         expect(sleeps).toBe(3);
         expect(result.path).toBe('/usr/bin/bwrap');

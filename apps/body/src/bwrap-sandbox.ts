@@ -796,30 +796,29 @@ function lostPackageManagerLock(output: string): boolean {
 
 type InstallFailure = { readonly ok: false; readonly reason: string; readonly lockedOut: boolean };
 
-function failedStage(result: SandboxInstallResult, fallback: string): InstallFailure {
-  return {
-    ok: false,
-    reason: lastLine(result.output, fallback),
-    lockedOut: lostPackageManagerLock(result.output),
-  };
-}
-
 /**
  * One install attempt on a host `bubblewrapPackageSupport` already cleared, as
  * the unprivileged helper account: `sudo -n` only, because the agent runs as a
  * systemd `--user` unit and never as root.
  *
  * `apt-get update` runs first — a host whose cache predates the package's
- * arrival answers "Unable to locate package" on every daemon start otherwise.
+ * arrival answers "Unable to locate package" otherwise — but it is BEST-EFFORT
+ * and its exit code is the verdict on nothing. One unreachable third-party repo
+ * or a rotated signing key exits it non-zero on a host where bubblewrap installs
+ * fine from the base archive, and only the install itself can establish that the
+ * package is unobtainable, which is the whole meaning of the failure marker.
  */
 async function installBubblewrap(
   run: SandboxInstallRunner,
 ): Promise<{ readonly ok: true } | InstallFailure> {
-  const refresh = await run('sudo', ['-n', 'apt-get', 'update']);
-  if (refresh.code !== 0) return failedStage(refresh, `apt-get update exited ${refresh.code}`);
+  await run('sudo', ['-n', 'apt-get', 'update']);
   const install = await run('sudo', ['-n', 'apt-get', 'install', '-y', 'bubblewrap']);
   if (install.code === 0) return { ok: true };
-  return failedStage(install, `apt-get install exited ${install.code}`);
+  return {
+    ok: false,
+    reason: lastLine(install.output, `apt-get install exited ${install.code}`),
+    lockedOut: lostPackageManagerLock(install.output),
+  };
 }
 
 const sleepFor = (ms: number): Promise<void> =>

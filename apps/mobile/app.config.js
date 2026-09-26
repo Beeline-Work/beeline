@@ -176,6 +176,7 @@ export default {
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidBuildTooling.js"),
+            require("./plugins/withAndroidPushRouting.js"),
             [
                 "expo-router",
                 {

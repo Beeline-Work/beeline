@@ -7,6 +7,9 @@ import {
 } from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
+// The tap trampoline the mobile manifest declares for this exact action is
+// covered by apps/mobile's `androidPushRouting.test.ts`.
+const ANDROID_PUSH_CLICK_ACTION = 'app.usebeeline.NOTIFICATION';
 
 describe('Firebase push credentials', () => {
   it('uses an inline service account with cert and its project id', () => {
@@ -114,7 +117,9 @@ describe('Firebase push routing payload', () => {
       ...(cornerId ? { cornerId } : {}),
       messageId: 'message-1',
     });
-    expect(payload.android).toEqual({ notification: { tag: roomId } });
+    expect(payload.android).toEqual({
+      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION, tag: roomId },
+    });
     expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
     expect(payload.android).not.toHaveProperty('collapseKey');
   });
@@ -149,7 +154,12 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
-      android: { notification: { tag: 'room-welcome' } },
+      android: {
+        notification: {
+          clickAction: ANDROID_PUSH_CLICK_ACTION,
+          tag: 'room-welcome',
+        },
+      },
       apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
@@ -163,17 +173,19 @@ describe('Firebase push routing payload', () => {
   });
 
   it('routes a Workspace-only join to the exact Workspace without inventing a Room', () => {
-    expect(
-      firebasePushMessage('device-token', {
-        messageId: 'workspace-join:notification-id',
-        workspaceId: 'workspace-default',
-        type: 'workspace-join',
-        text: 'alice joined Beeline',
-      }).data,
-    ).toEqual({
+    const payload = firebasePushMessage('device-token', {
+      messageId: 'workspace-join:notification-id',
+      workspaceId: 'workspace-default',
+      type: 'workspace-join',
+      text: 'alice joined Beeline',
+    });
+    expect(payload.data).toEqual({
       type: 'workspace-join',
       target: 'workspace',
       workspaceId: 'workspace-default',
+    });
+    expect(payload.android).toEqual({
+      notification: { clickAction: ANDROID_PUSH_CLICK_ACTION },
     });
   });
 });

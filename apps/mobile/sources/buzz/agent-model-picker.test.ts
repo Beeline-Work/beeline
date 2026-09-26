@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentHarnessName, filterAgentModelOptions } from './agent-model-picker';
+import { filterAgentModelOptions } from './agent-model-picker';
 
 describe('filterAgentModelOptions', () => {
   const options = [
@@ -16,24 +16,5 @@ describe('filterAgentModelOptions', () => {
 
   it('keeps every catalog option for an empty search', () => {
     expect(filterAgentModelOptions(options, '   ')).toEqual(options);
-  });
-});
-
-describe('agentHarnessName', () => {
-  it('names each helper harness kind', () => {
-    expect(agentHarnessName('claude')).toBe('Claude Code');
-    expect(agentHarnessName('codex')).toBe('Codex');
-    expect(agentHarnessName('cursor')).toBe('Cursor');
-    expect(agentHarnessName('goose')).toBe('Goose');
-    expect(agentHarnessName('grok')).toBe('Grok');
-    expect(agentHarnessName('opencode')).toBe('OpenCode');
-    expect(agentHarnessName('pi')).toBe('Pi');
-  });
-
-  it('names nothing for a kind that is not a runtime', () => {
-    expect(agentHarnessName('reference')).toBeUndefined();
-    expect(agentHarnessName('custom')).toBeUndefined();
-    expect(agentHarnessName('hermes')).toBeUndefined();
-    expect(agentHarnessName(undefined)).toBeUndefined();
   });
 });

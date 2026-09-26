@@ -235,7 +235,6 @@ const cases: Case[] = [
       'owner',
       'soul',
       'seededSoul',
-      'harness',
       'runtimeSelection',
       'selected',
       'modelUnavailable',
@@ -312,18 +311,6 @@ describe('phone surface readers', () => {
       });
     });
   }
-
-  it('keeps a harness word on an agent and drops anything else', () => {
-    const base = {
-      workspaceId,
-      agent: { identity: agent, role: 'member' },
-      catalog: [],
-      commands: [],
-    };
-    expect(readAgentDetailView({ ...base, harness: 'cursor' })?.harness).toBe('cursor');
-    for (const harness of ['Cursor Agent', '', 42, 'x'.repeat(40)])
-      expect(readAgentDetailView({ ...base, harness })).not.toHaveProperty('harness');
-  });
 
   it('drops an unreadable list entry instead of blanking the Room', () => {
     const view = readRoomView({

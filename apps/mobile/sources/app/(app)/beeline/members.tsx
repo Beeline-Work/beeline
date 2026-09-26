@@ -53,7 +53,6 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
-  agentHarnessName,
   filterAgentModelOptions,
 } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
@@ -929,7 +928,6 @@ export default function BuzzMembers({
     }
   };
 
-  const harnessName = agentHarnessName(selectedAgent?.harness);
   const modelAxes = useMemo(() => {
     const advertisedModel = selectedAgent?.catalog.find(
       (axis) => axis.category === 'model',
@@ -1035,12 +1033,8 @@ export default function BuzzMembers({
                           style={styles.axisRow}
                           testID={`model-axis-${kind}`}
                         >
-                          <Text style={styles.axisLabel} testID={`model-axis-label-${kind}`}>
-                            {kind === 'model'
-                              ? harnessName
-                                ? `Model · ${harnessName}`
-                                : 'Model'
-                              : 'Effort'}
+                          <Text style={styles.axisLabel}>
+                            {kind === 'model' ? 'Model' : 'Effort'}
                           </Text>
                           <Text style={styles.axisValue} numberOfLines={1}>
                             {working === 'model-catalog' && kind === 'effort'
@@ -1528,7 +1522,7 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
       paddingHorizontal: hull.space.sm,
     },
-    axisLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, minWidth: 54 },
+    axisLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, width: 54 },
     axisValue: {
       ...Typography.default(),
       ...hull.type.body,

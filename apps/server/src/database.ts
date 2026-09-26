@@ -557,7 +557,6 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS harness_kind text;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
 ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
   CHECK (model_unavailable IN ('model','effort','selection'));

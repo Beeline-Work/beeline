@@ -1,4 +1,4 @@
-# Agent profile: one removal, a bounded model list, and the runtime named
+# Agent profile: one removal and a bounded model list
 
 Captures come from this branch's running Expo web client at **390×844**
 (phone) and **1440×1000** (desktop), dark appearance, backed by a fresh local
@@ -21,22 +21,18 @@ profiles keep Ban unchanged.
 | Owner edit (Candy) | [phone-candy-owner-edit.png](phone-candy-owner-edit.png) | [desktop-candy-owner-edit.png](desktop-candy-owner-edit.png) |
 | Manager (BBC)      | [phone-bbc-manager.png](phone-bbc-manager.png)           | [desktop-bbc-manager.png](desktop-bbc-manager.png)           |
 
-## 3. The model list is bounded and names its runtime
+## 3. The model list is bounded to five rows
 
 The open option list shows at most five 44pt rows
 (`AGENT_MODEL_PICKER_VISIBLE_ROWS`) and scrolls inside that bound — measured
 in the live bundle: list 220px tall, 12 rows, 528px of scroll content.
 
-The list is the helper's own live harness catalog. Charles's runtime is
-**Cursor** (`agentKind: cursor`), not Claude Code, and Cursor genuinely runs
-GPT models beside Claude ones, so filtering them out would hide models the
-agent can use. That is read off the operator machine's own helper runtime
-record, `~/.local/state/beeline/agents/9c874349…/runtime.json`, which records
-`agentKind: "cursor"` with command `cursor-agent-acp` and model
-`claude-opus-5-thinking-high` — a Claude model on a Cursor harness, which is
-why the offered list carries GPT entries too. The helper now reports its harness kind with each catalog, the
-server keeps it (`agents.harness_kind`) and the phone labels the row
-`Model · Cursor` (`Model · Claude Code` for Candy). Display only.
+The list's contents are unchanged: it is the helper's own live, validated
+harness catalog. Charles's helper runtime record
+(`~/.local/state/beeline/agents/9c874349…/runtime.json`) records
+`agentKind: "cursor"` with model `claude-opus-5-thinking-high` — a Claude model
+on a Cursor harness, which genuinely runs GPT models too — and the list is left
+as is for Charles.
 
 | Frame                 | Phone                                                                  | Desktop                                                  |
 | --------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- |

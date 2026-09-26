@@ -284,10 +284,10 @@ if (process.env.AUDIT_AGENT_PROFILES === '1') {
     'GPT-5.6 Sol 1M Max',
   ];
   await database.query(
-    `INSERT INTO agents(agent_id,owner_id,selected_model,selected_effort,model_catalog,harness_kind)
-     VALUES($1,$4,'claude-opus-5','high',$5::jsonb,'claude'),
-           ($2,$6,'gpt-5.6-sol','high',$7::jsonb,'codex'),
-           ($3,$4,'claude-opus-5-thinking-high','high',$8::jsonb,'cursor')
+    `INSERT INTO agents(agent_id,owner_id,selected_model,selected_effort,model_catalog)
+     VALUES($1,$4,'claude-opus-5','high',$5::jsonb),
+           ($2,$6,'gpt-5.6-sol','high',$7::jsonb),
+           ($3,$4,'claude-opus-5-thinking-high','high',$8::jsonb)
      ON CONFLICT(agent_id) DO NOTHING`,
     [
       candy,

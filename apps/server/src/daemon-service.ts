@@ -46,7 +46,6 @@ import {
   isAgentKind,
   isServerEventKind,
   MESSAGE_REACTION_EMOJIS,
-  readHarnessKind,
   type ServerEventKind,
 } from '@beeline/api-contract/phone';
 import {
@@ -4169,8 +4168,7 @@ export class DaemonService {
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     await this.database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
-         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
-         harness_kind=COALESCE($6,harness_kind),updated_at=now()
+         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,updated_at=now()
        WHERE agent_id=$1`,
       [
         agentId,
@@ -4178,7 +4176,6 @@ export class DaemonService {
         input.selection?.model ?? null,
         input.selection?.effort ?? null,
         input.unavailable ?? null,
-        readHarnessKind(input.harness) ?? null,
       ],
     );
     return this.writeResult();

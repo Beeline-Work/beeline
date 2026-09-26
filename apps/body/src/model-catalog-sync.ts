@@ -54,7 +54,6 @@ export function modelCatalogHash(
   options: readonly AgentModelConfigOption[],
   selection: Selection | undefined,
   startupUnavailable?: 'model' | 'effort' | 'selection',
-  harness?: string,
 ): string {
   return createHash('sha256')
     .update(
@@ -62,9 +61,6 @@ export function modelCatalogHash(
         options,
         selection: selection ?? null,
         startupUnavailable: startupUnavailable ?? null,
-        // Part of the hash so a helper that starts reporting its harness
-        // re-posts an otherwise unchanged catalog once.
-        ...(harness ? { harness } : {}),
       }),
     )
     .digest('hex');
@@ -121,8 +117,7 @@ export async function syncAgentModelCatalog(
     const effectiveCatalog = input.startupUnavailable
       ? catalog
       : withEffectiveCurrentValues(catalog, selection);
-    const harness = input.agent.kind;
-    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable, harness);
+    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
     if (!input.force && previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
@@ -132,8 +127,6 @@ export async function syncAgentModelCatalog(
       options: effectiveCatalog as Input<'postAgentModelCatalog'>['options'],
       ...(selection ? { selection } : {}),
       ...(input.startupUnavailable ? { unavailable: input.startupUnavailable } : {}),
-      // Whose catalog this is, so the phone can name the runtime beside it.
-      ...(harness ? { harness } : {}),
     });
     await writeFile(hashPath, `${hash}\n`, { mode: 0o600 });
     log(

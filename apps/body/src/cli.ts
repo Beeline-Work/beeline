@@ -69,7 +69,7 @@ import {
   runConnectFinishCommand,
 } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import { ensureBwrapSandbox } from './bwrap-sandbox.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -244,12 +244,17 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
-  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
+  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Settled exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
-  // the boundary before any Room comes online.
-  const sandbox = detectBwrapSandbox({ ...(runtime.sandbox ? { policy: runtime.sandbox } : {}) });
+  // the boundary before any Room comes online. Absent bubblewrap is installed
+  // on this one pass: a Room shell is approved only inside that sandbox, so
+  // without it the helper silently has no shell at all.
+  const sandbox = await ensureBwrapSandbox({
+    ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
+  });
   if (sandbox.path) config.bwrapPath = sandbox.path;
+  else config.sandboxUnavailableDetail = sandbox.advisory;
   // Owner-configured credential masks ride the runtime record; the
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.

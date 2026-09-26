@@ -159,6 +159,13 @@ export interface BodyConfig {
    */
   bwrapPath?: string;
   /**
+   * The operator-facing advisory explaining why `bwrapPath` is absent, from
+   * `ensureBwrapSandbox` at daemon start. A Room session prompt states it so a
+   * model asked for something needing a shell can say why it cannot run one
+   * instead of retrying (`beeline-skill.ts`).
+   */
+  sandboxUnavailableDetail?: string;
+  /**
    * Extra filesystem paths whose contents are masked ABSENT from sandboxed ACP
    * children, on top of the built-in known credential homes
    * (`bwrap-sandbox.ts` KNOWN_CREDENTIAL_MASK_PATHS). Sourced from the runtime

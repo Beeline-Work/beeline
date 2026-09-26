@@ -143,7 +143,7 @@
  * every spawn afterwards is unwrapped. Room callbacks remain fail-closed;
  * corner callbacks can enforce the denylist only for harnesses that still ask.
  */
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -623,4 +623,119 @@ export function detectBwrapSandbox(
     path: bwrapPath,
     advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; ambient credential stores (~/.config/gh, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a repository corner adds its worktree and git dir, then receives its linked repository's GitHub App credential. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
   };
+}
+
+/** The one command an operator runs when Beeline could not install bubblewrap itself. */
+export const BUBBLEWRAP_INSTALL_FIX = 'sudo apt-get install -y bubblewrap';
+
+export type SandboxInstallResult = {
+  readonly code: number | null;
+  readonly output: string;
+};
+
+export type SandboxInstallRunner = (
+  command: string,
+  args: readonly string[],
+) => Promise<SandboxInstallResult>;
+
+const INSTALL_TIMEOUT_MS = 2 * 60_000;
+const INSTALL_OUTPUT_LIMIT = 32 * 1024;
+
+export const runSandboxInstallCommand: SandboxInstallRunner = (command, args) =>
+  new Promise((resolve) => {
+    execFile(
+      command,
+      [...args],
+      { timeout: INSTALL_TIMEOUT_MS, maxBuffer: INSTALL_OUTPUT_LIMIT * 2 },
+      (error, stdout, stderr) => {
+        const code =
+          error && 'code' in error && typeof error.code === 'number'
+            ? error.code
+            : error
+              ? null
+              : 0;
+        const output = [stdout, stderr].join('').trim();
+        resolve({ code, output: output || (error ? error.message : '') });
+      },
+    );
+  });
+
+function lastLine(output: string, fallback: string): string {
+  return (
+    output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .pop() ?? fallback
+  );
+}
+
+async function installBubblewrap(
+  run: SandboxInstallRunner,
+  platform: NodeJS.Platform,
+  getuid: (() => number) | undefined,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  if (platform !== 'linux') {
+    return { ok: false, reason: 'bubblewrap is packaged for Linux only' };
+  }
+  const args = ['install', '-y', 'bubblewrap'];
+  const install =
+    getuid?.() === 0 ? await run('apt-get', args) : await run('sudo', ['-n', 'apt-get', ...args]);
+  if (install.code === 0) return { ok: true };
+  return { ok: false, reason: lastLine(install.output, `exit ${install.code}`) };
+}
+
+/**
+ * The OS sandbox this host can actually provide, installing bubblewrap once
+ * when it is simply absent.
+ *
+ * A Room shell is approved only while the sandbox that holds the Room's
+ * read-only filesystem wraps the session (`monolith-room-turn.ts`), so a host
+ * without `bwrap` has no Room shell at all — which is worth one install
+ * attempt, the same way the Tailscale connector installs its own client rather
+ * than asking a person to. Re-detection afterwards is the real self-test, not
+ * `--version`: an installed `bwrap` that cannot unshare is still no sandbox.
+ * `sandbox: 'off'` is an operator decision and installs nothing, and a `bwrap`
+ * that is present but failed its self-test is not a missing package.
+ */
+export async function ensureBwrapSandbox(
+  options: {
+    policy?: SandboxPolicy;
+    env?: NodeJS.ProcessEnv;
+    run?: SandboxInstallRunner;
+    /** Test seam: the same one-shot detection the daemon runs at start. */
+    detect?: typeof detectBwrapSandbox;
+    platform?: NodeJS.Platform;
+    getuid?: () => number;
+  } = {},
+): Promise<BwrapAvailability> {
+  const detect = options.detect ?? detectBwrapSandbox;
+  const detectInput = {
+    ...(options.policy ? { policy: options.policy } : {}),
+    ...(options.env ? { env: options.env } : {}),
+  };
+  const detected = detect(detectInput);
+  if (detected.path) return detected;
+  const env = options.env ?? process.env;
+  const override = env.BUZZY_BODY_SANDBOX;
+  const policy = isSandboxPolicy(override) ? override : (options.policy ?? DEFAULT_SANDBOX_POLICY);
+  const shellConsequence = 'A Room shell stays refused while the OS sandbox is unavailable.';
+  if (policy === 'off' || executableOnPath('bwrap', env)) {
+    return { advisory: `${detected.advisory} ${shellConsequence}` };
+  }
+  const installed = await installBubblewrap(
+    options.run ?? runSandboxInstallCommand,
+    options.platform ?? process.platform,
+    options.getuid ?? process.getuid,
+  );
+  if (!installed.ok) {
+    return {
+      advisory:
+        `${detected.advisory} ${shellConsequence} Automatic bubblewrap install failed: ` +
+        `${installed.reason}; run \`${BUBBLEWRAP_INSTALL_FIX}\` on this host and restart the agent.`,
+    };
+  }
+  const after = detect(detectInput);
+  if (after.path) return after;
+  return { advisory: `${after.advisory} ${shellConsequence}` };
 }

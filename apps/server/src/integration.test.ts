@@ -757,7 +757,7 @@ describe('monolith integration', () => {
       (await operation('removeRoomMember', { roomId: created.id, memberId: aliceId })).status,
     ).toBe(204);
     await operation('addRoomMember', { roomId: created.id, memberId: aliceId });
-    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(403);
+    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(204);
     expect((await operation('deleteRoom', { roomId: created.id })).status).toBe(204);
     expect((await request(`/v1/phone/rooms/${created.id}`)).status).toBe(404);
     const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
@@ -1416,7 +1416,9 @@ describe('monolith integration', () => {
     ).json()) as { id: string; created: boolean };
     expect(first).toEqual({ id: retry.id, created: true });
     expect(retry.created).toBe(false);
-    expect((await operation('leaveRoom', { roomId: room.id })).status).toBe(403);
+    const lastManagerLeave = await operation('leaveRoom', { roomId: room.id });
+    expect(lastManagerLeave.status).toBe(400);
+    expect(await lastManagerLeave.json()).toEqual({ error: 'last_admin_confirmation_required' });
     expect((await operation('removeRoomMember', { roomId: room.id, memberId: HUMAN })).status).toBe(
       403,
     );

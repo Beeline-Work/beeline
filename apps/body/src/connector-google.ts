@@ -7,7 +7,7 @@
  * Every step reports through `onProgress` with a bounded tail of its own
  * output so the phone can stream the setup logs live.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ConnectorKind, ConnectorStep } from '@beeline/api-contract/daemon';
 import { GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
@@ -26,41 +26,12 @@ export function isGoogleToolConnectorType(type: string): type is
   return Object.hasOwn(GOOGLE_TOOL_SCOPES, type);
 }
 
-/** The helper's local copy of Beeline's grant, also read at session startup. */
+/** The local credential path retained for the standalone YouTube MCP. */
 export function manualGoogleCredentialsSearchPaths(home: string): readonly string[] {
   return [join(home, 'google-credentials.json')];
 }
 
-export function loadManualGoogleCredentials(
-  home: string,
-): { source: 'manual'; credentials: GoogleCredentials } | { source: 'manual-missing'; reason: string } {
-  for (const path of manualGoogleCredentialsSearchPaths(home)) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-      if (typeof parsed.accessToken === 'string' || typeof parsed.access_token === 'string') {
-        return {
-          source: 'manual',
-          credentials: {
-            accessToken: (parsed.accessToken ?? parsed.access_token) as string,
-            refreshToken:
-              typeof parsed.refreshToken === 'string' ? parsed.refreshToken : undefined,
-            expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : undefined,
-            accountEmail:
-              typeof parsed.accountEmail === 'string' ? parsed.accountEmail : undefined,
-          },
-        };
-      }
-    } catch {
-      // missing or unreadable file: keep looking, report honestly at the end
-    }
-  }
-  return {
-    source: 'manual-missing',
-    reason: 'Google Workspace has not been connected through Beeline',
-  };
-}
-
-/** Persist the resolved grant so later sessions can mount YouTube. */
+/** Persist the resolved grant for the standalone YouTube MCP. */
 export function persistManualGoogleCredentials(home: string, credentials: GoogleCredentials): string {
   const path = manualGoogleCredentialsSearchPaths(home)[0]!;
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

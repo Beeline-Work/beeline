@@ -194,6 +194,32 @@ export function evaluateServerCanaryWindow(samples, windowSeconds = SERVER_CANAR
   return { clean: true, elapsedSeconds: elapsed, poolMetricsAvailable: samples.every((sample) => sample.verdict.poolMetricsAvailable) };
 }
 
+/** The rolling Machine may promote only after a sustained healthy window.
+ * A few isolated warmup failures are tolerated, but a single good sample can
+ * never mask pool contention or broken authenticated Room reads. */
+export function evaluateServerCanaryPromotion(samples) {
+  if (!Array.isArray(samples) || samples.length !== 21)
+    return { clean: false, reason: 'canary requires all 21 samples' };
+  const elapsedSeconds = (Date.parse(samples.at(-1).at) - Date.parse(samples[0].at)) / 1000;
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < SERVER_CANARY_WINDOW_SECONDS)
+    return { clean: false, reason: 'canary did not cover the full five-minute window' };
+  const cleanCount = samples.filter((sample) => sample.verdict?.clean === true).length;
+  if (cleanCount < 16)
+    return { clean: false, reason: `only ${cleanCount} of 21 canary samples were clean` };
+  if (samples.slice(-5).some((sample) => sample.verdict?.clean !== true))
+    return { clean: false, reason: 'the final five canary samples were not all clean' };
+  let degradedStreak = 0;
+  for (const sample of samples) {
+    const reasons = sample.verdict?.reasons ?? [];
+    if (reasons.some((reason) => /database pool has|authenticated Room read/.test(reason)))
+      degradedStreak++;
+    else degradedStreak = 0;
+    if (degradedStreak >= 3)
+      return { clean: false, reason: 'sustained pool wait or Room read degradation' };
+  }
+  return { clean: true, cleanCount, elapsedSeconds };
+}
+
 export function createServerImageLedger({ version, sourceSha, plan, state = 'prepared' }) {
   validateReleaseIdentity(version, sourceSha);
   if (!['prepared', 'deployed', 'rolled-back'].includes(state)) fail(`invalid server ledger state: ${state}`);
@@ -648,6 +674,13 @@ async function main(argv) {
       expectedSha: args['expected-sha'],
     });
     if (args.output) writeJson(args.output, verdict);
+    console.log(JSON.stringify(verdict));
+    if (!verdict.clean) process.exitCode = 1;
+    return;
+  }
+  if (command === 'server-canary-promotion') {
+    const samples = readFileSync(args.samples, 'utf8').trim().split('\n').map(JSON.parse);
+    const verdict = evaluateServerCanaryPromotion(samples);
     console.log(JSON.stringify(verdict));
     if (!verdict.clean) process.exitCode = 1;
     return;

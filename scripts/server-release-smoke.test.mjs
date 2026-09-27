@@ -93,3 +93,21 @@ test('fails when no Workspace has a Room', async (t) => {
     /review identity has no Room in any Workspace/,
   );
 });
+
+test('does not accept a healthy-looking response while the app pool has waiters', async (t) => {
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({
+      ok: true,
+      database: { pool: { size: 5, inUse: 5, waiting: 2 }, oldestActiveQueryAgeMs: 100 },
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  await assert.rejects(runServerReleaseSmoke({
+    origin: `http://127.0.0.1:${port}`,
+    expectedVersion: 'v1.2.3', expectedSha: 'abc', reviewSecret: 'review-secret',
+    bootBudgetMs: 30, pollIntervalMs: 1,
+  }), /app pool has 2 waiter/);
+});

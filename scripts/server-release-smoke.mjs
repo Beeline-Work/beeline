@@ -39,17 +39,24 @@ export async function runServerReleaseSmoke({
           (candidate?.database?.oldestActiveQueryAgeMs === null ||
             Number.isFinite(candidate?.database?.oldestActiveQueryAgeMs))
         ) {
-          const versionResponse = await fetchImpl(`${origin}/version`, {
-            signal: AbortSignal.timeout(Math.min(10_000, Math.max(1, deadline - now()))),
-          });
-          if (versionResponse.ok) {
-            const live = await versionResponse.json();
-            if (live.version === expectedVersion && live.sourceSha === expectedSha) {
-              health = candidate;
-              break;
-            }
-            lastFailure = `waiting for ${expectedVersion}/${expectedSha}; live is ${live.version}/${live.sourceSha}`;
-          } else lastFailure = `version check returned HTTP ${versionResponse.status}`;
+          if (candidate.database.pool.waiting > 0)
+            lastFailure = `app pool has ${candidate.database.pool.waiting} waiter(s)`;
+          else if (candidate.database.oldestActiveQueryAgeMs !== null &&
+              candidate.database.oldestActiveQueryAgeMs > 5_000)
+            lastFailure = `app query age is ${candidate.database.oldestActiveQueryAgeMs}ms`;
+          else {
+            const versionResponse = await fetchImpl(`${origin}/version`, {
+              signal: AbortSignal.timeout(Math.min(10_000, Math.max(1, deadline - now()))),
+            });
+            if (versionResponse.ok) {
+              const live = await versionResponse.json();
+              if (live.version === expectedVersion && live.sourceSha === expectedSha) {
+                health = candidate;
+                break;
+              }
+              lastFailure = `waiting for ${expectedVersion}/${expectedSha}; live is ${live.version}/${live.sourceSha}`;
+            } else lastFailure = `version check returned HTTP ${versionResponse.status}`;
+          }
         } else lastFailure = 'health response omitted database pool diagnostics';
       } else lastFailure = `health returned HTTP ${response.status}`;
     } catch (error) {

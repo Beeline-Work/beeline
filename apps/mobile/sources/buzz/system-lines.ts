@@ -18,6 +18,8 @@ export type SystemLineMessage = {
   text: string;
   timestamp: number;
   isSystemNotice?: boolean;
+  /** A deleted message's line; it holds that message's place, so it never folds. */
+  deleted?: boolean;
   systemEvent?: SystemEvent;
   /** Every subject of a folded run, oldest first; absent on a single line. */
   systemSubjects?: SystemSubject[];
@@ -255,7 +257,7 @@ export function foldSystemLines<T extends SystemLineMessage>(messages: readonly 
       continue;
     }
     notificationRun = undefined;
-    const event = message.isSystemNotice ? message.systemEvent : undefined;
+    const event = message.isSystemNotice && !message.deleted ? message.systemEvent : undefined;
     if (!event) {
       run = null;
       folded.push(message);

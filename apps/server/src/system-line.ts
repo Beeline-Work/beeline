@@ -537,6 +537,37 @@ export async function restateSystemLine(
   return { text, event, updated: Boolean(result.rowCount) };
 }
 
+/**
+ * The line a deleted message becomes, in its own place: `@deleter deleted a
+ * message`, with `· sent by @author` when someone else wrote it. Only the
+ * structured event is stored on the deleted row; its text stays empty so no
+ * reader of message text can mistake the line for the author's words.
+ */
+export async function deletedMessageEvent(
+  database: SqlDatabase,
+  deleterId: string,
+  authorId: string,
+): Promise<SystemEvent> {
+  const rows = await database.query<IdentityLabelRow>(
+    `SELECT id,kind,name,handle FROM identities WHERE id=ANY($1::text[])`,
+    [[...new Set([deleterId, authorId])]],
+  );
+  const identities = new Map(rows.rows.map((row) => [row.id, row]));
+  const deleter = identities.get(deleterId);
+  const author = identities.get(authorId);
+  if (!deleter || !author) throw new Error('deleted message identities are missing');
+  return composeSystemLine(
+    await canonicalPhrase(database, {
+      subject: identitySubject(deleter),
+      verb: 'deleted',
+      object: 'a message',
+      ...(authorId === deleterId
+        ? {}
+        : { attribution: { verb: 'sent by', actor: identitySubject(author) } }),
+    }),
+  ).event;
+}
+
 /** The subject shape for a Room identity row. */
 export function identitySubject(row: {
   id: string;

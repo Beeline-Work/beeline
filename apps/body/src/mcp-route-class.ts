@@ -3,8 +3,9 @@
  *
  * Each declaration is `local` (copied into the isolated harness home as-is)
  * or `host` (kept out until an owner grant rewrites the route into the home).
- * Imported declarations are personal resources even when their process is local:
- * locality says nothing about credentials, connected accounts or ownership.
+ * A plain public HTTPS endpoint has no owner authority to grant. Process
+ * launches and routes carrying credentials or other configuration remain host
+ * resources; locality alone says nothing about account ownership.
  * Repository tools supplied by the daemon are mounted separately.
  * The same classification applies to every imported server on every harness,
  * including Goose, and the Room permission matcher reads the same verdict.
@@ -12,6 +13,7 @@
  * Grant acceptance (`host-mcp-route.ts`) writes the rewritten route; this
  * module is the import-step classifier alone.
  */
+import { isIP } from 'node:net';
 
 export type McpRouteClass = 'local' | 'host';
 
@@ -36,7 +38,31 @@ export function isCodeOwnedHostMcpName(name: string): boolean {
   return CODE_OWNED_HOST_MCP_NAMES.includes(name.trim().toLowerCase() as 'squire');
 }
 
-export function classifyImportedMcpServer(_input: ImportedMcpServerInput): McpRouteClass {
+export function classifyImportedMcpServer(input: ImportedMcpServerInput): McpRouteClass {
+  const declaration = input.declaration;
+  if (!declaration || isCodeOwnedHostMcpName(input.name)) return 'host';
+  // Only a URL and inert harness settings are sufficient evidence of a
+  // credential-free endpoint. Unknown settings fail closed: they may inject
+  // headers, select an OAuth account, or launch a process with host access.
+  const publicKeys = new Set(['url', 'enabled', 'startup_timeout_sec', 'tool_timeout_sec']);
+  if (Object.keys(declaration).some((key) => !publicKeys.has(key))) return 'host';
+  if (typeof declaration.url !== 'string') return 'host';
+  try {
+    const url = new URL(declaration.url);
+    if (
+      url.protocol === 'https:' &&
+      url.hostname.includes('.') &&
+      !url.hostname.endsWith('.local') &&
+      !isIP(url.hostname) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    )
+      return 'local';
+  } catch {
+    // Invalid URLs must not turn into ungated routes.
+  }
   return 'host';
 }
 

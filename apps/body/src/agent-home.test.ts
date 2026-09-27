@@ -946,6 +946,31 @@ describe('operator skills + MCP passthrough', () => {
 });
 
 describe('mounted imported MCP server names', () => {
+  it('mounts public remote tools before any grant while keeping credentialed routes gated', async () => {
+    const operatorHome = await scratch('beeline-public-mcp-operator-');
+    const agentHomeRoot = resolve(await scratch('beeline-public-mcp-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      [
+        '[mcp_servers.reference]',
+        'url = "https://docs.example.test/mcp"',
+        '[mcp_servers.account]',
+        'url = "https://account.example.test/mcp"',
+        'bearer_token_env_var = "ACCOUNT_TOKEN"',
+      ].join('\n'),
+    );
+
+    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'codex' });
+    const config = readFileSync(resolve(agentHomeRoot, 'codex/config.toml'), 'utf8');
+    expect(config).toContain('[mcp_servers.reference]');
+    expect(config).not.toContain('[mcp_servers.account]');
+    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([
+      'reference',
+    ]);
+    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['account']);
+  });
+
   it('lists every imported server the operator currently has, not only Squire', async () => {
     const operatorHome = await scratch('beeline-mounted-mcp-operator-');
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });

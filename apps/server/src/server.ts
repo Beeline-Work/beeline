@@ -296,6 +296,12 @@ export function createBeelineServer(options: ServerOptions): Server {
               );
             })
           : undefined;
+      const helperReleaseSubscription = principal.kind === 'daemon'
+        ? options.releaseNotify?.subscribeHelperRelease((release) => {
+            if (client.readyState === client.OPEN)
+              client.send(JSON.stringify({ type: 'helper-release', ...release }));
+          })
+        : undefined;
       const pendingPaintTraces = new Map<
         string,
         {
@@ -697,6 +703,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       client.on('close', () => {
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
         membershipWakeRelease?.();
+        helperReleaseSubscription?.();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

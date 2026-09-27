@@ -138,7 +138,7 @@ describe('managed update handoff', () => {
     expect(restarts).toEqual(['new']);
   });
 
-  it('forces the restart at the absolute drain deadline while a turn is still running', async () => {
+  it('waits at the drain deadline while a turn is still running', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let now = 1_000;
     const restarts: Array<[string, string]> = [];
@@ -168,11 +168,11 @@ describe('managed update handoff', () => {
           restarts.push([desiredRelease, mode]);
         },
       ),
-    ).toBe('restarting');
-    expect(restarts).toEqual([['new', 'forced']]);
+    ).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
   });
 
-  it('activates a staged release at the deadline even while a turn is still running', async () => {
+  it('keeps a staged release inert until the turn finishes', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let now = 1_000;
     const restarts: string[] = [];
@@ -190,8 +190,11 @@ describe('managed update handoff', () => {
     expect(await activeReleaseId(layout)).toBe('old');
 
     now += 50;
-    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe('restarting');
-    expect(restarts).toEqual(['new:forced']);
+    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(await coordinateManagedUpdateHandoff(update, () => true, restart)).toBe('restarting');
+    expect(restarts).toEqual(['new:drained']);
     expect(await activeReleaseId(layout)).toBe('new');
     expect((await readUpdateAttempt(layout))?.status).toBe('pending');
   });
@@ -237,7 +240,6 @@ describe('managed update handoff', () => {
 
   it.each([
     ['hung generated extension', 'session-start-failed'],
-    ['invalid model selection', 'model-unavailable'],
     ['broken sandbox', 'sandbox-unavailable'],
   ] as const)('automatically rolls back a successor with %s', async (_label, reason) => {
     const { layout, runtimeDir } = await layoutFixture();
@@ -262,6 +264,29 @@ describe('managed update handoff', () => {
       status: 'reverted',
       revertedBy: 'agent-1',
       failure: `functional update probe failed (${reason}): deliberate acceptance fault`,
+    });
+  });
+
+  it('retains the machine release and flags only the unavailable-model agent', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+      requiredProbeIds: ['agent-1', 'agent-2'],
+    });
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    await update.check();
+    const result = await gateManagedSuccessor({
+      layout, runtimeDir, loadedRelease: 'new', probeId: 'agent-1',
+      probe: () => Promise.reject(new UpdateFunctionalProbeError('model-unavailable', 'chosen model gone')),
+    });
+    expect(result.kind).toBe('agent-unavailable');
+    expect(await activeReleaseId(layout)).toBe('new');
+    expect(await readUpdateAttempt(layout)).toMatchObject({ status: 'pending', unavailableProbeIds: ['agent-1'] });
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
+      probeId: 'agent-2', functionalProof,
+    })).toBe(true);
+    expect(await readUpdateAttempt(layout)).toMatchObject({
+      status: 'confirmed', confirmedProbeIds: ['agent-2'], unavailableProbeIds: ['agent-1'],
     });
   });
 
@@ -472,6 +497,49 @@ describe('managed update handoff', () => {
     expect(await update.check()).toBe(false);
     await vi.waitFor(() => expect(workerCalls).toBe(2));
   });
+
+  it('checks a newly announced release immediately even inside the cadence window', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    let now = 1_000;
+    let workerCalls = 0;
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+      env: { BEELINE_UPDATE_INTERVAL_MS: '21600000' },
+      runUpdateWorker: async () => { workerCalls += 1; },
+    });
+    await update.check();
+    await vi.waitFor(() => expect(workerCalls).toBe(1));
+    now += 1;
+    await update.check();
+    expect(workerCalls).toBe(1);
+    update.notifyReleaseAvailable('a'.repeat(40));
+    await update.check();
+    await vi.waitFor(() => expect(workerCalls).toBe(2));
+    expect((await readUpdateState(layout)).notifiedReleaseKey).toBe('a'.repeat(40));
+    update.notifyReleaseAvailable('b'.repeat(40));
+    await update.check();
+    await vi.waitFor(() => expect(workerCalls).toBe(3));
+  });
+
+  it('activates an announced release on the next idle progress tick despite a six-hour initial delay', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    let now = 1_000;
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+      env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '21600000', BEELINE_SYSTEMD_USER: '0' },
+      runUpdateWorker: async () => {
+        await writeUpdateState(layout, { stagedReleaseId: 'new', lastCheckAt: now });
+      },
+    });
+    expect(await update.check()).toBe(false);
+    expect((await readUpdateState(layout)).stagedReleaseId).toBeUndefined();
+    update.notifyReleaseAvailable('v0.0.128:release-sha');
+    expect(await coordinateManagedUpdateHandoff(update, () => true, async () => undefined)).toBe('none');
+    await vi.waitFor(async () =>
+      expect((await readUpdateState(layout)).stagedReleaseId).toBe('new'),
+    );
+    now += 5_000; // the helper's ordinary watchdog progress interval
+    expect(await coordinateManagedUpdateHandoff(update, () => true, async () => undefined)).toBe('restarting');
+    expect(await activeReleaseId(layout)).toBe('new');
+  });
 });
 
 async function waitForSystemd(check: () => Promise<boolean>, timeoutMs = 8_000): Promise<void> {
@@ -574,7 +642,7 @@ describe('managed update drain', () => {
     const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 1 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     expect(restarts).toEqual([]);
-    expect(logs).toEqual(['[thin-core] update restart waiting: 1 active turn(s); deadline in 9m']);
+    expect(logs).toEqual(['[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes']);
 
     await clock.advance(2 * MINUTE);
     expect(restarts).toEqual([]);
@@ -584,7 +652,7 @@ describe('managed update drain', () => {
     expect(state.intakeQuiesced).toBe(true);
     expect(logs.filter((line) => line.includes('forced'))).toEqual([]);
 
-    // The deadline timer was disarmed with the restart: nothing fires later.
+    // The waiting timer was disarmed with the restart: nothing fires later.
     expect(clock.pending()).toBe(0);
     await clock.advance(UPDATE_DRAIN_DEADLINE_MS);
     expect(restarts).toHaveLength(1);
@@ -592,29 +660,23 @@ describe('managed update drain', () => {
     expect(restarts).toHaveLength(1);
   });
 
-  it('forces the restart of a stuck turn at the absolute deadline from its own timer', async () => {
+  it('does not interrupt a stuck turn at the absolute deadline', async () => {
     const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 2 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     const armedAt = clock.now;
 
-    // No further core tick: the deadline timer alone must fire the restart.
+    // No further core tick: elapsed time alone must never interrupt work.
     await clock.advance(UPDATE_DRAIN_DEADLINE_MS - 1);
     expect(restarts).toEqual([]);
     await clock.advance(1);
-    expect(restarts).toEqual([
-      { release: 'new', mode: 'forced', at: armedAt + UPDATE_DRAIN_DEADLINE_MS },
-    ]);
+    expect(restarts).toEqual([]);
     expect(state.intakeQuiesced).toBe(false);
-    expect(logs.at(-1)).toBe(
-      '[thin-core] update restart forced: drain deadline reached with 2 active turn(s); ' +
-        'cancelling them and restarting onto new',
-    );
-    expect(clock.pending()).toBe(0);
+    state.activeTurns = 0;
     expect(await drain.tick()).toBe('restarting');
-    expect(restarts).toHaveLength(1);
+    expect(restarts).toEqual([{ release: 'new', mode: 'drained', at: armedAt + UPDATE_DRAIN_DEADLINE_MS }]);
   });
 
-  it('logs one waiting line per minute with the turn count and the minutes left', async () => {
+  it('logs one waiting line per minute with the current turn count', async () => {
     const { clock, state, logs, drain } = await drainFixture({ activeTurns: 1 });
     await drain.tick();
     await clock.advance(MINUTE);
@@ -623,9 +685,9 @@ describe('managed update drain', () => {
     await drain.tick();
     await drain.tick();
     expect(logs).toEqual([
-      '[thin-core] update restart waiting: 1 active turn(s); deadline in 9m',
-      '[thin-core] update restart waiting: 1 active turn(s); deadline in 8m',
-      '[thin-core] update restart waiting: 3 active turn(s); deadline in 7m',
+      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
+      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
+      '[thin-core] update restart waiting: 3 active turn(s); will resume after work finishes',
     ]);
   });
 });

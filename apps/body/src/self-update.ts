@@ -268,6 +268,8 @@ async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentit
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
+  /** Last server-announced release for which this install checked the manifest. */
+  notifiedReleaseKey?: string;
   /** Verified release staged by the disposable worker, not yet activated. */
   stagedReleaseId?: string;
 }
@@ -823,6 +825,8 @@ export interface UpdateAttemptRecord {
   requiredProbeIds?: string[];
   /** Successfully probed identities; updated atomically under the install lock. */
   confirmedProbeIds?: string[];
+  /** Agent probes blocked by their own selected model; the machine release remains installed. */
+  unavailableProbeIds?: string[];
 }
 
 export function updateAttemptPath(layout: BeelineInstallLayout): string {
@@ -1076,7 +1080,7 @@ export class SelfUpdateManager {
       const sameVersion = Boolean(
         previousAttempt.to.version && previousAttempt.to.version === bundle.version,
       );
-      if (sameCommit || sameVersion) {
+      if (sameCommit && sameVersion) {
         const line =
           `release ${describeIdentity(previousAttempt.to)} reverted after a failed served-turn proof; ` +
           'waiting for a newer publish or `beeline update --force`';

@@ -40,6 +40,7 @@ import {
   LEGACY_ACCESS_POLICY,
 } from './access-policy.js';
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
+import { modelUnavailableState } from './model-availability.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
@@ -472,33 +473,34 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       },
     });
     // Busy means a turn is executing right now. An idle helper restarts on the
-    // tick that arms the update; a busy one at the earlier of its last turn's
-    // end or the absolute drain deadline, which the drain's own timer enforces.
+    // tick that arms the update; a busy one when its current work finishes.
     const updateDrain = update
       ? new ManagedUpdateDrain({
           update,
           quiesceIfIdle: () => core.quiesceForUpdateIfIdle(),
           activeTurnCount: () => core.activeTurnCount(),
-          restart: async ({ desiredRelease, drainDeadlineAt }, mode) => {
-            if (mode === 'forced') await core.prepareForForcedUpdateRestart();
+          restart: async ({ desiredRelease, drainDeadlineAt }) => {
             core.setDrainDeadlineAt(drainDeadlineAt);
             stoppingStatus =
               `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
               `desired_release=${desiredRelease}; ` +
-              `${mode === 'forced' ? 'active work cancelled at the drain deadline' : 'active work drained'}; ` +
-              `intake quiesced; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`;
+              `active work drained; intake quiesced`;
             await notifier.stopping(stoppingStatus);
             controller.abort();
           },
-          waiting: async ({ desiredRelease, drainDeadlineAt }) => {
+          waiting: async ({ desiredRelease }) => {
             await notifier.progress(
               `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
                 `active agent work is still running; handoff deferred; ` +
-                `desired_release=${desiredRelease}; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`,
+                `desired_release=${desiredRelease}`,
             );
           },
         })
       : undefined;
+    daemonApi.setHelperReleaseListener(({ version, sha }) => {
+      update?.notifyReleaseAvailable(`${version}:${sha}`);
+      void updateDrain?.tick();
+    });
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
@@ -543,13 +545,23 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             successorRolledBack = gate.rolledBack;
             throw gate.error;
           }
-          functionalProof = gate.proof;
+          if (gate.kind === 'agent-unavailable') {
+            if (!config.modelUnavailable) {
+              config.modelUnavailable = modelUnavailableState(
+                config.modelSelection ?? runtime.modelSelection ?? {},
+                gate.error.cause ?? gate.error,
+              );
+            }
+            console.warn(`[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`);
+          } else {
+            functionalProof = gate.proof;
+          }
           pendingSuccessor = false;
           // A fresh gate pass proves this update path is healthy right now,
           // whichever release it names — it supersedes any stale rollback
           // record from an earlier failed attempt.
           await clearUpdateRollbackAlert(runtimeDir);
-          console.log(
+          if (functionalProof) console.log(
             `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
               `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
               (functionalProof?.modelAnswer === 'unavailable'

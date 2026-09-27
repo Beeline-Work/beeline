@@ -49,7 +49,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (message.method === 'initialize') {
     send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } });
   } else if (message.method === 'session/new') {
-    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'probe-session' } });
+    send({ jsonrpc: '2.0', id: message.id, result: {
+      sessionId: 'probe-session',
+      ...(behaviors[0] === 'model-retired' ? { configOptions: [{
+        id: 'model', category: 'model', currentValue: 'available-model',
+        options: [{ id: 'available-model', name: 'Available model' }],
+      }] } : {}),
+    } });
   } else if (message.method === 'session/prompt') {
     const behavior = behaviors[Math.min(promptCallCount, behaviors.length - 1)];
     promptCallCount += 1;
@@ -206,6 +212,15 @@ describe('runUpdateFunctionalProbe', () => {
     await expect(
       probeWithModelUnavailable({ compareWithCurrentRelease: async () => ({ kind: 'served' }) }),
     ).rejects.toThrow('claude-opus-5-thinking-high" is unavailable; the current release answered');
+  });
+
+  it('classifies a model retired between preflight and session start as agent-specific', async () => {
+    await expect(probe('model-retired', {
+      configOverrides: { modelSelection: { model: 'retired-model' } },
+    } as never)).rejects.toMatchObject({
+      reason: 'model-unavailable',
+      cause: expect.objectContaining({ label: 'model', value: 'retired-model' }),
+    });
   });
 
   it('still rejects an unavailable model when no comparison is possible', async () => {

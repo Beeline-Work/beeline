@@ -25,6 +25,7 @@ import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/mon
 import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import { GitHubOperations } from '../../server/src/github-operations.js';
 import { ConnectionPresence } from '../../server/src/connection-presence.js';
+import { ReleaseNotifier } from '../../server/src/release-notify.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { isScheduledPrompt, MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -68,6 +69,7 @@ describe('daemon API client against the local monolith', () => {
   let launchedDaemonConfig: string | undefined;
   let live: LiveHub;
   let connectionPresence: ConnectionPresence;
+  let releaseNotify: ReleaseNotifier;
 
   const prepareTurn = async (client: DaemonApiClient, requestId: string) => {
     await database.transaction(async (tx) => {
@@ -480,6 +482,7 @@ describe('daemon API client against the local monolith', () => {
       },
     });
     connectionPresence = new ConnectionPresence(database, live, 1_000);
+    releaseNotify = new ReleaseNotifier(database, { secret: 'local-release-secret' });
     const githubOperations = new GitHubOperations(
       database,
       {} as never,
@@ -496,6 +499,7 @@ describe('daemon API client against the local monolith', () => {
       })),
       live,
       connectionPresence,
+      releaseNotify,
       mediaMaximumBytes: 1024,
       authHandler: mountedAuth.handle,
       github: {
@@ -733,6 +737,84 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       { timeout: 10_000 },
     );
   }, 30_000);
+
+  it('delivers a release to a connected helper and reconciles an offline helper on reconnect', async () => {
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const first = new DaemonApiClient(origin, daemonToken, AGENT);
+    const received: string[] = [];
+    first.setHelperReleaseListener(({ sha }) => received.push(sha));
+    let connected = false;
+    const disconnect = first.liveSubscribe(ROOM, undefined, undefined, (value) => { connected = value; });
+    await vi.waitFor(() => expect(connected).toBe(true));
+    await releaseNotify.notifyReleaseDelivered({
+      version: 'v0.0.128', sha: 'a'.repeat(40), changelogUrl: 'https://example.test/128',
+    });
+    await vi.waitFor(() => expect(received).toEqual(['a'.repeat(40)]));
+    disconnect();
+
+    await releaseNotify.notifyReleaseDelivered({
+      version: 'v0.0.129', sha: 'b'.repeat(40), changelogUrl: 'https://example.test/129',
+    });
+    const reconnected = new DaemonApiClient(origin, daemonToken, AGENT);
+    const recovered: string[] = [];
+    reconnected.setHelperReleaseListener(({ sha }) => recovered.push(sha));
+    const close = reconnected.liveSubscribe(ROOM);
+    await vi.waitFor(() => expect(recovered).toContain('b'.repeat(40)));
+    close();
+  });
+
+  it('sends an actionable owner DM only when this agent reports a missing model', async () => {
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const client = new DaemonApiClient(origin, daemonToken, AGENT);
+    await client.execute('postAgentModelCatalog', {
+      agentId: AGENT, workspaceId: WORKSPACE, options: [], selection: { model: 'gpt-5' },
+    });
+    expect((await database.query(
+      `SELECT count(*)::int count FROM messages WHERE author_id=$1`, [SYSTEM_IDENTITY_ID],
+    )).rows[0]).toEqual({ count: 0 });
+    await client.execute('postAgentModelCatalog', {
+      agentId: AGENT, workspaceId: WORKSPACE, options: [],
+      selection: { model: 'unavailable-model' }, unavailable: 'model',
+    });
+    const ownerMessages = await database.query<{ text: string }>(
+      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
+       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2
+         AND m.author_id=$1`,
+      [SYSTEM_IDENTITY_ID, HUMAN],
+    );
+    expect(ownerMessages.rows.map((row) => row.text)).toEqual([
+      expect.stringContaining('choose an available model or effort'),
+    ]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [PEER_AGENT]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [PEER_AGENT, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, PEER_AGENT, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(PEER_AGENT);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const peer = new DaemonApiClient(origin, peerToken, PEER_AGENT);
+    await peer.execute('postAgentModelCatalog', {
+      agentId: PEER_AGENT, workspaceId: WORKSPACE, options: [], selection: { model: 'gpt-5' },
+    });
+    expect((await database.query<{ agent_id: string; model_unavailable: string | null }>(
+      `SELECT agent_id,model_unavailable FROM agents WHERE agent_id=ANY($1::text[]) ORDER BY agent_id`,
+      [[AGENT, PEER_AGENT]],
+    )).rows).toEqual([
+      { agent_id: AGENT, model_unavailable: 'model' },
+      { agent_id: PEER_AGENT, model_unavailable: null },
+    ].sort((a, b) => a.agent_id.localeCompare(b.agent_id)));
+    await client.execute('postAgentModelCatalog', {
+      agentId: AGENT, workspaceId: WORKSPACE, options: [],
+      selection: { model: 'unavailable-model' }, unavailable: 'model',
+    });
+    expect((await database.query(
+      `SELECT count(*)::int count FROM messages WHERE author_id=$1`, [SYSTEM_IDENTITY_ID],
+    )).rows[0]).toEqual({ count: 1 });
+  });
 
   it('refreshes authenticated evidence across a socket drop and resumes through push without polling', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);

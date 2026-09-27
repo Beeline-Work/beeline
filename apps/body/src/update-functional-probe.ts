@@ -12,6 +12,7 @@ import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
   isGrokAgentCommand,
+  ModelSelectionUnavailableError,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
 
@@ -456,6 +457,11 @@ export async function runUpdateFunctionalProbe(input: {
         }
       } catch (initialError) {
         if (initialError instanceof UpdateFunctionalProbeError) throw initialError;
+        if (initialError instanceof ModelSelectionUnavailableError) {
+          throw new UpdateFunctionalProbeError('model-unavailable', initialError.message, {
+            cause: initialError,
+          });
+        }
         let error = initialError;
         let detail = error instanceof Error ? error.message : String(error);
         let failure = classifyAcpTurnFailure(error);

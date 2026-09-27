@@ -17,6 +17,26 @@ export interface ReleaseNotifyResult {
   readonly skipped: number;
 }
 
+export interface HelperRelease {
+  readonly version: string;
+  readonly sha: string;
+}
+
+/** The release endpoint writes this only after publishing the helper bundle. */
+async function recordHelperRelease(database: SqlDatabase, release: HelperRelease): Promise<void> {
+  await database.query(
+    `INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,$1,$2)
+     ON CONFLICT(singleton) DO UPDATE SET version=EXCLUDED.version,sha=EXCLUDED.sha,announced_at=now()`,
+    [release.version, release.sha],
+  );
+}
+
+async function latestHelperRelease(database: SqlDatabase): Promise<HelperRelease | undefined> {
+  return (await database.query<HelperRelease>(
+    `SELECT version,sha FROM helper_release_notifications WHERE singleton=true`,
+  )).rows[0];
+}
+
 function required(value: string, field: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`${field} is required`);
@@ -24,35 +44,17 @@ function required(value: string, field: string): string {
 }
 
 /**
- * The captain's template, verbatim in shape. The helper section names ONLY
- * when this person owns a daemon reporting a version other than the release
- * being announced (an owned daemon that has never reported a version is left
- * alone — nothing is asserted about a daemon nobody has ever observed). The
- * app section names ONLY the platform(s) this person's registered devices
- * actually use.
- *
- * The helper command is `npx usebeeline update`, never any `npx beeline ...`
- * spelling: `beeline` is also an UNRELATED package on npm (a router
- * library), so `npx beeline ...` would fetch a stranger's code — keeping our
- * published package name in the instruction is the safe form. #949 made the
- * npx path delegate to the installed bundle when one exists, so this works
- * on an installed host exactly like the on-PATH `beeline` wrapper, and it
- * still reaches hosts that only hold the npm package.
+ * App-store action remains in the release DM. Helpers update automatically
+ * over their live server connection, so a behind helper is never manual work.
  */
 export function composeReleaseNotice(input: {
   readonly version: string;
   readonly changelogUrl: string;
-  readonly behind: boolean;
   readonly platforms: ReadonlySet<'android' | 'ios'>;
 }): string {
   const sections = [
     `Beeline release ${input.version} is out! New functionalities are in the changelog (${input.changelogUrl}).`,
   ];
-  if (input.behind) {
-    sections.push(
-      'In order to keep your agents current, go to the host machine for your agents, and run "npx usebeeline update"',
-    );
-  }
   if (input.platforms.has('android')) {
     sections.push('Android: open the Google Play Store, find Beeline, and tap Update.');
   }
@@ -97,7 +99,6 @@ async function notifyPerson(
   input: {
     readonly version: string;
     readonly changelogUrl: string;
-    readonly behind: boolean;
     readonly platforms: ReadonlySet<'android' | 'ios'>;
   },
 ): Promise<boolean> {
@@ -128,23 +129,6 @@ export async function notifyReleaseDelivered(
   const version = required(input.version, 'version');
   const changelogUrl = required(input.changelogUrl, 'changelogUrl');
   required(input.sha, 'sha');
-  const behindOwners = new Set(
-    (
-      await database.query<{ owner_id: string }>(
-        `SELECT DISTINCT a.owner_id
-         FROM agents a
-         JOIN LATERAL (
-           SELECT body FROM live_outputs
-           WHERE agent_id=a.agent_id AND kind='presence'
-           ORDER BY updated_at DESC LIMIT 1
-         ) lo ON true
-         WHERE (lo.body->>'releaseVersion') IS NOT NULL
-           AND (lo.body->>'releaseVersion') <> $1`,
-        [version],
-      )
-    ).rows.map((row) => row.owner_id),
-  );
-
   const platformsByIdentity = new Map<string, Set<'android' | 'ios'>>();
   for (const row of (
     await database.query<{ identity_id: string; platform: 'android' | 'ios' }>(
@@ -166,7 +150,6 @@ export async function notifyReleaseDelivered(
     const posted = await notifyPerson(database, person.id, {
       version,
       changelogUrl,
-      behind: behindOwners.has(person.id),
       platforms: platformsByIdentity.get(person.id) ?? new Set(),
     });
     if (posted) notified += 1;
@@ -187,6 +170,10 @@ export interface ReleaseNotifierOptions {
  */
 export class ReleaseNotifier {
   readonly secret: string | undefined;
+  private readonly listeners = new Set<(release: HelperRelease) => void>();
+  private pollTimer: NodeJS.Timeout | undefined;
+  private lastSeenRelease: string | undefined;
+  private lastRelease: HelperRelease | undefined;
 
   constructor(
     private readonly database: SqlDatabase,
@@ -195,7 +182,53 @@ export class ReleaseNotifier {
     this.secret = options.secret;
   }
 
-  notifyReleaseDelivered(input: ReleaseNotifyInput): Promise<ReleaseNotifyResult> {
+  async notifyReleaseDelivered(input: ReleaseNotifyInput): Promise<ReleaseNotifyResult> {
+    // The helper wake must not wait behind a potentially long per-person DM
+    // fanout; the pipeline's notify HTTP budget is shorter than that fanout.
+    required(input.changelogUrl, 'changelogUrl');
+    await recordHelperRelease(this.database, {
+      version: required(input.version, 'version'),
+      sha: required(input.sha, 'sha'),
+    });
+    await this.poll();
     return notifyReleaseDelivered(this.database, input);
+  }
+
+  /** One database read per server process, including servers other than the notify recipient. */
+  subscribeHelperRelease(listener: (release: HelperRelease) => void): () => void {
+    this.listeners.add(listener);
+    if (this.lastRelease) {
+      try {
+        listener(this.lastRelease);
+      } catch (error) {
+        console.error('[release] helper socket send failed', error);
+      }
+    }
+    if (!this.pollTimer) {
+      this.pollTimer = setInterval(() => void this.poll().catch(console.error), 15_000);
+      this.pollTimer.unref?.();
+    }
+    void this.poll().catch(console.error);
+    return () => {
+      this.listeners.delete(listener);
+      if (!this.listeners.size && this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = undefined;
+      }
+    };
+  }
+
+  private async poll(): Promise<void> {
+    const release = await latestHelperRelease(this.database);
+    if (!release || `${release.version}:${release.sha}` === this.lastSeenRelease) return;
+    this.lastSeenRelease = `${release.version}:${release.sha}`;
+    this.lastRelease = release;
+    for (const listener of this.listeners) {
+      try {
+        listener(release);
+      } catch (error) {
+        console.error('[release] helper socket send failed', error);
+      }
+    }
   }
 }

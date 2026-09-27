@@ -24,6 +24,7 @@ import {
   HEALTH_POOL_WAIT_TIMEOUT_MS,
   MIGRATION_LOCK_TIMEOUT_MS,
   MIGRATION_STATEMENT_TIMEOUT_MS,
+  isTransientDatabaseConnectionError,
   type SqlDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
@@ -169,6 +170,11 @@ describe('a terminated checked-out connection never wedges the pool', () => {
       application_name: 'beeline_migration',
       options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
     });
+  });
+
+  it('retries server startup and connection saturation responses', () => {
+    expect(isTransientDatabaseConnectionError({ code: '57P03' })).toBe(true);
+    expect(isTransientDatabaseConnectionError({ code: '53300' })).toBe(true);
   });
 });
 

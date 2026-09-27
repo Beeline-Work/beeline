@@ -82,7 +82,7 @@ export function postgresPoolConfig(
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000', 'ETIMEDOUT']);
+const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT']);
 const TRANSIENT_CONNECTION_MESSAGE =
   /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 const RETRY_DELAYS_MS = [100, 300, 700];

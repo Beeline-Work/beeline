@@ -56,6 +56,10 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   database: SqlDatabase;
+  /** Deployment capacity calculated from PostgreSQL max_connections at boot. */
+  databaseBudget?: import('./database-budget.js').DatabaseConnectionBudget;
+  enrichmentDatabase?: SqlDatabase;
+  jobsDatabase?: SqlDatabase;
   /** A one-connection app-role pool kept outside request traffic so health
    * remains observable while the main pool is saturated. */
   healthDatabase?: SqlDatabase;
@@ -990,6 +994,27 @@ async function route(
         },
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
         ...(options.database.queryProfiles ? { queryProfiles: options.database.queryProfiles() } : {}),
+        ...(options.databaseBudget ? { budget: options.databaseBudget } : {}),
+        ...(options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
+          ? {
+              pools: Object.fromEntries(
+                ([
+                  ['enrichment', options.enrichmentDatabase],
+                  ['diagnostics', options.healthDatabase],
+                  ['jobs', options.jobsDatabase],
+                ] as const)
+                  .filter(([, db]) => !!db)
+                  .map(([name, db]) => {
+                    const counts = db?.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+                    return [name, {
+                      size: counts.total,
+                      inUse: counts.total - counts.idle,
+                      waiting: counts.waiting,
+                    }];
+                  }),
+              ),
+            }
+          : {}),
       },
       live: liveHealth(),
       ...(options.backgroundHealth ? { background: options.backgroundHealth() } : {}),

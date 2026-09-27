@@ -1,5 +1,6 @@
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
+import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -72,19 +73,33 @@ async function runReleaseMigration(): Promise<void> {
 
 async function main() {
   const connectionString = required('DATABASE_URL');
+  const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
+  let budget: ReturnType<typeof databaseConnectionBudget>;
+  try {
+    const capacity = await healthDatabase.query<{ max_connections: string }>('SHOW max_connections');
+    budget = databaseConnectionBudget(
+      Number(capacity.rows[0]?.max_connections),
+      Number(process.env.BEELINE_SERVER_MACHINES ?? '2'),
+      Number(process.env.DATABASE_POOL_MAX ?? '5'),
+    );
+  } catch (error) {
+    await healthDatabase.close();
+    throw error;
+  }
   const database = new PostgresDatabase(
     connectionString,
-    Number(process.env.DATABASE_POOL_MAX ?? '5'),
+    budget.app,
   );
   try {
     await assertSchemaCurrent(database);
   } catch (error) {
     await database.close();
+    await healthDatabase.close();
     throw error;
   }
-  const enrichmentDatabase = new PostgresDatabase(connectionString, 2, { mode: 'enrichment' });
-  const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
-  const jobsDatabase = new PostgresDatabase(connectionString, 2, { mode: 'long-running' });
+  const enrichmentDatabase = new PostgresDatabase(connectionString, budget.enrichment, { mode: 'enrichment' });
+  const jobsDatabase = new PostgresDatabase(connectionString, budget.jobs, { mode: 'long-running' });
+  console.log(`[database] connection budget ${JSON.stringify(budget)}`);
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
   const live = new LiveHub();
@@ -281,6 +296,9 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
+    databaseBudget: budget,
+    enrichmentDatabase,
+    jobsDatabase,
     googleOAuth,
     registryMcpOAuth,
     healthDatabase,

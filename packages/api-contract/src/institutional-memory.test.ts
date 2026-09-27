@@ -63,6 +63,30 @@ describe('institutional memory proposal contract', () => {
     });
   });
 
+  it('accepts a durable fact about the requester in their profile', () => {
+    expect(
+      parseInstitutionalMemoryProposal({
+        ...workspaceFact,
+        memoryKind: 'human_profile_fact',
+        subjectIdentityId: 'human-1',
+        audience: 'human_profile',
+        classification: {
+          subjectIsRequester: true,
+          rationale: 'The delivery detail is about the requester.',
+        },
+      }),
+    ).toMatchObject({ memoryKind: 'human_profile_fact', subjectIdentityId: 'human-1' });
+  });
+
+  it('rejects a scope that contradicts the classified subject', () => {
+    expect(() =>
+      parseInstitutionalMemoryProposal({
+        ...workspaceFact,
+        classification: { ...workspaceFact.classification, subjectIsRequester: true },
+      }),
+    ).toThrow(/contradicts its subject/);
+  });
+
   it('rejects widened audiences, agent-like third scopes, unknown fields, and oversized UTF-8', () => {
     expect(() =>
       parseInstitutionalMemoryProposal({
@@ -70,7 +94,7 @@ describe('institutional memory proposal contract', () => {
         memoryKind: 'human_profile_fact',
         subjectIdentityId: 'human-1',
       }),
-    ).toThrow(/requester test/);
+    ).toThrow(/audience/);
     expect(() =>
       parseInstitutionalMemoryProposal({ ...workspaceFact, audience: 'source_room' }),
     ).toThrow(/audience/);

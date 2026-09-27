@@ -8,6 +8,8 @@ import {
   INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH,
+  INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
+  INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX,
   parseInstitutionalCuratorProposal,
   parseInstitutionalMemoryProposal,
   type CompleteInstitutionalMemoryJobInput,
@@ -17,6 +19,8 @@ import {
   type InstitutionalContextSnapshot,
   type ProposeInstitutionalMemoryInput,
   type ProposeInstitutionalMemoryResult,
+  type SearchInstitutionalMemoryInput,
+  type SearchInstitutionalMemoryResult,
   type InstitutionalMemoryShadowJob,
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
@@ -1286,7 +1290,7 @@ export async function getInstitutionalContext(
       INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES,
     );
     const profile = selectContextSection(
-      "This requester's working preferences:",
+      "This requester's profile facts:",
       ranked.filter((item) => item.kind === 'human_profile_fact'),
       INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES,
     );
@@ -1435,11 +1439,7 @@ export async function proposeInstitutionalMemory(
     }
     const parsed = parseInstitutionalMemoryProposal({
       proposalVersion: 1,
-      candidateType: input.correction
-        ? 'correction_candidate'
-        : input.memoryKind === 'human_profile_fact'
-          ? 'preference_candidate'
-          : 'fact_candidate',
+      candidateType: input.correction ? 'correction_candidate' : 'fact_candidate',
       memoryKind: input.memoryKind,
       ...(input.memoryKind === 'human_profile_fact'
         ? { subjectIdentityId: authority.requester_identity_id }
@@ -1450,11 +1450,11 @@ export async function proposeInstitutionalMemory(
       audience: input.memoryKind === 'workspace_fact' ? 'workspace' : 'human_profile',
       confidence: input.confidence,
       classification: {
-        stillTrueForAnotherRequester: input.memoryKind === 'workspace_fact',
         rationale:
           input.memoryKind === 'workspace_fact'
-            ? 'This remains true when another person asks.'
-            : 'This describes how the durable root requester likes to work.',
+            ? 'The fact is about someone or something other than the requester.'
+            : 'The fact is about the durable root requester.',
+        subjectIsRequester: input.memoryKind === 'human_profile_fact',
       },
       cas: input.cas,
     });
@@ -1468,6 +1468,82 @@ export async function proposeInstitutionalMemory(
     return applied;
   });
   return proposal;
+}
+
+/** Search the full active item set; snapshot recency and byte limits do not apply. */
+export async function searchInstitutionalMemory(
+  database: SqlDatabase,
+  command: CommandRow,
+  input: SearchInstitutionalMemoryInput,
+): Promise<SearchInstitutionalMemoryResult> {
+  const query = typeof input.query === 'string' ? input.query.trim() : '';
+  if (
+    !query ||
+    query.includes('\0') ||
+    Buffer.byteLength(query, 'utf8') > INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES
+  ) {
+    throw new Error('institutional memory search query is invalid');
+  }
+  const limit = input.limit === undefined ? 5 : input.limit;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX) {
+    throw new Error('institutional memory search limit is invalid');
+  }
+  return database.transaction(async (db) => {
+    const authority = (
+      await db.query<{ workspace_id: string; requester_identity_id: string }>(
+        `SELECT room.workspace_id,root.author_id requester_identity_id
+       FROM rooms room
+       JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+       JOIN rooms root_room ON root_room.id=root.room_id AND root_room.workspace_id=room.workspace_id
+       JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
+       JOIN memberships member ON member.workspace_id=room.workspace_id
+         AND member.room_id IS NULL AND member.identity_id=root.author_id
+         AND member.removed_at IS NULL
+       WHERE room.id=$1`,
+        [command.room_id, command.root_source_message_id],
+      )
+    ).rows[0];
+    if (!authority) throw new Error('institutional memory requester authority is unavailable');
+    const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
+    if (!rolloutAllowsLive(rolloutStage)) {
+      throw new Error('institutional memory is not enabled for this Workspace');
+    }
+    const rows = (
+      await db.query<{
+        id: string;
+        kind: 'workspace_fact' | 'human_profile_fact';
+        canonical_key: string;
+        body: string;
+        version: number;
+      }>(
+        `SELECT item.id,item.kind,item.canonical_key,item.body,item.version
+       FROM institutional_memory_items item
+       WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
+         AND (item.kind='workspace_fact' OR
+              (item.kind='human_profile_fact' AND item.subject_identity_id=$2))
+         AND (strpos(lower(item.canonical_key),lower($3))>0 OR
+              strpos(lower(item.body),lower($3))>0)
+         AND NOT EXISTS (
+           SELECT 1 FROM institutional_memory_item_sources source
+           JOIN messages message ON message.id=source.message_id
+           WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
+         )
+       ORDER BY item.updated_at DESC,item.id
+       LIMIT $4`,
+        [authority.workspace_id, authority.requester_identity_id, query, limit],
+      )
+    ).rows;
+    return {
+      quotedContext: true,
+      results: rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        canonicalKey: row.canonical_key,
+        body: row.body,
+        version: row.version,
+      })),
+    };
+  });
 }
 
 /** Blank and archive every derivative before a deleted source can be served again. */

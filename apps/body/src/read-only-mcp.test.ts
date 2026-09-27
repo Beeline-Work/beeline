@@ -33,19 +33,25 @@ describe('direct message helper surface', () => {
     const byDefault = agentToolsFor(true, false).map((tool) => tool.name);
     expect(byDefault).toContain('propose_memory_item');
     expect(byDefault).toContain('search_history');
+    expect(byDefault).toContain('search_memory');
     expect(byDefault).toContain('load_workspace_skill');
     const disabled = agentToolsFor(true, false, false, false, true, false, false).map(
       (tool) => tool.name,
     );
     expect(disabled).not.toContain('propose_memory_item');
     expect(disabled).not.toContain('search_history');
+    expect(disabled).not.toContain('search_memory');
     expect(disabled).not.toContain('load_workspace_skill');
     const enabled = agentToolsFor(true, false, false, false, true, false, true).map(
       (tool) => tool.name,
     );
     expect(enabled).toContain('propose_memory_item');
     expect(enabled).toContain('search_history');
+    expect(enabled).toContain('search_memory');
     expect(enabled).toContain('load_workspace_skill');
+    const proposal = agentToolsFor(true, false).find((tool) => tool.name === 'propose_memory_item');
+    expect(proposal?.inputSchema.required).toContain('subject_is_requester');
+    expect(proposal?.inputSchema.properties).not.toHaveProperty('memory_kind');
   });
 });
 

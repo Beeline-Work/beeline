@@ -1030,6 +1030,267 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(bounded.omitted.workspace).toBeGreaterThan(0);
   });
 
+  it('routes self facts to the requester profile and third-party facts to shared memory', async () => {
+    await enrollLive();
+    const source = '4'.repeat(64);
+    const otherSource = '5'.repeat(64);
+    const ownNextSource = '6'.repeat(64);
+    const retrievalRequest = 'Remind me of my access detail.';
+    expect(retrievalRequest.toLowerCase()).not.toMatch(/alex|receives|packages|thursdays/);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES
+       ($1,$3,$4,'My delivery code is blue harbor; Alex receives packages on Thursdays.'),
+       ($2,$3,$5,'What is the handoff schedule?'),
+       ($6,$3,$4,$7)`,
+      [source, otherSource, ROOM, HUMAN, OTHER_HUMAN, ownNextSource, retrievalRequest],
+    );
+    const first = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: source,
+      reason: 'human_tag',
+      turnRequestId: 'subject-first',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, first!.id, 'subject-first-generation');
+    const daemon = liveDaemon();
+    const base = {
+      agentId: AGENT,
+      roomId: ROOM,
+      requestId: 'subject-first',
+      generationId: 'subject-first-generation',
+      sourceMessageIds: [source],
+      correction: false,
+      confidence: 0.9,
+      cas: { baseVersion: null },
+    } as const;
+    const self = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        ...base,
+        memoryKind: 'human_profile_fact',
+        canonicalKey: 'delivery.self-code',
+        body: "The requester's delivery code is blue harbor.",
+      },
+      AGENT,
+    );
+    const thirdParty = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        ...base,
+        memoryKind: 'workspace_fact',
+        canonicalKey: 'delivery.alex-day',
+        body: 'Alex receives packages on Thursdays.',
+      },
+      AGENT,
+    );
+    const stored = (
+      await database.query<{ id: string; kind: string; subject_identity_id: string | null }>(
+        `SELECT id,kind,subject_identity_id FROM institutional_memory_items WHERE id=ANY($1::uuid[])`,
+        [[self.itemId, thirdParty.itemId]],
+      )
+    ).rows;
+    expect(stored).toContainEqual({
+      id: self.itemId,
+      kind: 'human_profile_fact',
+      subject_identity_id: HUMAN,
+    });
+    expect(stored).toContainEqual({
+      id: thirdParty.itemId,
+      kind: 'workspace_fact',
+      subject_identity_id: null,
+    });
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        agentId: AGENT,
+        requestId: 'subject-first',
+        generationId: 'subject-first-generation',
+        status: 'complete',
+      },
+      AGENT,
+    );
+    const next = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: otherSource,
+      reason: 'human_tag',
+      turnRequestId: 'subject-other',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, next!.id, 'subject-other-generation');
+    const otherContext = await daemon.execute(
+      'getInstitutionalContext',
+      {
+        roomId: ROOM,
+        requestId: 'subject-other',
+        generationId: 'subject-other-generation',
+      },
+      AGENT,
+    );
+    expect(otherContext.text).toContain('Alex receives packages on Thursdays');
+    expect(otherContext.text).not.toContain('blue harbor');
+    const otherSearch = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: 'subject-other',
+        generationId: 'subject-other-generation',
+        query: 'delivery',
+      },
+      AGENT,
+    );
+    expect(otherSearch.results.map((item) => item.id)).toContain(thirdParty.itemId);
+    expect(otherSearch.results.map((item) => item.id)).not.toContain(self.itemId);
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        agentId: AGENT,
+        requestId: 'subject-other',
+        generationId: 'subject-other-generation',
+        status: 'complete',
+      },
+      AGENT,
+    );
+    const ownNext = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: ownNextSource,
+      reason: 'human_tag',
+      turnRequestId: 'subject-own-next',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, ownNext!.id, 'subject-own-generation');
+    const ownContext = await daemon.execute(
+      'getInstitutionalContext',
+      {
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+      },
+      AGENT,
+    );
+    expect(ownContext.text).toContain('blue harbor');
+    const ownSearch = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+        query: 'blue harbor',
+      },
+      AGENT,
+    );
+    expect(ownSearch.results.map((item) => item.id)).toContain(self.itemId);
+    await database.query(
+      `UPDATE institutional_memory_items SET updated_at=now()-interval '10 days' WHERE id=$1`,
+      [thirdParty.itemId],
+    );
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_command_id)
+       SELECT md5('memory-filler-'||i::text)::uuid,$1,'workspace_fact',
+         'filler.'||i::text,'unrelated filler '||i::text,$2,$3,'workspace',0.5,1,'fixture'
+       FROM generate_series(1,510) AS i`,
+      [WORKSPACE, ROOM, source],
+    );
+    const capped = await daemon.execute(
+      'getInstitutionalContext',
+      {
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+      },
+      AGENT,
+    );
+    expect(capped.itemIds).not.toContain(thirdParty.itemId);
+    // The agent's search phrase can find an active item absent from the frozen
+    // snapshot even though the human request contains none of that item's terms.
+    const beyondSnapshot = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+        query: 'Alex receives packages',
+      },
+      AGENT,
+    );
+    expect(beyondSnapshot.results.map((item) => item.id)).toContain(thirdParty.itemId);
+    await database.query(`UPDATE institutional_memory_items SET state='archived' WHERE id=$1`, [
+      thirdParty.itemId,
+    ]);
+    const archived = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+        query: 'Alex receives packages',
+      },
+      AGENT,
+    );
+    expect(archived.results).toEqual([]);
+    await database.query(`UPDATE institutional_memory_items SET state='active' WHERE id=$1`, [
+      thirdParty.itemId,
+    ]);
+    await database.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [source]);
+    const deletedSource = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+        query: 'Alex receives packages',
+      },
+      AGENT,
+    );
+    expect(deletedSource.results).toEqual([]);
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        agentId: AGENT,
+        requestId: 'subject-own-next',
+        generationId: 'subject-own-generation',
+        status: 'complete',
+      },
+      AGENT,
+    );
+    const dmCommand = await createAgentCommand(database, {
+      roomId: DM,
+      agentId: AGENT,
+      sourceMessageId: DM_MESSAGE,
+      reason: 'human_tag',
+      turnRequestId: 'subject-dm',
+    });
+    await claimAgentCommand(database, DM, AGENT, dmCommand!.id, 'subject-dm-generation');
+    await expect(
+      daemon.execute(
+        'proposeInstitutionalMemory',
+        {
+          agentId: AGENT,
+          roomId: DM,
+          requestId: 'subject-dm',
+          generationId: 'subject-dm-generation',
+          memoryKind: 'workspace_fact',
+          canonicalKey: 'delivery.private-third-party',
+          body: 'Alex has a private delivery detail.',
+          sourceMessageIds: [DM_MESSAGE],
+          correction: false,
+          confidence: 0.9,
+          cas: { baseVersion: null },
+        },
+        AGENT,
+      ),
+    ).rejects.toThrow(/direct-message facts/);
+  });
+
   it('tombstones item content and derived events when a source is deleted', async () => {
     await enrollLive();
     const secondarySource = '6'.repeat(64);

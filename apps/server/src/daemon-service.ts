@@ -147,6 +147,7 @@ import {
   getInstitutionalContext,
   heartbeatInstitutionalMemoryJob,
   proposeInstitutionalMemory,
+  searchInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
   recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
@@ -310,6 +311,7 @@ export class DaemonService {
       'requestCornerAppOpen',
       'getInstitutionalContext',
       'proposeInstitutionalMemory',
+      'searchInstitutionalMemory',
       'searchInstitutionalHistory',
       'loadWorkspaceSkill',
     ]);
@@ -651,6 +653,18 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'proposeInstitutionalMemory'>,
+        )) as Output<Name>;
+      case 'searchInstitutionalMemory':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('institutional memory search requires an active command');
+        }
+        if (!this.institutionalMemoryShadow.live) {
+          throw new Error('institutional memory is disabled');
+        }
+        return (await searchInstitutionalMemory(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'searchInstitutionalMemory'>,
         )) as Output<Name>;
       case 'searchInstitutionalHistory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -6315,6 +6329,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   failInstitutionalMemoryJob: true,
   getInstitutionalContext: true,
   proposeInstitutionalMemory: true,
+  searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
   loadWorkspaceSkill: true,
   getDaemonBootstrap: true,

@@ -35,7 +35,7 @@ import { createBeelineServer } from '../apps/server/src/server.js';
 import { GitHubOperations } from '../apps/server/src/github-operations.js';
 import { createAgentCommand } from '../apps/server/src/agent-command.js';
 import { systemLine } from '../apps/server/src/system-line.js';
-import { cornerReviewerInstruction } from '../apps/body/src/monolith-corner-turn.js';
+import { cornerReviewerInstruction } from '../apps/body/src/prompt-assembly.js';
 import { agentToolsFor, prChecksStatus } from '../apps/body/src/read-only-mcp.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 

@@ -566,6 +566,10 @@ export type CornerListResult = {
 };
 export type CornerRestoreResult = {
   readonly cornerId: string;
+  /** Present on servers that expose archived corners to active-only discovery helpers. */
+  readonly archived?: boolean;
+  /** Parent Room retained after archival so a helper can locate its local worktree. */
+  readonly parentRoomId?: string;
   /** Immutable objective from the authoritative corner fact. */
   readonly objective: string;
   /** Current immutable assignment, absent on corners opened before briefs. */

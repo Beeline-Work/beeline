@@ -585,7 +585,6 @@ export function BuzzChatSurface({
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,
-    markUnreadFrom,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -3298,28 +3297,6 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
-  const handleMarkUnread = useCallback(
-    async (message: ChatDisplayMessage) => {
-      // The boundary may only be placed on a row the one definition of unread
-      // admits. Placed on the viewer's own message it drew a NEW MESSAGES
-      // divider and announced success while the server — which never counts
-      // viewer-authored rows — reported nothing unread and left the deck read.
-      if (!countsAsUnread(message)) return;
-      const messageId = message.relayId ?? message.id;
-      try {
-        await markUnreadFrom(messageId);
-        AccessibilityInfo.announceForAccessibility('Marked unread from this message');
-        refreshSignal.force();
-      } catch (error) {
-        AccessibilityInfo.announceForAccessibility('Mark unread failed');
-        Modal.alert(
-          'Could not mark unread',
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    },
-    [markUnreadFrom, refreshSignal],
-  );
   const canDeleteMessage = useCallback(
     (message: ChatDisplayMessage) =>
       !message.deleted && !message.isAgentActivity && !message.isAgentDraft &&
@@ -6403,18 +6380,6 @@ export function BuzzChatSurface({
               if (target) void beginForward(target);
             }}
             testID="message-forward-action"
-          />
-        ) : null}
-        {messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget) ? (
-          <HullActionSheetRow
-            accessibilityLabel="Mark unread from this message"
-            label="Mark unread"
-            onPress={() => {
-              const target = messageActionsTarget;
-              setMessageActionsTarget(null);
-              if (target) void handleMarkUnread(target);
-            }}
-            testID="message-mark-unread-action"
           />
         ) : null}
         {messageActionsTarget && canDeleteMessage(messageActionsTarget) ? (

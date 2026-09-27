@@ -356,19 +356,53 @@ describe('resolveBuzzNotificationTarget', () => {
         channelId: 'room-1',
       },
     ],
-  ])('switches Workspace before resolving a %s payload', async (_kind, target) => {
-    const order: string[] = [];
-    const resolved = await resolveBuzzNotificationTarget(target, {
-      activateWorkspace: async (id) => {
-        order.push(`workspace:${id}`);
-      },
-      readRoom: async (id) => {
-        order.push(`room:${id}`);
-        return roomTruth();
-      },
-    });
-    expect(order).toEqual(['workspace:workspace-1', 'room:room-1']);
-    expect(resolved.channelId).toBe('room-1');
+  ])(
+    'opens a %s payload after Workspace selection without a redundant Room read',
+    async (_kind, target) => {
+      const order: string[] = [];
+      const resolved = await resolveBuzzNotificationTarget(target, {
+        activateWorkspace: async (id) => {
+          order.push(`workspace:${id}`);
+        },
+        readRoom: async (id) => {
+          order.push(`room:${id}`);
+          return roomTruth();
+        },
+      });
+      expect(order).toEqual(['workspace:workspace-1']);
+      expect(resolved).toEqual(target);
+    },
+  );
+
+  it('does not hold a named Room push behind a stalled preflight read', async () => {
+    const target = {
+      type: 'channel-activity',
+      target: 'message' as const,
+      workspaceId: 'workspace-1',
+      roomId: 'room-1',
+      channelId: 'room-1',
+      messageId: 'message-120',
+    };
+    const readRoom = vi.fn(() => new Promise<ReturnType<typeof roomTruth>>(() => undefined));
+    await expect(
+      resolveBuzzNotificationTarget(target, {
+        activateWorkspace: async () => undefined,
+        readRoom,
+      }),
+    ).resolves.toEqual(target);
+    expect(readRoom).not.toHaveBeenCalled();
+  });
+
+  it('reads Room truth when an older push omitted the Workspace', async () => {
+    const readRoom = vi.fn().mockResolvedValue(roomTruth());
+    const activateWorkspace = vi.fn().mockResolvedValue(undefined);
+    const resolved = await resolveBuzzNotificationTarget(
+      { type: 'channel-activity', target: 'message', roomId: 'room-1', channelId: 'room-1' },
+      { activateWorkspace, readRoom },
+    );
+    expect(readRoom).toHaveBeenCalledWith('room-1');
+    expect(activateWorkspace).toHaveBeenCalledWith('workspace-1');
+    expect(resolved.workspaceId).toBe('workspace-1');
   });
 
   it('resolves corner-open to the live corner', async () => {

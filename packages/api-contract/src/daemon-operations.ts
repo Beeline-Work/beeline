@@ -265,9 +265,8 @@ export type DaemonOperationMap = {
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   /**
-   * Per-call Squire gate: owner turns bypass only under yolo; otherwise a requester needs a
-   * live mcp/squire grant keyed to them. A miss posts the existing Once/Always/No
-   * card in the owner's Trusty Squire DM and returns pending.
+   * Per-call Squire gate: an agent may use its owner's connected Squire
+   * regardless of the root requester or yolo setting.
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   /**

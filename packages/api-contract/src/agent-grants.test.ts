@@ -15,7 +15,6 @@ import {
   isRequestableAgentGrantKind,
   parseCommandGrantTarget,
   parseGrantDecisionLine,
-  squireCallAllowed,
 } from './agent-grants.js';
 
 describe('requestable grant kinds', () => {
@@ -218,88 +217,5 @@ describe('an interpreter grant is bound to its script', () => {
     const refusal = grantScriptTooLongMessage('big.py', 9_000, 400);
     expect(refusal).toContain('will not be truncated');
     expect(refusal).toContain('open_corner');
-  });
-});
-
-describe('squireCallAllowed', () => {
-  const owner = 'owner';
-  const requester = 'member';
-  const ownerGrant = {
-    grantId: 'g-owner',
-    kind: 'mcp',
-    target: 'squire',
-    status: 'approved',
-    requestedBy: owner,
-  };
-  const memberAlways = {
-    grantId: 'g-member',
-    kind: 'mcp',
-    target: 'squire',
-    status: 'approved',
-    requestedBy: requester,
-  };
-
-  it('lets the owner bypass only when yolo is enabled', () => {
-    expect(
-      squireCallAllowed({
-        requesterId: owner,
-        ownerId: owner,
-        yoloMode: true,
-        grants: [ownerGrant],
-      }),
-    ).toEqual({
-      allowed: true,
-    });
-  });
-
-  it('requires explicit resource approval for the owner when yolo is off', () => {
-    expect(squireCallAllowed({ requesterId: owner, ownerId: owner, grants: [] })).toEqual({
-      allowed: false,
-    });
-    expect(squireCallAllowed({ requesterId: owner, ownerId: owner, grants: [ownerGrant] })).toEqual(
-      { allowed: true, grantId: 'g-owner' },
-    );
-  });
-
-  it('refuses a non-owner when the only live grant is the owner Always', () => {
-    expect(
-      squireCallAllowed({ requesterId: requester, ownerId: owner, grants: [ownerGrant] }),
-    ).toEqual({ allowed: false });
-  });
-
-  it('lets a non-owner through only on a live grant keyed to that requester', () => {
-    expect(
-      squireCallAllowed({
-        requesterId: requester,
-        ownerId: owner,
-        grants: [ownerGrant, memberAlways],
-      }),
-    ).toEqual({ allowed: true, grantId: 'g-member' });
-    expect(
-      squireCallAllowed({
-        requesterId: 'someone-else',
-        ownerId: owner,
-        grants: [ownerGrant, memberAlways],
-      }),
-    ).toEqual({ allowed: false });
-  });
-
-  it('consumes a Once grant keyed to that requester', () => {
-    expect(
-      squireCallAllowed({
-        requesterId: requester,
-        ownerId: owner,
-        grants: [
-          ownerGrant,
-          {
-            grantId: 'g-once',
-            kind: 'mcp',
-            target: 'squire',
-            status: 'once',
-            requestedBy: requester,
-          },
-        ],
-      }),
-    ).toEqual({ allowed: true, grantId: 'g-once', consume: true });
   });
 });

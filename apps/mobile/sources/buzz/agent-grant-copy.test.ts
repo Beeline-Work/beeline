@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentGrantView } from '@beeline/api-contract/phone';
-import { grantAskLine, grantOutcomeLine, grantProvenanceLine } from './agent-grant-copy';
+import {
+  grantAskLine,
+  grantRequestLine,
+  grantOutcomeLine,
+  grantProvenanceLine,
+} from './agent-grant-copy';
 
 const OWNER = { pubkey: 'a'.repeat(64), kind: 'human' as const, name: 'Charles' };
 
@@ -22,6 +27,17 @@ function grant(overrides: Partial<AgentGrantView>): AgentGrantView {
 }
 
 describe('grant copy', () => {
+  it('states each remaining ask as one specific action line', () => {
+    expect(grantRequestLine('Alex', '@Bee', { kind: 'path', target: '/home/alex/report' })).toBe(
+      'Alex wants @Bee to read /home/alex/report',
+    );
+    expect(grantRequestLine('Alex', '@Bee', { kind: 'mcp', target: 'openaiDeveloperDocs' })).toBe(
+      'Alex wants @Bee to use openaiDeveloperDocs',
+    );
+    expect(grantRequestLine('Alex', '@Bee', { kind: 'repository', target: 'team/repo' })).toBe(
+      'Alex wants @Bee to write team/repo',
+    );
+  });
   it('prints one verb per kind in front of the target', () => {
     expect(grantAskLine({ kind: 'command', target: 'fly deploy' })).toBe('run fly deploy');
     expect(grantAskLine({ kind: 'path', target: '~/Design/assets' })).toBe('read ~/Design/assets');
@@ -43,7 +59,7 @@ describe('grant copy', () => {
     expect(grantOutcomeLine(grant({ status: 'denied' }))).toMatch(/^Charles declined · \d/);
     expect(grantOutcomeLine(grant({ status: 'revoked' }))).toMatch(/^Charles revoked · \d/);
     expect(grantOutcomeLine(grant({ auto: true, decidedBy: undefined }))).toMatch(
-      /^yolo auto-approved · \d/,
+      /^Beeline auto-approved · \d/,
     );
   });
 
@@ -58,7 +74,7 @@ describe('grant copy', () => {
       /^approved by Charles, .+ · standing · auto-approved$/,
     );
     expect(grantProvenanceLine(grant({ auto: true, decidedBy: undefined }))).toMatch(
-      /^approved by yolo, .+ · standing · auto-approved$/,
+      /^approved by Beeline, .+ · standing · auto-approved$/,
     );
     // A settled grant with no decision stamp still states a date: the row's own
     // created-at is the only honest one left.

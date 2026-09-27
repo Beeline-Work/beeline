@@ -9034,7 +9034,7 @@ describe('monolith integration', () => {
           reason: 'inspect the checkout',
         })
       ).json(),
-    ).toEqual(expect.objectContaining({ status: 'pending', auto: false }));
+    ).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
 
     const rejected = await operation('updateAgentYolo', {
       workspaceId: WORKSPACE,
@@ -9332,7 +9332,7 @@ describe('monolith integration', () => {
     [true, false],
     [true, true],
   ])(
-    'enforces the personal-resource matrix (yolo=%s ownerRequester=%s)',
+    'lets an agent use its own owner resource (yolo=%s ownerRequester=%s)',
     async (yolo, ownerRequester) => {
       await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
       const token = await phoneToken('matrix-member');
@@ -9358,67 +9358,72 @@ describe('monolith integration', () => {
       const resource = await (
         await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
       ).json();
-      expect(resource.allowed).toBe(yolo && ownerRequester);
-      if (!resource.allowed) {
-        const card = (
-          await database.query<{ room_id: string; card: { requester: { pubkey: string } } }>(
-            `SELECT room_id,card FROM messages WHERE id=$1`,
-            [resource.messageId],
+      expect(resource.allowed).toBe(true);
+      expect(
+        (
+          await (
+            await daemonOperation('authorizeResourceCall', {
+              ...context,
+              target: 'openaiDeveloperDocs',
+            })
+          ).json()
+        ).allowed,
+      ).toBe(true);
+      expect(
+        (
+          await database.query(
+            `SELECT id FROM agent_grants WHERE target IN ('paid-api','openaiDeveloperDocs')`,
           )
-        ).rows[0]!;
-        expect(card.room_id).not.toBe(ROOM);
-        expect(card.card.requester.pubkey).toBe(ownerRequester ? HUMAN : member);
-        expect(
-          (await request(`/v1/phone/rooms/${card.room_id}`, 'GET', undefined, token)).status,
-        ).toBe(404);
-        expect(
-          (
-            await operation(
-              'decideAgentGrant',
-              { grantId: resource.grantId, decision: 'always' },
-              token,
-            )
-          ).status,
-        ).toBe(403);
-        expect(
-          (await operation('decideAgentGrant', { grantId: resource.grantId, decision: 'always' }))
-            .status,
-        ).toBe(200);
-        // Paid calls share the approved resource scope; repeated calls do not ask for a budget.
-        for (let i = 0; i < 2; i++)
-          expect(
-            (
-              await (
-                await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
-              ).json()
-            ).allowed,
-          ).toBe(true);
-        expect(
-          (
-            await (
-              await daemonOperation('authorizeResourceCall', {
-                ...context,
-                target: 'different-api',
-              })
-            ).json()
-          ).allowed,
-        ).toBe(false);
-        expect((await operation('revokeAgentGrant', { grantId: resource.grantId })).status).toBe(
-          200,
-        );
-        expect(
-          (
-            await (
-              await daemonOperation('authorizeResourceCall', { ...context, target: 'paid-api' })
-            ).json()
-          ).allowed,
-        ).toBe(false);
-      }
+        ).rows,
+      ).toEqual([]);
+      expect((await (await daemonOperation('authorizeSquireCall', context)).json()).allowed).toBe(
+        true,
+      );
       expect(
         (await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows,
       ).toEqual([]);
     },
   );
+
+  it('lets an agent use its owner tool when another person’s agent started the turn', async () => {
+    const OTHER_AGENT = 'e'.repeat(64);
+    const OTHER_OWNER = 'f'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other Owner','other-owner'),($2,'agent','Other Agent','other-agent')`,
+      [OTHER_OWNER, OTHER_AGENT],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$2,false)`, [
+      OTHER_AGENT,
+      OTHER_OWNER,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, OTHER_AGENT, ROOM],
+    );
+    const sourceId = createHash('sha256').update('other-agent-root-resource').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'@bee use your docs','message')`,
+      [sourceId, ROOM, OTHER_AGENT],
+    );
+    await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: sourceId,
+      reason: 'agent_mention',
+    });
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const result = (await (
+      await daemonOperation('authorizeResourceCall', {
+        roomId: ROOM,
+        requestId: sourceId,
+        target: 'openaiDeveloperDocs',
+      })
+    ).json()) as { allowed: boolean };
+    expect(result.allowed).toBe(true);
+    expect(
+      (await database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows,
+    ).toEqual([]);
+  });
 
   it('rejects obsolete repository grant requests without posting a permission card', async () => {
     const source = (await (
@@ -9440,7 +9445,12 @@ describe('monolith integration', () => {
       (await database.query(`SELECT 1 FROM agent_grants WHERE kind='repository'`)).rows,
     ).toEqual([]);
     expect(
-      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-request'`, [ROOM])).rows,
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='grant-request'`,
+          [ROOM],
+        )
+      ).rows,
     ).toEqual([]);
   });
 
@@ -9476,16 +9486,26 @@ describe('monolith integration', () => {
       });
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ allowed: true });
-      const withoutTurn = await request(`/v1/daemon/operations/${name}`, 'POST', {
-        roomId: cornerId,
-      }, daemonToken);
+      const withoutTurn = await request(
+        `/v1/daemon/operations/${name}`,
+        'POST',
+        {
+          roomId: cornerId,
+        },
+        daemonToken,
+      );
       expect(withoutTurn.status).toBe(403);
     }
     expect(
       (await database.query(`SELECT 1 FROM agent_grants WHERE room_id=$1`, [cornerId])).rows,
     ).toEqual([]);
     expect(
-      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`, [cornerId])).rows,
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
+          [cornerId],
+        )
+      ).rows,
     ).toEqual([]);
   });
 
@@ -9503,12 +9523,16 @@ describe('monolith integration', () => {
         await (
           await daemonOperation('requestAgentGrant', {
             roomId: ROOM,
-            kind: 'host',
-            target,
+            kind: 'mcp',
+            target: 'wallet',
             reason: 'use the host',
           })
         ).json(),
       );
+      await database.query(`UPDATE agent_grants SET kind='host',target=$2 WHERE id=$1`, [
+        grants[grants.length - 1]!.grantId,
+        target,
+      ]);
     }
     await database.query(`UPDATE agent_grants SET command_id=NULL WHERE id=$1`, [
       grants[1]!.grantId,
@@ -9653,7 +9677,7 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
-  it('forces the personal-resource bypass off in a public Workspace and rejects calls without live command authority', async () => {
+  it('keeps owner tools available in a public Workspace and rejects calls without live command authority', async () => {
     await database.query(`UPDATE workspaces SET visibility='public' WHERE id=$1`, [WORKSPACE]);
     const source = (await (
       await operation('sendRoomMessage', { roomId: ROOM, text: '@bee work', mentions: [AGENT] })
@@ -9667,7 +9691,7 @@ describe('monolith integration', () => {
           })
         ).json()
       ).allowed,
-    ).toBe(false);
+    ).toBe(true);
     const response = await fetch(`${origin}/v1/daemon/operations/authorizeResourceCall`, {
       method: 'POST',
       headers: { authorization: `Bearer ${daemonToken}`, 'content-type': 'application/json' },
@@ -9679,7 +9703,7 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('keeps the root requester through delegation, resumes, and later owner turns', async () => {
+  it('lets delegated turns use the same owner tool after a later owner turn', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const token = await phoneToken('delegated-member');
     const member = createHash('sha256').update('github:delegated-member').digest('hex');
@@ -9728,32 +9752,10 @@ describe('monolith integration', () => {
     const held = await (
       await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: delegated })
     ).json();
-    expect(held.allowed).toBe(false);
+    expect(held.allowed).toBe(true);
     expect(
-      (
-        await database.query<{ requested_by: string }>(
-          `SELECT requested_by FROM agent_grants WHERE id=$1`,
-          [held.grantId],
-        )
-      ).rows[0]!.requested_by,
-    ).toBe(member);
-    expect(
-      (await operation('decideAgentGrant', { grantId: held.grantId, decision: 'once' })).status,
-    ).toBe(200);
-    const resume = (
-      await database.query<any>(
-        `SELECT * FROM agent_commands WHERE action='resume' AND agent_id=$1 ORDER BY created_at DESC LIMIT 1`,
-        [AGENT],
-      )
-    ).rows[0]!;
-    expect(resume.root_source_message_id).toBe(source.messageId);
-    const context = { roomId: ROOM, requestId: resume.turn_request_id };
-    expect((await (await daemonOperation('authorizeSquireCall', context)).json()).allowed).toBe(
-      true,
-    );
-    expect((await (await daemonOperation('authorizeSquireCall', context)).json()).allowed).toBe(
-      false,
-    );
+      (await database.query(`SELECT 1 FROM agent_grants WHERE target='squire'`)).rowCount,
+    ).toBe(0);
   });
 
   it('does not reuse an owner command grant on a third-party turn or without command authority', async () => {
@@ -9815,8 +9817,8 @@ describe('monolith integration', () => {
             requestId: ownerAsk.messageId,
           })
         ).json()
-      ).grants,
-    ).toEqual([]);
+      ).grants.map((g: any) => g.grantId),
+    ).toContain(grant.grantId);
   });
 
   it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
@@ -9865,7 +9867,7 @@ describe('monolith integration', () => {
         roomId: ROOM,
         requestId: ask.messageId,
         kind: 'command',
-        target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
+        target: 'cat /home/other/.env',
         reason: 'publish the preview build',
       })
     ).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
@@ -9877,8 +9879,8 @@ describe('monolith integration', () => {
       await daemonOperation('requestAgentGrant', {
         roomId: ROOM,
         requestId: ask.messageId,
-        kind: 'host',
-        target: 'api.fly.io',
+        kind: 'command',
+        target: 'cat /home/other/.ssh/id_rsa',
         reason: 'reach the Fly API',
         ttlSeconds: 3_600,
       })
@@ -9907,7 +9909,7 @@ describe('monolith integration', () => {
     // addressed by what it IS, and `background.ts` pushes it to that person.
     expect(card.tagged_ids).toEqual([]);
     expect(card.text).toBe(
-      '@bee asked @owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
+      '@member wants Bee to use cat /home/other/.env and Bee to use cat /home/other/.ssh/id_rsa',
     );
     expect(card.card.owner.pubkey).toBe(HUMAN);
     expect(card.card.requester.pubkey).toBe(memberId);
@@ -9985,8 +9987,8 @@ describe('monolith integration', () => {
       )
     ).rows;
     expect(decisions.map((item) => item.body)).toEqual([
-      '@owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
-      '@owner declined host api.fly.io',
+      '@owner approved once command cat /home/other/.env',
+      '@owner declined command cat /home/other/.ssh/id_rsa',
     ]);
     // The decision carries a RESUME kind: it answers the turn already paused on
     // the ask, and the helper must not start a second turn on it.
@@ -9995,13 +9997,13 @@ describe('monolith integration', () => {
         subject: { kind: 'person', id: HUMAN, name: '@owner' },
         verb: 'approved once',
         kind: 'grant-decided',
-        object: { text: 'command fly deploy -a beeline-preview --with FLY_TOKEN' },
+        object: { text: 'command cat /home/other/.env' },
       },
       {
         subject: { kind: 'person', id: HUMAN, name: '@owner' },
         verb: 'declined',
         kind: 'grant-decided',
-        object: { text: 'host api.fly.io' },
+        object: { text: 'command cat /home/other/.ssh/id_rsa' },
       },
     ]);
     // These items are in this agent's inbox because the server routed them here.
@@ -10032,7 +10034,7 @@ describe('monolith integration', () => {
         grantId: first.grantId,
         kind: 'command',
         status: 'once',
-        target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
+        target: 'cat /home/other/.env',
         requestedBy: memberId,
         requestedByName: 'Member',
       }),
@@ -10057,7 +10059,7 @@ describe('monolith integration', () => {
         roomId: ROOM,
         requestId: ask.messageId,
         kind: 'command',
-        target: 'npm test',
+        target: 'cat /home/other/.env.production',
         reason: 'run the suite',
       })
     ).json()) as { grantId: string; messageId: string };
@@ -10588,6 +10590,61 @@ describe('monolith integration', () => {
     ).toBeUndefined();
   });
 
+  it.each([false, true])(
+    'auto-approves owner-machine host and command grants for another requester (yolo=%s)',
+    async (yolo) => {
+      await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+      const token = await phoneToken('foreign-root');
+      const requesterId = createHash('sha256').update('github:foreign-root').digest('hex');
+      await operation('addWorkspaceMember', {
+        workspaceId: WORKSPACE,
+        memberId: requesterId,
+        role: 'member',
+      });
+      await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
+      const source = (await (
+        await operation(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            text: '@bee use your machine',
+            mentions: [AGENT],
+          },
+          token,
+        )
+      ).json()) as { messageId: string };
+      for (const [kind, target] of [
+        ['host', 'api.fly.io'],
+        ['command', 'npm test'],
+        ['path', '/home/owner/notes'],
+        ['secret', 'OWNER_KEY'],
+        ['mcp', 'openaiDeveloperDocs'],
+      ] as const) {
+        const grant = (await (
+          await daemonOperation('requestAgentGrant', {
+            roomId: ROOM,
+            requestId: source.messageId,
+            kind,
+            target,
+            reason: 'owner resource',
+          })
+        ).json()) as { grantId: string; status: string; auto: boolean; messageId?: string };
+        expect(grant).toMatchObject({ status: 'approved', auto: true });
+        expect(grant.messageId).toBeUndefined();
+        expect(
+          (
+            await database.query(`SELECT requested_by FROM agent_grants WHERE id=$1`, [
+              grant.grantId,
+            ])
+          ).rows[0],
+        ).toEqual({ requested_by: requesterId });
+      }
+      expect(
+        (await database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows,
+      ).toEqual([]);
+    },
+  );
+
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
@@ -10617,7 +10674,7 @@ describe('monolith integration', () => {
     );
     expect(lines.rows).toEqual([
       {
-        text: '@bee was granted secret FLY_TOKEN · auto-approved under yolo',
+        text: '@bee was granted secret FLY_TOKEN · auto-approved',
         presentation: 'system',
         tagged_ids: [],
         author_id: AGENT,
@@ -10625,7 +10682,7 @@ describe('monolith integration', () => {
           subject: { kind: 'agent', id: AGENT, name: '@bee' },
           verb: 'was granted',
           object: { text: 'secret FLY_TOKEN' },
-          consequence: 'auto-approved under yolo',
+          consequence: 'auto-approved',
         },
       },
     ]);
@@ -10701,249 +10758,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('routes the Squire host grant to its owner without changing shared agent access', async () => {
-    const adminToken = await phoneToken('mcp-grant-admin');
-    const adminId = createHash('sha256').update('github:mcp-grant-admin').digest('hex');
-    await operation('addWorkspaceMember', {
-      workspaceId: WORKSPACE,
-      memberId: adminId,
-      role: 'admin',
-    });
-    const memberToken = await phoneToken('squire-requester');
-    const requesterId = createHash('sha256').update('github:squire-requester').digest('hex');
-    await operation('addWorkspaceMember', {
-      workspaceId: WORKSPACE,
-      memberId: requesterId,
-      role: 'member',
-    });
-    await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
-    await database.query(
-      `UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb WHERE agent_id=$1`,
-      [AGENT],
-    );
-    const sourceId = createHash('sha256').update('squire-source').digest('hex');
-    expect(
-      (
-        await operation(
-          'sendRoomMessage',
-          {
-            roomId: ROOM,
-            messageId: sourceId,
-            text: '@bee use Squire',
-            mentions: [AGENT],
-          },
-          memberToken,
-        )
-      ).status,
-    ).toBe(200);
-    const route = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        requestId: sourceId,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'use the owner vault',
-      })
-    ).json()) as {
-      grantId: string;
-      messageId: string;
-      approval: { destination: string; authority: string };
-    };
-    expect(route.approval).toEqual({
-      destination: 'trusty-squire-dm',
-      authority: 'resource-owner',
-    });
-    const card = (
-      await database.query<{
-        room_id: string;
-        author_id: string;
-        text: string;
-        card: {
-          owner: { pubkey: string };
-          requester: { pubkey: string };
-          sourceRoomId: string;
-          sourceMessageId?: string;
-          grants: Array<{ target: string; status: string }>;
-        };
-      }>(`SELECT room_id,author_id,text,card FROM messages WHERE id=$1`, [route.messageId])
-    ).rows[0]!;
-    expect(card.author_id).toBe(connectorIdentityId('trusty-squire'));
-    expect(card.room_id).not.toBe(ROOM);
-    expect(card.card.owner.pubkey).toBe(HUMAN);
-    expect(card.card.sourceRoomId).toBe(ROOM);
-    expect(card.card.sourceMessageId).toBe(sourceId);
-    expect(card.card.requester.pubkey).toBe(requesterId);
-    expect(card.text).toContain('@owner');
-    expect(card.card.grants).toEqual([
-      expect.objectContaining({ target: 'squire', status: 'pending' }),
-    ]);
-    expect(
-      (
-        await operation(
-          'decideAgentGrant',
-          { grantId: route.grantId, decision: 'always' },
-          adminToken,
-        )
-      ).status,
-    ).toBe(403);
-    expect(
-      (
-        await operation(
-          'decideAgentGrant',
-          { grantId: route.grantId, decision: 'deny' },
-          memberToken,
-        )
-      ).status,
-    ).toBe(403);
-    expect(
-      (await operation('decideAgentGrant', { grantId: route.grantId, decision: 'always' })).status,
-    ).toBe(200);
-    expect(
-      (
-        await database.query<{ access_policy: { type: string } }>(
-          `SELECT access_policy FROM agents WHERE agent_id=$1`,
-          [AGENT],
-        )
-      ).rows[0]!.access_policy.type,
-    ).toBe('everyone');
-    expect(
-      (
-        await database.query<{ card: { grants: Array<{ status: string }> } }>(
-          `SELECT card FROM messages WHERE id=$1`,
-          [route.messageId],
-        )
-      ).rows[0]!.card.grants[0]!.status,
-    ).toBe('approved');
-    const otherWorkspace = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-    const otherRoom = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name,visibility)
-       VALUES($1,$2,$3,'Other Room','invite-only')`,
-      [otherRoom, otherWorkspace, HUMAN],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [otherWorkspace, AGENT, otherRoom],
-    );
-    const outside = (await (
-      await daemonOperation('listAgentGrants', {
-        agentId: AGENT,
-        roomId: otherRoom,
-      })
-    ).json()) as { grants: Array<{ grantId: string }> };
-    expect(outside.grants.map((grant) => grant.grantId)).not.toContain(route.grantId);
-    expect(
-      (await operation('decideAgentGrant', { grantId: route.grantId, decision: 'once' })).status,
-    ).toBe(409);
-
-    const second = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        requestId: sourceId,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'another exact request',
-      })
-    ).json()) as { grantId: string };
-    expect(
-      (await operation('decideAgentGrant', { grantId: second.grantId, decision: 'once' })).status,
-    ).toBe(200);
-    const liveBefore = (await (
-      await daemonOperation('listAgentGrants', {
-        agentId: AGENT,
-        roomId: ROOM,
-      })
-    ).json()) as { grants: Array<{ grantId: string }> };
-    expect(liveBefore.grants.map((grant) => grant.grantId)).toContain(second.grantId);
-    expect((await daemonOperation('consumeAgentGrant', { grantId: second.grantId })).status).toBe(
-      200,
-    );
-    expect((await daemonOperation('consumeAgentGrant', { grantId: second.grantId })).status).toBe(
-      404,
-    );
-    const liveAfter = (await (
-      await daemonOperation('listAgentGrants', {
-        agentId: AGENT,
-        roomId: ROOM,
-      })
-    ).json()) as { grants: Array<{ grantId: string }> };
-    expect(liveAfter.grants.map((grant) => grant.grantId)).not.toContain(second.grantId);
-    const discovery = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        requestId: sourceId,
-        kind: 'mcp',
-        target: 'facade-resource',
-        reason: 'discover and call one personal resource',
-      })
-    ).json()) as { grantId: string };
-    expect(
-      (await operation('decideAgentGrant', { grantId: discovery.grantId, decision: 'once' }))
-        .status,
-    ).toBe(200);
-    const discoveryContext = {
-      roomId: ROOM,
-      requestId: sourceId,
-      target: 'facade-resource',
-    };
-    expect(
-      (
-        await (
-          await daemonOperation('authorizeResourceCall', {
-            ...discoveryContext,
-            consume: false,
-          })
-        ).json()
-      ).allowed,
-    ).toBe(true);
-    expect(
-      (
-        await database.query<{ status: string; expires_at: Date | null }>(
-          `SELECT status,expires_at FROM agent_grants WHERE id=$1`,
-          [discovery.grantId],
-        )
-      ).rows[0],
-    ).toEqual({ status: 'once', expires_at: null });
-    expect(
-      (await (await daemonOperation('authorizeResourceCall', discoveryContext)).json()).allowed,
-    ).toBe(true);
-    expect(
-      (
-        await database.query<{ expired: boolean }>(
-          `SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1`,
-          [discovery.grantId],
-        )
-      ).rows[0],
-    ).toEqual({ expired: true });
-    expect(
-      (await operation('revokeAgentGrant', { grantId: second.grantId }, adminToken)).status,
-    ).toBe(403);
-    expect((await operation('revokeAgentGrant', { grantId: second.grantId })).status).toBe(200);
-    const denied = (await (
-      await daemonOperation('requestAgentGrant', {
-        roomId: ROOM,
-        requestId: sourceId,
-        kind: 'mcp',
-        target: 'squire',
-        reason: 'request to decline',
-      })
-    ).json()) as { grantId: string; messageId: string };
-    expect(
-      (await operation('decideAgentGrant', { grantId: denied.grantId, decision: 'deny' })).status,
-    ).toBe(200);
-    expect(
-      (
-        await database.query<{ card: { grants: Array<{ status: string }> } }>(
-          `SELECT card FROM messages WHERE id=$1`,
-          [denied.messageId],
-        )
-      ).rows[0]!.card.grants[0]!.status,
-    ).toBe('denied');
-  });
-
-  it("does not let a non-owner requester use mounted Squire without that owner's applicable approval", async () => {
+  it("lets another human trigger the agent owner's mounted Squire without a card", async () => {
     const MACHINE = 'machine-squire-box';
     const SIBLING = 'd'.repeat(64);
     await database.query(
@@ -11034,87 +10849,18 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
 
-    const held = (await (
-      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: sourceId })
-    ).json()) as {
-      allowed: boolean;
-      grantId: string;
-      status: string;
-      messageId: string;
-    };
-    expect(held).toEqual(
-      expect.objectContaining({ allowed: false, status: 'pending', grantId: expect.any(String) }),
-    );
-    const card = (
-      await database.query<{
-        room_id: string;
-        author_id: string;
-        card: { requester: { pubkey: string }; grants: Array<{ target: string; status: string }> };
-      }>(`SELECT room_id,author_id,card FROM messages WHERE id=$1`, [held.messageId])
-    ).rows[0]!;
-    expect(card.author_id).toBe(connectorIdentityId('trusty-squire'));
-    expect(card.room_id).not.toBe(ROOM);
-    expect(card.card.requester.pubkey).toBe(requesterId);
-    expect(card.card.grants).toEqual([
-      expect.objectContaining({ target: 'squire', status: 'pending' }),
-    ]);
-
-    expect(
-      (await operation('decideAgentGrant', { grantId: held.grantId, decision: 'always' })).status,
-    ).toBe(200);
     const allowed = (await (
       await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: sourceId })
     ).json()) as { allowed: boolean };
     expect(allowed.allowed).toBe(true);
-
-    const otherToken = await phoneToken('squire-other');
-    const otherId = createHash('sha256').update('github:squire-other').digest('hex');
-    await operation('addWorkspaceMember', {
-      workspaceId: WORKSPACE,
-      memberId: otherId,
-      role: 'member',
-    });
-    await operation('addRoomMember', { roomId: ROOM, memberId: otherId });
-    const otherSource = createHash('sha256').update('squire-other-call').digest('hex');
     expect(
-      (
-        await operation(
-          'sendRoomMessage',
-          {
-            roomId: ROOM,
-            messageId: otherSource,
-            text: '@bee use Squire too',
-            mentions: [AGENT],
-          },
-          otherToken,
-        )
-      ).status,
-    ).toBe(200);
-    const otherHeld = (await (
-      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: otherSource })
-    ).json()) as { allowed: boolean; status: string };
-    expect(otherHeld).toEqual(expect.objectContaining({ allowed: false, status: 'pending' }));
-
-    const ownerSource = createHash('sha256').update('squire-owner-call').digest('hex');
-    expect(
-      (
-        await operation('sendRoomMessage', {
-          roomId: ROOM,
-          messageId: ownerSource,
-          text: '@bee use Squire',
-          mentions: [AGENT],
-        })
-      ).status,
-    ).toBe(200);
-    const ownerPass = (await (
-      await daemonOperation('authorizeSquireCall', { roomId: ROOM, requestId: ownerSource })
-    ).json()) as { allowed: boolean };
-    expect(ownerPass.allowed).toBe(true);
+      (await database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows,
+    ).toEqual([]);
   });
 
   /**
    * C94. Goosy took 36 granted commands in a top-level Room and 4 in its corner,
-   * every one auto-approved under yolo, and among them wrote into the captain's
+   * every one auto-approved, and among them wrote into the captain's
    * live project, ran a script it had authored itself, and read the key names
    * out of his environment file. Yolo stays the scope gate — an ordinary command
    * still just runs — and only the two hard stops wait for a person.
@@ -11140,7 +10886,7 @@ describe('monolith integration', () => {
       `SELECT text,system_event FROM messages WHERE card_type='grant-auto' ORDER BY created_at DESC LIMIT 1`,
     );
     expect(autoLine.rows[0]!.text).toBe(
-      '@bee was granted command npm test · auto-approved under yolo, reads only outside its scratch',
+      '@bee was granted command npm test · auto-approved, reads only outside its scratch',
     );
 
     // An interpreter and a credential file each ask a person, under yolo.
@@ -11245,7 +10991,7 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(cornerLine.rows[0]!.text).toBe(
-      '@bee was granted command npm test · auto-approved under yolo, free to write the worktree and act on the host',
+      '@bee was granted command npm test · auto-approved, free to write the worktree and act on the host',
     );
   });
 

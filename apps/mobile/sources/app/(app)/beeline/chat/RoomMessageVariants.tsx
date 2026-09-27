@@ -18,7 +18,7 @@ import { fallbackMemberName } from '@/buzz/member-display';
 import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
-import { grantAskLine } from '@/buzz/agent-grant-copy';
+import { grantRequestLine } from '@/buzz/agent-grant-copy';
 import {
   connectorOfferActionLabel,
   connectorOfferConnectingLine,
@@ -323,12 +323,10 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
               />
             }
             title={
-              <Text testID="grant-request-title">
-                <TranscriptCardHandle>@{agentName.replace(/^@/, '')}</TranscriptCardHandle> asks you
+              <Text testID={`grant-${grant.grantId}-ask`}>
+                {grantRequestLine(request.requester.name, `@${agentName.replace(/^@/, '')}`, grant)}
               </Text>
             }
-            subline={`${grantAskLine(grant)} · ${grant.reason}${!repositoryRequest ? ` · requested by ${request.requester.name}` : ''}`}
-            sublineTestID={`grant-${grant.grantId}-ask`}
             stamp={ledgerStamp(message.timestamp)}
             code={grant.script?.contents}
             codeTestID={grant.script ? `grant-${grant.grantId}-script` : undefined}

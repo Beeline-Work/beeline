@@ -59,7 +59,6 @@ import {
   isRequestableAgentGrantKind,
   isCommandGrantScript,
   parseCommandGrantTarget,
-  squireCallAllowed,
   type AgentGrantEscalation,
   type AgentGrantKind,
   type CommandGrantRule,
@@ -4463,11 +4462,9 @@ export class DaemonService {
   }
 
   /**
-   * request_grant: the agent raises its hand. Under yolo the grant is approved
-   * on the spot (auto=true) and one quiet system line records it. Personal
-   * resources ask only their owner in a private system or connector DM. Every
-   * bypass and approval is scoped to the active command's original requester.
-   * Budget and repository asks are retired.
+   * request_grant records owner-machine access without a card. Wallet access
+   * retains its requester/yolo rule. Credential files and unread scripts still
+   * require a person. Budget and repository asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -4553,8 +4550,14 @@ export class DaemonService {
       ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
     };
     const grantId = randomUUID();
+    // These grants describe resources on the executing agent's owner machine.
+    // The person who started the turn is provenance, not the resource owner.
+    // Wallet consent and the two command hard stops keep their existing gates.
     const auto =
-      context.yolo_mode && requesterRow.id === context.owner_id && escalations.length === 0;
+      escalations.length === 0 &&
+      (kind === 'mcp' && target === 'wallet'
+        ? context.yolo_mode && requesterRow.id === context.owner_id
+        : true);
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
@@ -4642,7 +4645,7 @@ export class DaemonService {
       ).rows[0];
       if (open) {
         const grants = [...open.card.grants, grantView];
-        await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
+        await restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {
           agent,
           owner,
           requester,
@@ -4656,8 +4659,8 @@ export class DaemonService {
       await systemLine(database, {
         id: messageId,
         roomId: dmRoomId,
-        authorId: squireRoute ? connectorIdentityId('trusty-squire') : undefined,
-        ...grantCardPhrase(agent, owner, [grantView]),
+        authorId: squireRoute ? connectorIdentityId('trusty-squire') : agentId,
+        ...grantCardPhrase(requester, agent, [grantView]),
         presentation: 'card',
         cardType: 'grant-request',
         card: {
@@ -4749,7 +4752,7 @@ export class DaemonService {
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
        WHERE g.agent_id=$1 AND g.status IN ('approved','once')
          AND (g.expires_at IS NULL OR g.expires_at>now())
-         AND (NOT g.auto OR EXISTS (
+         AND (NOT g.auto OR (g.kind<>'mcp' OR g.target<>'wallet') OR EXISTS (
            SELECT 1 FROM agents a JOIN workspaces w ON w.id=g.workspace_id
            WHERE a.agent_id=g.agent_id AND a.yolo_mode AND w.visibility<>'public'
              AND (g.kind='repository' OR g.requested_by=a.owner_id)
@@ -4814,7 +4817,7 @@ export class DaemonService {
     return this.authorizeScopedGrant(input, agentId, 'mcp', 'squire');
   }
 
-  /** Resource access includes paid calls within the same target and requester scope. */
+  /** An agent may use its own owner's resources; wallet retains its separate consent gate. */
   private async authorizeScopedGrant(
     input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
@@ -4847,22 +4850,10 @@ export class DaemonService {
     ).rows[0];
     if (!context) throw new Error('agent not found');
     if (!context.owner_present) throw new Error('resource owner access denied');
+    if (target !== 'wallet') return { allowed: true };
     if (context.yolo_mode && requester.id === context.owner_id) return { allowed: true };
     const listed = await this.listAgentGrants(agentId, input.roomId);
     const scopedGrants = listed.grants.filter((g) => g.roomId === input.roomId);
-    if (target === 'squire') {
-      const verdict = squireCallAllowed({
-        requesterId: requester.id,
-        ownerId: context.owner_id,
-        yoloMode: context.yolo_mode,
-        grants: scopedGrants,
-      });
-      if (verdict.allowed) {
-        if (verdict.consume && verdict.grantId)
-          await this.consumeAgentGrant({ grantId: verdict.grantId }, agentId);
-        return verdict;
-      }
-    }
     const grant = scopedGrants.find(
       (g) =>
         g.kind === kind &&
@@ -4889,7 +4880,7 @@ export class DaemonService {
         ...input,
         kind,
         target,
-        reason: 'use this resource, including paid calls within this approval scope',
+        reason: 'use this resource',
       },
       agentId,
     );
@@ -6214,14 +6205,14 @@ export class DaemonService {
 }
 
 /**
- * What a yolo auto-approval actually licensed, so a scroll-back reads as an
+ * What automatic owner-machine access actually licensed, so a scroll-back reads as an
  * account of what happened and not a list of names (C94). The boundary is the
  * capability table's, exact and enforced by the mount namespace the runner
  * spawns into: a Room reads, a corner writes its worktree and acts on the host.
  */
 function autoGrantConsequence(kind: AgentGrantKind, surface: AgentSurface): string {
-  if (kind !== 'command') return 'auto-approved under yolo';
-  return `auto-approved under yolo, ${surfaceGrantBoundary(surface)}`;
+  if (kind !== 'command') return 'auto-approved';
+  return `auto-approved, ${surfaceGrantBoundary(surface)}`;
 }
 
 /**
@@ -6262,25 +6253,25 @@ function validateGrantScript(
   return script;
 }
 
-/** The push/preview text of a grant card: who asks whom for what, and why. */
-/** The grant card's header sentence: `Bee asked Owner for command npm test · run the tests`. */
+/** One action line for each remaining permission ask. */
 function grantCardPhrase(
+  requester: { pubkey: string; kind: 'human' | 'agent'; name: string },
   agent: { pubkey: string; name: string },
-  owner: { pubkey: string; kind: 'human'; name: string; handle?: string },
-  grants: readonly { kind: AgentGrantKind; target: string; reason: string }[],
+  grants: readonly { kind: AgentGrantKind; target: string }[],
 ): SystemPhrase {
   return {
-    subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
-    verb: grants.every((grant) => grant.kind === 'repository')
-      ? 'asked a Workspace admin for'
-      : `asked ${systemIdentityMention({
-          id: owner.pubkey,
-          kind: owner.kind,
-          name: owner.name,
-          handle: owner.handle ?? null,
-        })} for`,
-    object: grants.map((grant) => `${grant.kind} ${grant.target}`).join(' and '),
-    ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
+    subject: {
+      kind: requester.kind === 'human' ? 'person' : 'agent',
+      id: requester.pubkey,
+      name: requester.name,
+    },
+    verb: 'wants',
+    object: grants
+      .map(
+        (grant) =>
+          `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : 'use'} ${grant.target}`,
+      )
+      .join(' and '),
   };
 }
 

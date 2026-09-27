@@ -164,7 +164,7 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).toContain(
       'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening.',
     );
-    expect(context.sessionPrompt).toContain('each resource call checks the original requester');
+    expect(context.sessionPrompt).toContain('An agent may use its own owner’s tools and resources');
     expect(context.sessionPrompt).toContain('web search is enabled');
     expect(context.sessionPrompt).toContain(
       'Tag the user only when you need a decision or input, or when the task they asked for is finished.',

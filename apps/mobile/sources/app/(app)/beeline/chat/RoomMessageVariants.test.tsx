@@ -2382,12 +2382,12 @@ describe('Room message variant components', () => {
         onDecision={onDecision}
       />,
     );
-    expect(JSON.stringify(ownerView.toJSON())).toContain('asks you');
+    expect(JSON.stringify(ownerView.toJSON())).toContain('wants');
     expect(ownerView.root.findByProps({ testID: 'grant-g-1-ask' }).props.children).toBe(
-      'run fly deploy -a beeline-preview --with FLY_TOKEN · to publish the preview build · requested by Alex',
+      'Alex wants @Terra to use fly deploy -a beeline-preview --with FLY_TOKEN',
     );
     expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe(
-      'reach api.fly.io · to reach the Fly API · requested by Alex',
+      'Alex wants @Terra to use api.fly.io',
     );
     expect(JSON.stringify(ownerView.toJSON())).toContain('No');
     expect(JSON.stringify(ownerView.toJSON())).toContain('Once');
@@ -2556,7 +2556,7 @@ describe('Room message variant components', () => {
     );
     expect(
       ownerView.root.findByProps({ testID: 'grant-squire-grant-ask' }).props.children,
-    ).toContain('requested by Alex');
+    ).toContain('Alex wants');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-source' }).props.onPress());
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-once' }).props.onPress());

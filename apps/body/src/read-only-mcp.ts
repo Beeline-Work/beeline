@@ -1156,7 +1156,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      "Raise your hand for reach outside the sandbox: kind path|host|secret|device|command|mcp with one target and the reason. Opening and working in a corner, including its isolated checkout and shell, needs no grant. Personal resources skip prompts under yolo only for their owner as the original requester; otherwise cards go privately to the resource owner. Approved resource access includes paid calls within its scope, without a generic budget prompt. Otherwise a card goes to the authorized approver and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A request for mcp squire is answered in your owner’s Trusty Squire DM; your current Room receives the answer wake. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on the approval wake's fresh session. Use it as soon as that wake resumes your work; do not restart or schedule another turn. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.",
+      "Request one resource outside the sandbox: kind path|host|secret|device|command|mcp with one target and reason. Your own owner's files, secrets, tools and connections are available regardless of the root requester or yolo; another person's files or tools require that person's approval. The wallet keeps its separate rule. A command target is one exact line without shell metacharacters; secrets use a `--with SECRET_NAME` suffix. A mounted MCP route uses its exact harness name. A granted route mounts on the next session. A pending card pauses the turn until its owner answers. Exactly two command shapes always wait for a person: a script nobody has read and a named credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -2920,8 +2920,8 @@ export async function requestGrant(
   const ask = `${AGENT_GRANT_VERBS[kind]} ${target}`;
   if (result.auto === true) {
     return kind === 'command'
-      ? `approved (yolo): ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`
-      : `approved (yolo): ${ask} [grant ${grantId}]; applies at the agent's next session.`;
+      ? `approved: ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`
+      : `approved: ${ask} [grant ${grantId}]; applies at the agent's next session.`;
   }
   // Yolo covers most asks; these two shapes never do, and saying which one this
   // is stops the model retrying the same line expecting a different answer.

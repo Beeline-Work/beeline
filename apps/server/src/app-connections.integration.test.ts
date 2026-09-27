@@ -64,7 +64,9 @@ describe('the app route order', () => {
 
   it('reuses a connected Workbench connection before asking the Registry', async () => {
     const p = probes({
-      workbench: vi.fn(async () => ({ transport: 'squire-api', reference: 'vault:resend' }) as const),
+      workbench: vi.fn(
+        async () => ({ transport: 'squire-api', reference: 'vault:resend' }) as const,
+      ),
     });
     const decision = await resolveAppRoute({ reconnect: false, noApi: false }, p);
     expect(decision).toMatchObject({ kind: 'route', route: 'workbench', transport: 'squire-api' });
@@ -97,9 +99,9 @@ describe('the app route order', () => {
   it('keeps an existing route — even in error — until an explicit reconnect', async () => {
     const existing = { transport: 'registry-mcp', state: 'active', hasCredential: false } as const;
     const p = probes();
-    await expect(
-      resolveAppRoute({ existing, reconnect: false, noApi: false }, p),
-    ).resolves.toEqual({ kind: 'keep', transport: 'registry-mcp' });
+    await expect(resolveAppRoute({ existing, reconnect: false, noApi: false }, p)).resolves.toEqual(
+      { kind: 'keep', transport: 'registry-mcp' },
+    );
     expect(p.workbench).not.toHaveBeenCalled();
     expect(p.registry).not.toHaveBeenCalled();
     // noApi cannot move a Registry route to the browser.
@@ -107,7 +109,9 @@ describe('the app route order', () => {
       resolveAppRoute({ existing, reconnect: false, noApi: true }, p),
     ).resolves.toMatchObject({ kind: 'keep', transport: 'registry-mcp' });
     // A reconnect starts from the top again.
-    await expect(resolveAppRoute({ existing, reconnect: true, noApi: false }, p)).resolves.toMatchObject({
+    await expect(
+      resolveAppRoute({ existing, reconnect: true, noApi: false }, p),
+    ).resolves.toMatchObject({
       kind: 'route',
       route: 'squire-api',
     });
@@ -120,7 +124,10 @@ describe('the app route order', () => {
       resolveAppRoute({ existing: api, reconnect: false, noApi: true }, probes()),
     ).resolves.toMatchObject({ kind: 'route', route: 'squire-browser' });
     await expect(
-      resolveAppRoute({ existing: { ...api, hasCredential: true }, reconnect: false, noApi: true }, probes()),
+      resolveAppRoute(
+        { existing: { ...api, hasCredential: true }, reconnect: false, noApi: true },
+        probes(),
+      ),
     ).resolves.toMatchObject({ kind: 'keep', transport: 'squire-api' });
   });
 });
@@ -236,7 +243,10 @@ describe('connect_app', () => {
       { ...turn, app: 'linear.app', reason: 'file the bug' },
       HELPER,
     );
-    expect(again).toMatchObject({ status: 'connecting', appId: (first as { appId: string }).appId });
+    expect(again).toMatchObject({
+      status: 'connecting',
+      appId: (first as { appId: string }).appId,
+    });
     expect(again).not.toHaveProperty('route');
     expect(await routes()).toEqual([{ route: 'registry-mcp', transport: 'registry-mcp' }]);
     expect((await database.query(`SELECT 1 FROM workspace_apps`)).rowCount).toBe(1);
@@ -244,11 +254,19 @@ describe('connect_app', () => {
 
   it('asks for Trusty Squire before an API route can start, then connects on the vaulted key', async () => {
     const daemon = daemonWith(fakeRegistry([]).client);
-    const blocked = await daemon.execute('connectApp', { ...turn, app: 'Resend', reason: 'send' }, HELPER);
+    const blocked = await daemon.execute(
+      'connectApp',
+      { ...turn, app: 'Resend', reason: 'send' },
+      HELPER,
+    );
     expect(blocked).toMatchObject({ status: 'needs_squire', route: 'squire-api' });
     expect((blocked as { next: string }).next).toContain('offer_connector');
     const squireId = await connectSquire();
-    const connecting = await daemon.execute('connectApp', { ...turn, app: 'Resend', reason: 'send' }, HELPER);
+    const connecting = await daemon.execute(
+      'connectApp',
+      { ...turn, app: 'Resend', reason: 'send' },
+      HELPER,
+    );
     expect(connecting).toMatchObject({ status: 'connecting', transport: 'squire-api' });
     expect((connecting as { next: string }).next).toContain('store_credential (service "resend")');
     await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
@@ -328,7 +346,7 @@ describe('connect_app', () => {
     expect(await routes()).toEqual([]);
   });
 
-  it('authorizes every route of one app against one decision and one usage ledger', async () => {
+  it('authorizes every owner app route without a card and records one usage ledger', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([linearServer]).client);
     const connected = (await daemon.execute(
@@ -345,64 +363,55 @@ describe('connect_app', () => {
       { ...turn, target: 'registry-mcp:app.linear/linear', operation: 'create_issue' },
       HELPER,
     );
-    expect(viaRegistry).toMatchObject({ allowed: false, status: 'pending' });
-    // The same app reached through Squire is the same pending decision, not a
-    // second route that could be tried instead.
+    expect(viaRegistry).toMatchObject({ allowed: true });
+    // The same owner app reached through Squire uses its connected route.
     const viaSquire = await daemon.execute(
       'authorizeResourceCall',
       { ...turn, target: 'squire', appKeys: ['linear'], operation: 'use_credential' },
       HELPER,
     );
-    expect(viaSquire).toMatchObject({ allowed: false, grantId: (viaRegistry as { grantId: string }).grantId });
+    expect(viaSquire).toMatchObject({ allowed: true });
     const grants = await database.query<{ target: string; status: string }>(
       `SELECT target,status FROM agent_grants`,
     );
-    expect(grants.rows).toEqual([{ target: 'app:linear', status: 'pending' }]);
-    // The route is untouched by the refusal.
+    expect(grants.rows).toEqual([]);
     expect(await routes()).toEqual([{ route: 'registry-mcp', transport: 'registry-mcp' }]);
 
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$1,decided_at=now()`, [
-      OWNER,
-    ]);
-    await expect(
-      daemon.execute(
-        'authorizeResourceCall',
-        { ...turn, target: 'registry-mcp:app.linear/linear', operation: 'create_issue' },
-        HELPER,
-      ),
-    ).resolves.toMatchObject({ allowed: true });
-    await expect(
-      daemon.execute(
-        'authorizeResourceCall',
-        { ...turn, target: 'squire', appKeys: ['linear'], operation: 'use_credential' },
-        HELPER,
-      ),
-    ).resolves.toMatchObject({ allowed: true });
     // Discovery does not count as use.
     await daemon.execute(
       'authorizeResourceCall',
-      { ...turn, target: 'registry-mcp:app.linear/linear', consume: false, operation: 'tools/list' },
+      {
+        ...turn,
+        target: 'registry-mcp:app.linear/linear',
+        consume: false,
+        operation: 'tools/list',
+      },
       HELPER,
     );
     const usage = await database.query<{ operation: string; app_id: string }>(
       `SELECT operation,app_id FROM workspace_app_usage ORDER BY created_at, operation`,
     );
-    expect(usage.rows.map((row) => row.operation).sort()).toEqual(['create_issue', 'use_credential']);
+    expect(usage.rows.map((row) => row.operation).sort()).toEqual([
+      'create_issue',
+      'use_credential',
+    ]);
     expect(new Set(usage.rows.map((row) => row.app_id))).toEqual(new Set([connected.appId]));
     const [app] = await readOwnerApps(database, OWNER);
     expect(app).toMatchObject({ status: 'connected', useCount: 2 });
-    // A Squire call for an app nobody connected keeps Squire's own gate.
-    await daemon.execute(
-      'authorizeResourceCall',
-      { ...turn, target: 'squire', appKeys: ['unrelated'] },
-      HELPER,
-    );
+    // A Squire call for an app nobody connected uses the owner's Squire route.
+    expect(
+      await daemon.execute(
+        'authorizeResourceCall',
+        { ...turn, target: 'squire', appKeys: ['unrelated'] },
+        HELPER,
+      ),
+    ).toMatchObject({ allowed: true });
     expect(
       (await database.query(`SELECT 1 FROM agent_grants WHERE target='squire'`)).rowCount,
-    ).toBe(1);
+    ).toBe(0);
   });
 
-  it('disconnect revokes the app’s approvals and refuses its Squire calls; reconnect decides again', async () => {
+  it('disconnect refuses app calls and reconnect restores the route', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([linearServer]).client);
     const phone = new PhoneService(database, 'http://placeholder');
@@ -416,13 +425,14 @@ describe('connect_app', () => {
       { ...turn, target: 'registry-mcp:app.linear/linear' },
       HELPER,
     );
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$1,decided_at=now()`, [
+    await phone.execute(
+      'disconnectWorkbenchApp',
+      { workspaceId: WORKSPACE, appId: connected.appId },
       OWNER,
-    ]);
-    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: connected.appId }, OWNER);
+    );
     expect(
       (await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows,
-    ).toEqual([{ status: 'revoked' }]);
+    ).toEqual([]);
     expect(
       (
         await database.query<{ status: string }>(
@@ -482,7 +492,11 @@ describe('connect_app', () => {
     ).resolves.toEqual({ allowed: false });
     // Stripe active, Linear disconnected: Stripe's approval never covers Linear.
     const phone = new PhoneService(database, 'http://placeholder');
-    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: linear.appId }, OWNER);
+    await phone.execute(
+      'disconnectWorkbenchApp',
+      { workspaceId: WORKSPACE, appId: linear.appId },
+      OWNER,
+    );
     for (const appKeys of [['linear', 'stripe'], ['stripe', 'linear'], ['linear']])
       await expect(
         daemon.execute('authorizeResourceCall', { ...mixed, appKeys }, HELPER),
@@ -498,14 +512,30 @@ describe('connect_app', () => {
     expect(usage.rows).toEqual([{ app_key: 'stripe' }]);
   });
 
+  it('does not treat another owner’s connected app as this helper’s resource', async () => {
+    const other = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','other')`, [other]);
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
+       VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',$1,$2,'linear','Linear','squire-api','squire-api')`,
+      [WORKSPACE, other],
+    );
+    const daemon = daemonWith(fakeRegistry([]).client);
+    await expect(
+      daemon.execute('authorizeResourceCall', { ...turn, target: 'squire', appKeys: ['linear'] }, HELPER),
+    ).resolves.toEqual({ allowed: false });
+    expect((await database.query(`SELECT id FROM agent_grants`)).rows).toEqual([]);
+  });
+
   it('keeps one app, one decision and one ledger across the person’s Workspaces', async () => {
     const OTHER_WORKSPACE = '44444444-4444-4444-8444-444444444444';
     const OTHER_ROOM = '55555555-5555-4555-8555-555555555555';
     const OTHER_HELPER = 'c'.repeat(64);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Garden')`, [OTHER_WORKSPACE]);
-    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`, [
-      OTHER_HELPER,
-    ]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`,
+      [OTHER_HELPER],
+    );
     await database.query(
       `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name,yolo_mode)
        VALUES($1,$2,'machine-one','Owner laptop',false)`,
@@ -557,8 +587,11 @@ describe('connect_app', () => {
     expect(second).not.toHaveProperty('route');
     expect(await routes()).toHaveLength(1);
     expect(
-      (await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='registry-mcp'`))
-        .rowCount,
+      (
+        await database.query(
+          `SELECT 1 FROM workspace_connectors WHERE connector_type='registry-mcp'`,
+        )
+      ).rowCount,
     ).toBe(1);
     expect(await readOwnerApps(database, OWNER)).toHaveLength(1);
     const phone = new PhoneService(database, 'http://placeholder');
@@ -571,7 +604,10 @@ describe('connect_app', () => {
       OTHER_HELPER,
     );
     expect(configuration.registryMcpRoutes).toEqual([
-      expect.objectContaining({ connectorId: first.connectorId, target: 'registry-mcp:app.linear/linear' }),
+      expect.objectContaining({
+        connectorId: first.connectorId,
+        target: 'registry-mcp:app.linear/linear',
+      }),
     ]);
     await daemon.execute(
       'authorizeResourceCall',
@@ -579,10 +615,7 @@ describe('connect_app', () => {
       OTHER_HELPER,
     );
     const grants = await database.query<{ target: string }>(`SELECT target FROM agent_grants`);
-    expect(grants.rows).toEqual([{ target: 'app:linear' }]);
-    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$1,decided_at=now()`, [
-      OWNER,
-    ]);
+    expect(grants.rows).toEqual([]);
     await expect(
       daemon.execute(
         'authorizeResourceCall',
@@ -591,12 +624,12 @@ describe('connect_app', () => {
       ),
     ).resolves.toMatchObject({ allowed: true });
     const [app] = await readOwnerApps(database, OWNER);
-    expect(app).toMatchObject({ appId: first.appId, useCount: 1 });
-    // Disconnecting it once revokes the approval every Workspace was using.
+    expect(app).toMatchObject({ appId: first.appId, useCount: 2 });
+    // Disconnecting it once removes the route every Workspace was using.
     await phone.execute('disconnectWorkbenchApp', { workspaceId: '', appId: first.appId }, OWNER);
-    expect((await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows).toEqual([
-      { status: 'revoked' },
-    ]);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows,
+    ).toEqual([]);
   });
 
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {
@@ -618,13 +651,19 @@ describe('connect_app', () => {
       { workspaceId: WORKSPACE, app: 'Resend', helperAgentId: 'machine-one' },
       OWNER,
     );
-    expect(result).toMatchObject({ status: 'connecting', transport: 'squire-api', route: 'squire-api' });
+    expect(result).toMatchObject({
+      status: 'connecting',
+      transport: 'squire-api',
+      route: 'squire-api',
+    });
     const asked = await database.query<{ text: string; author_id: string }>(
       `SELECT m.text,m.author_id FROM messages m JOIN rooms r ON r.id=m.room_id
        WHERE r.direct_participants IS NOT NULL AND m.author_id=$1`,
       [OWNER],
     );
-    expect(asked.rows).toEqual([{ text: '@bee Connect Resend to my Workbench.', author_id: OWNER }]);
+    expect(asked.rows).toEqual([
+      { text: '@bee Connect Resend to my Workbench.', author_id: OWNER },
+    ]);
     const command = await database.query<{ agent_id: string; state: string }>(
       `SELECT agent_id,state FROM agent_commands WHERE source_message_id<>'app-source'`,
     );

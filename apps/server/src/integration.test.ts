@@ -1807,6 +1807,16 @@ describe('monolith integration', () => {
       rooms: Array<{ roomId: string }>;
     };
     expect(bootstrap.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
+    const discovery = (await (await daemonOperation('getAgentDiscoverySnapshot', {}, restartedToken)).json()) as {
+      cursor: string;
+      rooms: Array<{ roomId: string }>;
+    };
+    expect(discovery.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
+    expect(await (await daemonOperation('getAgentDiscoveryChanges', { after: discovery.cursor }, restartedToken)).json()).toMatchObject({
+      cursor: discovery.cursor,
+      changes: [],
+      hasMore: false,
+    });
     const restartedInbox = (await (
       await daemonOperation('getRoomInbox', { roomId: dm.id }, restartedToken)
     ).json()) as { items: Array<{ id: string }> };

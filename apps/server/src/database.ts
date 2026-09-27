@@ -16,6 +16,7 @@ import {
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+import { AGENT_DISCOVERY_SCHEMA } from './agent-discovery.js';
 
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
 export const APP_POOL_WAIT_TIMEOUT_MS = 2_000;
@@ -2160,6 +2161,9 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await upgradeGrantPolicy(database);
   const withdrawn = await withdrawSupersededGrantAsks(database);
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
+  // Install the change journal after release backfills so they do not emit
+  // thousands of synthetic discovery deltas while old servers still serve.
+  await database.query(AGENT_DISCOVERY_SCHEMA);
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

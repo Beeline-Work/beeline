@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
+import { agentDiscoveryCursor } from './agent-discovery.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -333,13 +334,14 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
+      let agentSubscribed = false;
       socketSubscriptions.set(client, () => releases.size);
       if (principal.kind === 'daemon')
         sendLive(JSON.stringify({
           type: 'hello',
           protocolMin: 1,
           protocolMax: 1,
-          capabilities: { discoveryWake: true, pushIntake: true },
+          capabilities: { discoveryWake: true, pushIntake: true, discoveryV1: true },
         }));
       let socketTasks = 0;
       let socketQueuedBytes = 0;
@@ -354,10 +356,13 @@ export function createBeelineServer(options: ServerOptions): Server {
           ? options.live.subscribeAll((event) => {
               if (
                 event.type !== 'invalidate' ||
-                event.targetAgentId !== principal.identityId ||
                 client.readyState !== client.OPEN
               )
                 return;
+              if (agentSubscribed && event.reason === 'postgres:rooms' &&
+                  releases.has(event.roomId))
+                sendLive(JSON.stringify({ type: 'agent-discovery-wake' }));
+              if (event.targetAgentId !== principal.identityId) return;
               if (event.reason === 'connector-assignment') {
                 sendLive(JSON.stringify({ type: 'connector-assignment' }));
                 return;
@@ -367,6 +372,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                 return;
               }
               if (event.reason !== 'postgres:memberships') return;
+              if (agentSubscribed)
+                sendLive(JSON.stringify({ type: 'agent-discovery-wake' }));
               sendLive(
                 JSON.stringify({
                   type: 'rooms-changed',
@@ -439,6 +446,20 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (item.type === 'subscribe-agent' && principal.kind === 'daemon') {
+            if (item.cursor !== undefined &&
+                (typeof item.cursor !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(item.cursor))) {
+              liveErrors.invalid++;
+              client.close(1008, 'invalid discovery cursor');
+              return;
+            }
+            agentSubscribed = true;
+            const cursor = await agentDiscoveryCursor(options.database);
+            sendLive(JSON.stringify({ type: 'agent-subscribed', cursor }));
+            if (item.cursor !== undefined && item.cursor !== cursor)
+              sendLive(JSON.stringify({ type: 'agent-discovery-wake' }));
+            return;
+          }
           if (item.type === 'trace-paint' && typeof item.id === 'string') {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;

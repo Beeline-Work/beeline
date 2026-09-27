@@ -147,6 +147,8 @@ export type DaemonOperationMap = {
   claimAgentCommand: Operation<CommandClaimInput, WriteResult>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
+  getAgentDiscoverySnapshot: Operation<DaemonBootstrapInput, AgentDiscoverySnapshot>;
+  getAgentDiscoveryChanges: Operation<{ readonly after: string }, AgentDiscoveryChanges>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
@@ -455,6 +457,33 @@ export type DaemonBootstrapResult = {
     /** Changes when the repository binding or its GitHub installation changes. */
     readonly repositoryRevision?: string;
   }[];
+};
+export type AgentDiscoveryRoom = {
+  readonly roomId: string;
+  readonly parentRoomId?: string;
+  /** The corner's original opener, for the helper's initial working write. */
+  readonly openedBy?: string;
+  readonly archived: boolean;
+  readonly repositoryRevision?: string;
+};
+export type AgentDiscoverySnapshot = {
+  /** Opaque durable cursor. Fetch changes after this cursor on every reconnect. */
+  readonly cursor: string;
+  readonly workspaceIds: readonly string[];
+  /** Active Rooms and corners only; archived local corners can be resolved by getCornerRestoreState. */
+  readonly rooms: readonly AgentDiscoveryRoom[];
+};
+export type AgentDiscoveryChanges = {
+  readonly cursor: string;
+  readonly changes: readonly (Partial<AgentDiscoveryRoom> & {
+    /** Set for a Workspace membership change, including one with no Room. */
+    readonly workspaceId?: string;
+    /** True after this agent loses membership or the Room is deleted. */
+    readonly removed: boolean;
+  })[];
+  readonly hasMore: boolean;
+  /** Rebuild from a snapshot after an installation/repository change or stale cursor. */
+  readonly resetRequired?: boolean;
 };
 export type WorkspaceRosterResult = {
   readonly members: readonly {

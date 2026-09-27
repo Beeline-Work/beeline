@@ -71,6 +71,7 @@ import {
 } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { agentDiscoveryChanges, agentDiscoverySnapshot } from './agent-discovery.js';
 import { closeCornerState } from './corner-close.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -723,6 +724,14 @@ export class DaemonService {
       }
       case 'getDaemonBootstrap':
         return (await this.bootstrap(authenticatedAgentId)) as Output<Name>;
+      case 'getAgentDiscoverySnapshot':
+        return (await agentDiscoverySnapshot(this.database, authenticatedAgentId)) as Output<Name>;
+      case 'getAgentDiscoveryChanges':
+        return (await agentDiscoveryChanges(
+          this.database,
+          authenticatedAgentId,
+          (input as Input<'getAgentDiscoveryChanges'>).after,
+        )) as Output<Name>;
       case 'getWorkspaceRoster':
         return (await this.workspaceRoster(
           input as Input<'getWorkspaceRoster'>,
@@ -6369,6 +6378,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   searchInstitutionalHistory: true,
   loadWorkspaceSkill: true,
   getDaemonBootstrap: true,
+  getAgentDiscoverySnapshot: true,
+  getAgentDiscoveryChanges: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,
   getRoomConversation: true,

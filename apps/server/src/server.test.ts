@@ -369,7 +369,7 @@ describe('daemon live command push', () => {
       return () => { recover = undefined; };
     });
     const server = createBeelineServer({
-      database: { query: vi.fn(), transaction: vi.fn(), onRecovery },
+      database: { query: vi.fn().mockResolvedValue({ rows: [{ version: '7' }], rowCount: 1 }), transaction: vi.fn(), onRecovery },
       auth: { authenticateDaemon: vi.fn().mockResolvedValue('agent-live') } as unknown as TokenAuth,
       phone: { canReadRooms: vi.fn().mockResolvedValue(new Set(['room-live'])) } as unknown as PhoneService,
       daemon: { execute: vi.fn(async (name: string) => name === 'getAgentCommands'
@@ -389,8 +389,13 @@ describe('daemon live command push', () => {
     });
     await expect(hello).resolves.toMatchObject({
       protocolMin: 1, protocolMax: 1,
-      capabilities: { discoveryWake: true },
+      capabilities: { discoveryWake: true, discoveryV1: true },
     });
+    const agentSubscribed = nextSocketMessage(socket, 'agent-subscribed');
+    const agentWake = nextSocketMessage(socket, 'agent-discovery-wake');
+    socket.send(JSON.stringify({ type: 'subscribe-agent', cursor: '0' }));
+    await expect(agentSubscribed).resolves.toMatchObject({ cursor: '7' });
+    await expect(agentWake).resolves.toMatchObject({ type: 'agent-discovery-wake' });
     const subscribed = nextSocketMessage(socket, 'subscribed');
     socket.send(JSON.stringify({ type: 'subscribe', roomId: 'room-live' }));
     await expect(subscribed).resolves.toMatchObject({

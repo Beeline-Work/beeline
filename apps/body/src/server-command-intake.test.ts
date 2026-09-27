@@ -110,6 +110,19 @@ describe('command intake mechanics', () => {
     expect(socket.api.liveSubscribe).toHaveBeenCalledWith('room', undefined, undefined,
       expect.any(Function), presence, expect.any(Function));
   });
+  it('exits when shutdown aborts during an asynchronous closed check', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async () => ({ commandProtocol: 1, commands: [] }));
+    const socket = socketApi(execute);
+    const closed = vi.fn(async () => {
+      abort.abort();
+      return false;
+    });
+    await runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, closed, run: vi.fn(), stop: vi.fn() });
+    expect(closed).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
   it('processes a pushed stop while an input is running', async () => {
     const abort = new AbortController();
     let release = () => {};

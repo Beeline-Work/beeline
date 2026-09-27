@@ -62,11 +62,6 @@ import {
 } from './registry-mcp.js';
 export { CEREMONY_EXPIRED };
 
-export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
-
-/** Retained for tests that refer to the former local sign-in cadence. */
-export const CONNECT_WATCH_INTERVAL_MS = 2_000;
-
 type ConnectorApi = Pick<DaemonApiClient, 'execute'>;
 
 export type ConnectorAssignmentLoopOptions = {
@@ -146,7 +141,7 @@ export class ConnectorAssignmentLoop {
   private connectWatch?: () => void;
   private started = false;
   private stopped = false;
-  /** One install at a time per connector; other polls skip it. */
+  /** One install at a time per connector; concurrent wakes skip it. */
   private readonly inFlight = new Set<string>();
   private mcp?: SquireMcpClient;
 
@@ -201,7 +196,7 @@ export class ConnectorAssignmentLoop {
    * Squire's already-connected short-circuit flips the row to `connected`;
    * nothing on the wire announces that the human finished, so the connect
    * process exiting is the signal. Drain on that, and the row settles on the
-   * same cadence it always has instead of waiting out the recovery poll.
+   * process exit event without waiting for a server read timer.
    */
   private watchConnectSignIn(): void {
     if (this.stopped || this.connectWatch) return;

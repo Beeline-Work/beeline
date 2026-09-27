@@ -10,12 +10,10 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CORNER_AUTHOR_CONTRACT,
-  CORNER_CLOSE_POLL_BASE_MS,
   CORNER_DELIVERY_NUDGE,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
   CORNER_YOLO_MERGE_NUDGE,
-  cornerClosePollMs,
   cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerReviewerInstruction,
@@ -505,14 +503,7 @@ describe('corner merge instructions', () => {
   });
 });
 
-describe('corner close-request polling cadence', () => {
-  it('spreads the recovery poll across five minutes', () => {
-    expect(cornerClosePollMs(() => 0)).toBe(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThan(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 5 * 60_000);
-    expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
-  });
-
+describe('corner close-request delivery', () => {
   it('runs a chat-only corner in scratch and attaches a generated file without git', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-chat-corner-'));
     roots.push(root);

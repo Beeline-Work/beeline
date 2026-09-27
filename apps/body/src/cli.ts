@@ -619,12 +619,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // collapse multiple agents on one physical host into one machine row
         // in readWorkbench. Best-effort: a failed report does not block
         // readiness or the Room loop.
-        void readMachineId(process.env).then(({ machineId, machineName }) =>
-          daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
-        );
-        // The connector work queue drains on the live Connect push; the
-        // interval is only recovery. One loop per daemon process, started
-        // idempotently so a reconnect never stacks a second timer.
+        void readMachineId(process.env)
+          .then(({ machineId, machineName }) =>
+            daemonApi.execute('postAgentMachineReport', { machineId, machineName }))
+          .then(() => institutionalMemoryWorker?.wake())
+          .catch((error) => console.warn('[body] machine report failed:', error));
+        // The connector work queue drains on the live Connect push.
+        // One loop per daemon process also handles reconnects.
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,

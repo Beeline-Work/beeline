@@ -1078,7 +1078,7 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
-  it('survives a failed assignments read and re-arms its next poll', async () => {
+  it('survives a failed assignments read and retries on the next wake', async () => {
     const calls: ExecuteCall[] = [];
     let fail = true;
     const api = {
@@ -1088,19 +1088,14 @@ describe('ConnectorAssignmentLoop', () => {
         return { assignments: [] };
       },
     };
-    let scheduled = 0;
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
-      schedule: (fn) => {
-        scheduled += 1;
-        return fn;
-      },
-      cancel: () => {},
     });
     await loop.runOnce(); // throws inside runOnce must be swallowed
+    fail = false;
+    loop.wake();
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
     loop.stop();
-    expect(scheduled).toBe(0);
-    expect(calls).toHaveLength(1);
   });
 });

@@ -42,6 +42,7 @@ describe('no timer-driven helper server reads', () => {
       throw new Error(`unexpected daemon operation ${name}`);
     });
     let socket!: { readyState: number; onopen?: () => void; onclose?: () => void;
+      onmessage?: (event: { data: string }) => void;
       send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
     const client = new DaemonApiClient('http://localhost:3000', 'token', staged.runtime.agent.publicKey,
       fetchImpl as typeof fetch, () => {
@@ -70,6 +71,14 @@ describe('no timer-driven helper server reads', () => {
     const baseline = [...operations];
     await vi.advanceTimersByTimeAsync(4 * 60 * 60_000);
     expect(operations).toEqual(baseline);
+    socket.onmessage?.({ data: JSON.stringify({ type: 'memory-job', roomId: 'room-1' }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operations.filter((name) => name === 'claimInstitutionalMemoryJob').length)
+      .toBeGreaterThan(baseline.filter((name) => name === 'claimInstitutionalMemoryJob').length);
+    socket.onmessage?.({ data: JSON.stringify({ type: 'connector-assignment' }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operations.filter((name) => name === 'getConnectorAssignments').length)
+      .toBeGreaterThan(baseline.filter((name) => name === 'getConnectorAssignments').length);
     abort.abort(); connector.stop(); memory.stop();
     await running;
   });

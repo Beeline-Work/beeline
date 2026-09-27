@@ -552,18 +552,6 @@ export interface MonolithCornerTurnOptions {
   connectorUsage?: ConnectorUsageRecorder;
 }
 
-/**
- * Close-request recovery poll: 10 to 15 min, spread across corners.
- * `corner-complete` on the live socket closes immediately via `requestClose`.
- * The GET is the dropped-socket net: once at intake start, once after a turn
- * (a close during that turn must not wait the idle interval), then only every
- * 10 min while idle.
- */
-export const CORNER_CLOSE_POLL_BASE_MS = 10 * 60_000;
-export function cornerClosePollMs(random: () => number = Math.random): number {
-  return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 5 * 60_000);
-}
-
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly commandContext: CommandExecutionContext;
@@ -572,15 +560,12 @@ export class MonolithCornerTurnLoop {
   private wakeIntake?: () => void;
 
   /**
-   * Called by the daemon's one slow workspace reconciliation sweep, and by the
-   * fast reconcile a socket reconnect arms. A `corner-complete` published while
-   * that socket was down is never replayed, so the sweep clears the close
-   * throttle too: the durable read is what recovers the frame nobody heard.
+   * Called on socket resubscription. A `corner-complete` published while that
+   * socket was down is recovered by a single durable read.
    *
    * The wake is the intake loop's own stable notify and is handed back exactly
    * once, so it is kept: clearing it here left `requestClose` waking nothing
-   * after the first sweep, and a pushed `corner-complete` then waited out the
-   * idle timer. Intake clears it itself when it exits.
+   * after the first reconciliation. Intake clears it itself when it exits.
    */
   requestReconciliation(): void {
     this.reconcileCloseRequested = true;

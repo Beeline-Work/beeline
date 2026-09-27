@@ -242,6 +242,46 @@ describe('DaemonApiClient', () => {
     vi.unstubAllGlobals();
   });
 
+  it('enables agent discovery only after an ACK and carries its cursor on reconnect', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const wakes = vi.fn();
+    client.setRoomsChangedListener(() => undefined);
+    client.setAgentDiscoveryListener(wakes);
+    const first = FakeWebSocket.instances[0]!;
+    first.open();
+    expect(first.sent).toEqual([]);
+    first.message({ type: 'hello', capabilities: { discoveryV1: true } });
+    expect(first.sent.map((frame) => JSON.parse(frame))).toEqual([{ type: 'subscribe-agent' }]);
+    expect(client.agentDiscoveryAvailable()).toBe(false);
+    first.message({ type: 'agent-discovery-wake' });
+    expect(wakes).not.toHaveBeenCalled();
+    first.message({ type: 'agent-subscribed', cursor: 'cursor-1' });
+    expect(client.agentDiscoveryAvailable()).toBe(true);
+    expect(wakes).toHaveBeenCalledTimes(1);
+    client.updateAgentDiscoveryCursor('cursor-2');
+    first.message({ type: 'agent-discovery-wake' });
+    expect(wakes).toHaveBeenCalledTimes(2);
+    first.close();
+    expect(client.agentDiscoveryAvailable()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_250);
+    const second = FakeWebSocket.instances[1]!;
+    second.open();
+    second.message({ type: 'hello', capabilities: { discoveryV1: true } });
+    expect(second.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: 'subscribe-agent', cursor: 'cursor-2' },
+    ]);
+    client.closeLive();
+    vi.useRealTimers();
+  });
+
   it('delivers a config-changed push to the one registered listener', async () => {
     vi.useFakeTimers();
     FakeWebSocket.instances.length = 0;
@@ -254,7 +294,12 @@ describe('DaemonApiClient', () => {
     );
     const configChanged = vi.fn();
     client.setConfigChangedListener(configChanged);
-    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      () => undefined,
+      () => undefined,
+    );
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });
@@ -281,7 +326,12 @@ describe('DaemonApiClient', () => {
     );
     const hiccup = vi.fn();
     client.setHiccupRestartListener(hiccup);
-    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      () => undefined,
+      () => undefined,
+    );
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });

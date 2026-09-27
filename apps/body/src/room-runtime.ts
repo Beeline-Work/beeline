@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -12,6 +12,7 @@ import {
 } from './daemon-api-client.js';
 import {
   isStandingWorkspaceConfigurationFault,
+  type DaemonBootstrapResult,
   type CornerRestoreResult,
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
@@ -44,6 +45,39 @@ export function defaultReconcileHeartbeatMs(random: () => number = Math.random):
 }
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
+
+interface DiscoveryDescriptor {
+  roomId: string;
+  parentRoomId?: string;
+  archived: boolean;
+  removed?: boolean;
+  repositoryRevision?: string;
+  openedBy?: string;
+}
+
+interface DiscoveryChange extends Partial<DiscoveryDescriptor> {
+  workspaceId?: string;
+}
+
+interface DiscoverySnapshot {
+  cursor: string;
+  workspaceIds: string[];
+  rooms: DiscoveryDescriptor[];
+}
+
+interface DiscoveryChanges {
+  cursor: string;
+  changes: DiscoveryChange[];
+  hasMore: boolean;
+}
+
+interface DiscoveryOperations {
+  execute(
+    name: 'getAgentDiscoverySnapshot',
+    input: Record<string, never>,
+  ): Promise<DiscoverySnapshot>;
+  execute(name: 'getAgentDiscoveryChanges', input: { after: string }): Promise<DiscoveryChanges>;
+}
 
 class CornerCredentialLookupError extends Error {
   constructor(cause: unknown) {
@@ -554,6 +588,10 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
+  private discoveryInventory?: Map<string, DiscoveryDescriptor>;
+  private discoveryCursor?: string;
+  private discoveryWorkspaces: string[] = [];
+  private discoveryStateLoaded = false;
   private confirmationPending = false;
   private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
@@ -610,6 +648,7 @@ export class RoomRuntimeCoordinator {
       }
       this.queueMembershipEvent({ ...event, roomId });
     });
+    this.options.daemonApi.setAgentDiscoveryListener?.(() => this.wakeDiscovery());
     this.options.daemonApi.setCornerCompleteListener?.((roomId) => {
       void this.applyCornerComplete(roomId).catch((error) =>
         console.error('[thin-core] live corner-complete apply failed', error),
@@ -743,9 +782,8 @@ export class RoomRuntimeCoordinator {
     // that has arrived by now is covered by its start pass. Wakes landing
     // DURING the reconcile re-arm fast reconcile instead of being swallowed.
     const coveredWakes = this.discoveryWakes.beginReconcile();
-    const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
-      agentId: this.agent.publicKey,
-    });
+    const discovery = await this.readDiscovery();
+    const bootstrap = discovery.bootstrap;
     if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
       this.workspaceRemovalConfirmations += 1;
       if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
@@ -774,43 +812,59 @@ export class RoomRuntimeCoordinator {
     const desired = new Set(desiredTopRooms);
     const desiredCorners = new Map<string, DesiredCorner>();
     const archivedCorners = new Map<string, { cornerId: string; parentRoomId: string }>();
-    await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
-      try {
-        const result = await this.options.daemonApi.execute('listRoomCorners', {
-          roomId: room.roomId,
-        });
-        for (const corner of result.corners) {
-          this.monolithCornerParents.set(corner.cornerId, room.roomId);
-          if (corner.archived) {
-            archivedCorners.set(corner.cornerId, {
-              cornerId: corner.cornerId,
-              parentRoomId: room.roomId,
-            });
-          } else {
-            desired.add(corner.cornerId);
-            desiredCorners.set(corner.cornerId, {
-              cornerId: corner.cornerId,
-              parentRoomId: room.roomId,
-              ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
-            });
-          }
+    if (discovery.corners) {
+      for (const corner of discovery.corners) {
+        const parentRoomId = corner.parentRoomId!;
+        this.monolithCornerParents.set(corner.roomId, parentRoomId);
+        if (corner.archived) {
+          archivedCorners.set(corner.roomId, { cornerId: corner.roomId, parentRoomId });
+        } else {
+          desired.add(corner.roomId);
+          desiredCorners.set(corner.roomId, {
+            cornerId: corner.roomId,
+            parentRoomId,
+            openedBy: corner.openedBy!,
+          });
         }
-      } catch (error) {
-        // A failed corner read is uncertainty, never evidence that every
-        // running corner vanished. Keep the last successful parent mapping
-        // and retry on the next reconciliation heartbeat.
-        for (const [cornerId, parentRoomId] of this.monolithCornerParents) {
-          if (parentRoomId === room.roomId && this.running.has(cornerId)) {
-            desired.add(cornerId);
-            desiredCorners.set(cornerId, { cornerId, parentRoomId });
-          }
-        }
-        console.error(
-          `[thin-core] monolith Room ${room.roomId} corner listing failed; keeping known corners:`,
-          error,
-        );
       }
-    });
+    } else
+      await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
+        try {
+          const result = await this.options.daemonApi.execute('listRoomCorners', {
+            roomId: room.roomId,
+          });
+          for (const corner of result.corners) {
+            this.monolithCornerParents.set(corner.cornerId, room.roomId);
+            if (corner.archived) {
+              archivedCorners.set(corner.cornerId, {
+                cornerId: corner.cornerId,
+                parentRoomId: room.roomId,
+              });
+            } else {
+              desired.add(corner.cornerId);
+              desiredCorners.set(corner.cornerId, {
+                cornerId: corner.cornerId,
+                parentRoomId: room.roomId,
+                ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
+              });
+            }
+          }
+        } catch (error) {
+          // A failed corner read is uncertainty, never evidence that every
+          // running corner vanished. Keep the last successful parent mapping
+          // and retry on the next reconciliation heartbeat.
+          for (const [cornerId, parentRoomId] of this.monolithCornerParents) {
+            if (parentRoomId === room.roomId && this.running.has(cornerId)) {
+              desired.add(cornerId);
+              desiredCorners.set(cornerId, { cornerId, parentRoomId });
+            }
+          }
+          console.error(
+            `[thin-core] monolith Room ${room.roomId} corner listing failed; keeping known corners:`,
+            error,
+          );
+        }
+      });
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
     await this.sweepArchivedCornerWorktrees(archivedCorners);
@@ -850,6 +904,175 @@ export class RoomRuntimeCoordinator {
     this.discoveryWakes.completeReconcile(coveredWakes);
     if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
     return 'member';
+  }
+
+  private async readDiscovery(): Promise<{
+    bootstrap: DaemonBootstrapResult;
+    corners?: DiscoveryDescriptor[];
+  }> {
+    const legacy = async () => ({
+      bootstrap: await this.options.daemonApi.execute('getDaemonBootstrap', {
+        agentId: this.agent.publicKey,
+      }),
+    });
+    if (!this.options.daemonApi.agentDiscoveryAvailable?.()) return legacy();
+    const api = this.options.daemonApi as unknown as DiscoveryOperations;
+    await this.loadDiscoveryState();
+    const snapshot = async (): Promise<void> => {
+      const state = await api.execute('getAgentDiscoverySnapshot', {});
+      if (!state.cursor || !Array.isArray(state.workspaceIds) || !Array.isArray(state.rooms)) {
+        throw new Error('agent discovery snapshot is incomplete');
+      }
+      this.discoveryInventory = new Map(state.rooms.map((room) => [room.roomId, room]));
+      this.discoveryWorkspaces = [...state.workspaceIds];
+      this.discoveryCursor = state.cursor;
+      this.options.daemonApi.updateAgentDiscoveryCursor?.(state.cursor);
+      await this.persistDiscoveryState();
+    };
+    try {
+      if (!this.discoveryInventory || !this.discoveryCursor) {
+        await snapshot();
+      } else {
+        const inventory = new Map(this.discoveryInventory);
+        const workspaces = new Set(this.discoveryWorkspaces);
+        let cursor = this.discoveryCursor;
+        let complete = false;
+        for (let page = 0; page < 8; page += 1) {
+          const result = await api.execute('getAgentDiscoveryChanges', { after: cursor });
+          if (!result.cursor || !Array.isArray(result.changes)) {
+            throw new Error('agent discovery delta is incomplete');
+          }
+          for (const change of result.changes) {
+            if (change.roomId) {
+              if (change.removed) inventory.delete(change.roomId);
+              else if (typeof change.archived === 'boolean') {
+                inventory.set(change.roomId, {
+                  ...inventory.get(change.roomId),
+                  ...change,
+                  roomId: change.roomId,
+                  archived: change.archived,
+                });
+              }
+            } else if (change.workspaceId) {
+              if (change.removed) workspaces.delete(change.workspaceId);
+              else workspaces.add(change.workspaceId);
+            }
+          }
+          if (!result.hasMore) {
+            complete = true;
+            cursor = result.cursor;
+            break;
+          }
+          if (result.cursor === cursor) break;
+          cursor = result.cursor;
+        }
+        if (complete) {
+          this.discoveryInventory = inventory;
+          this.discoveryWorkspaces = [...workspaces];
+          this.discoveryCursor = cursor;
+          this.options.daemonApi.updateAgentDiscoveryCursor?.(cursor);
+          await this.persistDiscoveryState();
+        } else {
+          await snapshot();
+        }
+      }
+    } catch (error) {
+      if (
+        error instanceof DaemonApiError &&
+        (error.status === 409 || error.status === 410 || error.code === 'cursor_expired')
+      ) {
+        await snapshot();
+      } else if (error instanceof DaemonApiError && error.status === 404) {
+        // A new socket may land on a new server while its HTTP request lands
+        // on an old peer during a rolling release.
+        return legacy();
+      } else throw error;
+    }
+    const inventory = [...this.discoveryInventory!.values()];
+    const corners = inventory.filter((room) => room.parentRoomId);
+    return {
+      bootstrap: {
+        workspaceIds: this.discoveryWorkspaces,
+        rooms: inventory
+          .filter((room) => !room.parentRoomId)
+          .map(({ roomId, archived, repositoryRevision }) => ({
+            roomId,
+            archived,
+            ...(repositoryRevision ? { repositoryRevision } : {}),
+          })),
+      },
+      // A server released before opener projection still works through the
+      // legacy corner list, whose createdBy field guards the first write.
+      ...(corners.every((corner) => corner.archived || corner.openedBy) ? { corners } : {}),
+    };
+  }
+
+  private discoveryStatePath(): string {
+    return resolve(dirname(this.configPath), 'discovery-state.json');
+  }
+
+  private async loadDiscoveryState(): Promise<void> {
+    if (this.discoveryStateLoaded) return;
+    this.discoveryStateLoaded = true;
+    try {
+      const state = JSON.parse(await readFile(this.discoveryStatePath(), 'utf8')) as {
+        version?: unknown;
+        agentId?: unknown;
+        cursor?: unknown;
+        workspaceIds?: unknown;
+        rooms?: unknown;
+      };
+      if (
+        state.version !== 1 ||
+        state.agentId !== this.agent.publicKey ||
+        typeof state.cursor !== 'string' ||
+        !Array.isArray(state.workspaceIds) ||
+        !state.workspaceIds.every((id) => typeof id === 'string') ||
+        !Array.isArray(state.rooms) ||
+        !state.rooms.every(
+          (room) =>
+            room &&
+            typeof room === 'object' &&
+            typeof room.roomId === 'string' &&
+            typeof room.archived === 'boolean',
+        )
+      )
+        return;
+      this.discoveryInventory = new Map(
+        (state.rooms as DiscoveryDescriptor[]).map((room) => [room.roomId, room]),
+      );
+      this.discoveryWorkspaces = state.workspaceIds as string[];
+      this.discoveryCursor = state.cursor;
+      this.options.daemonApi.updateAgentDiscoveryCursor?.(state.cursor);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('[thin-core] saved discovery cursor unavailable; requesting snapshot:', error);
+      }
+    }
+  }
+
+  private async persistDiscoveryState(): Promise<void> {
+    if (!this.discoveryInventory || !this.discoveryCursor) return;
+    const path = this.discoveryStatePath();
+    const staged = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(
+        staged,
+        JSON.stringify({
+          version: 1,
+          agentId: this.agent.publicKey,
+          cursor: this.discoveryCursor,
+          workspaceIds: this.discoveryWorkspaces,
+          rooms: [...this.discoveryInventory.values()],
+        }),
+        { mode: 0o600, flag: 'wx' },
+      );
+      await rename(staged, path);
+    } catch (error) {
+      await rm(staged, { force: true }).catch(() => undefined);
+      console.warn('[thin-core] discovery cursor checkpoint unavailable:', error);
+    }
   }
 
   /**

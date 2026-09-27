@@ -153,6 +153,10 @@ export class DaemonApiClient {
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
+  private agentDiscoveryListener?: () => void;
+  private agentDiscoveryCursor?: string;
+  private agentDiscoverySubscribed = false;
+  private discoveryV1 = false;
 
   constructor(
     readonly baseUrl: string,
@@ -221,6 +225,21 @@ export class DaemonApiClient {
     this.ensureLiveSocket();
   }
 
+  /** New servers ACK agent-scoped discovery; older servers ignore this frame. */
+  setAgentDiscoveryListener(listener: () => void, cursor?: string): void {
+    this.agentDiscoveryListener = listener;
+    this.agentDiscoveryCursor = cursor;
+    this.ensureLiveSocket();
+  }
+
+  agentDiscoveryAvailable(): boolean {
+    return this.agentDiscoverySubscribed;
+  }
+
+  updateAgentDiscoveryCursor(cursor: string): void {
+    this.agentDiscoveryCursor = cursor;
+  }
+
   /** A pending memory job is announced on the live socket. */
   setMemoryJobListener(listener: () => void): void {
     this.memoryJobListener = listener;
@@ -274,6 +293,8 @@ export class DaemonApiClient {
     this.liveReconnect = undefined;
     const socket = this.liveSocket;
     this.liveSocket = undefined;
+    this.agentDiscoverySubscribed = false;
+    this.discoveryV1 = false;
     socket?.close();
   }
 
@@ -335,8 +356,34 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
-      if (event.type === 'helper-release' && typeof event.version === 'string' &&
-          typeof event.sha === 'string') {
+      if (event.type === 'hello') {
+        const capabilities = event.capabilities as Record<string, unknown> | undefined;
+        this.discoveryV1 = capabilities?.discoveryV1 === true;
+        if (this.discoveryV1 && this.agentDiscoveryListener) {
+          socket.send(
+            JSON.stringify({
+              type: 'subscribe-agent',
+              ...(this.agentDiscoveryCursor ? { cursor: this.agentDiscoveryCursor } : {}),
+            }),
+          );
+        }
+        return;
+      }
+      if (event.type === 'agent-subscribed' && typeof event.cursor === 'string') {
+        if (!this.discoveryV1) return;
+        this.agentDiscoverySubscribed = true;
+        this.agentDiscoveryListener?.();
+        return;
+      }
+      if (event.type === 'agent-discovery-wake') {
+        if (this.agentDiscoverySubscribed) this.agentDiscoveryListener?.();
+        return;
+      }
+      if (
+        event.type === 'helper-release' &&
+        typeof event.version === 'string' &&
+        typeof event.sha === 'string'
+      ) {
         this.helperReleaseListener?.({ version: event.version, sha: event.sha });
         return;
       }
@@ -421,11 +468,16 @@ export class DaemonApiClient {
     const reconnect = () => {
       if (this.liveSocket !== socket) return;
       this.liveSocket = undefined;
+      this.agentDiscoverySubscribed = false;
+      this.discoveryV1 = false;
       for (const room of this.liveRooms.values()) room.onState?.(false);
       if (!this.liveRooms.size && !this.roomsChangedListener) return;
       const delay = this.liveReconnectDelayMs;
       this.liveReconnectDelayMs = Math.min(delay * 2, 30_000);
-      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), delay + Math.floor(Math.random() * delay * 0.25));
+      this.liveReconnect = setTimeout(
+        () => this.ensureLiveSocket(),
+        delay + Math.floor(Math.random() * delay * 0.25),
+      );
       this.liveReconnect.unref?.();
     };
     socket.onerror = () => undefined;

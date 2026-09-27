@@ -1,5 +1,7 @@
 import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import { SquireTaskRelay } from './squire-task-relay.js';
+import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -22,14 +24,13 @@ import {
   AGENT_SKILL_DIRS,
   expectedMountedImportedMcpServerNames,
   freshHarnessLoginLine,
-  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
   isExpiredHarnessLoginError,
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
 } from './agent-home.js';
-import { claimGrantedHostRoutes, grantedHostRouteWires } from './host-mcp-route.js';
+import { claimGrantedHostRoutes, grantedHostRouteWires, grantedSquireHostRoute } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -567,6 +568,7 @@ export function cornerClosePollMs(random: () => number = Math.random): number {
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
 
@@ -655,6 +657,15 @@ export class MonolithCornerTurnLoop {
     this.closePollMs = options.closePollMs ?? cornerClosePollMs();
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
+    this.squireRelay = new SquireTaskRelay(
+      this.agent.publicKey, options.cornerId, this.commandContext.path,
+      async (call) => (await options.api.execute('authorizeResourceCall', {
+        roomId: call.roomId, requestId: call.requestId, generationId: call.generationId,
+        target: 'squire',
+        ...resourceCallFacts({ method: 'tools/call', params: { name: call.tool, arguments: call.args } }, 'squire'),
+      })).allowed,
+      options.config.operatorHome ?? homedir(),
+    );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.cornerId, {
       workspaceId: options.workspaceId,
@@ -705,6 +716,7 @@ export class MonolithCornerTurnLoop {
    * actually running the stopped turn is cancelled.
    */
   private stopTurn(requestId: string): void {
+    this.squireRelay.cancel(requestId);
     this.stoppedTurns.add(requestId);
     while (this.stoppedTurns.size > 500)
       this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
@@ -884,6 +896,14 @@ export class MonolithCornerTurnLoop {
       this.commandContext.path,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
+    const squireScope = {
+      agentId: this.agent.publicKey,
+      roomId: this.options.cornerId,
+      ...(grantedSquireHostRoute(mountedHostRoutes, {
+        ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
+        ...registryHostDeclarations,
+      }) ? { relay: await this.squireRelay.listen() } : {}),
+    };
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -897,7 +917,7 @@ export class MonolithCornerTurnLoop {
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
-          squireScope: { agentId: this.agent.publicKey, roomId: this.options.cornerId },
+          squireScope,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes: mountedHostRoutes,
@@ -1007,11 +1027,6 @@ export class MonolithCornerTurnLoop {
           npmCacheDir,
           pnpmStoreDir,
           cargoTargetDir,
-          ...grantedSquireHostBindPaths({
-            operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
@@ -1126,7 +1141,7 @@ export class MonolithCornerTurnLoop {
       operatorHome,
       { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
-      { agentId: this.agent.publicKey, roomId: this.options.cornerId },
+      squireScope,
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and
@@ -2103,6 +2118,8 @@ export class MonolithCornerTurnLoop {
         },
         onPoll: () => this.options.onPoll(),
         onError: (error) => console.error('[thin-core] corner command failed', error),
+        onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
+        onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
         stop: (requestId) => this.stopTurn(requestId),
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,
@@ -2146,6 +2163,7 @@ export class MonolithCornerTurnLoop {
           }),
       });
     } finally {
+      this.squireRelay.close();
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
       // A harvest writes into host-wide state, so it finishes or is discarded

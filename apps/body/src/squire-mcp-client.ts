@@ -27,6 +27,7 @@ const CALL_TIMEOUT_MS = 120_000;
 
 export type SquireMcpClientOptions = {
   readonly scope: SquireAgentScope;
+  readonly home?: string;
   /** Spawn command; defaults to the published package through npx. */
   readonly command?: string;
   readonly args?: readonly string[];
@@ -35,6 +36,10 @@ export type SquireMcpClientOptions = {
   readonly spawn?: typeof spawn;
   /** Process env for the MCP server; defaults to the helper chrome profile. */
   readonly env?: NodeJS.ProcessEnv;
+  readonly onSpawn?: (pid: number | undefined) => void;
+  readonly onExit?: (pid: number | undefined, code: number | null) => void;
+  /** Task-owned relays kill the whole façade → npx → Squire process group. */
+  readonly processGroup?: boolean;
 };
 
 type PendingEntry = {
@@ -76,6 +81,14 @@ export class StdioSquireMcpClient {
     }
   }
 
+  /** Raw MCP request for the helper-owned task relay. The child remains the owner. */
+  async requestMcp(method: 'tools/list' | 'tools/call', params: Record<string, unknown>): Promise<unknown> {
+    await this.ensureSession();
+    return this.request(method, params);
+  }
+
+  get pid(): number | undefined { return this.child?.pid; }
+
   /** Tear the session down; safe to call repeatedly. */
   close(): void {
     this.closed = true;
@@ -85,7 +98,11 @@ export class StdioSquireMcpClient {
       entry.reject(new Error('Squire MCP session closed'));
     }
     this.pending.clear();
-    this.child?.kill();
+    if (this.options.processGroup && this.child?.pid) {
+      try { process.kill(-this.child.pid, 'SIGKILL'); } catch { this.child.kill('SIGKILL'); }
+    } else {
+      this.child?.kill();
+    }
     this.child = undefined;
   }
 
@@ -99,33 +116,44 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
-    const launch = squireFacadeLaunch(homedir(), this.options.scope);
+    const launch = squireFacadeLaunch(this.options.home ?? homedir(), this.options.scope);
+    const env = { ...(this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env }) };
+    if (!this.options.scope.relay) {
+      delete env.BEELINE_SQUIRE_RELAY_URL;
+      delete env.BEELINE_SQUIRE_RELAY_TOKEN;
+      delete env.BEELINE_TURN_CONTEXT_FILE;
+    }
     const child = (this.options.spawn ?? spawn)(
       this.options.command ?? launch.command,
       [...(this.options.args ?? launch.args)],
       {
-        env: {
-          ...(this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env }),
-          TRUSTY_SQUIRE_AGENT_IDENTITY: launch.env.TRUSTY_SQUIRE_AGENT_IDENTITY,
-        },
+        detached: this.options.processGroup ?? false,
+        env,
       },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
+    this.options.onSpawn?.(child.pid);
     this.buffer = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onData(chunk));
     child.stderr.on('data', (chunk: string) => this.log(`squire mcp stderr: ${chunk.trim()}`));
-    child.on('exit', (code) => {
+    let exited = false;
+    const fail = (code: number | null, error?: Error) => {
+      if (exited) return;
+      exited = true;
       this.log(`squire mcp exited (${String(code)})`);
+      this.options.onExit?.(child.pid, code);
       this.initialized = undefined;
       this.child = undefined;
       for (const entry of this.pending.values()) {
         clearTimeout(entry.timer);
-        entry.reject(new Error('Squire MCP server exited'));
+        entry.reject(error ?? new Error('Squire MCP server exited'));
       }
       this.pending.clear();
-    });
+    };
+    child.on('error', (error) => fail(null, error));
+    child.on('exit', (code) => fail(code));
     return this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},

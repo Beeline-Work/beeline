@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import { notifyConnectorAssignment } from './postgres-live.js';
+import { notifyConnectorAssignment, notifyConnectorHelper } from './postgres-live.js';
 
 /**
  * Public callback rendezvous for Registry MCP OAuth.
@@ -81,6 +81,7 @@ export class RegistryMcpOAuth {
          sign_in=NULL,updated_at=now() WHERE id=$1 AND status='installing'`,
       [row.rows[0]!.connector_id],
     );
+    await notifyConnectorHelper(this.database, row.rows[0]!.connector_id);
     return true;
   }
 

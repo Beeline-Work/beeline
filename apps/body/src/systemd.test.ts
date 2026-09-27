@@ -12,6 +12,7 @@ import {
   isCanonicalInstalledLauncher,
   disableAgentService,
   reconcileAgentServices,
+  startLocalWatchdog,
   systemdBrokerUnitPath,
 } from './systemd.js';
 import { TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
@@ -22,6 +23,24 @@ afterEach(async () => {
 });
 
 describe('systemd supervision contract', () => {
+  it('keeps an idle connected helper alive using only local watchdog progress', async () => {
+    vi.useFakeTimers();
+    try {
+      const progress = vi.fn(async () => undefined);
+      let status = 'connected';
+      const stop = startLocalWatchdog({ progress }, () => status, 1_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(progress).toHaveBeenCalledTimes(3);
+      status = 'reconnecting';
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(progress).toHaveBeenLastCalledWith('reconnecting');
+      stop();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(progress).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('renders notify readiness, progress watchdog, bounded stop and deliberate-removal policy', () => {
     const unit = agentServiceUnit();
     expect(unit).toContain('Type=notify');

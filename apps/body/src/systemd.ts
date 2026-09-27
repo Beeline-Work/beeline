@@ -399,7 +399,7 @@ export async function extendSystemdStartTimeout(ms: number): Promise<void> {
   await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(() => undefined);
 }
 
-/** No timer lives here: callers may emit WATCHDOG only after a completed core tick. */
+/** systemd notification transport; the local watchdog timer below never reads the server. */
 export class SystemdNotifier implements DaemonNotifier {
   async ready(status: string): Promise<void> {
     await notify(['--ready', `--status=${status}`]);
@@ -412,4 +412,15 @@ export class SystemdNotifier implements DaemonNotifier {
   async stopping(status: string): Promise<void> {
     await notify(['STOPPING=1', `STATUS=${status}`]);
   }
+}
+
+/** Keep an idle, socket-connected helper alive in systemd without a server read. */
+export function startLocalWatchdog(
+  notifier: Pick<DaemonNotifier, 'progress'>,
+  status: () => string,
+  intervalMs = 60_000,
+): () => void {
+  const timer = setInterval(() => void notifier.progress(status()), intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   formatToolReachLine,
   installTailscale,
+  watchTailscaleSignIn,
   type TailscaleCommandResult,
   type TailscaleCommandRunner,
 } from './connector-tailscale.js';
@@ -18,7 +19,24 @@ function runner(results: readonly TailscaleCommandResult[]) {
 }
 
 describe('installTailscale', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
+
+  it('wakes once when the local tailnet connects without reading the server', async () => {
+    vi.useFakeTimers();
+    let state = 'NeedsLogin';
+    const run = vi.fn(async () => ({ code: 0, stdout: JSON.stringify({ BackendState: state }), stderr: '' }));
+    const connected = vi.fn();
+    const stop = watchTailscaleSignIn(connected, { run, intervalMs: 100 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(run).toHaveBeenCalledWith('tailscale', ['status', '--json']);
+    expect(connected).not.toHaveBeenCalled();
+    state = 'Running';
+    await vi.advanceTimersByTimeAsync(100);
+    expect(connected).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    stop();
+  });
 
   it('accepts an already connected helper and reports its account', async () => {
     const command = runner([

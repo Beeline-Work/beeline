@@ -57,6 +57,26 @@ describe('system lines on the phone', () => {
     ]);
   });
 
+  it('keeps each deleted message line in its own place', () => {
+    const deleted = (id: string, timestamp: number) => ({
+      id,
+      text: '@lunchboxfortwo deleted a message · sent by @milo',
+      timestamp,
+      deleted: true,
+      isSystemNotice: true,
+      systemEvent: {
+        subject: { kind: 'person' as const, id: 'lunchboxfortwo', name: '@lunchboxfortwo' },
+        verb: 'deleted',
+        object: { text: 'a message' },
+        consequence: 'sent by @milo',
+      },
+    });
+    expect(foldSystemLines([deleted('a', 1), deleted('b', 2)]).map((line) => line.id)).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
   it('never folds across a different verb, an ordinary message, or an old plain row', () => {
     const message = { id: 'm', text: 'hello', timestamp: 2, isUser: true };
     const left = {

@@ -309,7 +309,7 @@ async function noCodeCornerSession(
     toolCalls: [],
   });
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
-  await new MonolithCornerTurnLoop({
+  const loop = new MonolithCornerTurnLoop({
     cornerId: 'corner-id',
     parentRoomId: 'room-id',
     workspaceId: 'workspace',
@@ -331,7 +331,11 @@ async function noCodeCornerSession(
     onCloseRequested: vi.fn(async () => undefined),
     createAcpClient: () => acp,
     ...extra,
-  }).run();
+  });
+  const running = loop.run();
+  await vi.waitFor(() => expect(sessionInput).toBeDefined());
+  loop.requestClose();
+  await running;
   await scheduler.dispose();
   return sessionInput;
 }
@@ -392,7 +396,7 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
   ).toContain('upgrade_corner_to_code');
 });
 
-it('retires a no-code session on the timed restore read when the server already moved it to code', async () => {
+it('retires a no-code session on reconnect reconciliation when the server already moved it to code', async () => {
   const root = await mkdtemp(join(tmpdir(), 'beeline-lane-poll-'));
   roots.push(root);
   const workspace = join(root, 'rooms', 'corner-id', 'scratch');
@@ -443,8 +447,9 @@ it('retires a no-code session on the timed restore read when the server already 
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const onLaneChanged = vi.fn();
   const onCloseRequested = vi.fn(async () => undefined);
+  const onPoll = vi.fn();
 
-  await new MonolithCornerTurnLoop({
+  const loop = new MonolithCornerTurnLoop({
     cornerId: 'corner-id',
     parentRoomId: 'room-id',
     workspaceId: 'workspace',
@@ -456,11 +461,15 @@ it('retires a no-code session on the timed restore read when the server already 
     api,
     scheduler,
     pollMs: 1,
-    onPoll: vi.fn(),
+    onPoll,
     onFailure: vi.fn(),
     onCloseRequested,
     onLaneChanged,
-  }).run();
+  });
+  const running = loop.run();
+  await vi.waitFor(() => expect(onPoll).toHaveBeenCalled());
+  loop.requestReconciliation();
+  await running;
   await scheduler.dispose();
 
   expect(onLaneChanged).toHaveBeenCalledTimes(1);
@@ -536,6 +545,7 @@ async function upgradeTurn(
   let closeRequested = false;
   let closeAfterReceipt = false;
   let delivered = false;
+  let loop: MonolithCornerTurnLoop;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     if (name === 'getAgentCommands') {
       if (delivered) return { commandProtocol: 1, commands: [] };
@@ -559,7 +569,10 @@ async function upgradeTurn(
         ],
       };
     if (name === 'getAgentConfiguration') return { commands: [] };
-    if (name === 'postAgentTurnReceipt' && closeAfterReceipt) closeRequested = true;
+    if (name === 'postAgentTurnReceipt' && closeAfterReceipt) {
+      closeRequested = true;
+      queueMicrotask(() => loop.requestClose());
+    }
     return { id: 'write-id', createdAt: 1 };
   });
   const api = {
@@ -578,6 +591,7 @@ async function upgradeTurn(
       answer({
         commitUpgrade: () => {
           lane = 'code';
+          queueMicrotask(() => loop.requestReconciliation());
         },
         requestClose: () => {
           // Let the refused upgrade finish its ordinary reply and receipt
@@ -591,7 +605,7 @@ async function upgradeTurn(
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const onLaneChanged = vi.fn();
 
-  await new MonolithCornerTurnLoop({
+  loop = new MonolithCornerTurnLoop({
     cornerId: 'corner-id',
     parentRoomId: 'room-id',
     workspaceId: 'workspace',
@@ -611,7 +625,8 @@ async function upgradeTurn(
     onCloseRequested: vi.fn(async () => undefined),
     onLaneChanged,
     createAcpClient: () => acp,
-  }).run();
+  });
+  await loop.run();
   await scheduler.dispose();
   return { written: execute.mock.calls.map(([name]) => name as string), execute, onLaneChanged };
 }

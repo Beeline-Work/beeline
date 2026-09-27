@@ -2033,15 +2033,24 @@ export class DaemonService {
       `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
       [agentId],
     );
-    const rooms = await this.database.query<{ room_id: string; archived: boolean }>(
-      `SELECT m.room_id, r.archived_at IS NOT NULL archived FROM memberships m
+    const rooms = await this.database.query<{ room_id: string; archived: boolean; repository_revision: string }>(
+      `SELECT m.room_id, r.archived_at IS NOT NULL archived,
+              concat_ws(':',r.repository_resolution,COALESCE(r.repository_key,''),
+                COALESCE(r.repository_remote,''),r.repository_target_branch,
+                COALESCE(r.repository_updated_at::text,''),
+                COALESCE(i.status,''),COALESCE(i.updated_at::text,''),
+                COALESCE(g.active::text,''),COALESCE(g.updated_at::text,'')) repository_revision
+       FROM memberships m
        JOIN rooms r ON r.id=m.room_id
+       LEFT JOIN github_installations i ON i.installation_id=r.github_installation_id
+       LEFT JOIN github_repositories g ON r.repository_key='github:' || g.repository_id::text
        WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL`,
       [agentId],
     );
     return {
       workspaceIds: workspaces.rows.map((row) => row.workspace_id),
-      rooms: rooms.rows.map((row) => ({ roomId: row.room_id, archived: row.archived })),
+      rooms: rooms.rows.map((row) => ({ roomId: row.room_id, archived: row.archived,
+        repositoryRevision: row.repository_revision })),
     };
   }
   private async workspaceRoster(input: Input<'getWorkspaceRoster'>, agentId: string) {

@@ -55,6 +55,7 @@ import {
   createCommunityInviteToken,
   defaultFaceForSeed,
   FACE_SOULS,
+  formatSystemLine,
   isCommunityInviteToken,
   isFaceId,
   MESSAGE_REACTION_EMOJIS,
@@ -114,6 +115,7 @@ import {
 } from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import {
+  deletedMessageEvent,
   directMessageRoomId,
   identitySubject,
   systemIdentityMention,
@@ -543,11 +545,16 @@ function projectedMessage(
   );
   const base: RoomViewMessage = {
     id: row.id,
-    text: row.deleted_at ? 'Message deleted' : row.text,
+    // A deleted message stays in its place as a system line (`deletedMessageEvent`).
+    text: row.deleted_at
+      ? row.system_event
+        ? formatSystemLine(row.system_event)
+        : 'Message deleted'
+      : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
     author,
-    presentation: row.presentation,
+    presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
     ...(row.presentation === 'message'
@@ -3816,7 +3823,7 @@ export class PhoneService {
   ): Promise<void> {
     if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
     await this.database.transaction(async (database) => {
-      const deleted = await database.query(
+      const deleted = await database.query<{ author_id: string; deleted_by: string }>(
         `UPDATE messages message SET deleted_at=COALESCE(message.deleted_at,now()),
            deleted_by=COALESCE(message.deleted_by,$3),text='',attachments='[]'::jsonb,reactions='{}'::jsonb
          FROM rooms room
@@ -3831,10 +3838,17 @@ export class PhoneService {
                  AND manager.identity_id=$3 AND manager.role IN ('owner','admin')
                  AND manager.removed_at IS NULL
              ))
-         RETURNING message.id`,
+         RETURNING message.author_id,message.deleted_by`,
         [input.messageId, input.roomId, viewerId],
       );
-      if (!deleted.rowCount) throw new Error('message is not available for deletion');
+      const row = deleted.rows[0];
+      if (!row) throw new Error('message is not available for deletion');
+      // The deleted row keeps its place and time and reads as a system line
+      // naming who deleted it; nothing new is posted to the Room.
+      await database.query(`UPDATE messages message SET system_event=$2::jsonb WHERE message.id=$1`, [
+        input.messageId,
+        JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)),
+      ]);
       await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
     });
   }

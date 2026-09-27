@@ -26,6 +26,7 @@ export type RoomMembershipChange = {
   /** The named Room/corner is already archived, so nothing is started for it. */
   readonly archived?: boolean;
   readonly removed?: boolean;
+  readonly repositoryChanged?: boolean;
 };
 
 export type DaemonFetch = typeof fetch;
@@ -99,6 +100,7 @@ function membershipChange(event: Record<string, unknown>): RoomMembershipChange 
     ...(typeof event.openedBy === 'string' ? { openedBy: event.openedBy } : {}),
     ...(event.archived === true ? { archived: true } : {}),
     ...(event.removed === true ? { removed: true } : {}),
+    ...(event.repositoryChanged === true ? { repositoryChanged: true } : {}),
   };
 }
 
@@ -144,6 +146,7 @@ export class DaemonApiClient {
     }
   >();
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
+  private memoryJobListener?: () => void;
   private configChangedListener?: () => void;
   private hiccupRestartListener?: (attempt: number) => void;
   private connectorAssignmentListener?: () => void;
@@ -202,7 +205,7 @@ export class DaemonApiClient {
       if (this.liveSocket?.readyState === WebSocket.OPEN) {
         this.liveSocket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
-      if (!this.liveRooms.size) {
+      if (!this.liveRooms.size && !this.roomsChangedListener) {
         clearTimeout(this.liveReconnect);
         this.liveSocket?.close();
         this.liveSocket = undefined;
@@ -215,6 +218,13 @@ export class DaemonApiClient {
    * an unscoped wake (reconnect) still runs the recovery reconcile. */
   setRoomsChangedListener(listener: (event?: RoomMembershipChange) => void): void {
     this.roomsChangedListener = listener;
+    this.ensureLiveSocket();
+  }
+
+  /** A pending memory job is announced on the live socket. */
+  setMemoryJobListener(listener: () => void): void {
+    this.memoryJobListener = listener;
+    this.ensureLiveSocket();
   }
 
   /** Register the one listener invoked when the server reports the agent's
@@ -253,6 +263,20 @@ export class DaemonApiClient {
     if (room && cursor) room.cursor = cursor;
   }
 
+  /** Retry an uncertain discovery read through socket reconnect backoff. */
+  reconnectLive(): void {
+    this.liveSocket?.close();
+  }
+
+  /** Release the long-lived socket when the helper itself is shutting down. */
+  closeLive(): void {
+    clearTimeout(this.liveReconnect);
+    this.liveReconnect = undefined;
+    const socket = this.liveSocket;
+    this.liveSocket = undefined;
+    socket?.close();
+  }
+
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
     input: Input<Name>,
@@ -286,7 +310,7 @@ export class DaemonApiClient {
   }
 
   private ensureLiveSocket(): void {
-    if (this.liveSocket || !this.liveRooms.size) return;
+    if (this.liveSocket || (!this.liveRooms.size && !this.roomsChangedListener)) return;
     const socket = this.webSocketFactory(this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live', [
       `bearer.${this.daemonToken}`,
     ]);
@@ -300,6 +324,7 @@ export class DaemonApiClient {
       // the reconciliation and the pending_ops drain still reach them.
       this.roomsChangedListener?.();
       this.connectorAssignmentListener?.();
+      this.memoryJobListener?.();
     };
     socket.onmessage = (message) => {
       let value: unknown;
@@ -329,6 +354,10 @@ export class DaemonApiClient {
       }
       if (event.type === 'connector-assignment') {
         this.connectorAssignmentListener?.();
+        return;
+      }
+      if (event.type === 'memory-job') {
+        this.memoryJobListener?.();
         return;
       }
       if (event.type === 'config-changed') {
@@ -393,10 +422,10 @@ export class DaemonApiClient {
       if (this.liveSocket !== socket) return;
       this.liveSocket = undefined;
       for (const room of this.liveRooms.values()) room.onState?.(false);
-      if (!this.liveRooms.size) return;
+      if (!this.liveRooms.size && !this.roomsChangedListener) return;
       const delay = this.liveReconnectDelayMs;
       this.liveReconnectDelayMs = Math.min(delay * 2, 30_000);
-      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), delay);
+      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), delay + Math.floor(Math.random() * delay * 0.25));
       this.liveReconnect.unref?.();
     };
     socket.onerror = () => undefined;

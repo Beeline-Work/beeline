@@ -6,10 +6,10 @@
  * on read; `revoke-grants` stays queued until this loop confirms the provider
  * drop. This loop is what makes that queue REAL on the helper: a Connect tap
  * pushes `connector-assignment` over the live socket, `wake()` drains then,
- * and a 5-minute poll is only recovery. The one thing nothing on the wire
+ * and socket reconnect also drains missed work. The one thing nothing on the wire
  * announces is the human finishing a sign-in, so while this helper owns a
- * ceremony it watches that connect process locally and drains when it exits
- * (`CONNECT_WATCH_INTERVAL_MS`). It runs the Squire lifecycle
+ * ceremony it listens for that connect process exiting and drains then.
+ * It runs the Squire lifecycle
  * (`connector-squire.ts`) and reports each install step back through
  * `postConnectorStatus` so the phone paints progress live. A completed
  * install reports through `installConnector`, which flips the row to
@@ -23,7 +23,7 @@
  * The four Google tool connectors ride ONE grant: their installs share a
  * single credential resolution per drain and run one at a time.
  * One assignment at a time per connector; failures are logged, never raised —
- * the next drain retries, on the next push or the recovery poll.
+ * the next drain retries on the next push or reconnect.
  */
 import type {
   ConnectorAssignment,
@@ -53,7 +53,7 @@ import {
   type InstallSquireResult,
   type SquireMcpClient,
 } from './connector-squire.js';
-import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
+import { installTailscale, watchTailscaleSignIn, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 import {
   CEREMONY_EXPIRED,
@@ -61,20 +61,6 @@ import {
   type RegistryInstallResult,
 } from './registry-mcp.js';
 export { CEREMONY_EXPIRED };
-
-export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
-
-/**
- * How often the helper looks at a sign-in it OWNS. This is a local
- * `kill(pid, 0)` on the connect process, never a server read, and it exists
- * only while this helper is holding a ceremony open for a human: the row
- * stays `installing` until a LATER run reaches Squire's already-connected
- * short-circuit, and the only thing that says the human is finished is that
- * connect process exiting. It is armed when a ceremony is published and
- * disarmed the moment that process is gone, so an idle fleet runs no timer at
- * all and the five-minute interval stays pure recovery.
- */
-export const CONNECT_WATCH_INTERVAL_MS = 2_000;
 
 type ConnectorApi = Pick<DaemonApiClient, 'execute'>;
 
@@ -99,6 +85,7 @@ export type ConnectorAssignmentLoopOptions = {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
+  readonly watchTailscaleSignIn?: typeof watchTailscaleSignIn;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
   /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
@@ -121,7 +108,6 @@ export type ConnectorAssignmentLoopOptions = {
 export class ConnectorAssignmentLoop {
   private readonly agentId: string;
   private readonly api: ConnectorApi;
-  private readonly intervalMs: number;
   private readonly log: (message: string) => void;
   private readonly install: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
   private readonly installGoogle: (
@@ -133,10 +119,11 @@ export class ConnectorAssignmentLoop {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
+  private readonly watchTailscaleSignIn: typeof watchTailscaleSignIn;
+  private tailscaleWatch?: () => void;
   private readonly googleHomeDir: string;
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
-  private readonly signInWatches = new Map<string, unknown>();
   /** When each registry sign-in attempt's SERVER clock ends, so one can time
    * out. Keyed by connector AND pairing generation: a re-pair re-arms the row
    * to a new generation, and a ceremony latched to the old one must never
@@ -150,23 +137,17 @@ export class ConnectorAssignmentLoop {
     mcp: SquireMcpClient,
     ref: string,
   ) => Promise<{ revoked: number; failed: number }>;
-  private readonly schedule: (fn: () => void, ms: number) => unknown;
-  private readonly cancel: (handle: unknown) => void;
-  private timer?: unknown;
   /** Armed only while this helper owns a live sign-in ceremony. */
-  private connectWatch?: unknown;
-  /** Armed only while a Tailscale browser login is waiting for its callback. */
-  private tailscaleWatch?: unknown;
+  private connectWatch?: () => void;
   private started = false;
   private stopped = false;
-  /** One install at a time per connector; other polls skip it. */
+  /** One install at a time per connector; concurrent wakes skip it. */
   private readonly inFlight = new Set<string>();
   private mcp?: SquireMcpClient;
 
   constructor(options: ConnectorAssignmentLoopOptions) {
     this.agentId = options.agentId;
     this.api = options.api;
-    this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
     this.installGoogle =
@@ -181,29 +162,21 @@ export class ConnectorAssignmentLoop {
             : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
         }));
     this.installTailscale = options.installTailscale ?? installTailscale;
+    this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
-    this.schedule =
-      options.schedule ??
-      ((fn: () => void, ms: number) => {
-        const timer = setTimeout(fn, ms);
-        timer.unref?.();
-        return timer;
-      });
-    this.cancel = options.cancel ?? ((handle: unknown) => clearTimeout(handle as NodeJS.Timeout));
   }
 
   start(): void {
     if (this.stopped || this.started) return;
     this.started = true;
     void this.runOnce();
-    this.timer = this.schedule(() => this.poll(), this.intervalMs);
   }
 
-  /** Event-driven drain. The interval stays the recovery net. */
+  /** Event-driven drain, also called when the socket reconnects. */
   wake(): void {
     if (this.stopped) return;
     void this.runOnce();
@@ -211,20 +184,10 @@ export class ConnectorAssignmentLoop {
 
   stop(): void {
     this.stopped = true;
-    if (this.timer !== undefined) {
-      this.cancel(this.timer);
-      this.timer = undefined;
-    }
-    if (this.connectWatch !== undefined) {
-      this.cancel(this.connectWatch);
-      this.connectWatch = undefined;
-    }
-    if (this.tailscaleWatch !== undefined) {
-      this.cancel(this.tailscaleWatch);
-      this.tailscaleWatch = undefined;
-    }
-    for (const watch of this.signInWatches.values()) this.cancel(watch);
-    this.signInWatches.clear();
+    this.connectWatch?.();
+    this.connectWatch = undefined;
+    this.tailscaleWatch?.();
+    this.tailscaleWatch = undefined;
   }
 
   /**
@@ -233,40 +196,15 @@ export class ConnectorAssignmentLoop {
    * Squire's already-connected short-circuit flips the row to `connected`;
    * nothing on the wire announces that the human finished, so the connect
    * process exiting is the signal. Drain on that, and the row settles on the
-   * same cadence it always has instead of waiting out the recovery poll.
+   * process exit event without waiting for a server read timer.
    */
   private watchConnectSignIn(): void {
-    if (this.stopped || this.connectWatch !== undefined) return;
-    if (!this.connectCeremonyLive()) return;
-    this.connectWatch = this.schedule(() => this.checkConnectSignIn(), CONNECT_WATCH_INTERVAL_MS);
-  }
-
-  /** A ceremony of ours still worth waiting on: claimed, unspent, alive. */
-  private connectCeremonyLive(): boolean {
+    if (this.stopped || this.connectWatch) return;
     const claim = squireConnectSession();
-    if (!claim) return false;
-    if (Date.now() - claim.claimedAt >= CONNECT_TIMEOUT_MS) return false;
-    return isProcessAlive(claim.pid);
-  }
-
-  private checkConnectSignIn(): void {
-    this.connectWatch = undefined;
-    if (this.stopped) return;
-    if (this.connectCeremonyLive()) {
-      this.connectWatch = this.schedule(() => this.checkConnectSignIn(), CONNECT_WATCH_INTERVAL_MS);
-      return;
-    }
-    // The connect process is gone — the human signed in, closed the page, or
-    // the ceremony outlived its own tunnel. Every one of those is answered by
-    // the next drain, now rather than in five minutes.
-    void this.runOnce();
-  }
-
-  /** One interval tick: poll, then re-arm. */
-  private poll(): void {
-    if (this.stopped) return;
-    void this.runOnce();
-    this.timer = this.schedule(() => this.poll(), this.intervalMs);
+    this.connectWatch = claim?.onExit?.(() => {
+      this.connectWatch = undefined;
+      if (!this.stopped) void this.runOnce();
+    });
   }
 
   /** Drain the queue once; every failure is logged, never raised. */
@@ -400,9 +338,6 @@ export class ConnectorAssignmentLoop {
       home: this.registryHomeDir,
     });
     const stopWatch = () => {
-      const watch = this.signInWatches.get(assignment.connectorId);
-      if (watch !== undefined) this.cancel(watch);
-      this.signInWatches.delete(assignment.connectorId);
     };
     if (result.status === 'connected') {
       stopWatch();
@@ -461,13 +396,6 @@ export class ConnectorAssignmentLoop {
         : { signIn: null, errorMessage: result.errorMessage }),
       ...generation,
     });
-    if (result.status === 'installing' && !this.signInWatches.has(assignment.connectorId)) {
-      const watch = this.schedule(() => {
-        this.signInWatches.delete(assignment.connectorId);
-        if (!this.stopped) void this.runOnce();
-      }, CONNECT_WATCH_INTERVAL_MS);
-      this.signInWatches.set(assignment.connectorId, watch);
-    }
   }
 
   /** Install Tailscale and publish its browser login URL until the tailnet is connected. */
@@ -494,10 +422,8 @@ export class ConnectorAssignmentLoop {
       ...(existing?.signIn ? { signIn: existing.signIn } : {}),
     });
     if (result.status === 'connected') {
-      if (this.tailscaleWatch !== undefined) {
-        this.cancel(this.tailscaleWatch);
-        this.tailscaleWatch = undefined;
-      }
+      this.tailscaleWatch?.();
+      this.tailscaleWatch = undefined;
       await this.api.execute('installConnector', {
         agentId: this.agentId,
         connectorId,
@@ -514,12 +440,11 @@ export class ConnectorAssignmentLoop {
       ...(result.status === 'error' ? { errorMessage: result.errorMessage } : {}),
       ...generation,
     });
-    if (result.status === 'installing' && this.tailscaleWatch === undefined) {
-      this.tailscaleWatch = this.schedule(() => {
+    if (result.status === 'installing' && !this.tailscaleWatch)
+      this.tailscaleWatch = this.watchTailscaleSignIn(() => {
         this.tailscaleWatch = undefined;
-        if (!this.stopped) void this.runOnce();
-      }, CONNECT_WATCH_INTERVAL_MS);
-    }
+        if (!this.stopped) this.wake();
+      });
   }
 
   /** Google tool connectors keep their manual credentials next to the runtime. */

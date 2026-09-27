@@ -13,6 +13,8 @@ export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
 export const INSTITUTIONAL_CONTEXT_SKILL_INDEX_MAX_BYTES = 1_800;
 export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
+export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
+export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
 /**
@@ -141,8 +143,9 @@ export interface InstitutionalMemoryProposal {
   readonly audience: InstitutionalMemoryAudience;
   readonly confidence: number;
   readonly classification: {
-    /** The captain's one classification test. */
-    readonly stillTrueForAnotherRequester: boolean;
+    /** Legacy classifier signal; scope is determined by the fact's subject. */
+    readonly stillTrueForAnotherRequester?: boolean;
+    readonly subjectIsRequester?: boolean;
     readonly rationale: string;
   };
   readonly cas: InstitutionalMemoryProposalCas;
@@ -231,6 +234,24 @@ export interface ProposeInstitutionalMemoryInput {
 export interface ProposeInstitutionalMemoryResult {
   readonly itemId: string;
   readonly version: number;
+}
+
+export interface SearchInstitutionalMemoryInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface SearchInstitutionalMemoryResult {
+  /** Quoted, fallible context; never instructions or authority. */
+  readonly results: readonly Pick<
+    InstitutionalMemoryItem,
+    'id' | 'kind' | 'canonicalKey' | 'body' | 'version'
+  >[];
+  readonly quotedContext: true;
 }
 
 export interface SearchInstitutionalHistoryInput {
@@ -427,11 +448,20 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
   const classification = record(proposal.classification, 'institutional memory classification');
   exactKeys(
     classification,
-    ['stillTrueForAnotherRequester', 'rationale'],
+    ['stillTrueForAnotherRequester', 'subjectIsRequester', 'rationale'],
     'institutional memory classification',
   );
-  if (typeof classification.stillTrueForAnotherRequester !== 'boolean') {
+  if (
+    classification.stillTrueForAnotherRequester !== undefined &&
+    typeof classification.stillTrueForAnotherRequester !== 'boolean'
+  ) {
     throw new Error('institutional memory classification test is invalid');
+  }
+  if (
+    classification.subjectIsRequester !== undefined &&
+    typeof classification.subjectIsRequester !== 'boolean'
+  ) {
+    throw new Error('institutional memory subject classification is invalid');
   }
   const rationale = boundedText(
     classification.rationale,
@@ -453,17 +483,14 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       : boundedText(cas.supersedesItemId, 'institutional memory supersedes item', 200);
 
   const workspaceFact = proposal.memoryKind === 'workspace_fact';
-  if (workspaceFact !== classification.stillTrueForAnotherRequester) {
-    throw new Error('institutional memory kind contradicts the requester test');
+  if (
+    classification.subjectIsRequester !== undefined &&
+    classification.subjectIsRequester === workspaceFact
+  ) {
+    throw new Error('institutional memory kind contradicts its subject');
   }
   if ((proposal.audience === 'workspace') !== workspaceFact) {
     throw new Error('institutional memory audience contradicts its kind');
-  }
-  if (proposal.candidateType === 'fact_candidate' && !workspaceFact) {
-    throw new Error('institutional memory fact candidates must be workspace facts');
-  }
-  if (proposal.candidateType === 'preference_candidate' && workspaceFact) {
-    throw new Error('institutional memory preference candidates must be human profile facts');
   }
   const subjectIdentityId =
     proposal.subjectIdentityId === undefined
@@ -497,7 +524,16 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
     audience: proposal.audience,
     confidence: proposal.confidence,
     classification: {
-      stillTrueForAnotherRequester: classification.stillTrueForAnotherRequester,
+      ...(classification.stillTrueForAnotherRequester === undefined
+        ? {}
+        : {
+            stillTrueForAnotherRequester: classification.stillTrueForAnotherRequester,
+          }),
+      ...(classification.subjectIsRequester === undefined
+        ? {}
+        : {
+            subjectIsRequester: classification.subjectIsRequester,
+          }),
       rationale,
     },
     cas: {

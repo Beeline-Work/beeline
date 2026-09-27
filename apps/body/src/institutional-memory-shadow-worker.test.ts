@@ -53,6 +53,14 @@ function workerOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe('institutional memory shadow worker', () => {
+  it('classifies memory by subject, including requester facts beyond preferences', () => {
+    const prompt = institutionalMemoryExtractionPrompt(job);
+    expect(prompt).toContain(
+      'About the requester, including personal facts beyond working preferences',
+    );
+    expect(prompt).toContain('About any other person (member or nonmember)');
+    expect(prompt).toContain('output null for third-party facts sourced from a direct message');
+  });
   it('is on by default and off only when both flags are explicitly false', () => {
     expect(institutionalMemoryShadowEnabled({})).toBe(true);
     expect(

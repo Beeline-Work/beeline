@@ -86,7 +86,7 @@ describe('beeline-agent request_grant', () => {
         },
       },
     ]);
-    expect(reply).toMatch(/^pending, card posted: route squire \[grant g-9\]/);
+    expect(reply).toMatch(/^pending, card posted: use squire \[grant g-9\]/);
     expect(reply).toContain('paused');
     expect(reply).toContain(
       "The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private Trusty Squire DM",

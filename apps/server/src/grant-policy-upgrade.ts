@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import {
+  commandRuleEscalations,
+  parseCommandGrantTarget,
+  type CommandGrantScript,
+} from '@beeline/api-contract/agent-grants';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { ensureSystemDirectMessageRoom, systemLine } from './system-line.js';
@@ -77,15 +82,20 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
       let turnDisposition: 'resumed' | 'cancelled' | 'not-active' | 'unrecoverable' | undefined;
       if (grant.previous_status === 'pending') {
         const command = grant.command_id
-          ? (await db.query<{
-              id: string;
-              turn_request_id: string;
-              root_author_id: string | null;
-            }>(`SELECT command.id,command.turn_request_id,root.author_id root_author_id
+          ? (
+              await db.query<{
+                id: string;
+                turn_request_id: string;
+                root_author_id: string | null;
+              }>(
+                `SELECT command.id,command.turn_request_id,root.author_id root_author_id
               FROM agent_commands command
               LEFT JOIN messages root ON root.id=command.root_source_message_id
               WHERE command.id=$1 AND command.agent_id=$2 AND command.room_id=$3
-              FOR UPDATE OF command`, [grant.command_id, grant.agent_id, grant.room_id])).rows[0]
+              FOR UPDATE OF command`,
+                [grant.command_id, grant.agent_id, grant.room_id],
+              )
+            ).rows[0]
           : undefined;
         if (command?.root_author_id === grant.requested_by) {
           await systemLine(db, {
@@ -197,5 +207,56 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
       JOIN agent_grants g ON g.id::text=e->>'grantId'
       WHERE g.status='revoked' AND e->>'status'<>'revoked'
     )`);
+  });
+}
+
+/**
+ * Asks still pending from before an agent could use its own owner's resources
+ * without a card. The current server never raises them: owner-machine access
+ * is recorded as approved on the spot, and budget and repository asks are
+ * retired. Nothing waits on these rows, yet their cards kept offering
+ * No/Once/Always. Each is withdrawn by @system without waking the turn that
+ * raised it, so an answer can no longer resume stale work. Asks the current
+ * rule still raises — the wallet, a credential file, an unread script — stay.
+ */
+export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promise<number> {
+  return database.transaction(async (db) => {
+    const pending = await db.query<{
+      id: string;
+      kind: string;
+      target: string;
+      script: CommandGrantScript | null;
+    }>(`SELECT id::text,kind,target,script FROM agent_grants
+      WHERE status='pending' AND NOT (kind='mcp' AND target='wallet')
+      FOR UPDATE`);
+    const superseded = pending.rows
+      .filter((grant) => {
+        if (grant.kind !== 'command') return true;
+        try {
+          const rule = parseCommandGrantTarget(grant.target);
+          return commandRuleEscalations(rule, grant.script ?? undefined).length === 0;
+        } catch {
+          return false;
+        }
+      })
+      .map((grant) => grant.id);
+    if (!superseded.length) return 0;
+    await db.query(
+      `UPDATE agent_grants SET status='revoked',decided_by=$2,decided_at=now()
+       WHERE id::text=ANY($1::text[]) AND status='pending'`,
+      [superseded, SYSTEM_IDENTITY_ID],
+    );
+    await db.query(
+      `UPDATE messages m SET card=jsonb_set(m.card,'{grants}',(
+        SELECT jsonb_agg(CASE WHEN e->>'grantId'=ANY($1::text[])
+          THEN jsonb_set(e,'{status}','"revoked"'::jsonb) ELSE e END ORDER BY ordinal)
+        FROM jsonb_array_elements(m.card->'grants') WITH ORDINALITY entries(e,ordinal)
+      )) WHERE m.card_type='grant-request' AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(m.card->'grants') e
+        WHERE e->>'grantId'=ANY($1::text[])
+      )`,
+      [superseded],
+    );
+    return superseded.length;
   });
 }

@@ -95,6 +95,16 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
 }
 
 /**
+ * The words a notification shows. A chat line is cut to a preview under the
+ * app's name. A permission ask is sent whole and without the "Beeline" title,
+ * so the ask itself takes the first line; the phone already names the app.
+ */
+export function pushAlert(message: PushDeliveryMessage): { title?: string; body: string } {
+  if (message.permission) return { body: message.text };
+  return { title: 'Beeline', body: message.text.slice(0, 200) };
+}
+
+/**
  * Android pushes are data-only: expo-notifications draws the notification
  * itself (title `title`, body `message`, identifier `tag`), which is the only
  * way it can attach the inline action buttons named by `categoryId`. An FCM
@@ -105,12 +115,13 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
  */
 export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
   const data = pushMessageData(message);
+  const alert = pushAlert(message);
   return {
     token,
     data: {
       ...data,
-      title: 'Beeline',
-      message: message.text.slice(0, 200),
+      ...(alert.title ? { title: alert.title } : {}),
+      message: alert.body,
       tag: message.messageId,
     },
     android: { priority: 'high' },

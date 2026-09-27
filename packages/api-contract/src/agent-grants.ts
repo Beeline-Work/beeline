@@ -55,7 +55,7 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
   device: 'use',
   budget: 'spend',
   command: 'run',
-  mcp: 'route',
+  mcp: 'use',
   repository: 'edit',
 };
 
@@ -201,35 +201,97 @@ export function formatGrantEscalationReason(
 
 /** Shells and language runtimes: they execute a file the command line does not describe. */
 const INTERPRETER_COMMANDS = new Set([
-  'sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'csh', 'tcsh', 'fish', 'busybox',
-  'python', 'python2', 'python3', 'py', 'pypy', 'pypy3',
-  'node', 'nodejs', 'deno', 'bun', 'ts-node', 'tsx',
-  'ruby', 'irb', 'perl', 'php', 'lua', 'luajit', 'r', 'rscript',
-  'osascript', 'pwsh', 'powershell', 'cmd',
+  'sh',
+  'bash',
+  'zsh',
+  'dash',
+  'ksh',
+  'ash',
+  'csh',
+  'tcsh',
+  'fish',
+  'busybox',
+  'python',
+  'python2',
+  'python3',
+  'py',
+  'pypy',
+  'pypy3',
+  'node',
+  'nodejs',
+  'deno',
+  'bun',
+  'ts-node',
+  'tsx',
+  'ruby',
+  'irb',
+  'perl',
+  'php',
+  'lua',
+  'luajit',
+  'r',
+  'rscript',
+  'osascript',
+  'pwsh',
+  'powershell',
+  'cmd',
 ]);
 
 /** Wrappers whose real command is an argument; the script lookup steps over them. */
 const COMMAND_WRAPPERS = new Set([
-  'env', 'xargs', 'nohup', 'setsid', 'time', 'timeout', 'watch', 'script',
-  'sudo', 'doas', 'nice', 'ionice', 'stdbuf',
+  'env',
+  'xargs',
+  'nohup',
+  'setsid',
+  'time',
+  'timeout',
+  'watch',
+  'script',
+  'sudo',
+  'doas',
+  'nice',
+  'ionice',
+  'stdbuf',
 ]);
 
 /** Basenames whose whole point is holding a secret. */
 const CREDENTIAL_BASENAMES = new Set([
-  '.env', '.envrc', '.flaskenv', '.netrc', '_netrc', '.git-credentials', '.pgpass',
-  '.npmrc', '.pypirc', '.secrets.env', '.htpasswd', '.dockercfg',
-  'credentials', 'credentials.json', 'secrets.json', 'providers.json',
+  '.env',
+  '.envrc',
+  '.flaskenv',
+  '.netrc',
+  '_netrc',
+  '.git-credentials',
+  '.pgpass',
+  '.npmrc',
+  '.pypirc',
+  '.secrets.env',
+  '.htpasswd',
+  '.dockercfg',
+  'credentials',
+  'credentials.json',
+  'secrets.json',
+  'providers.json',
 ]);
 
 /** Directory names that ARE a key store; a path through one is a credential path. */
 const CREDENTIAL_DIRECTORIES = new Set([
-  '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.gcloud', '.docker', 'keyrings',
-  'gh', 'trusty-squire', 'beeline',
+  '.ssh',
+  '.gnupg',
+  '.aws',
+  '.azure',
+  '.kube',
+  '.gcloud',
+  '.docker',
+  'keyrings',
+  'gh',
+  'trusty-squire',
+  'beeline',
 ]);
 
-const CREDENTIAL_EXTENSIONS =
-  /\.(pem|p12|pfx|key|jks|keystore|kdbx|asc|gpg|ppk|crt|pkcs12)$/i;
-const CREDENTIAL_WORD = /(^|[-_.])(secret|secrets|credential|credentials|password|passwd|token|apikey|api_key|keystore|privatekey)([-_.]|$)/i;
+const CREDENTIAL_EXTENSIONS = /\.(pem|p12|pfx|key|jks|keystore|kdbx|asc|gpg|ppk|crt|pkcs12)$/i;
+const CREDENTIAL_WORD =
+  /(^|[-_.])(secret|secrets|credential|credentials|password|passwd|token|apikey|api_key|keystore|privatekey)([-_.]|$)/i;
 const ENV_FILE = /(^|[.\-_])env(\.|$)|^\.env/i;
 
 function commandBasename(word: string): string {

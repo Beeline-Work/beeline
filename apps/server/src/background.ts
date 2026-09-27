@@ -24,7 +24,13 @@ export type PushAction = PushActionPayload;
 export interface PushSender {
   send(
     token: string,
-    message: { messageId: string; text: string; action?: PushAction } & (
+    message: {
+      messageId: string;
+      text: string;
+      action?: PushAction;
+      /** A permission ask: its text is delivered whole, never cut to fit. */
+      permission?: true;
+    } & (
       | { type: 'test' }
       | {
           workspaceId: string;
@@ -152,6 +158,8 @@ export class PushDeliveryLoop {
           AND m.created_at>=now()-interval '1 hour'
           AND m.presentation IS DISTINCT FROM 'activity'
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
+          -- An automatic access receipt asks nothing of anyone.
+          AND m.card_type IS DISTINCT FROM 'grant-auto'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND (m.card_type IS DISTINCT FROM 'relay' OR m.card->>'direction' IS DISTINCT FROM 'up')
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
@@ -289,6 +297,7 @@ export class PushDeliveryLoop {
             type: 'message';
             text: string;
             action?: PushAction;
+            permission?: true;
           };
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
@@ -360,6 +369,9 @@ export class PushDeliveryLoop {
                 type: 'message' as const,
                 text: candidate.text,
                 ...pushActionFor(candidate),
+                // Only a grant-request card carries `grants`, so its first
+                // grant id marks a permission ask.
+                ...(candidate.grant_id ? { permission: true as const } : {}),
               },
       });
     }

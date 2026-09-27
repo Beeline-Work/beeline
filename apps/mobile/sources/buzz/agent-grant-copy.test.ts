@@ -47,7 +47,7 @@ describe('grant copy', () => {
     expect(grantAskLine({ kind: 'budget', target: '$10 of API spend' })).toBe(
       'spend $10 of API spend',
     );
-    expect(grantAskLine({ kind: 'mcp', target: 'squire' })).toBe('route squire');
+    expect(grantAskLine({ kind: 'mcp', target: 'squire' })).toBe('use squire');
   });
 
   it('settles into the write-permission style outcome line, and stays silent while pending', () => {

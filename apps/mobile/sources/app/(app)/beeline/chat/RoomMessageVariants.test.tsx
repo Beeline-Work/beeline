@@ -2389,6 +2389,11 @@ describe('Room message variant components', () => {
     expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe(
       'Alex wants @Terra to use api.fly.io',
     );
+    // Permission text is never cut to one line.
+    for (const grantId of ['g-1', 'g-2'])
+      expect(
+        ownerView.root.findByProps({ testID: `grant-${grantId}-title` }).props.numberOfLines,
+      ).toBeUndefined();
     expect(JSON.stringify(ownerView.toJSON())).toContain('No');
     expect(JSON.stringify(ownerView.toJSON())).toContain('Once');
     expect(JSON.stringify(ownerView.toJSON())).toContain('Always');

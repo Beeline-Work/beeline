@@ -120,7 +120,11 @@ describe('Postgres live fanout', () => {
         table: 'github_repositories', operation: 'UPDATE', roomId: ROOM,
         repositoryId: String(index),
       }) });
-    expect(listener.projectionHealth()).toMatchObject({ active: 2, queued: 13 });
+    expect(listener.projectionHealth()).toMatchObject({
+      connected: true, active: 2, queued: 13, delivered: 0, failed: 0,
+    });
+    expect(listener.projectionHealth().oldestActiveAgeMs).not.toBeNull();
+    expect(listener.projectionHealth().oldestQueuedAgeMs).not.toBeNull();
     client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
       table: 'github_repositories', operation: 'UPDATE', roomId: ROOM, repositoryId: '5',
     }) });
@@ -128,9 +132,19 @@ describe('Postgres live fanout', () => {
     releaseReads();
     await eventually(() => repositoryReads === 15);
     expect(peak).toBe(2);
-    expect(listener.projectionHealth()).toMatchObject({ active: 0, queued: 0, dropped: 0 });
+    expect(listener.projectionHealth()).toMatchObject({
+      active: 0, queued: 0, dropped: 0, delivered: 15, failed: 0,
+      oldestActiveAgeMs: null, oldestQueuedAgeMs: null,
+    });
+    const health = listener.projectionHealth();
+    expect(health.lastNotificationAt).not.toBeNull();
+    expect(health.lastDeliveredAt).toBeGreaterThanOrEqual(health.lastNotificationAt!);
+    expect(health.lastDeliveryAgeMs).not.toBeNull();
+    expect(listener.projectionHealth().deliveryAgeBuckets.reduce((sum, count) => sum + count, 0))
+      .toBe(15);
     await listener.stop();
     await running;
+    expect(listener.projectionHealth().connected).toBe(false);
   });
 
   it('sends one recovery resync after a saturated notification backlog drains', async () => {

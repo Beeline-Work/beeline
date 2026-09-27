@@ -722,6 +722,9 @@ export class RoomRuntimeCoordinator {
 
   quiesceForUpdateIfIdle(): boolean {
     if (!this.isWorkspaceIdle()) return false;
+    // A host restart may be staggered after this idle proof. Keep new
+    // commands from starting while the old process waits for its slot.
+    this.restartRequested = true;
     for (const room of this.running.values()) room.controller.abort();
     return true;
   }

@@ -102,6 +102,7 @@ import {
   ManagedUpdateDrain,
   attemptFailureText,
   gateManagedSuccessor,
+  managedRestartStaggerMs,
   ManagedUpdateHandoff,
   rollbackFailedSuccessor,
   runningRuntimeProbeIds,
@@ -393,8 +394,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // Socket-idle is healthy. Keep systemd's local watchdog alive without a
   // discovery tick or any daemon API read.
   let lastCoreStatus = 'starting';
-  const stopWatchdog = startLocalWatchdog(notifier,
-    () => `loaded_release=${loadedRelease ?? 'development'}; ${lastCoreStatus}`);
+  const stopWatchdog = startLocalWatchdog(
+    notifier,
+    () => `loaded_release=${loadedRelease ?? 'development'}; ${lastCoreStatus}`,
+  );
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
@@ -491,6 +494,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           activeTurnCount: () => core.activeTurnCount(),
           restart: async ({ desiredRelease, drainDeadlineAt }) => {
             core.setDrainDeadlineAt(drainDeadlineAt);
+            const staggerMs = managedRestartStaggerMs(
+              runtime.agent.publicKey,
+              desiredRelease,
+              drainDeadlineAt,
+            );
+            if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
             stoppingStatus =
               `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
               `desired_release=${desiredRelease}; ` +
@@ -621,7 +630,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // readiness or the Room loop.
         void readMachineId(process.env)
           .then(({ machineId, machineName }) =>
-            daemonApi.execute('postAgentMachineReport', { machineId, machineName }))
+            daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
+          )
           .then(() => institutionalMemoryWorker?.wake())
           .catch((error) => console.warn('[body] machine report failed:', error));
         // The connector work queue drains on the live Connect push.

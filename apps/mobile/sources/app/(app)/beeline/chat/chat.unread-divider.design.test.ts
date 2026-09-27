@@ -118,10 +118,10 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId)');
   });
 
-  it('keeps corner unread actions and landing paths closed', () => {
+  it('keeps corner read state and landing paths closed', () => {
     expect(chatSource).toContain('corner={isCorner}');
     expect(chatSource).toContain('{!isCorner && (\n            <RoomCatchUpSheet');
-    expect(chatSource).toContain('messageActionsTarget && !isCorner && countsAsUnread(messageActionsTarget)');
+    expect(chatSource).not.toContain('message-mark-unread-action');
     expect(chatSource).toContain('isCorner ||\n      !firstUnreadMessageId');
     expect(chatSource).toContain('firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,\n    releasedAnchorKey');
   });

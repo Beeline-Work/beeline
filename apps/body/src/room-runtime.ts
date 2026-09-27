@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -372,6 +372,18 @@ export async function discoverCornerWorktree(
   return { path, gitCommonDir };
 }
 
+/** The local worktree root is small even when the server has years of archived corners. */
+export async function localCornerWorktreeIds(supervisorRoot: string): Promise<Set<string>> {
+  const root = resolve(supervisorRoot, 'beeline', 'corners');
+  const entries = await readdir(root, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    },
+  );
+  return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+}
+
 interface CornerScratch {
   path: string;
   cornerId: string;
@@ -528,6 +540,8 @@ export class RoomRuntimeCoordinator {
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
   private readonly idleCornerSubscriptions = new Map<string, () => void>();
   private readonly pendingCornerCommands = new Set<string>();
+  /** Enumerated once; later materialization and removal keep it current. */
+  private localWorktreeIds?: Promise<Set<string>>;
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -1491,11 +1505,17 @@ export class RoomRuntimeCoordinator {
     featureBranch: string;
     token: string;
   }): Promise<{ path: string; gitCommonDir: string }> {
-    return materializeCornerWorktree({
+    const worktree = await materializeCornerWorktree({
       ...input,
       supervisorRoot: this.runtime.supervisorRoot,
       committer: { name: this.agent.name, publicKey: this.agent.publicKey },
     });
+    (await this.getLocalWorktreeIds()).add(input.cornerId);
+    return worktree;
+  }
+
+  private getLocalWorktreeIds(): Promise<Set<string>> {
+    return (this.localWorktreeIds ??= localCornerWorktreeIds(this.runtime.supervisorRoot));
   }
 
   private async retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void> {
@@ -1522,14 +1542,20 @@ export class RoomRuntimeCoordinator {
   private async sweepArchivedCornerWorktrees(
     corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
   ): Promise<void> {
-    for (const corner of corners.values()) {
+    const localIds = await this.getLocalWorktreeIds();
+    for (const cornerId of [...localIds]) {
+      const corner = corners.get(cornerId);
+      if (!corner) continue;
       if (this.running.has(corner.cornerId) || this.pendingCornerReaps.has(corner.cornerId)) {
         continue;
       }
       let discovered: DiscoveredCornerWorktree | undefined;
       try {
         discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, corner.cornerId);
-        if (!discovered) continue;
+        if (!discovered) {
+          localIds.delete(corner.cornerId);
+          continue;
+        }
         const [restore, repository] = await Promise.all([
           this.options.daemonApi.execute('getCornerRestoreState', {
             cornerId: corner.cornerId,
@@ -1590,6 +1616,7 @@ export class RoomRuntimeCoordinator {
       ).token;
       await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
       this.pendingCornerReaps.delete(worktree.cornerId);
+      (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
       // `gone` asserts the remote branch is gone, so a preserved branch must
       // not post it: the corner's own GitHub facts still own its lifecycle.
       if (!preserveRemoteBranch) {

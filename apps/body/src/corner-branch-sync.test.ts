@@ -62,6 +62,51 @@ async function remoteWithCornerBranch(): Promise<{ remote: string; scratch: stri
 }
 
 describe('a helper joining a corner it did not open', () => {
+  it('skips archived history with no local worktree before any restore read', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-history-'));
+    roots.push(supervisorRoot);
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async () => {
+      throw new Error('archive history must not reach the server');
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: {
+          name: 'Bee',
+          publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+        },
+        rooms: [],
+        communityId: 'workspace',
+        supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const recovery = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(
+        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+      ): Promise<void>;
+    };
+    const history = new Map(
+      Array.from(
+        { length: 446 },
+        (_, index) =>
+          [
+            `corner-${index}`,
+            { cornerId: `corner-${index}`, parentRoomId: 'room-parent' },
+          ] as const,
+      ),
+    );
+
+    await recovery.sweepArchivedCornerWorktrees(history);
+
+    expect(execute).not.toHaveBeenCalled();
+    await coordinator.shutdown();
+  });
+
   it('deletes its worktree and exact local and remote branches on close', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-'));

@@ -97,7 +97,9 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
-        'requestId', COALESCE(NEW.request_id, OLD.request_id)
+        'requestId', COALESCE(NEW.request_id, OLD.request_id),
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE' OR NEW.status IS DISTINCT FROM OLD.status
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'rooms' THEN
       payload = jsonb_build_object(
@@ -157,7 +159,11 @@ BEGIN
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
         'lane', COALESCE(NEW.lane, OLD.lane),
         'laneChanged', CASE WHEN TG_OP = 'UPDATE'
-          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END
+          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END,
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
+            OR NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+            OR NEW.close_requested IS DISTINCT FROM OLD.close_requested
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
@@ -270,6 +276,8 @@ interface LiveNotificationPayload {
   closeRequested?: boolean;
   lane?: string;
   laneChanged?: boolean;
+  /** Parent Room of a corner whose list status inputs (turn status, lifecycle, close) changed. */
+  cornerParentId?: string;
   pending?: boolean;
   repositoryChanged?: boolean;
   installationId?: string;
@@ -315,6 +323,9 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
         : {}),
       ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
       ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
+      ...(typeof parsed.cornerParentId === 'string'
+        ? { cornerParentId: parsed.cornerParentId }
+        : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
       ...(typeof parsed.repositoryChanged === 'boolean'
         ? { repositoryChanged: parsed.repositoryChanged } : {}),
@@ -658,5 +669,15 @@ export class PostgresLiveListener {
         : {}),
     };
     this.live.publish(event);
+    // The parent's corner list reads a corner's status from these rows, but
+    // their notifications name only the corner. One reason-only hint tells a
+    // list watching the parent to re-read; nothing else acts on it.
+    if (payload.cornerParentId) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: payload.cornerParentId,
+        reason: 'corner-status',
+      });
+    }
   }
 }

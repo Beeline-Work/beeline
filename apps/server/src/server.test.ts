@@ -611,6 +611,9 @@ describe('daemon live command push', () => {
     });
     await expect(closed).resolves.toEqual({ type: 'corner-complete', roomId });
 
+    // A child corner's status hint is for corner lists, never an inbox replay.
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+
     const restarted = nextSocketMessage(socket, 'corner-restart');
     live.publish({
       type: 'invalidate',

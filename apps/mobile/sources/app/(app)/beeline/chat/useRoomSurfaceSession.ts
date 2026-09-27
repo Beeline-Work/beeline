@@ -727,6 +727,8 @@ export function useRoomSurfaceSession({
               return;
             }
             if (live.type === 'invalidate') {
+              // A child corner's list status: this Room's own read does not change.
+              if (live.reason === 'corner-status') return;
               if (live.trace) {
                 const received = {
                   ...live.trace,

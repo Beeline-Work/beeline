@@ -39,24 +39,25 @@ export function GoogleEntryRow({
   const tools = googleToolRows(connectors);
   const targetId = resolveGoogleConnectTarget(connectors);
   const target = tools.find((tool) => tool.id === targetId) ?? tools[0];
+  const available = tools.some((tool) => tool.available);
   // The parent row is not a connector — never pass the folded "google" id.
   // Status comes from the real google-* tools; soon only when every listed
   // tool is itself unavailable (Google Workspace is not offered here).
   const instrument = connectorInstrument(
-    tools.some((tool) => tool.available) ? entry.status : 'soon',
+    available ? entry.status : 'soon',
     target?.id,
   );
-  const canConnect =
-    instrument.connect && tools.some((tool) => tool.available);
-  const errorText =
-    entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined;
+  const canConnect = instrument.connect && available;
+  const errorText = available && entry.status === 'error'
+    ? (entry.errorMessage ?? 'Connection failed')
+    : undefined;
 
   return (
     <View testID="google-entry">
       <SettingsRow
         action={canConnect ? 'Connect' : undefined}
-        description={errorText}
-        descriptionTone={entry.status === 'error' ? 'danger' : undefined}
+        description={available ? errorText : 'Google connection is unavailable on this Beeline server'}
+        descriptionTone={errorText ? 'danger' : undefined}
         leading={
           <ServiceMark
             company={GOOGLE_ENTRY_ID}
@@ -85,7 +86,7 @@ export function GoogleEntryRow({
           {googleToolRows(connectors).flatMap((tool) => {
             const toolInstrument = connectorInstrument(tool.status, tool.id);
             const canConnect = tool.available && toolInstrument.connect;
-            const extras = connectorExpandedActions(toolInstrument);
+            const extras = tool.available ? connectorExpandedActions(toolInstrument) : [];
             return [
               <SettingsRow
                 leading={
@@ -100,11 +101,11 @@ export function GoogleEntryRow({
                 key={tool.id}
                 testID={`google-tool-${tool.id}`}
                 title={tool.name}
-                value={toolInstrument.value}
-                valueTone={toolInstrument.valueTone}
+                value={tool.available ? toolInstrument.value : 'soon'}
+                valueTone={tool.available ? toolInstrument.valueTone : undefined}
                 action={canConnect ? 'Connect' : undefined}
-                description={tool.status === 'error' ? tool.errorMessage : undefined}
-                descriptionTone={tool.status === 'error' ? 'danger' : undefined}
+                description={tool.available && tool.status === 'error' ? tool.errorMessage : undefined}
+                descriptionTone={tool.available && tool.status === 'error' ? 'danger' : undefined}
                 trailingPress={
                   canConnect
                     ? {

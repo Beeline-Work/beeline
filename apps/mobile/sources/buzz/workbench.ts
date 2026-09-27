@@ -248,7 +248,14 @@ function googleEntryTools(
 ): readonly WorkbenchConnector[] {
   return GOOGLE_CONNECTOR_ORDER.map((id) =>
     connectors.find((connector) => connector.id === id),
-  ).filter((tool): tool is WorkbenchConnector => tool !== undefined);
+  ).filter((tool): tool is WorkbenchConnector => tool !== undefined).map((tool) =>
+    // Older Google rows can carry a Squire browser failure. Google OAuth does
+    // not use that browser, so this is not a Google connection error.
+    tool.status === 'error' &&
+    /Trusty Squire[\s\S]{0,80}browser|browser[\s\S]{0,80}Trusty Squire/i.test(tool.errorMessage ?? '')
+      ? { ...tool, status: 'disconnected', errorMessage: undefined }
+      : tool,
+  );
 }
 
 /** The Google group state across its four tool connectors: fully
@@ -304,11 +311,10 @@ export function googleEntryConnector(
 export function googleToolRows(
   connectors: readonly WorkbenchConnector[],
 ): readonly WorkbenchConnector[] {
-  return GOOGLE_CONNECTOR_ORDER.flatMap((id) => {
-    const tool = connectors.find((connector) => connector.id === id);
-    if (!tool) return [];
-    return [{ ...tool, status: tool.status ?? 'disconnected' }];
-  });
+  return googleEntryTools(connectors).map((tool) => ({
+    ...tool,
+    status: tool.status ?? 'disconnected',
+  }));
 }
 
 /** The concrete Google tool type the single entry pairs first: the first

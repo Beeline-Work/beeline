@@ -1491,8 +1491,13 @@ export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
     (candidate) => readScopedMessage(candidate, item.roomId as string),
     ROOM_VIEW_MESSAGE_LIMIT,
   );
-  if (!messages) return null;
+  // A dropped history row would let a short page claim the beginning while
+  // hiding the very message the reader was trying to load.
+  if (!messages || !Array.isArray(item.messages) || messages.length !== item.messages.length)
+    return null;
   const before = record(item.nextBefore);
+  if (item.nextBefore !== undefined && (!before || !integer(before.createdAt) || !hex64(before.id)))
+    return null;
   const nextBefore =
     before && integer(before.createdAt) && hex64(before.id)
       ? { createdAt: before.createdAt, id: before.id }

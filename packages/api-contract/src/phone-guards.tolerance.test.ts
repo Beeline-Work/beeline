@@ -568,6 +568,14 @@ describe('phone surface readers', () => {
     expect(view?.messages[0]?.text).toBe(`message ${sent.length - ROOM_VIEW_MESSAGE_LIMIT}`);
   });
 
+  it('rejects a history page with an unreadable row instead of claiming its boundary', () => {
+    expect(readRoomHistoryView({ roomId, messages: [{ ...message, id: 'invalid' }] })).toBeNull();
+    expect(
+      readRoomHistoryView({ roomId, messages: [message], nextBefore: { createdAt: 10 } }),
+    ).toBeNull();
+    expect(readRoomHistoryView({ roomId, messages: [message] })?.messages).toHaveLength(1);
+  });
+
   it('omits an unreadable createdAt, updatedAt or archived instead of inventing one', () => {
     const { createdAt: _c, updatedAt: _u, archived: _a, ...bareHeader } = header;
     const view = readRoomView({ ...currentRoom, room: bareHeader });

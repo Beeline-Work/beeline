@@ -27,6 +27,25 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('RoomRuntimeCoordinator live membership apply', () => {
+  it('keeps a capable live socket after a discovery read fault and retains old-server fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-discovery-recovery-'));
+    roots.push(root);
+    const reconnectLive = vi.fn();
+    const supportsDiscoveryWake = vi.fn(() => true);
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: {
+        reconnectLive, supportsDiscoveryWake, setRoomsChangedListener: vi.fn(),
+      } as unknown as DaemonApiClient });
+    try {
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).not.toHaveBeenCalled();
+      supportsDiscoveryWake.mockReturnValue(false);
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
   it('starts a Room from a membership push without listing corners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-room-'));
     roots.push(root);

@@ -697,7 +697,11 @@ export class RoomRuntimeCoordinator {
   }
 
   reconnectAfterFailure(): void {
-    this.options.daemonApi.reconnectLive?.();
+    // New servers emit a discovery wake when their DB listener recovers.
+    // Older servers lack that guarantee, so retain socket reconnect recovery
+    // until they leave the rolling fleet.
+    if (!this.options.daemonApi.supportsDiscoveryWake?.())
+      this.options.daemonApi.reconnectLive?.();
   }
 
   private wakeDiscovery(): void {

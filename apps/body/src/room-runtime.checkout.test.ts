@@ -143,3 +143,46 @@ it('serves an empty remote from Room state, then takes its first default-branch 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it('shares parent repository and token reads across sibling corners and invalidates on change', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-parent-repository-cache-'));
+  try {
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    let releaseRepository!: (value: { resolution: 'repository'; key: string; remote: string }) => void;
+    const pendingRepository = new Promise<{ resolution: 'repository'; key: string; remote: string }>(
+      (resolve) => { releaseRepository = resolve; });
+    const execute = vi.fn(async (name: string) => name === 'getRoomRepositoryState'
+      ? pendingRepository
+      : { token: 'short-lived', expiresAt: Date.now() + 60_000 });
+    const coordinator = new RoomRuntimeCoordinator({
+      agent: { name: 'Bee', publicKey: identity.publicKey,
+        secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+      communityId: 'workspace', rooms: [], supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+    } as AgentRuntimeRecord, join(root, 'agent.json'), { workspaceRoot: root } as never,
+    { daemonApi: { execute } as unknown as DaemonApiClient });
+    const cache = coordinator as unknown as {
+      parentRepositoryState(roomId: string): Promise<unknown>;
+      parentRepositoryToken(roomId: string): Promise<unknown>;
+      invalidateParentRepository(roomId: string): void;
+    };
+    const first = cache.parentRepositoryState('parent');
+    const second = cache.parentRepositoryState('parent');
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomRepositoryState')).toHaveLength(1);
+    releaseRepository({ resolution: 'repository', key: 'owner/repo', remote: 'file:///repo' });
+    expect(await first).toEqual(await second);
+    await cache.parentRepositoryState('parent');
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomRepositoryState')).toHaveLength(1);
+    await Promise.all([cache.parentRepositoryToken('parent'), cache.parentRepositoryToken('parent')]);
+    await cache.parentRepositoryToken('parent');
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomGitHubToken')).toHaveLength(1);
+    cache.invalidateParentRepository('parent');
+    await cache.parentRepositoryState('parent');
+    await cache.parentRepositoryToken('parent');
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomRepositoryState')).toHaveLength(2);
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomGitHubToken')).toHaveLength(2);
+    await coordinator.shutdown();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

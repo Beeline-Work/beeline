@@ -13,6 +13,7 @@ import {
 import {
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
+  type RoomGitHubTokenResult,
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
@@ -554,6 +555,10 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
+  private readonly repositoryStateCache = new Map<string, { value: RoomRepositoryStateResult; until: number }>();
+  private readonly repositoryStateFlights = new Map<string, Promise<RoomRepositoryStateResult>>();
+  private readonly tokenCache = new Map<string, RoomGitHubTokenResult>();
+  private readonly tokenFlights = new Map<string, Promise<RoomGitHubTokenResult>>();
   private confirmationPending = false;
   private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
@@ -600,6 +605,7 @@ export class RoomRuntimeCoordinator {
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
       if (event?.repositoryChanged) {
+        if (event.roomId) this.invalidateParentRepository(event.roomId);
         this.wakeDiscovery();
         return;
       }
@@ -763,6 +769,7 @@ export class RoomRuntimeCoordinator {
       const previous = this.repositoryRevisions.get(room.roomId);
       this.repositoryRevisions.set(room.roomId, revision);
       if (previous === undefined || previous === revision) continue;
+      this.invalidateParentRepository(room.roomId);
       const running = this.running.get(room.roomId);
       if (running) await this.stopRunning(room.roomId, running);
       // A restored App grant can also clear a corner's previous standing
@@ -1013,12 +1020,9 @@ export class RoomRuntimeCoordinator {
 
   private async startRoomOnce(roomId: string): Promise<void> {
     const controller = new AbortController();
-    // Repository inspection is enrichment. A missing first commit or App grant
-    // must not prevent the Room's chat loop from accepting its first command.
-    const cwd = await this.materializeRoomCheckout(roomId).catch((error) => {
-      console.warn(`[thin-core] Room ${roomId} checkout unavailable:`, error);
-      return this.roomRoot(roomId);
-    });
+    // The turn loop refreshes checkout before activation. Idle Rooms can
+    // subscribe to durable commands without fetching a token or running Git.
+    const cwd = this.roomRoot(roomId);
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const startedAt = this.now();
     const loop = new MonolithRoomTurnLoop({
@@ -1082,7 +1086,7 @@ export class RoomRuntimeCoordinator {
     roomId: string,
     repository?: RoomRepositoryStateResult,
   ): Promise<string> {
-    repository ??= await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    repository ??= await this.parentRepositoryState(roomId);
     if (repository.resolution !== 'repository' || !repository.remote) return this.roomRoot(roomId);
 
     const remote = roomCheckoutRemote(repository.remote);
@@ -1095,7 +1099,7 @@ export class RoomRuntimeCoordinator {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
     const token = remote.startsWith('https://github.com/')
-      ? await this.options.daemonApi.execute('getRoomGitHubToken', { roomId })
+      ? await this.parentRepositoryToken(roomId)
       : undefined;
     const env = token ? githubGitEnv(token.token) : process.env;
     if (!existsSync(resolve(path, '.git'))) {
@@ -1145,7 +1149,7 @@ export class RoomRuntimeCoordinator {
     roomId: string,
   ): Promise<{ cwd: string; branch?: string; commit?: string }> {
     try {
-      const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+      const repository = await this.parentRepositoryState(roomId);
       if (repository.resolution !== 'repository' || !repository.remote)
         return { cwd: this.roomRoot(roomId) };
       const branch = repository.targetBranch || 'main';
@@ -1166,9 +1170,7 @@ export class RoomRuntimeCoordinator {
     try {
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
-        this.options.daemonApi.execute('getRoomRepositoryState', {
-          roomId: corner.parentRoomId,
-        }),
+        this.parentRepositoryState(corner.parentRoomId),
       ]);
       const objective =
         (restore.objective ?? '').trim() ||
@@ -1332,10 +1334,53 @@ export class RoomRuntimeCoordinator {
     roomId: string,
   ): Promise<{ token: string; expiresAt: number }> {
     try {
-      return await this.options.daemonApi.execute('getRoomGitHubToken', { roomId });
+      return await this.parentRepositoryToken(roomId);
     } catch (error) {
       if (error instanceof DaemonApiError && !error.retryable) throw error;
       throw new CornerCredentialLookupError(error);
+    }
+  }
+
+  private invalidateParentRepository(roomId: string): void {
+    this.repositoryStateCache.delete(roomId);
+    this.repositoryStateFlights.delete(roomId);
+    this.tokenCache.delete(roomId);
+    this.tokenFlights.delete(roomId);
+  }
+
+  private async parentRepositoryState(roomId: string): Promise<RoomRepositoryStateResult> {
+    const cached = this.repositoryStateCache.get(roomId);
+    if (cached && cached.until > this.now()) return cached.value;
+    const existing = this.repositoryStateFlights.get(roomId);
+    if (existing) return existing;
+    const flight = this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    this.repositoryStateFlights.set(roomId, flight);
+    try {
+      const value = await flight;
+      if (this.repositoryStateFlights.get(roomId) === flight)
+        this.repositoryStateCache.set(roomId, { value, until: this.now() + 5_000 });
+      return value;
+    } finally {
+      if (this.repositoryStateFlights.get(roomId) === flight)
+        this.repositoryStateFlights.delete(roomId);
+    }
+  }
+
+  private async parentRepositoryToken(roomId: string): Promise<RoomGitHubTokenResult> {
+    const cached = this.tokenCache.get(roomId);
+    if (cached && cached.expiresAt - 10_000 > this.now()) return cached;
+    const existing = this.tokenFlights.get(roomId);
+    if (existing) return existing;
+    const flight = this.options.daemonApi.execute('getRoomGitHubToken', { roomId });
+    this.tokenFlights.set(roomId, flight);
+    try {
+      const value = await flight;
+      if (this.tokenFlights.get(roomId) === flight && value.expiresAt - 10_000 > this.now())
+        this.tokenCache.set(roomId, value);
+      return value;
+    } finally {
+      if (this.tokenFlights.get(roomId) === flight)
+        this.tokenFlights.delete(roomId);
     }
   }
 

@@ -20,6 +20,7 @@ import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from
 import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
 import { convergeTrustySquireBrokerService } from './systemd.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
+import { UpdateFunctionalProbeError } from './update-functional-probe.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
@@ -90,6 +91,7 @@ export class ManagedUpdateHandoff {
   #requested = false;
   #restartRequest: ManagedUpdateRestartRequest | undefined;
   #stagedReleaseId: string | undefined;
+  #notifiedReleaseKey: string | undefined;
 
   private constructor(options: {
     layout: BeelineInstallLayout;
@@ -132,6 +134,13 @@ export class ManagedUpdateHandoff {
       now,
       ...options,
     });
+  }
+
+  /** The live server socket wakes this install immediately; the manifest stays authoritative. */
+  notifyReleaseAvailable(releaseKey: string): void {
+    if (!releaseKey || this.#notifiedReleaseKey === releaseKey) return;
+    this.#notifiedReleaseKey = releaseKey;
+    this.#nextUpdateCheckAt = 0;
   }
 
   /**
@@ -199,8 +208,15 @@ export class ManagedUpdateHandoff {
           'BEELINE_UPDATE_INTERVAL_MS',
           DEFAULT_UPDATE_INTERVAL_MS,
         );
-        if (state.lastCheckAt !== undefined && now - state.lastCheckAt < interval) return;
+        if (state.notifiedReleaseKey === this.#notifiedReleaseKey &&
+            state.lastCheckAt !== undefined && now - state.lastCheckAt < interval) return;
         await this.#runUpdateWorker();
+        if (this.#notifiedReleaseKey) {
+          await writeUpdateState(this.#layout, {
+            ...await readUpdateState(this.#layout),
+            notifiedReleaseKey: this.#notifiedReleaseKey,
+          });
+        }
       })
         .catch((error) => {
           console.error(
@@ -266,7 +282,7 @@ export class ManagedUpdateHandoff {
     this.#requested = true;
     console.log(
       `[thin-core] update restart armed: loaded release ${this.#loadedRelease} -> ` +
-        `${desiredRelease}; absolute drain deadline ${new Date(drainDeadlineAt).toISOString()}`,
+        `${desiredRelease}; drain target ${new Date(drainDeadlineAt).toISOString()}`,
     );
     return true;
   }
@@ -276,10 +292,7 @@ export class ManagedUpdateHandoff {
    * Busy means a turn is executing right now; serving Rooms and corners with
    * no turn in flight is idle. `quiesceIfIdle` closes intake in the same
    * synchronous transition that proves idle, so a new turn cannot race
-   * activation. A staged release stays inert while a turn runs — until the
-   * absolute drain deadline, when the restart is forced (`forced: true`) and
-   * the caller cancels the running turn; the convergence contract outranks a
-   * stuck turn. `ManagedUpdateDrain` enforces that deadline with a timer.
+   * activation. A staged release stays inert for as long as a turn runs.
    */
   async restartRequest(quiesceIfIdle: () => boolean): Promise<
     | { kind: 'none' }
@@ -287,17 +300,16 @@ export class ManagedUpdateHandoff {
     | {
         kind: 'restart';
         request: ManagedUpdateRestartRequest;
-        forced: boolean;
       }
   > {
     const activeDrift = await this.check();
     if (!activeDrift && !this.#stagedReleaseId) return { kind: 'none' };
     const request = this.#restartRequest;
     if (!request) throw new Error('update drift was detected without an in-memory restart request');
-    let forced = false;
     if (!quiesceIfIdle()) {
-      if (this.#now() < request.drainDeadlineAt) return { kind: 'waiting', request };
-      forced = true;
+      // An update never cancels agent work. The next completed turn wakes the
+      // drain and installs the staged release through the same idle gate.
+      return { kind: 'waiting', request };
     }
     if (this.#stagedReleaseId) {
       const stagedReleaseId = this.#stagedReleaseId;
@@ -336,12 +348,11 @@ export class ManagedUpdateHandoff {
       this.#restartRequest = undefined;
       await this.#journalDrift(stagedReleaseId);
     }
-    return { kind: 'restart', request: this.#restartRequest ?? request, forced };
+    return { kind: 'restart', request: this.#restartRequest ?? request };
   }
 }
 
-/** How the restart was reached: every turn finished, or the absolute deadline forced it. */
-export type ManagedUpdateRestartMode = 'drained' | 'forced';
+export type ManagedUpdateRestartMode = 'drained';
 
 /** One funnel from a completed core tick to the process handoff callback. */
 export async function coordinateManagedUpdateHandoff(
@@ -356,7 +367,7 @@ export async function coordinateManagedUpdateHandoff(
     await waiting(next.request);
     return 'waiting-for-idle';
   }
-  await restart(next.request, next.forced ? 'forced' : 'drained');
+  await restart(next.request, 'drained');
   return 'restarting';
 }
 
@@ -367,7 +378,7 @@ export interface ManagedUpdateDrainOptions {
   /** Closes intake and returns true only when no turn is executing right now. */
   quiesceIfIdle: () => boolean;
   activeTurnCount: () => number;
-  /** Exits the process. `forced` means a turn is still running and must be cancelled first. */
+  /** Exits the process after every active turn has finished. */
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>;
   /** Progress report while a turn keeps the armed restart waiting (sd_notify STATUS). */
   waiting?: (request: ManagedUpdateRestartRequest) => Promise<void>;
@@ -380,25 +391,20 @@ export interface ManagedUpdateDrainOptions {
 /**
  * The armed restart's clock. Each completed core tick calls `tick()`: an idle
  * helper restarts on that tick; a busy one restarts on the first tick after
- * its last turn ends. The absolute drain deadline is enforced by a timer of
- * its own, so a turn that never ends still restarts on time — the core tick
- * loop is not trusted to reach it. While waiting, one log line per minute
- * says how many turns hold the restart and how long the deadline has left.
+ * its last turn ends. One log line per minute says how many turns still hold
+ * the restart; no update timer cancels a running turn.
  */
 export class ManagedUpdateDrain {
   readonly #options: ManagedUpdateDrainOptions;
-  readonly #now: () => number;
   readonly #log: (line: string) => void;
   readonly #setTimer: (callback: () => void, ms: number) => unknown;
   readonly #clearTimer: (handle: unknown) => void;
-  #deadlineTimer: unknown;
   #waitLogTimer: unknown;
   #resolving: Promise<ManagedUpdateHandoffProgress> | undefined;
   #restarting = false;
 
   constructor(options: ManagedUpdateDrainOptions) {
     this.#options = options;
-    this.#now = options.now ?? Date.now;
     this.#log = options.log ?? ((line) => console.log(line));
     this.#setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
     this.#clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
@@ -419,19 +425,13 @@ export class ManagedUpdateDrain {
   }
 
   async #step(): Promise<ManagedUpdateHandoffProgress> {
-    const { update, quiesceIfIdle, activeTurnCount } = this.#options;
+    const { update, quiesceIfIdle } = this.#options;
     let armed: ManagedUpdateRestartRequest | undefined;
     const progress = await coordinateManagedUpdateHandoff(
       update,
       quiesceIfIdle,
       async (request, mode) => {
         this.#disarm();
-        if (mode === 'forced') {
-          this.#log(
-            `[thin-core] update restart forced: drain deadline reached with ${activeTurnCount()} ` +
-              `active turn(s); cancelling them and restarting onto ${request.desiredRelease}`,
-          );
-        }
         await this.#options.restart(request, mode);
         // Latched only once the process is on its way out; a failed restart
         // attempt leaves the next tick free to try again.
@@ -442,47 +442,33 @@ export class ManagedUpdateDrain {
         await this.#options.waiting?.(request);
       },
     );
-    if (armed && !this.#deadlineTimer) this.#arm(armed);
+    if (armed && !this.#waitLogTimer) this.#arm();
     return progress;
   }
 
-  #arm(request: ManagedUpdateRestartRequest): void {
-    this.#logWaiting(request);
-    this.#scheduleWaitLog(request);
-    this.#deadlineTimer = this.#setTimer(
-      () =>
-        void this.#resolve().catch((error) => {
-          // The next core tick retries: the deadline has passed, so it forces too.
-          this.#log(
-            `[thin-core] update restart at the drain deadline failed; retrying on the next tick: ` +
-              `${error instanceof Error ? error.message : String(error)}`,
-          );
-        }),
-      Math.max(0, request.drainDeadlineAt - this.#now()),
-    );
+  #arm(): void {
+    this.#logWaiting();
+    this.#scheduleWaitLog();
   }
 
-  #scheduleWaitLog(request: ManagedUpdateRestartRequest): void {
+  #scheduleWaitLog(): void {
     this.#waitLogTimer = this.#setTimer(() => {
       this.#waitLogTimer = undefined;
       if (this.#restarting) return;
-      this.#logWaiting(request);
-      this.#scheduleWaitLog(request);
+      this.#logWaiting();
+      this.#scheduleWaitLog();
     }, UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
   }
 
-  #logWaiting(request: ManagedUpdateRestartRequest): void {
-    const minutesLeft = Math.max(0, Math.ceil((request.drainDeadlineAt - this.#now()) / 60_000));
+  #logWaiting(): void {
     this.#log(
       `[thin-core] update restart waiting: ${this.#options.activeTurnCount()} active turn(s); ` +
-        `deadline in ${minutesLeft}m`,
+        `will resume after work finishes`,
     );
   }
 
   #disarm(): void {
-    if (this.#deadlineTimer !== undefined) this.#clearTimer(this.#deadlineTimer);
     if (this.#waitLogTimer !== undefined) this.#clearTimer(this.#waitLogTimer);
-    this.#deadlineTimer = undefined;
     this.#waitLogTimer = undefined;
   }
 }
@@ -611,10 +597,11 @@ export async function proveLoadedReleaseReady(
       return false;
     const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
     const required = current.requiredProbeIds ?? [probeId];
+    const satisfied = [...confirmed, ...(current.unavailableProbeIds ?? [])];
     await replaceUpdateAttempt(layout, {
       ...current,
       confirmedProbeIds: confirmed,
-      ...(required.every((id) => confirmed.includes(id)) ? { status: 'confirmed' as const } : {}),
+      ...(required.every((id) => satisfied.includes(id)) ? { status: 'confirmed' as const } : {}),
     });
     return true;
   });
@@ -637,7 +624,29 @@ export async function proveLoadedReleaseReady(
 
 export type ManagedSuccessorGateResult =
   | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
+  | { kind: 'agent-unavailable'; error: UpdateFunctionalProbeError }
   | { kind: 'failed'; error: unknown; rolledBack: boolean };
+
+async function recordUnavailableProbe(input: {
+  layout: BeelineInstallLayout;
+  loadedRelease: string | undefined;
+  probeId: string;
+}): Promise<boolean> {
+  return withInstallLock(input.layout, async () => {
+    const current = await readUpdateAttempt(input.layout);
+    if (!current || current.status !== 'pending' || current.releaseId !== input.loadedRelease ||
+        await activeReleaseId(input.layout) !== input.loadedRelease) return false;
+    const unavailableProbeIds = [...new Set([...(current.unavailableProbeIds ?? []), input.probeId])].sort();
+    const required = current.requiredProbeIds ?? [input.probeId];
+    const satisfied = [...(current.confirmedProbeIds ?? []), ...unavailableProbeIds];
+    await replaceUpdateAttempt(input.layout, {
+      ...current,
+      unavailableProbeIds,
+      ...(required.every((id) => satisfied.includes(id)) ? { status: 'confirmed' as const } : {}),
+    });
+    return true;
+  });
+}
 
 /**
  * Every daemon on this host shares ONE update attempt, so the first sibling to
@@ -713,6 +722,10 @@ export async function gateManagedSuccessor(input: {
     }
     return { kind: 'passed', proof };
   } catch (error) {
+    if (error instanceof UpdateFunctionalProbeError && error.reason === 'model-unavailable' &&
+        await recordUnavailableProbe(input)) {
+      return { kind: 'agent-unavailable', error };
+    }
     return {
       kind: 'failed',
       error,

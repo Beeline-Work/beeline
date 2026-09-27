@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -7,6 +7,7 @@ import {
   SYSTEM_IDENTITY_ID,
   composeReleaseNotice,
   notifyReleaseDelivered,
+  ReleaseNotifier,
 } from './release-notify.js';
 
 const OWNER = 'a'.repeat(64);
@@ -44,7 +45,6 @@ describe('composeReleaseNotice', () => {
       composeReleaseNotice({
         version: 'v0.0.42',
         changelogUrl: 'https://github.com/lunchboxfortwo/beeline/releases/tag/v0.0.42',
-        behind: false,
         platforms: new Set(),
       }),
     ).toBe(
@@ -52,14 +52,13 @@ describe('composeReleaseNotice', () => {
     );
   });
 
-  it('adds the helper section only when behind, and both platform sections for both devices', () => {
+  it('gives app-store instructions without asking a helper owner to update manually', () => {
     const text = composeReleaseNotice({
       version: 'v0.0.42',
       changelogUrl: 'https://example.test/releases/v0.0.42',
-      behind: true,
       platforms: new Set(['android', 'ios']),
     });
-    expect(text).toContain('"npx usebeeline update"');
+    expect(text).not.toContain('npx usebeeline update');
     // Regression: `beeline` is an UNRELATED package on npm (a router
     // library), so the DM must never name an `npx beeline ...` spelling —
     // that would fetch a stranger's code. The published name is the safe
@@ -156,7 +155,7 @@ describe('notifyReleaseDelivered', () => {
     expect(nextVersion).toEqual({ notified: 2, skipped: 0 });
   });
 
-  it('includes the helper section only for the owner of a daemon reporting a different version', async () => {
+  it('keeps a behind helper out of the release DM because installation is automatic', async () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'t','presence',$3::jsonb)`,
       [
@@ -184,8 +183,24 @@ describe('notifyReleaseDelivered', () => {
        WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
       [SYSTEM_IDENTITY_ID, OTHER_PERSON],
     );
-    expect(ownerMessage.rows[0]?.text).toContain('"npx usebeeline update"');
+    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
     expect(otherMessage.rows[0]?.text).not.toContain('npx usebeeline update');
+  });
+
+  it('stores the delivered helper release and pushes it to connected and later subscribers', async () => {
+    const notifier = new ReleaseNotifier(database);
+    const connected: string[] = [];
+    const release = notifier.subscribeHelperRelease(({ sha }) => connected.push(sha));
+    await notifier.notifyReleaseDelivered({
+      version: 'v0.0.128', sha: 'a'.repeat(40), changelogUrl: 'https://example.test/128',
+    });
+    expect(connected).toContain('a'.repeat(40));
+    release();
+    const reconnect = new ReleaseNotifier(database);
+    const offline: string[] = [];
+    const stop = reconnect.subscribeHelperRelease(({ sha }) => offline.push(sha));
+    await vi.waitFor(() => expect(offline).toContain('a'.repeat(40)));
+    stop();
   });
 
   it('omits the helper section once the owned daemon reports the matching version', async () => {

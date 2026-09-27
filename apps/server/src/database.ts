@@ -1547,6 +1547,15 @@ CREATE TABLE IF NOT EXISTS beeline_release_steps (
   detail jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 
+-- Latest helper bundle confirmed delivered by the release pipeline. Every
+-- server instance reads this for connected daemon sockets and reconnects.
+CREATE TABLE IF NOT EXISTS helper_release_notifications (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  version text NOT NULL,
+  sha text NOT NULL,
+  announced_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Owner-initiated workspace deletion is a real DELETE FROM workspaces, whose
 -- ON DELETE CASCADE already empties rooms/memberships/messages/invites/etc
 -- (every one of those tables carries workspace_id or a room_id that chains to

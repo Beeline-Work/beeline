@@ -4258,7 +4258,22 @@ export class DaemonService {
     return this.writeResult();
   }
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
-    await this.database.query(
+    return this.database.transaction(async (database) => {
+    const prior = (await database.query<{
+      model_unavailable: string | null; owner_id: string; name: string; updated_at: Date;
+    }>(
+      `SELECT a.model_unavailable,a.owner_id,i.name,a.updated_at FROM agents a
+       JOIN identities i ON i.id=a.agent_id
+       JOIN memberships agent_member ON agent_member.identity_id=a.agent_id
+         AND agent_member.workspace_id=$2 AND agent_member.room_id IS NULL
+         AND agent_member.removed_at IS NULL
+       JOIN memberships owner_member ON owner_member.identity_id=a.owner_id
+         AND owner_member.workspace_id=$2 AND owner_member.room_id IS NULL
+         AND owner_member.removed_at IS NULL
+       WHERE a.agent_id=$1`,
+      [agentId, input.workspaceId],
+    )).rows[0];
+    await database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
          selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
          fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,updated_at=now()
@@ -4278,7 +4293,26 @@ export class DaemonService {
         ),
       ],
     );
+    // A model/effort choice the owner must replace is the only update-related
+    // app notice. Routine release checks and successful probes stay silent.
+    if (prior && !prior.model_unavailable &&
+        (input.unavailable === 'model' || input.unavailable === 'effort')) {
+      const roomId = await ensureSystemDirectMessageRoom(
+        database, input.workspaceId, prior.owner_id,
+      );
+      await systemLine(database, {
+        roomId,
+        authorId: SYSTEM_IDENTITY_ID,
+        id: createHash('sha256')
+          .update(`agent-model-unavailable:v1:${agentId}:${input.unavailable}:${prior.updated_at.toISOString()}`)
+          .digest('hex'),
+        subject: { kind: 'agent', id: agentId, name: prior.name },
+        verb: 'needs a different model',
+        consequence: 'Open this agent’s settings and choose an available model or effort.',
+      });
+    }
     return this.writeResult();
+    });
   }
   private async machineReport(input: Input<'postAgentMachineReport'>, agentId: string) {
     await this.database.query(

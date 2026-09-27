@@ -468,8 +468,9 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
     expect(logs.join('\n')).toContain('reverted after a failed served-turn proof');
 
-    // A genuinely newer publish clears the pin without human intervention.
-    const newer = await buildFixtureBundle('c5fixed', '1.6.0');
+    // A new commit clears the pin even if a rebuilt release reused the same
+    // version label. The old OR comparison skipped this later artifact.
+    const newer = await buildFixtureBundle('c5fixed', b.version);
     const fixed = new SelfUpdateManager({
       layout,
       env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(newer) },

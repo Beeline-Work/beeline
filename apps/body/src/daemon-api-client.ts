@@ -149,6 +149,7 @@ export class DaemonApiClient {
   private connectorAssignmentListener?: () => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
+  private helperReleaseListener?: (release: { version: string; sha: string }) => void;
 
   constructor(
     readonly baseUrl: string,
@@ -243,6 +244,10 @@ export class DaemonApiClient {
     this.cornerRestartListener = listener;
   }
 
+  setHelperReleaseListener(listener: (release: { version: string; sha: string }) => void): void {
+    this.helperReleaseListener = listener;
+  }
+
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
@@ -305,6 +310,11 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
+      if (event.type === 'helper-release' && typeof event.version === 'string' &&
+          typeof event.sha === 'string') {
+        this.helperReleaseListener?.({ version: event.version, sha: event.sha });
+        return;
+      }
       if (event.type === 'rooms-changed') {
         this.roomsChangedListener?.(membershipChange(event));
         return;

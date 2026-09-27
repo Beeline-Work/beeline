@@ -50,7 +50,8 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, googleDriveMcpServer, youtubeMcpServer } from './room-session.js';
+import { roomGoogleToolFingerprint, roomGoogleToolTokens } from './room-google-grant.js';
 import { institutionalContextForTurn } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
@@ -549,8 +550,6 @@ export interface MonolithCornerTurnOptions {
   grantRunnerEndpoint?: GrantRunnerEndpoint;
   /** Connection usage capture: batched per turn into one postConnectionUsage. */
   connectorUsage?: ConnectorUsageRecorder;
-  /** Local YouTube MCP — only when this helper already holds the Google grant. */
-  youtubeAccessToken?: string;
 }
 
 /**
@@ -779,13 +778,14 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes, googleTokens] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
       this.grantedHostRoutes(),
+      roomGoogleToolTokens(this.options.api, this.options.cornerId),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
@@ -808,6 +808,7 @@ export class MonolithCornerTurnLoop {
             ],
           }),
           ...registryRoutes.map((route) => route.routeName),
+          ...roomGoogleToolFingerprint(googleTokens),
         ],
         this.sessionCodegraphReady,
       ),
@@ -852,13 +853,14 @@ export class MonolithCornerTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes, googleTokens] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
       this.grantedHostRoutes(),
+      roomGoogleToolTokens(this.options.api, this.options.cornerId),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     this.yoloMode = configuration.yoloMode;
@@ -1078,6 +1080,7 @@ export class MonolithCornerTurnLoop {
             grantedHostRoutes: mountedHostRoutes,
           }),
           ...Object.keys(registryHostDeclarations),
+          ...roomGoogleToolFingerprint(googleTokens),
         ],
         codegraphReady,
       ),
@@ -1132,10 +1135,12 @@ export class MonolithCornerTurnLoop {
     }
     const youtube = youtubeMcpServer(
       this.options.config,
-      this.options.youtubeAccessToken,
+      googleTokens.youtube,
       resourceAuthFile,
     );
     if (youtube) servers.push(youtube);
+    const drive = googleDriveMcpServer(this.options.config, googleTokens.drive, resourceAuthFile);
+    if (drive) servers.push(drive);
     const grantedRouteServers = grantedHostRouteWires(
       mountedHostRoutes,
       operatorHome,

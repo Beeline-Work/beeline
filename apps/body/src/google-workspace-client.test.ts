@@ -20,6 +20,22 @@ describe('defaultAnalyticsDateRange', () => {
   });
 });
 
+describe('Google Drive Room tool', () => {
+  it('lists bounded non-trashed files with the connected bearer', async () => {
+    const client = googleWorkspaceClient(
+      { accessToken: async () => 'room-token' },
+      transport(async (method, url, _body, headers) => {
+        expect(method).toBe('GET');
+        expect(url).toContain('/drive/v3/files?');
+        expect(new URL(url).searchParams.get('q')).toBe('trashed = false');
+        expect(headers?.authorization).toBe('Bearer room-token');
+        return { status: 200, json: { files: [{ id: 'file-1', name: 'Plan' }] } };
+      }),
+    );
+    await expect(client.drive.listFiles()).resolves.toEqual([{ id: 'file-1', name: 'Plan' }]);
+  });
+});
+
 describe('googleWorkspaceClient YouTube', () => {
   it('reads the signed-in channel and an Analytics reports.query', async () => {
     const seen: string[] = [];

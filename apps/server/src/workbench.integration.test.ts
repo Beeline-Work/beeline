@@ -1089,6 +1089,51 @@ describe('workbench connectors', () => {
     expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
   });
 
+  it('serves a connected Gmail grant to its Room agent and denies unrelated Rooms', async () => {
+    const roomId = randomUUID();
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Google Room')`,
+      [roomId, WORKSPACE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member')`, [WORKSPACE, roomId, HELPER]);
+    const before = await daemonOperation('getRoomGoogleGrant', { roomId });
+    expect(before).toMatchObject({ status: 200, body: { status: 'pending' } });
+
+    const paired = await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    }) as { connectorId: string };
+    await database.query(`UPDATE workspace_connectors SET status='connected',sign_in=NULL
+      WHERE id=$1`, [paired.connectorId]);
+    const grant = vi.spyOn(GoogleOAuth.prototype, 'grantForHelper').mockResolvedValue({
+      accessToken: 'renewed-server-token', expiresAt: Date.now() + 3_600_000,
+      scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+    });
+    try {
+      const connected = await daemonOperation('getRoomGoogleGrant', { roomId });
+      expect(connected).toMatchObject({ status: 200, body: {
+        status: 'ready', connectedTypes: ['google-gmail'],
+        credentials: { accessToken: 'renewed-server-token' },
+      } });
+      expect(grant).toHaveBeenCalledWith(paired.connectorId, HELPER);
+      const other = await daemonOperation('getRoomGoogleGrant', { roomId }, otherHelperToken);
+      expect(other).toMatchObject({ status: 403, body: { error: 'daemon room access denied' } });
+      await database.query(`UPDATE workspace_connectors SET status='disconnected' WHERE id=$1`,
+        [paired.connectorId]);
+      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
+        status: 200, body: { status: 'pending' },
+      });
+      await database.query(`UPDATE workspace_connectors SET status='connected' WHERE id=$1`,
+        [paired.connectorId]);
+      await database.query(`UPDATE memberships SET removed_at=now()
+        WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, HUMAN]);
+      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
+        status: 200, body: { status: 'pending' },
+      });
+    } finally {
+      grant.mockRestore();
+    }
+  });
+
   it('keeps a Google retry error until the helper confirms the tool install', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,

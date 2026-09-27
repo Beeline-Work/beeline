@@ -326,6 +326,16 @@ export type DaemonOperationMap = {
       };
     }
   >;
+  /** A connected Google grant for this agent's current Room, renewed server-side. */
+  getRoomGoogleGrant: Operation<RoomInput, {
+    readonly status: 'pending' | 'ready';
+    readonly connectedTypes?: readonly string[];
+    readonly credentials?: {
+      readonly accessToken: string;
+      readonly expiresAt: number;
+      readonly scopes: readonly string[];
+    };
+  }>;
   beginRegistryMcpOAuth: Operation<
     AgentInput & { readonly connectorId: string },
     { readonly state: string; readonly redirectUri: string; readonly expiresAt: number }

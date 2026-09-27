@@ -16,7 +16,6 @@ import {
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
-import { loadManualGoogleCredentials } from './connector-google.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -564,8 +563,6 @@ export class RoomRuntimeCoordinator {
   private readonly grantRunnerServer: GrantRunnerServer;
   /** Connection usage capture, batched per agent turn. */
   private readonly connectorUsage: ConnectorUsageRecorder;
-  /** Cached local Google grant for the YouTube MCP mount. */
-  private youtubeToken: string | null | undefined;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -951,17 +948,6 @@ export class RoomRuntimeCoordinator {
     };
   }
 
-  /** Local Google grant for the YouTube MCP. File/env only — never spawns
-   *  Squire at session start. Connect persists the grant onto this path. */
-  private youtubeAccessToken(): string | undefined {
-    if (this.youtubeToken === undefined) {
-      const home = process.env.BEELINE_AGENT_HOME ?? process.cwd();
-      const resolved = loadManualGoogleCredentials(home);
-      this.youtubeToken = resolved.source === 'manual' ? resolved.credentials.accessToken : null;
-    }
-    return this.youtubeToken ?? undefined;
-  }
-
   /** The loopback door for run_granted_command; started once, on first use. */
   private grantRunnerEndpoint(): Promise<GrantRunnerEndpoint | undefined> {
     return this.grantRunnerServer.start().catch((error) => {
@@ -997,7 +983,6 @@ export class RoomRuntimeCoordinator {
       refreshCheckout: () => this.refreshRoomCheckout(roomId),
       grantRunner: this.grantRunner,
       ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
-      ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
       runtime: this.runtime,
       config: this.roomConfig(roomId),
       api: this.options.daemonApi,
@@ -1198,7 +1183,6 @@ export class RoomRuntimeCoordinator {
         grantRunner: this.grantRunner,
         ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
         connectorUsage: this.connectorUsage,
-        ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
         parentRoomId: corner.parentRoomId,
         workspaceId: this.runtime.communityId,
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),

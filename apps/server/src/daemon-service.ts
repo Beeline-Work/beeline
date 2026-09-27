@@ -1031,6 +1031,33 @@ export class DaemonService {
           credentials ? { status: 'ready', credentials } : { status: 'pending' }
         ) as Output<Name>;
       }
+      case 'getRoomGoogleGrant': {
+        const roomId = (input as Input<'getRoomGoogleGrant'>).roomId;
+        const connected = await this.database.query<{ id: string; connector_type: string }>(
+          `SELECT c.id,c.connector_type FROM workspace_connectors c
+           JOIN rooms r ON r.workspace_id=c.workspace_id AND r.id=$1
+           JOIN agents a ON a.agent_id=$2 AND a.owner_id=c.owner_identity_id
+             AND COALESCE(a.machine_id,a.agent_id)=c.machine_id
+           JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2
+             AND m.removed_at IS NULL
+           JOIN memberships owner ON owner.workspace_id=r.workspace_id
+             AND owner.room_id IS NULL AND owner.identity_id=a.owner_id
+             AND owner.removed_at IS NULL
+           WHERE c.helper_agent_id=$2 AND c.status='connected'
+             AND c.connector_type IN ('google-gmail','google-drive','google-youtube')
+           ORDER BY CASE c.connector_type WHEN 'google-drive' THEN 0 ELSE 1 END
+           `,
+          [roomId, authenticatedAgentId],
+        );
+        const connectorId = connected.rows[0]?.id;
+        const grant = connectorId
+          ? await this.googleOAuth?.grantForHelper(connectorId, authenticatedAgentId)
+          : null;
+        return (grant ? {
+          status: 'ready', credentials: grant,
+          connectedTypes: connected.rows.map((row) => row.connector_type),
+        } : { status: 'pending' }) as Output<Name>;
+      }
       case 'beginRegistryMcpOAuth': {
         if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
         return (await this.registryMcpOAuth.begin(
@@ -6394,6 +6421,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentMachineReport: true,
   getConnectorAssignments: true,
   getGoogleOAuthGrant: true,
+  getRoomGoogleGrant: true,
   beginRegistryMcpOAuth: true,
   claimRegistryMcpOAuthCode: true,
   installConnector: true,

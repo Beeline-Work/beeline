@@ -466,7 +466,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.descriptionTone).toBe('danger');
   });
 
-  it('paints a failed Google tool as its own breakage with its own error', async () => {
+  it('does not paint a stale Squire browser error as Google failure', async () => {
     const source = new MockWorkbenchSource();
     source.failNextPair('trusty-squire');
     source.failNextPair('google-gmail');
@@ -480,14 +480,13 @@ describe('Workbench settings screen', () => {
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
     expect(google.props.action).toBe('Connect');
-    expect(google.props.descriptionTone).toBe('danger');
-    expect(google.props.description).toContain(
-      'another Trusty Squire session is already using the browser',
-    );
+    expect(google.props.descriptionTone).toBeUndefined();
+    expect(google.props.description).toBeUndefined();
     act(() => google.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
     expect(gmail.props.action).toBe('Connect');
-    expect(gmail.props.descriptionTone).toBe('danger');
+    expect(gmail.props.descriptionTone).toBeUndefined();
+    expect(gmail.props.description).toBeUndefined();
   });
 
   it('creates a wallet from Connect and opens the dashboard', async () => {

@@ -114,7 +114,8 @@ it('shows Connect on the parent when no Google tool is connected', async () => {
 it('shows soon on the parent only when every Google tool is unavailable', async () => {
   const onPressConnect = vi.fn();
   const connectors: WorkbenchConnector[] = [
-    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: false },
+    { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: false,
+      status: 'error', errorMessage: 'another Trusty Squire session is already using the browser — close it first' },
     { id: 'google-calendar', name: 'Calendar', description: 'Events', available: false },
     { id: 'google-drive', name: 'Drive', description: 'Files', available: false },
     { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: false },
@@ -131,8 +132,15 @@ it('shows soon on the parent only when every Google tool is unavailable', async 
   });
   const parent = renderer.root.findByProps({ testID: 'google-entry-row' });
   expect(parent.props.value).toBe('soon');
+  expect(parent.props.description).toBe('Google connection is unavailable on this Beeline server');
+  expect(parent.props.descriptionTone).toBeUndefined();
   expect(parent.props.action).toBeUndefined();
   expect(parent.props.trailingPress).toBeUndefined();
+  await act(async () => parent.props.onPress());
+  const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
+  expect(gmail.props.value).toBe('soon');
+  expect(gmail.props.description).toBeUndefined();
+  expect(gmail.props.action).toBeUndefined();
   expect(onPressConnect).not.toHaveBeenCalled();
   await act(async () => renderer.unmount());
 });

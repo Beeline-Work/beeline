@@ -191,6 +191,7 @@ export type CalendarCapability = {
 
 /** Google Drive: search/read documents. */
 export type DriveCapability = {
+  listFiles(): Promise<{ id: string; name?: string; mimeType?: string }[]>;
   searchFiles(query: string): Promise<{ id: string; name?: string; mimeType?: string }[]>;
   readFile(fileId: string): Promise<{ id: string; name?: string; content: string }>;
 };
@@ -378,6 +379,20 @@ export function googleWorkspaceClient(
       },
     },
     drive: {
+      async listFiles() {
+        const params = new URLSearchParams({
+          q: 'trashed = false', pageSize: String(MAX_RESULTS), fields: 'files(id,name,mimeType)',
+        });
+        const { status, json } = await authorized.request(
+          'GET', `https://www.googleapis.com/drive/v3/files?${params}`,
+        );
+        assertOk(status, json);
+        return ((json as { files?: Record<string, unknown>[] }).files ?? []).map((file) => ({
+          id: String(file.id),
+          name: typeof file.name === 'string' ? file.name : undefined,
+          mimeType: typeof file.mimeType === 'string' ? file.mimeType : undefined,
+        }));
+      },
       async searchFiles(query) {
         const params = new URLSearchParams({
           q: `name contains '${query.replace(/'/g, "\\'")}' and trashed = false`,

@@ -1,4 +1,4 @@
-import { assertSchemaCurrent, markSchemaCurrent, migrate, PostgresDatabase } from './database.js';
+import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
@@ -48,10 +48,11 @@ async function runReleaseMigration(): Promise<void> {
     mode: 'migration',
   });
   try {
-    await migrate(database);
+    await migrate(database, { deferData: true });
     await retryMigrationStep('auth schema', async () => {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
+    await migrateData(database);
     // Armed only by the release owner, once the create-or-join onboarding is
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();

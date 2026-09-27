@@ -7,6 +7,7 @@ import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -2071,7 +2072,10 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
 `;
 
-export async function migrate(database: SqlDatabase): Promise<void> {
+export async function migrate(
+  database: SqlDatabase,
+  options: { deferData?: boolean } = {},
+): Promise<void> {
   const ddl = (name: string, sql: string) =>
     retryMigrationStep(name, async () => { await database.query(sql); });
   const ddlScript = async (name: string, sql: string) => {
@@ -2116,9 +2120,6 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      ON messages(created_at DESC)
      WHERE search_document IS NULL AND presentation='message'`,
   ));
-  const searchDocuments = await backfillMessageSearchDocuments(database);
-  if (searchDocuments)
-    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await retryMigrationStep('search document index', () => createIndexConcurrently(
     database,
     'messages_search_document_idx',
@@ -2133,32 +2134,52 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
   ));
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
-  await backfillCornerOwners(database);
-  await backfillInheritedCornerMemberships(database);
-  const blockers = await reconcileCornerMergeBlockers(database);
+  if (!options.deferData) await migrateData(database);
+}
+
+/** Idempotent data work runs after both schema owners have expanded. Each step
+ * commits separately, so retrying a release resumes completed work. */
+export async function migrateData(database: SqlDatabase): Promise<void> {
+  const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    let result!: T;
+    await retryMigrationStep(name, async () => {
+      result = await run();
+    });
+    return result;
+  };
+  const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);
+  if (searchDocuments)
+    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
+  await dataStep('corner owner backfill', () => backfillCornerOwners(database));
+  await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
+  const blockers = await dataStep('corner merge blockers', () =>
+    reconcileCornerMergeBlockers(database));
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
-  const reviewers = await reconcileConfiguredCornerReviewers(database);
+  const reviewers = await dataStep('corner reviewers', () =>
+    reconcileConfiguredCornerReviewers(database));
   console.log(
     `reconcileConfiguredCornerReviewers: restored ${reviewers.subscriptions} subscription(s), dispatched ${reviewers.commands} review(s)`,
   );
-  const syncedRoomRoles = await syncTopLevelSharedRoomRoles(database);
+  const syncedRoomRoles = await dataStep('top-level Room roles', () =>
+    syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
-  await backfillSystemEventKinds(database);
-  await database.query(
+  await dataStep('system event kinds', () => backfillSystemEventKinds(database));
+  await dataStep('system identity avatar', () => database.query(
     `UPDATE identities SET avatar='/v1/connectors/logo/system.svg',updated_at=now()
      WHERE id=$1 AND avatar IS DISTINCT FROM '/v1/connectors/logo/system.svg'`,
     [SYSTEM_IDENTITY_ID],
-  );
+  ));
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
-  await backfillInstitutionalMemoryRollout(database);
+  await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
   await backfillAgentHandles(database);
-  await backfillYoloModeDefault(database);
-  await backfillConnectorMachineId(database);
-  await backfillRegistryApps(database);
-  await upgradeGrantPolicy(database);
-  const withdrawn = await withdrawSupersededGrantAsks(database);
+  await dataStep('yolo default', () => backfillYoloModeDefault(database));
+  await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
+  await dataStep('registry apps', () => backfillRegistryApps(database));
+  await dataStep('grant policy', () => upgradeGrantPolicy(database));
+  const withdrawn = await dataStep('superseded grant asks', () =>
+    withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
 }
 
@@ -2170,28 +2191,38 @@ export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
  * Only rows `searchInstitutionalHistory` can ever return are filled: it matches
  * `presentation='message'` inside INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, and a row
  * older than that window today can never re-enter it, so a document for one is
- * work with no reader. That is what keeps this off the release's critical path
- * — the alternative rewrites the busiest table in full behind the release gate.
- * Batches are bounded by the partial index each UPDATE empties, so no statement
- * holds the table for longer than one batch.
+ * work with no reader. The release data stage keeps this work out of DDL
+ * retries and commits each batch before starting the next. The partial index
+ * makes a converged probe cheap even when older rows remain unfilled.
  */
 export async function backfillMessageSearchDocuments(
   database: SqlDatabase,
   batchSize = MESSAGE_SEARCH_BACKFILL_BATCH,
+  bounded = false,
 ): Promise<number> {
   let filled = 0;
   for (;;) {
-    const updated = await database.query(
-      `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
+    let updated: { rowCount: number } | undefined;
+    await retryMigrationStep('message search backfill batch', async () => {
+      const run = (db: SqlDatabase) => db.query(
+        `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
        WHERE id IN (
          SELECT id FROM messages
          WHERE search_document IS NULL AND presentation='message'
            AND created_at>=now()-$1*interval '1 day'
          ORDER BY created_at DESC LIMIT $2)`,
-      [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
-    );
-    filled += updated.rowCount;
-    if (updated.rowCount < batchSize) return filled;
+        [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
+      );
+      updated = bounded
+        ? await database.transaction(async (transaction) => {
+            await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+            await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+            return run(transaction);
+          })
+        : await run(database);
+    });
+    filled += updated!.rowCount;
+    if (updated!.rowCount < batchSize) return filled;
   }
 }
 
@@ -2219,15 +2250,38 @@ async function createIndexConcurrently(
 
 /** Backfill machine_id on legacy workspace_connectors rows. */
 export async function backfillConnectorMachineId(database: SqlDatabase): Promise<number> {
-  const result = await database.query(
+  const changed = await boundedMigrationUpdate(database, 'connector machine IDs',
     `UPDATE workspace_connectors c SET machine_id=COALESCE(
        (SELECT a.machine_id FROM agents a WHERE a.agent_id=c.helper_agent_id),
        c.helper_agent_id
-     ) WHERE c.machine_id IS NULL`,
+     ) WHERE c.id IN (SELECT id FROM workspace_connectors
+       WHERE machine_id IS NULL ORDER BY id LIMIT $1)`,
   );
-  if (result.rowCount > 0)
-    console.log(`backfillConnectorMachineId: set ${result.rowCount} connector machine_id(s)`);
-  return result.rowCount;
+  if (changed > 0)
+    console.log(`backfillConnectorMachineId: set ${changed} connector machine_id(s)`);
+  return changed;
+}
+
+async function boundedMigrationUpdate(
+  database: SqlDatabase,
+  name: string,
+  sql: string,
+  values: unknown[] = [],
+  batchSize = 200,
+): Promise<number> {
+  let changed = 0;
+  for (;;) {
+    let count = 0;
+    await retryMigrationStep(name, async () => {
+      count = (await database.transaction(async (transaction) => {
+        await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+        await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+        return transaction.query(sql, [...values, batchSize]);
+      })).rowCount;
+    });
+    changed += count;
+    if (count < batchSize) return changed;
+  }
 }
 
 /**
@@ -2237,64 +2291,54 @@ export async function backfillConnectorMachineId(database: SqlDatabase): Promise
  * inside either roster receive deterministic numeric suffixes.
  */
 export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
-  return database.transaction(async (transaction) => {
-    await transaction.query(`SELECT id FROM workspaces ORDER BY id FOR UPDATE`);
-    const rows = await transaction.query<{
-      id: string;
-      kind: 'human' | 'agent';
-      name: string;
-      handle: string | null;
-    }>(
-      `SELECT id,kind,name,handle FROM identities
-       ORDER BY CASE kind WHEN 'human' THEN 0 ELSE 1 END,created_at,id`,
-    );
-    const memberships = await transaction.query<{ workspace_id: string; identity_id: string }>(
-      `SELECT workspace_id,identity_id FROM memberships
-       WHERE room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id,identity_id`,
-    );
-    const workspacesByIdentity = new Map<string, string[]>();
-    for (const membership of memberships.rows) {
-      const workspaces = workspacesByIdentity.get(membership.identity_id) ?? [];
-      workspaces.push(membership.workspace_id);
-      workspacesByIdentity.set(membership.identity_id, workspaces);
-    }
-    const takenByWorkspace = new Map<string, Set<string>>();
-    const unscopedTaken = new Set<string>();
-    for (const row of rows.rows) {
-      if (row.kind !== 'human' || !row.handle) continue;
-      for (const workspaceId of workspacesByIdentity.get(row.id) ?? []) {
-        const taken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
-        taken.add(row.handle.toLowerCase());
-        takenByWorkspace.set(workspaceId, taken);
-      }
-    }
-    let changed = 0;
-    for (const row of rows.rows) {
-      if (row.kind !== 'agent') continue;
-      const workspaceIds = workspacesByIdentity.get(row.id) ?? [];
-      const taken = workspaceIds.length
-        ? workspaceIds.flatMap((workspaceId) => [...(takenByWorkspace.get(workspaceId) ?? [])])
-        : [...unscopedTaken];
-      const handle = uniqueAgentHandle(row.name, taken);
-      if (workspaceIds.length) {
-        for (const workspaceId of workspaceIds) {
-          const workspaceTaken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
-          workspaceTaken.add(handle.toLowerCase());
-          takenByWorkspace.set(workspaceId, workspaceTaken);
-        }
-      } else {
-        unscopedTaken.add(handle.toLowerCase());
-      }
-      if (row.handle === handle) continue;
-      const updated = await transaction.query(
-        `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
-        [row.id, handle],
-      );
-      changed += updated.rowCount;
-    }
-    console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
-    return changed;
-  });
+  const agents = await database.query<{ id: string; created_at: Date }>(
+    `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
+  );
+  let changed = 0;
+  for (const agent of agents.rows) {
+    let updated = 0;
+    await retryMigrationStep(`agent handle ${agent.id}`, async () => {
+      updated = await database.transaction(async (transaction) => {
+        await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+        await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+        // Use the same allocation lock as live pairing/renaming, and lock only
+        // this identity's Workspaces. A legacy global FOR UPDATE held every
+        // Workspace row until the entire population had been rewritten.
+        const workspaceIds = await lockIdentityHandleWorkspaces(transaction, agent.id);
+        const current = (await transaction.query<{ name: string; handle: string | null }>(
+          `SELECT name,handle FROM identities WHERE id=$1 FOR UPDATE`, [agent.id],
+        )).rows[0];
+        if (!current) return 0;
+        const taken = workspaceIds.length
+          ? await transaction.query<{ handle: string }>(
+              `SELECT DISTINCT identity.handle FROM memberships member
+               JOIN identities identity ON identity.id=member.identity_id
+               WHERE member.workspace_id=ANY($1::uuid[]) AND member.room_id IS NULL
+                 AND member.removed_at IS NULL AND identity.id<>$2 AND identity.handle IS NOT NULL
+                 AND (identity.kind='human' OR (identity.kind='agent' AND
+                   (identity.created_at,identity.id)<($3::timestamptz,$2)))`,
+              [workspaceIds, agent.id, agent.created_at],
+            )
+          : await transaction.query<{ handle: string }>(
+              `SELECT identity.handle FROM identities identity WHERE identity.kind='agent'
+                 AND identity.handle IS NOT NULL AND (identity.created_at,identity.id)<($2::timestamptz,$1)
+                 AND NOT EXISTS (SELECT 1 FROM memberships member WHERE member.identity_id=identity.id
+                   AND member.room_id IS NULL AND member.removed_at IS NULL)`,
+              [agent.id, agent.created_at],
+            );
+        const handle = uniqueAgentHandle(current.name, taken.rows.map((row) => row.handle));
+        if (current.handle === handle) return 0;
+        const updated = await transaction.query(
+          `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
+          [agent.id, handle],
+        );
+        return updated.rowCount;
+      });
+    });
+    changed += updated;
+  }
+  console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
+  return changed;
 }
 
 /**
@@ -2329,9 +2373,12 @@ export async function backfillInstitutionalMemoryRollout(database: SqlDatabase):
  * and logs exactly how many rows it touched so a deploy's logs carry the count.
  */
 export async function backfillYoloModeDefault(database: SqlDatabase): Promise<number> {
-  const result = await database.query(`UPDATE agents SET yolo_mode = true WHERE yolo_mode = false`);
-  console.log(`backfillYoloModeDefault: flipped ${result.rowCount} agent row(s) to yolo_mode=true`);
-  return result.rowCount;
+  const changed = await boundedMigrationUpdate(database, 'yolo default',
+    `UPDATE agents SET yolo_mode=true WHERE agent_id IN (
+       SELECT agent_id FROM agents WHERE yolo_mode=false ORDER BY agent_id LIMIT $1)`,
+  );
+  console.log(`backfillYoloModeDefault: flipped ${changed} agent row(s) to yolo_mode=true`);
+  return changed;
 }
 
 /**
@@ -2341,9 +2388,10 @@ export async function backfillYoloModeDefault(database: SqlDatabase): Promise<nu
  * that already happened. Idempotent through the `IS NULL` guard.
  */
 export async function backfillSystemEventKinds(database: SqlDatabase): Promise<void> {
-  await database.query(
+  await boundedMigrationUpdate(database, 'system event kinds',
     `UPDATE messages SET system_event = system_event || jsonb_build_object('kind','schedule-ran')
-     WHERE system_event->>'verb' = $1 AND system_event->>'kind' IS NULL`,
+     WHERE id IN (SELECT id FROM messages WHERE system_event->>'verb'=$1
+       AND system_event->>'kind' IS NULL ORDER BY id LIMIT $2)`,
     [SCHEDULE_RAN_VERB],
   );
 }

@@ -19,6 +19,7 @@ import {
   postgresPoolConfig,
   REQUIRED_SCHEMA_VERSION,
   markSchemaCurrent,
+  migrateData,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
   MIGRATION_LOCK_TIMEOUT_MS,
@@ -171,6 +172,29 @@ describe('a terminated checked-out connection never wedges the pool', () => {
 });
 
 describe('message search vectors', () => {
+  it('keeps release schema and resumable data work separate without losing historical search', async () => {
+    const database = new PgliteDatabase();
+    try {
+      await migrate(database);
+      const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+      const room = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+      const author = 'a'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [author]);
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'History')`, [workspace]);
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('legacy-search',$1,$2,'historical phrase')`, [room, author]);
+      await database.query(`UPDATE messages SET search_document=NULL WHERE id='legacy-search'`);
+      await migrate(database, { deferData: true });
+      expect((await database.query(`SELECT search_document FROM messages WHERE id='legacy-search'`)).rows[0]).toEqual({ search_document: null });
+      await migrateData(database);
+      expect((await database.query<{ matched: boolean }>(
+        `SELECT search_document @@ websearch_to_tsquery('simple','historical phrase') matched
+         FROM messages WHERE id='legacy-search'`,
+      )).rows[0]?.matched).toBe(true);
+    } finally {
+      await database.close();
+    }
+  });
   it('maintains new writes by trigger and fills history in bounded batches', async () => {
     const database = new PgliteDatabase();
     await migrate(database);

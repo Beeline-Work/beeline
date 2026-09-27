@@ -15,6 +15,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { withAdapterInstallLock } from './adapter-install-lock.js';
 import type { SessionMode } from './config.js';
 import {
   cornerAutonomyModeCandidates,
@@ -728,17 +729,19 @@ export class AcpClient extends EventEmitter {
 
   async start(timeoutMs = 60_000): Promise<void> {
     if (this.alive) return;
-    this.child = spawn(this.agentCommand, this.agentArgs, {
-      // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
-      // a real boundary, not a decorative one layered over a full inherit.
-      env: this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
-      ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
-      // The harness and every tool it spawns share a disposable process
-      // group. A hard turn deadline can therefore retire the whole tree,
-      // never just the ACP parent while a shell/compiler keeps running.
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    this.child = await withAdapterInstallLock(() =>
+      spawn(this.agentCommand, this.agentArgs, {
+        // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
+        // a real boundary, not a decorative one layered over a full inherit.
+        env: this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
+        ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
+        // The harness and every tool it spawns share a disposable process
+        // group. A hard turn deadline can therefore retire the whole tree,
+        // never just the ACP parent while a shell/compiler keeps running.
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }),
+    );
     this.alive = true;
 
     this.stderrTail = '';

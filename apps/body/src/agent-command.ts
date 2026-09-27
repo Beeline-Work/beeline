@@ -1,7 +1,10 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
 
 export const AGENT_KINDS = [
@@ -90,6 +93,7 @@ export async function runAdapterInstall(
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       env: opts.env ?? process.env,
       stdio: opts.stdio ?? 'inherit',
+      timeout: 2 * 60_000,
     });
     child.once('error', rejectInstall);
     child.once('exit', (code, signal) => {
@@ -110,12 +114,73 @@ export async function runAdapterInstall(
 /** Refresh a separable ACP adapter before resolving the binary that will use it. */
 export async function installLatestAgentAdapter(
   kind: AgentKind,
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
+  opts: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    stdio?: 'inherit' | 'ignore';
+    readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
+    readLatestVersion?: (packageName: string) => Promise<string>;
+    install?: (command: AdapterInstallCommand) => Promise<void>;
+  } = {},
 ): Promise<boolean> {
   const install = latestAdapterInstallCommand(kind);
   if (!install) return false;
-  await runAdapterInstall(install, opts);
-  return true;
+  const packageName = install.args[2].slice(0, -'@latest'.length);
+  return withAdapterInstallLock(async () => {
+    let installed: string | undefined;
+    let latest: string;
+    try {
+      installed = await (
+        opts.readInstalledVersion ?? ((name) => installedAdapterVersion(name, opts.env))
+      )(packageName);
+      latest = await (
+        opts.readLatestVersion ?? ((name) => publishedAdapterVersion(name, opts.env))
+      )(packageName);
+      if (!latest.trim()) return false;
+    } catch {
+      // An unavailable registry or npm root must not turn every daemon start
+      // into a destructive reinstall of a working adapter.
+      return false;
+    }
+    if (installed === latest.trim()) return false;
+    await (opts.install ?? ((command) => runAdapterInstall(command, opts)))(install);
+    return true;
+  }, opts.env);
+}
+
+const execFileAsync = promisify(execFile);
+
+async function npmOutput(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const { stdout } = await execFileAsync('npm', args, {
+    env,
+    timeout: 3_000,
+    maxBuffer: 16_384,
+  });
+  return stdout.trim();
+}
+
+async function installedAdapterVersion(
+  packageName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const root = await npmOutput(['root', '-g'], env);
+  if (!root) throw new Error('npm global root is empty');
+  try {
+    const contents = await readFile(resolve(root, packageName, 'package.json'), 'utf8');
+    const version = (JSON.parse(contents) as { version?: unknown }).version;
+    if (typeof version !== 'string') throw new Error('installed adapter version is missing');
+    return version;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+async function publishedAdapterVersion(
+  packageName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  return npmOutput(['view', packageName, 'version'], env);
 }
 
 function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string {

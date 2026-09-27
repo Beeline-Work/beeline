@@ -10,8 +10,8 @@
 import pc from 'picocolors';
 import {
   formatAdapterInstallCommand,
+  installLatestAgentAdapter,
   latestAdapterInstallCommand,
-  runAdapterInstall,
   type AdapterInstallCommand,
   type AgentKind,
 } from './agent-command.js';
@@ -45,9 +45,12 @@ import {
 import { withInstallLock } from './managed-update.js';
 
 interface RuntimeAdapterRefreshOptions {
+  env?: NodeJS.ProcessEnv;
   configPaths?: string[];
   readRuntime?: (path: string) => Promise<{ agentKind?: AgentKind }>;
   install?: (command: AdapterInstallCommand) => Promise<void>;
+  readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
+  readLatestVersion?: (packageName: string) => Promise<string>;
   log?: (line: string) => void;
 }
 
@@ -61,7 +64,6 @@ export async function refreshRuntimeHarnessAdapters(
 ): Promise<void> {
   const log = options.log ?? console.log;
   const readRuntime = options.readRuntime ?? readRuntimeRecord;
-  const install = options.install ?? ((command) => runAdapterInstall(command));
   const configPaths = options.configPaths ?? [
     ...(await findRuntimeConfigPaths(process.cwd()).catch(() => [] as string[])),
     ...(await findAgentRuntimeConfigPaths(process.env, process.cwd()).catch(() => [] as string[])),
@@ -76,7 +78,14 @@ export async function refreshRuntimeHarnessAdapters(
     if (!command) continue;
     log(`[beeline] refreshing ${kind} adapter: ${formatAdapterInstallCommand(command)}`);
     try {
-      await install(command);
+      await installLatestAgentAdapter(kind, {
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.install ? { install: options.install } : {}),
+        ...(options.readInstalledVersion
+          ? { readInstalledVersion: options.readInstalledVersion }
+          : {}),
+        ...(options.readLatestVersion ? { readLatestVersion: options.readLatestVersion } : {}),
+      });
     } catch (error) {
       log(
         `[beeline] ${kind} adapter refresh failed; keeping the installed copy (${error instanceof Error ? error.message : String(error)})`,
@@ -120,9 +129,7 @@ export async function requireLayout(): Promise<BeelineInstallLayout> {
   if (layout) return layout;
   const discovered = discoveredBeelineInstallLayout(process.env);
   if ((await readInstalledBundleIdentity(discovered)) !== undefined) return discovered;
-  throw new Error(
-    'this host has no Beeline install; run `npx usebeeline connect` first.',
-  );
+  throw new Error('this host has no Beeline install; run `npx usebeeline connect` first.');
 }
 
 async function runningDaemonConfigPaths(): Promise<string[]> {
@@ -221,7 +228,10 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   // `--check` is explicitly report-only. Every mutating update, including the
   // update pass `beeline start` performs before launching its fan-out, also
   // advances installed ACP adapters to the registry's current release.
-  if (!checkOnly) await refreshRuntimeHarnessAdapters();
+  if (!checkOnly)
+    await refreshRuntimeHarnessAdapters({
+      env: { ...process.env, BEELINE_LIB_DIR: layout.libDir },
+    });
 
   const installed = await readInstalledBundleIdentity(layout);
   console.log(`[beeline] installed bundle: ${describeIdentity(installed)}`);

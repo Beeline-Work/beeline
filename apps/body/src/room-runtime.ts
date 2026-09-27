@@ -39,6 +39,9 @@ export const REMOVAL_CONFIRMATION_READS = 2;
 export const ROOM_JOIN_CONCURRENCY = 4;
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 10 * 60_000;
+export function defaultReconcileHeartbeatMs(random: () => number = Math.random): number {
+  return DEFAULT_RECONCILE_HEARTBEAT_MS + Math.floor(random() * 5 * 60_000);
+}
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
@@ -628,7 +631,7 @@ export class RoomRuntimeCoordinator {
       this.options.onHiccupRestart?.(attempt);
     });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
-    this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
+    this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? defaultReconcileHeartbeatMs();
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
     const fixedWorkspaceCeiling = process.env.BUZZY_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({

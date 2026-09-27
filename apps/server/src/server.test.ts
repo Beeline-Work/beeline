@@ -287,6 +287,45 @@ describe('daemon live command push', () => {
     );
   });
 
+  it('acknowledges push intake when the separate presence announcement fails', async () => {
+    const roomId = 'room-live';
+    const agentId = 'agent-live';
+    const announce = vi.fn().mockRejectedValue(new Error('pool exhausted'));
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticateDaemon: vi.fn().mockResolvedValue(agentId) } as unknown as TokenAuth,
+      phone: { canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      connectionPresence: { announce } as never,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const commands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId, lifecycleId: 'lifecycle-1' }));
+    await expect(subscribed).resolves.toMatchObject({
+      roomId,
+      capabilities: { pushIntake: true, connectionPresence: true },
+    });
+    await expect(commands).resolves.toMatchObject({ roomId, commandProtocol: 1 });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(announce).toHaveBeenCalledOnce();
+  });
+
   it('refreshes commands only for a command invalidation addressed to this agent', async () => {
     const roomId = 'room-live';
     const agentId = 'agent-live';

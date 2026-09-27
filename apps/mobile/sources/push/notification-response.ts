@@ -145,6 +145,8 @@ export type NotificationResponseRouting = {
   handled: Set<string>;
   /** expo-notifications' identifier for a tap on the notification body. */
   defaultActionIdentifier: string;
+  /** Route only after the root navigator has rendered; prefetch may run sooner. */
+  waitForRootReady?: () => Promise<void>;
   /** Resolves once the landing route has committed, or reports a timeout. */
   waitForInitialLanding: () => Promise<InitialLandingResult>;
   /** Claims the destination for this push: the app root's pending landing replace must not run. */
@@ -152,10 +154,20 @@ export type NotificationResponseRouting = {
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
+  /** Optional read started before landing; it never gates navigation. */
+  prefetchRoom?: (responseId: string, roomId: string) => void;
   /** Same durable ids the entry adapter consults; a leftover replay is not a new tap. */
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
 };
+
+async function waitForCommittedLanding(routing: NotificationResponseRouting, log: (message: string) => void): Promise<void> {
+  while ((await routing.waitForInitialLanding()) === 'timeout') {
+    // Keep the response pending while Home shows its retry surface. Suppressing
+    // Home here would strand a cold tap on the empty index route.
+    log('[PUSH ROUTING] Initial landing still pending; retaining pushed destination');
+  }
+}
 
 function stringifyNotificationPayload(value: unknown): string {
   try {
@@ -211,22 +223,50 @@ export async function routeBuzzNotificationResponse(
         stringifyNotificationPayload(response.notification?.request?.content?.data),
     );
 
-    // The app root replaces whatever route is current when its landing check
-    // finishes, so opening the Room before then loses it. On a running app
-    // this is already settled and the tap navigates in the same tick.
-    const landing = await routing.waitForInitialLanding();
-    if (landing === 'timeout') {
-      log('[PUSH ROUTING] Initial landing did not commit before timeout; routing directly');
-    }
-
     const buzzTarget = getBuzzNotificationTargetFromData(
       response.notification?.request?.content?.data,
     );
+    const directRoom =
+      buzzTarget?.target === 'message' &&
+      Boolean(buzzTarget.workspaceId) &&
+      buzzTarget.roomId === buzzTarget.channelId &&
+      !buzzTarget.cornerId;
+    if (responseId && directRoom && buzzTarget?.channelId) {
+      try {
+        routing.prefetchRoom?.(responseId, buzzTarget.channelId);
+      } catch (error) {
+        log(`Could not prefetch pushed Room: ${String(error)}`);
+      }
+    }
+    await routing.waitForRootReady?.();
+
+    // The Room read may finish during startup, but navigation must wait until
+    // the landing route has committed. Root navigator readiness alone can
+    // precede that first usable destination on a killed-app push.
+    if (directRoom && buzzTarget) {
+      await waitForCommittedLanding(routing, log);
+      // This payload already has the exact top-level Room and Workspace. Its
+      // route carries the Workspace id, and the Room's own read persists
+      // server truth. A cold AsyncStorage selection write need not keep the
+      // Room behind the landing screen.
+      routing.suppressPendingInitialLanding();
+      navigateToBuzzTargetFromNotification(routing.router, buzzTarget, responseId!);
+      void routing.resolveTarget(buzzTarget).catch((error) =>
+        log(`Could not persist pushed Workspace selection: ${String(error)}`),
+      );
+      if (responseId) await routing.consumedResponses?.add(responseId);
+      log(`[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId}`);
+      return buzzTarget;
+    }
+
+    if (!directRoom) {
+      await waitForCommittedLanding(routing, log);
+    }
+
     if (buzzTarget) {
-      // This push now owns the destination — including on the timeout path,
-      // where the app root's landing replace may still be pending. Suppress it
+      // This push now owns the destination. Suppress a later Home replace
       // before resolving (which persists the Workspace selection and can take
-      // its own time), or a late replace would land the deck over the Room.
+      // its own time), or that replace would land the deck over the Room.
       routing.suppressPendingInitialLanding();
       const resolvedTarget = await routing.resolveTarget(buzzTarget);
       navigateToBuzzTargetFromNotification(routing.router, resolvedTarget, responseId!);

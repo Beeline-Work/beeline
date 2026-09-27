@@ -11,12 +11,16 @@ import { isPersonNameOnboardingPending } from '@/buzz/person-name';
 import {
   isInitialLandingNavigationSuppressed,
   markInitialLandingResolved,
+  retryInitialLandingNavigation,
 } from '@/navigation/initial-landing';
 import { initialAuthUrl } from '@/auth/desktop-auth-session';
 import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
 
 export default function Home() {
   const pathname = usePathname();
+  const pathnameRef = React.useRef(pathname);
+  pathnameRef.current = pathname;
+  const [landingStalled, setLandingStalled] = React.useState(false);
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
   const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
   const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
@@ -85,9 +89,17 @@ export default function Home() {
         params: { token: initialInviteToken },
       });
     } else if (hasBuzzIdentity && !personNameOnboardingPending) {
-      router.replace('/beeline/channels');
+      return retryInitialLandingNavigation(
+        () => router.replace('/beeline/channels'),
+        () => pathnameRef.current === '/' && !isInitialLandingNavigationSuppressed(),
+        () => setLandingStalled(true),
+      );
     } else {
-      router.replace('/beeline/onboarding');
+      return retryInitialLandingNavigation(
+        () => router.replace('/beeline/onboarding'),
+        () => pathnameRef.current === '/' && !isInitialLandingNavigationSuppressed(),
+        () => setLandingStalled(true),
+      );
     }
   }, [
     buzzCheckDone,
@@ -124,7 +136,22 @@ export default function Home() {
 
   // Beeline owns the app root. The replace keeps back navigation from revealing
   // The app entry always resolves through Beeline identity state.
-  return null;
+  if (!landingStalled) return null;
+  return (
+    <View style={styles.portraitContainer}>
+      <Text style={styles.title}>Opening Beeline…</Text>
+      <RoundButton
+        title="Try again"
+        onPress={() =>
+          router.replace(
+            hasBuzzIdentity && !personNameOnboardingPending
+              ? '/beeline/channels'
+              : '/beeline/onboarding',
+          )
+        }
+      />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

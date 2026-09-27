@@ -100,6 +100,69 @@ function routing(overrides: Partial<NotificationResponseRouting> = {}) {
 }
 
 describe('routeBuzzNotificationResponse', () => {
+  it('keeps an incomplete Room target on the landing fallback without adding a prefetch', async () => {
+    let finishLanding!: (value: 'committed') => void;
+    const landing = new Promise<'committed'>((resolve) => { finishLanding = resolve; });
+    const prefetchRoom = vi.fn();
+    const { navigate, routing: deps } = routing({
+      waitForInitialLanding: () => landing,
+      prefetchRoom,
+    });
+    const routed = routeBuzzNotificationResponse(tap('prefetch-1', 'room-early'), deps);
+    await Promise.resolve();
+    expect(prefetchRoom).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    finishLanding('committed');
+    await routed;
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it('prefetches a complete Room while waiting for a committed cold landing', async () => {
+    let finishLanding!: (value: 'committed') => void;
+    const landing = new Promise<'committed'>((resolve) => { finishLanding = resolve; });
+    const waitForInitialLanding = vi.fn(() => landing);
+    const resolveTarget = vi.fn(() => new Promise<never>(() => undefined));
+    const prefetchRoom = vi.fn();
+    const { navigate, suppressPendingInitialLanding, routing: deps } = routing({
+      waitForInitialLanding,
+      resolveTarget,
+      prefetchRoom,
+    });
+    const routed = routeBuzzNotificationResponse(
+      tap('fast-cold', 'room-fast', { workspaceId: 'workspace-fast' }),
+      deps,
+    );
+    await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledOnce());
+    expect(prefetchRoom).toHaveBeenCalledOnce();
+    expect(suppressPendingInitialLanding).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    finishLanding('committed');
+    await routed;
+    expect(resolveTarget).toHaveBeenCalledOnce();
+    expect(suppressPendingInitialLanding).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it('prefetches during root startup but navigates only after the navigator renders', async () => {
+    let releaseRoot!: () => void;
+    const ready = new Promise<void>((resolve) => { releaseRoot = resolve; });
+    const prefetchRoom = vi.fn();
+    const { navigate, routing: deps } = routing({
+      waitForRootReady: () => ready,
+      prefetchRoom,
+    });
+    const routed = routeBuzzNotificationResponse(
+      tap('early-root', 'room-early', { workspaceId: 'workspace-early' }),
+      deps,
+    );
+    await vi.waitFor(() => expect(prefetchRoom).toHaveBeenCalledOnce());
+    expect(navigate).not.toHaveBeenCalled();
+    releaseRoot();
+    await routed;
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+
   // The reported failure: the app is already running when the push is tapped.
   it('opens the Room a tap names while the app is already running', async () => {
     const { navigate, routing: deps } = routing();
@@ -152,29 +215,34 @@ describe('routeBuzzNotificationResponse', () => {
     expect(navigate.mock.calls[0][0].params.channelId).toBe('room-c');
   });
 
-  it('routes directly when the initial landing commit times out', async () => {
+  it('retains a cold push until the landing actually commits after a timeout', async () => {
     const log = vi.fn();
+    let commit = () => {};
+    const committed = new Promise<'committed'>((resolve) => { commit = () => resolve('committed'); });
+    const waitForInitialLanding = vi.fn().mockResolvedValueOnce('timeout').mockReturnValue(committed);
     const { navigate, routing: deps } = routing({
-      waitForInitialLanding: async () => 'timeout',
+      waitForInitialLanding,
       log,
     });
-
-    await routeBuzzNotificationResponse(tap('msg-timeout', 'room-timeout'), deps);
-
+    const routed = routeBuzzNotificationResponse(tap('msg-timeout', 'room-timeout'), deps);
+    await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledTimes(2));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(deps.suppressPendingInitialLanding).not.toHaveBeenCalled();
+    commit();
+    await routed;
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate.mock.calls[0][0].params.channelId).toBe('room-timeout');
     expect(log).toHaveBeenCalledWith(
-      '[PUSH ROUTING] Initial landing did not commit before timeout; routing directly',
+      '[PUSH ROUTING] Initial landing still pending; retaining pushed destination',
     );
   });
 
-  // The cold-start race behind the wrong-workspace deck: the landing decision
-  // is slow, the wait times out, the push routes directly — and the app root's
-  // landing replace, still pending, must then be suppressed or it lands the
-  // previously-active workspace's deck over the notification destination.
-  it('claims the destination on the timeout path before resolving and navigating', async () => {
+  it('claims a non-direct target only after a timed-out landing later commits', async () => {
+    let commit = () => {};
+    const committed = new Promise<'committed'>((resolve) => { commit = () => resolve('committed'); });
+    const waitForInitialLanding = vi.fn().mockResolvedValueOnce('timeout').mockReturnValue(committed);
     const { navigate, routing: deps } = routing({
-      waitForInitialLanding: async () => 'timeout',
+      waitForInitialLanding,
       suppressPendingInitialLanding: suppressInitialLandingNavigation,
       resolveTarget: async (target) => {
         // The app root reads this flag before its landing replace; it must
@@ -184,8 +252,11 @@ describe('routeBuzzNotificationResponse', () => {
       },
     });
 
-    await routeBuzzNotificationResponse(tap('msg-cold-race', 'room-race'), deps);
-
+    const routed = routeBuzzNotificationResponse(tap('msg-cold-race', 'room-race'), deps);
+    await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledTimes(2));
+    expect(isInitialLandingNavigationSuppressed()).toBe(false);
+    commit();
+    await routed;
     expect(isInitialLandingNavigationSuppressed()).toBe(true);
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate.mock.calls[0][0].params.channelId).toBe('room-race');
@@ -341,7 +412,9 @@ describe('notification response wiring', () => {
           },
         },
       };
+      const prefetchRoom = vi.fn();
       const { navigate, routing: deps } = routing({
+        prefetchRoom,
         resolveTarget: async (target) => {
           expect(target.workspaceId).toBe('other-workspace');
           return target;
@@ -362,6 +435,8 @@ describe('notification response wiring', () => {
       if (entry === 'background') listener?.(response);
 
       await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      if (surface === 'corner') expect(prefetchRoom).not.toHaveBeenCalled();
+      else expect(prefetchRoom).toHaveBeenCalledWith(responseId, channelId);
       expect(navigate).toHaveBeenCalledWith(
         {
           pathname: '/beeline/chat/[channelId]',
@@ -508,11 +583,8 @@ describe('notification response wiring', () => {
     expect(appRootSource.match(/markInitialLandingResolved\(\)/g)).toHaveLength(1);
   });
 
-  // The cold-start regression behind the wrong-workspace deck: the landing
-  // decision is slow, the push's wait times out and routes directly, and the
-  // app root's replace — still pending — would land the previously-active
-  // workspace's deck over the notification destination. The replace must be
-  // refused once a push has claimed the destination.
+  // A committed landing precedes suppression, so a later Home retry must not
+  // replace the push destination after the Room navigation starts.
   it('refuses the app root landing replace once a push claimed the destination', () => {
     const suppressCheck = appRootSource.indexOf('isInitialLandingNavigationSuppressed()');
     const firstReplace = appRootSource.indexOf('router.replace');

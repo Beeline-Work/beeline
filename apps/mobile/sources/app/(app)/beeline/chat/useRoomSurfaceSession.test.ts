@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+import { prefetchPushRoom } from '@/push/push-room-prefetch';
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
@@ -33,11 +34,13 @@ const controls = vi.hoisted(() => ({
   appState: 'active' as string,
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
+  ensureClientPromise: null as Promise<void> | null,
   viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
   roomResponse: null as RoomView | null,
+  roomReads: 0,
   roomError: null as unknown,
 }));
 
@@ -123,6 +126,7 @@ vi.mock('@/sync/transport', () => ({
       controls.transportCount += 1;
     }
     async ensureClient() {
+      await controls.ensureClientPromise;
       return {
         surfaceSubscribe: async (filters: unknown, emit: (event: TestSurfaceEvent) => void) => {
           const stop = vi.fn();
@@ -147,11 +151,18 @@ vi.mock('@/sync/transport/room-view-client', async () => {
     await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
   return {
     RoomViewHttpError,
+    readPushedMonolithRoom: async (_roomId: string) => {
+      controls.roomReads += 1;
+      if (controls.roomError) return Promise.reject(controls.roomError);
+      if (controls.roomResponse) return controls.roomResponse;
+      return new Promise<RoomView>(() => undefined);
+    },
     isRoomViewTimeoutError: (error: unknown) =>
       error instanceof RoomViewHttpError &&
       (error.code === 'timeout' || error.code === 'surface_request_timed_out'),
     RoomViewClient: class {
       async room() {
+        controls.roomReads += 1;
         if (controls.roomError) return Promise.reject(controls.roomError);
         if (controls.roomResponse) return controls.roomResponse;
         return new Promise<RoomView>(() => undefined);
@@ -368,8 +379,10 @@ beforeEach(() => {
   controls.replayEvents.length = 0;
   controls.readMarks.length = 0;
   controls.identityPromise = null;
+  controls.ensureClientPromise = null;
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
+  controls.roomReads = 0;
   controls.roomError = null;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
@@ -1286,6 +1299,74 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
     await act(async () => renderer.unmount());
     vi.useRealTimers();
+  });
+
+  it('paints a pushed Room before a slow watch setup and covers that read afterward', async () => {
+    vi.useFakeTimers();
+    controls.cached = null;
+    controls.roomResponse = roomView('room-a');
+    let releaseClient!: () => void;
+    controls.ensureClientPromise = new Promise<void>((resolve) => { releaseClient = resolve; });
+    let session!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', notificationResponseId: 'response-1', capture: (value) => { session = value; } }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.subscriptions).toHaveLength(0);
+    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
+    await act(async () => {
+      controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch());
+    });
+    expect(session.roomSurface?.room.id).toBe('room-a');
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      releaseClient();
+    });
+    await flushEffects();
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
+    controls.ensureClientPromise = null;
+    vi.useRealTimers();
+  });
+
+  it('uses the push read already started before route mount, then covers its watch gap', async () => {
+    controls.roomResponse = roomView('room-a');
+    prefetchPushRoom('response-prefetched', 'room-a');
+    await flushMicrotasks();
+    expect(controls.roomReads).toBe(1);
+    let session!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(Harness, {
+        channelId: 'room-a',
+        notificationResponseId: 'response-prefetched',
+        capture: (value) => { session = value; },
+      }));
+    });
+    await flushEffects();
+    await act(async () => controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch()));
+    expect(session.roomSurface?.room.id).toBe('room-a');
+    expect(controls.roomReads).toBe(1);
+    await flushEffects();
+    await act(async () => controls.subscriptions[0]!.emit({
+      monolithLive: { type: 'subscribed', roomId: 'room-a' },
+    }));
+    expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
   });
 
   it('closes a watch still waiting on its subscribe when the reader leaves', async () => {

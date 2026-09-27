@@ -4,6 +4,7 @@ import { isDesktopShell } from '@/utils/isDesktopShell';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
+const ACCESS_KEY = 'buzzy.monolith.access.v1';
 
 async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isDesktopShell()) return fetch(input, init);
@@ -47,6 +48,9 @@ export class MonolithSession {
   private access?: { token: string; expiresAt: number; identityId: string };
   private refreshToken?: string;
   private refreshInFlight?: Promise<string>;
+  private accessRestoreInFlight?: Promise<void>;
+  private accessRestoreAttempted = false;
+  private credentialRevision = 0;
 
   constructor(
     private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl,
@@ -120,19 +124,58 @@ export class MonolithSession {
   }
 
   async clear(): Promise<void> {
+    this.credentialRevision += 1;
     this.access = undefined;
     this.refreshToken = undefined;
+    this.accessRestoreAttempted = true;
     const storage = await this.secureStorage();
     await Promise.all([
       storage.deleteItemAsync(REFRESH_KEY),
       storage.deleteItemAsync(IDENTITY_KEY),
+      storage.deleteItemAsync(ACCESS_KEY),
     ]);
     this.identityChanged();
   }
 
   async authorization(): Promise<string> {
-    if (this.access && this.access.expiresAt > Date.now() + 30_000) return this.access.token;
+    const current = this.validAccessToken();
+    if (current) return current;
+    if (!this.access) {
+      if (!this.accessRestoreAttempted) this.accessRestoreInFlight ??= this.restoreAccess();
+      if (this.accessRestoreInFlight) await this.accessRestoreInFlight;
+      const restored = this.validAccessToken();
+      if (restored) return restored;
+    }
     return this.refresh();
+  }
+
+  private validAccessToken(): string | undefined {
+    return this.access && this.access.expiresAt > Date.now() + 30_000
+      ? this.access.token
+      : undefined;
+  }
+
+  private async restoreAccess(): Promise<void> {
+    this.accessRestoreAttempted = true;
+    const revision = this.credentialRevision;
+    const storage = await this.secureStorage();
+    const [raw, identityId] = await Promise.all([
+      storage.getItemAsync(ACCESS_KEY),
+      storage.getItemAsync(IDENTITY_KEY),
+    ]);
+    if (!raw || this.access || revision !== this.credentialRevision) return;
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (
+        value && typeof value === 'object' &&
+        typeof (value as { token?: unknown }).token === 'string' &&
+        typeof (value as { expiresAt?: unknown }).expiresAt === 'number' &&
+        typeof (value as { identityId?: unknown }).identityId === 'string' &&
+        (value as { identityId: string }).identityId === identityId
+      ) this.access = value as { token: string; expiresAt: number; identityId: string };
+    } catch {
+      // An old or partial secure-store value simply takes the refresh path.
+    }
   }
 
   async fetch(
@@ -153,12 +196,13 @@ export class MonolithSession {
       const forwardExternalAbort = () => controller.abort();
       init.signal?.addEventListener('abort', forwardExternalAbort);
       try {
+        const authorized = await this.authorization();
         return await this.fetchImpl(input, {
           ...init,
           signal: controller.signal,
           headers: {
             ...Object.fromEntries(new Headers(init.headers).entries()),
-            authorization: `Bearer ${await this.authorization()}`,
+            authorization: `Bearer ${authorized}`,
           },
         });
       } catch (error) {
@@ -172,6 +216,7 @@ export class MonolithSession {
     let response = await perform();
     if (response.status !== 401) return response;
     this.access = undefined;
+    this.accessRestoreAttempted = true;
     response = await perform();
     return response;
   }
@@ -204,11 +249,17 @@ export class MonolithSession {
   private async accept(tokens: MonolithTokens, signedIn = false): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
+    this.credentialRevision += 1;
     const storage = await this.secureStorage();
     const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
     await Promise.all([
       storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
       storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
+      storage.setItemAsync(ACCESS_KEY, JSON.stringify({
+        token: tokens.accessToken,
+        expiresAt: tokens.accessExpiresAt,
+        identityId: tokens.identityId,
+      })),
     ]);
     this.refreshToken = tokens.refreshToken;
     this.access = {

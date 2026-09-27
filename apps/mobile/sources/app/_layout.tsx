@@ -6,7 +6,7 @@ import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
-import { usePathname, useRouter } from 'expo-router';
+import { useNavigationContainerRef, usePathname, useRouter } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import {
@@ -36,6 +36,7 @@ import {
   type TappedNotificationResponse,
 } from '@/push/notification-response';
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
+import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import {
   markInitialLandingResolved,
   suppressInitialLandingNavigation,
@@ -309,6 +310,13 @@ export default function RootLayout() {
   // Init sequence
   //
   const [initialized, setInitialized] = React.useState(false);
+  const navigationRef = useNavigationContainerRef();
+  const rootReady = React.useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+  if (!rootReady.current) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((wake) => { resolve = wake; });
+    rootReady.current = { promise, resolve };
+  }
   const splashHidden = React.useRef(false);
   const hideNativeSplash = React.useCallback(() => {
     if (splashHidden.current) return;
@@ -329,6 +337,13 @@ export default function RootLayout() {
   React.useEffect(() => {
     if (initialized) hideNativeSplash();
   }, [hideNativeSplash, initialized]);
+  React.useEffect(() => {
+    if (navigationRef.isReady()) {
+      rootReady.current?.resolve();
+      return;
+    }
+    return navigationRef.addListener('ready', () => rootReady.current?.resolve());
+  }, [navigationRef]);
 
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
@@ -337,10 +352,12 @@ export default function RootLayout() {
         router,
         handled: handledNotificationIds.current,
         defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+        waitForRootReady: () => rootReady.current!.promise,
         waitForInitialLanding: whenInitialLandingResolved,
         suppressPendingInitialLanding: suppressInitialLandingNavigation,
         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
         resolveTarget: resolveBuzzNotificationDestination,
+        prefetchRoom: prefetchPushRoom,
         consumedResponses: consumedNotificationResponses,
         log: (message) => console.warn(message),
       });
@@ -349,10 +366,6 @@ export default function RootLayout() {
   );
 
   React.useEffect(() => {
-    if (!initialized) {
-      return;
-    }
-
     return startNotificationResponseEntries({
       addResponseListener: Notifications.addNotificationResponseReceivedListener,
       getLastResponse: Notifications.getLastNotificationResponseAsync,
@@ -362,7 +375,7 @@ export default function RootLayout() {
       log: (message, error) =>
         error == null ? console.warn(message) : console.warn(message, error),
     });
-  }, [handleNotificationResponse, initialized]);
+  }, [handleNotificationResponse]);
 
   // Track the screens
   useTrackScreens();
@@ -377,11 +390,9 @@ export default function RootLayout() {
   // Not inited
   //
 
-  if (!initialized) return null;
-
-  //
-  // Boot
-  //
+  // Mount the navigator on the first render. The native splash stays visible
+  // until fonts load, while Expo Router needs its first focused child before
+  // an imperative landing replace or push navigation can be dispatched.
 
   let providers = (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>

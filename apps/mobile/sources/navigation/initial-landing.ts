@@ -9,13 +9,14 @@
  *
  * So the response waits for the landing instead of racing it. The landing is
  * resolved once per process, so a tap on an app that is already running never
- * waits: the promise is already settled.
+ * waits: the promise is already settled. Home retries a dropped initial
+ * replace until a route commits.
  */
 
 /**
  * Bound on the wait. The landing decision reads secure storage and, on a
- * monolith build, the session; if it never lands the app is unusable anyway,
- * but a tapped push must never be swallowed by that, so the wait ends.
+ * monolith build, the session. Each wait reports a timeout; the push handler
+ * retains the target while Home shows a visible retry surface.
  */
 export const INITIAL_LANDING_TIMEOUT_MS = 8000;
 
@@ -52,6 +53,31 @@ export function suppressInitialLandingNavigation(): void {
 
 export function isInitialLandingNavigationSuppressed(): boolean {
   return suppressed;
+}
+
+/** A root dispatch can be dropped before React Navigation registers its first
+ * focused child, even while the container reports isReady(). Retry the
+ * landing replace until Expo Router reports a committed destination. */
+export function retryInitialLandingNavigation(
+  replace: () => void,
+  isPending: () => boolean,
+  showFallback: () => void,
+): () => void {
+  let cancelled = false;
+  let attempts = 0;
+  let timer: ReturnType<typeof setTimeout>;
+  const tryReplace = () => {
+    if (cancelled || !isPending()) return;
+    replace();
+    attempts += 1;
+    if (attempts === 6) showFallback();
+    timer = setTimeout(tryReplace, attempts < 6 ? 250 : 1000);
+  };
+  tryReplace();
+  return () => {
+    cancelled = true;
+    clearTimeout(timer);
+  };
 }
 
 /** Resolves once the landing route has committed, or on timeout. */

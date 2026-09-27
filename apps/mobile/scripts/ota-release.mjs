@@ -734,6 +734,15 @@ function markCanary(options) {
 // EVERY target names this candidate group and SHA in the message written by
 // promote(). A partial or superseded production rollout is never republished
 // by a retry: that would silently create a different OTA.
+function promotionMessageMatches(observed, expected) {
+  if (observed === expected) return true;
+  // eas-cli update:list --json returns a display line rather than the raw
+  // message: `"<message>" (55 minutes ago by <actor>)`. Compare only the
+  // quoted message, without accepting a prefix or extra words inside it.
+  const display = /^"([^"\r\n]+)" \([^\r\n]*\)$/.exec(observed ?? '');
+  return display?.[1] === expected;
+}
+
 function recoverPromotion(options) {
   const ledger = readLedger(options.ledger);
   if (ledger.status !== 'beta') fail(`Cannot recover ledger status ${ledger.status}.`);
@@ -750,7 +759,7 @@ function recoverPromotion(options) {
   const matched = candidates.flatMap((candidate) => {
     const target = byKey.get(targetKey(candidate));
     const message = `promote beta ${candidate.group} (${ledger.sourceSha.slice(0, 12)})`;
-    return target?.message === message ? [target] : [];
+    return promotionMessageMatches(target?.message, message) ? [target] : [];
   });
   if (matched.length === 0) {
     if (Number(options.retryAttempt ?? 1) > 1) {

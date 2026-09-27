@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
@@ -26,6 +27,19 @@ import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
 export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 60_000;
+export const MAX_HOST_RESTART_STAGGER_MS = 15_000;
+
+/** Stable per-agent spread after intake quiesces, bounded by the handoff deadline. */
+export function managedRestartStaggerMs(
+  agentId: string,
+  desiredRelease: string,
+  drainDeadlineAt: number,
+  now: number = Date.now(),
+): number {
+  const digest = createHash('sha256').update(agentId).update('\0').update(desiredRelease).digest();
+  const spread = digest.readUInt32BE(0) % (MAX_HOST_RESTART_STAGGER_MS + 1);
+  return Math.min(spread, Math.max(0, drainDeadlineAt - now));
+}
 const UPDATE_WORKER_DEADLINE_MS = UPDATE_DRAIN_DEADLINE_MS;
 // Must exceed the worker's absolute deadline: a legitimate long archive
 // download must never be mistaken for a dead owner by another agent daemon.
@@ -208,12 +222,16 @@ export class ManagedUpdateHandoff {
           'BEELINE_UPDATE_INTERVAL_MS',
           DEFAULT_UPDATE_INTERVAL_MS,
         );
-        if (state.notifiedReleaseKey === this.#notifiedReleaseKey &&
-            state.lastCheckAt !== undefined && now - state.lastCheckAt < interval) return;
+        if (
+          state.notifiedReleaseKey === this.#notifiedReleaseKey &&
+          state.lastCheckAt !== undefined &&
+          now - state.lastCheckAt < interval
+        )
+          return;
         await this.#runUpdateWorker();
         if (this.#notifiedReleaseKey) {
           await writeUpdateState(this.#layout, {
-            ...await readUpdateState(this.#layout),
+            ...(await readUpdateState(this.#layout)),
             notifiedReleaseKey: this.#notifiedReleaseKey,
           });
         }
@@ -634,9 +652,16 @@ async function recordUnavailableProbe(input: {
 }): Promise<boolean> {
   return withInstallLock(input.layout, async () => {
     const current = await readUpdateAttempt(input.layout);
-    if (!current || current.status !== 'pending' || current.releaseId !== input.loadedRelease ||
-        await activeReleaseId(input.layout) !== input.loadedRelease) return false;
-    const unavailableProbeIds = [...new Set([...(current.unavailableProbeIds ?? []), input.probeId])].sort();
+    if (
+      !current ||
+      current.status !== 'pending' ||
+      current.releaseId !== input.loadedRelease ||
+      (await activeReleaseId(input.layout)) !== input.loadedRelease
+    )
+      return false;
+    const unavailableProbeIds = [
+      ...new Set([...(current.unavailableProbeIds ?? []), input.probeId]),
+    ].sort();
     const required = current.requiredProbeIds ?? [input.probeId];
     const satisfied = [...(current.confirmedProbeIds ?? []), ...unavailableProbeIds];
     await replaceUpdateAttempt(input.layout, {
@@ -722,8 +747,11 @@ export async function gateManagedSuccessor(input: {
     }
     return { kind: 'passed', proof };
   } catch (error) {
-    if (error instanceof UpdateFunctionalProbeError && error.reason === 'model-unavailable' &&
-        await recordUnavailableProbe(input)) {
+    if (
+      error instanceof UpdateFunctionalProbeError &&
+      error.reason === 'model-unavailable' &&
+      (await recordUnavailableProbe(input))
+    ) {
       return { kind: 'agent-unavailable', error };
     }
     return {

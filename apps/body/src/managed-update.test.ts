@@ -19,6 +19,8 @@ import {
   gateManagedSuccessor,
   ManagedUpdateDrain,
   ManagedUpdateHandoff,
+  managedRestartStaggerMs,
+  MAX_HOST_RESTART_STAGGER_MS,
   proveLoadedReleaseReady,
   rollbackFailedSuccessor,
   UPDATE_DRAIN_DEADLINE_MS,
@@ -73,6 +75,20 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
+  it('spreads fifteen agents while respecting the current drain deadline', () => {
+    const agents = Array.from({ length: 15 }, (_, index) => index.toString(16).padStart(64, '0'));
+    const delays = agents.map((agent) =>
+      managedRestartStaggerMs(agent, 'release-new', 100_000, 80_000),
+    );
+    expect(new Set(delays).size).toBeGreaterThan(10);
+    expect(delays.every((delay) => delay >= 0 && delay <= MAX_HOST_RESTART_STAGGER_MS)).toBe(true);
+    expect(managedRestartStaggerMs(agents[0]!, 'release-new', 80_001, 80_000)).toBeLessThanOrEqual(
+      1,
+    );
+    expect(managedRestartStaggerMs(agents[0]!, 'release-new', 79_999, 80_000)).toBe(0);
+    expect(managedRestartStaggerMs(agents[0]!, 'release-new', 100_000, 80_000)).toBe(delays[0]);
+  });
+
   it('restarts when this process is still executing a previous release after the anchor moved', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     await rm(layout.libDir);
@@ -190,7 +206,9 @@ describe('managed update handoff', () => {
     expect(await activeReleaseId(layout)).toBe('old');
 
     now += 50;
-    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe('waiting-for-idle');
+    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe(
+      'waiting-for-idle',
+    );
     expect(restarts).toEqual([]);
     expect(await activeReleaseId(layout)).toBe('old');
     expect(await coordinateManagedUpdateHandoff(update, () => true, restart)).toBe('restarting');
@@ -276,17 +294,29 @@ describe('managed update handoff', () => {
     await symlink('beeline-releases/new', layout.libDir);
     await update.check();
     const result = await gateManagedSuccessor({
-      layout, runtimeDir, loadedRelease: 'new', probeId: 'agent-1',
-      probe: () => Promise.reject(new UpdateFunctionalProbeError('model-unavailable', 'chosen model gone')),
+      layout,
+      runtimeDir,
+      loadedRelease: 'new',
+      probeId: 'agent-1',
+      probe: () =>
+        Promise.reject(new UpdateFunctionalProbeError('model-unavailable', 'chosen model gone')),
     });
     expect(result.kind).toBe('agent-unavailable');
     expect(await activeReleaseId(layout)).toBe('new');
-    expect(await readUpdateAttempt(layout)).toMatchObject({ status: 'pending', unavailableProbeIds: ['agent-1'] });
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
-      probeId: 'agent-2', functionalProof,
-    })).toBe(true);
     expect(await readUpdateAttempt(layout)).toMatchObject({
-      status: 'confirmed', confirmedProbeIds: ['agent-2'], unavailableProbeIds: ['agent-1'],
+      status: 'pending',
+      unavailableProbeIds: ['agent-1'],
+    });
+    expect(
+      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
+        probeId: 'agent-2',
+        functionalProof,
+      }),
+    ).toBe(true);
+    expect(await readUpdateAttempt(layout)).toMatchObject({
+      status: 'confirmed',
+      confirmedProbeIds: ['agent-2'],
+      unavailableProbeIds: ['agent-1'],
     });
   });
 
@@ -504,7 +534,9 @@ describe('managed update handoff', () => {
     let workerCalls = 0;
     const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
       env: { BEELINE_UPDATE_INTERVAL_MS: '21600000' },
-      runUpdateWorker: async () => { workerCalls += 1; },
+      runUpdateWorker: async () => {
+        workerCalls += 1;
+      },
     });
     await update.check();
     await vi.waitFor(() => expect(workerCalls).toBe(1));
@@ -532,12 +564,24 @@ describe('managed update handoff', () => {
     expect(await update.check()).toBe(false);
     expect((await readUpdateState(layout)).stagedReleaseId).toBeUndefined();
     update.notifyReleaseAvailable('v0.0.128:release-sha');
-    expect(await coordinateManagedUpdateHandoff(update, () => true, async () => undefined)).toBe('none');
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => true,
+        async () => undefined,
+      ),
+    ).toBe('none');
     await vi.waitFor(async () =>
       expect((await readUpdateState(layout)).stagedReleaseId).toBe('new'),
     );
     now += 5_000; // the helper's ordinary watchdog progress interval
-    expect(await coordinateManagedUpdateHandoff(update, () => true, async () => undefined)).toBe('restarting');
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => true,
+        async () => undefined,
+      ),
+    ).toBe('restarting');
     expect(await activeReleaseId(layout)).toBe('new');
   });
 });
@@ -642,7 +686,9 @@ describe('managed update drain', () => {
     const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 1 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     expect(restarts).toEqual([]);
-    expect(logs).toEqual(['[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes']);
+    expect(logs).toEqual([
+      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
+    ]);
 
     await clock.advance(2 * MINUTE);
     expect(restarts).toEqual([]);
@@ -673,7 +719,9 @@ describe('managed update drain', () => {
     expect(state.intakeQuiesced).toBe(false);
     state.activeTurns = 0;
     expect(await drain.tick()).toBe('restarting');
-    expect(restarts).toEqual([{ release: 'new', mode: 'drained', at: armedAt + UPDATE_DRAIN_DEADLINE_MS }]);
+    expect(restarts).toEqual([
+      { release: 'new', mode: 'drained', at: armedAt + UPDATE_DRAIN_DEADLINE_MS },
+    ]);
   });
 
   it('logs one waiting line per minute with the current turn count', async () => {

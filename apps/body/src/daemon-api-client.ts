@@ -130,6 +130,9 @@ export class DaemonApiClient {
   private liveSocket?: WebSocket;
   private liveReconnect?: ReturnType<typeof setTimeout>;
   private liveReconnectDelayMs = 1_000;
+  private pendingSubscriptions: string[] = [];
+  private subscriptionInFlight?: string;
+  private subscriptionCompletionDeadline?: ReturnType<typeof setTimeout>;
   private readonly liveRooms = new Map<
     string,
     {
@@ -199,9 +202,11 @@ export class DaemonApiClient {
       });
     }
     this.ensureLiveSocket();
-    if (this.liveSocket?.readyState === WebSocket.OPEN) this.sendLiveSubscription(roomId);
+    if (this.liveSocket?.readyState === WebSocket.OPEN) this.queueLiveSubscription(roomId);
     return () => {
       this.liveRooms.delete(roomId);
+      this.pendingSubscriptions = this.pendingSubscriptions.filter((pending) => pending !== roomId);
+      this.completeLiveSubscription(roomId);
       if (this.liveSocket?.readyState === WebSocket.OPEN) {
         this.liveSocket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
@@ -274,6 +279,7 @@ export class DaemonApiClient {
     this.liveReconnect = undefined;
     const socket = this.liveSocket;
     this.liveSocket = undefined;
+    this.clearLiveSubscriptionQueue();
     socket?.close();
   }
 
@@ -317,7 +323,9 @@ export class DaemonApiClient {
     this.liveSocket = socket;
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;
-      for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
+      this.pendingSubscriptions = [...this.liveRooms.keys()];
+      this.subscriptionInFlight = undefined;
+      this.pumpLiveSubscriptions();
       // Every wake on this socket is fire-and-forget: a membership written, or
       // a Connect tapped, while this socket was connecting (or between
       // reconnects) never replays its frame. Treat every open as both wakes, so
@@ -327,6 +335,7 @@ export class DaemonApiClient {
       this.memoryJobListener?.();
     };
     socket.onmessage = (message) => {
+      if (this.liveSocket !== socket) return;
       let value: unknown;
       try {
         value = JSON.parse(String(message.data));
@@ -335,8 +344,11 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
-      if (event.type === 'helper-release' && typeof event.version === 'string' &&
-          typeof event.sha === 'string') {
+      if (
+        event.type === 'helper-release' &&
+        typeof event.version === 'string' &&
+        typeof event.sha === 'string'
+      ) {
         this.helperReleaseListener?.({ version: event.version, sha: event.sha });
         return;
       }
@@ -398,6 +410,10 @@ export class DaemonApiClient {
         while (room.pushedCommandIds.size > 10_000)
           room.pushedCommandIds.delete(room.pushedCommandIds.values().next().value!);
         if (commands.length) room.onCommands?.(commands);
+        // The initial command snapshot is the last server projection for a
+        // subscription. Its arrival credits the next Room; `subscribed` is
+        // sent before replay and command reads complete on current servers.
+        this.completeLiveSubscription(event.roomId);
         return;
       }
       if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
@@ -421,11 +437,15 @@ export class DaemonApiClient {
     const reconnect = () => {
       if (this.liveSocket !== socket) return;
       this.liveSocket = undefined;
+      this.clearLiveSubscriptionQueue();
       for (const room of this.liveRooms.values()) room.onState?.(false);
       if (!this.liveRooms.size && !this.roomsChangedListener) return;
       const delay = this.liveReconnectDelayMs;
       this.liveReconnectDelayMs = Math.min(delay * 2, 30_000);
-      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), delay + Math.floor(Math.random() * delay * 0.25));
+      this.liveReconnect = setTimeout(
+        () => this.ensureLiveSocket(),
+        delay + Math.floor(Math.random() * delay * 0.25),
+      );
       this.liveReconnect.unref?.();
     };
     socket.onerror = () => undefined;
@@ -444,6 +464,43 @@ export class DaemonApiClient {
         ...room.presence,
       }),
     );
+  }
+
+  private queueLiveSubscription(roomId: string): void {
+    if (this.subscriptionInFlight === roomId || this.pendingSubscriptions.includes(roomId)) return;
+    this.pendingSubscriptions.push(roomId);
+    this.pumpLiveSubscriptions();
+  }
+
+  private pumpLiveSubscriptions(): void {
+    if (this.subscriptionInFlight || this.liveSocket?.readyState !== WebSocket.OPEN) return;
+    const roomId = this.pendingSubscriptions.shift();
+    if (!roomId) return;
+    this.subscriptionInFlight = roomId;
+    this.sendLiveSubscription(roomId);
+    // Older servers or a revoked Room can omit a command snapshot. Release
+    // this one credit once so other authorized Rooms remain serviceable. This
+    // sends each queued subscription once; it never polls or retries a Room.
+    this.subscriptionCompletionDeadline = setTimeout(
+      () => this.completeLiveSubscription(roomId),
+      5_000,
+    );
+    this.subscriptionCompletionDeadline.unref?.();
+  }
+
+  private completeLiveSubscription(roomId: string): void {
+    if (this.subscriptionInFlight !== roomId) return;
+    clearTimeout(this.subscriptionCompletionDeadline);
+    this.subscriptionCompletionDeadline = undefined;
+    this.subscriptionInFlight = undefined;
+    this.pumpLiveSubscriptions();
+  }
+
+  private clearLiveSubscriptionQueue(): void {
+    clearTimeout(this.subscriptionCompletionDeadline);
+    this.subscriptionCompletionDeadline = undefined;
+    this.subscriptionInFlight = undefined;
+    this.pendingSubscriptions = [];
   }
 }
 

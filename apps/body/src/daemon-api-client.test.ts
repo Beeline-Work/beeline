@@ -242,6 +242,62 @@ describe('DaemonApiClient', () => {
     vi.unstubAllGlobals();
   });
 
+  it('credits one subscription after its command snapshot and drains a missing ACK once', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const releases = ['room-1', 'room-2', 'room-3'].map((id) => client.liveSubscribe(id));
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    const sentRooms = () => socket.sent.map((frame) => JSON.parse(frame).roomId as string);
+    expect(sentRooms()).toEqual(['room-1']);
+    socket.message({ type: 'subscribed', roomId: 'room-1' });
+    expect(sentRooms()).toEqual(['room-1']);
+    socket.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [] });
+    expect(sentRooms()).toEqual(['room-1', 'room-2']);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sentRooms()).toEqual(['room-1', 'room-2', 'room-3']);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sentRooms()).toEqual(['room-1', 'room-2', 'room-3']);
+    for (const release of releases) release();
+    client.closeLive();
+    vi.useRealTimers();
+  });
+
+  it('restarts the paced queue on reconnect and ignores a retired socket snapshot', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const releases = ['room-1', 'room-2'].map((id) => client.liveSubscribe(id));
+    const first = FakeWebSocket.instances[0]!;
+    first.open();
+    expect(first.sent).toHaveLength(1);
+    first.close();
+    await vi.advanceTimersByTimeAsync(1_250);
+    const second = FakeWebSocket.instances[1]!;
+    second.open();
+    expect(second.sent.map((frame) => JSON.parse(frame).roomId)).toEqual(['room-1']);
+    first.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [] });
+    expect(second.sent).toHaveLength(1);
+    second.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [] });
+    expect(second.sent.map((frame) => JSON.parse(frame).roomId)).toEqual(['room-1', 'room-2']);
+    for (const release of releases) release();
+    client.closeLive();
+    vi.useRealTimers();
+  });
+
   it('delivers a config-changed push to the one registered listener', async () => {
     vi.useFakeTimers();
     FakeWebSocket.instances.length = 0;
@@ -254,7 +310,12 @@ describe('DaemonApiClient', () => {
     );
     const configChanged = vi.fn();
     client.setConfigChangedListener(configChanged);
-    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      () => undefined,
+      () => undefined,
+    );
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });
@@ -281,7 +342,12 @@ describe('DaemonApiClient', () => {
     );
     const hiccup = vi.fn();
     client.setHiccupRestartListener(hiccup);
-    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      () => undefined,
+      () => undefined,
+    );
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });

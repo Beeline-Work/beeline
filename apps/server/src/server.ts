@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { SqlDatabase } from './database.js';
+import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -719,7 +719,14 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
           }
-        })();
+        })().catch((error) => {
+          console.error('[live] message failed', error);
+          if (client.readyState === client.OPEN)
+            client.close(
+              isTransientDatabaseConnectionError(error) ? 1013 : 1011,
+              'live request failed',
+            );
+        });
       });
       client.on('close', () => {
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);

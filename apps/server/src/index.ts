@@ -1,4 +1,5 @@
 import { assertSchemaCurrent, markSchemaCurrent, migrate, PostgresDatabase } from './database.js';
+import { retryOnDeadlock } from './migration-retry.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -45,8 +46,10 @@ function required(name: string) {
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
   try {
-    await migrate(database);
-    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    await retryOnDeadlock(async () => {
+      await migrate(database);
+      await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    });
     // Armed only by the release owner, once the create-or-join onboarding is
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
@@ -393,6 +396,7 @@ const migrationMode =
   console.error(
     migrationMode ? '[migration] failed:' : '[server] startup failed:',
     error instanceof Error ? error.message : String(error),
+    (error as { code?: unknown } | null)?.code ?? '',
   );
   process.exitCode = 1;
 });

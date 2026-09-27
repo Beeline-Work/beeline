@@ -26,6 +26,7 @@ export type RoomMembershipChange = {
   /** The named Room/corner is already archived, so nothing is started for it. */
   readonly archived?: boolean;
   readonly removed?: boolean;
+  readonly repositoryChanged?: boolean;
 };
 
 export type DaemonFetch = typeof fetch;
@@ -99,6 +100,7 @@ function membershipChange(event: Record<string, unknown>): RoomMembershipChange 
     ...(typeof event.openedBy === 'string' ? { openedBy: event.openedBy } : {}),
     ...(event.archived === true ? { archived: true } : {}),
     ...(event.removed === true ? { removed: true } : {}),
+    ...(event.repositoryChanged === true ? { repositoryChanged: true } : {}),
   };
 }
 
@@ -264,6 +266,15 @@ export class DaemonApiClient {
   /** Retry an uncertain discovery read through socket reconnect backoff. */
   reconnectLive(): void {
     this.liveSocket?.close();
+  }
+
+  /** Release the long-lived socket when the helper itself is shutting down. */
+  closeLive(): void {
+    clearTimeout(this.liveReconnect);
+    this.liveReconnect = undefined;
+    const socket = this.liveSocket;
+    this.liveSocket = undefined;
+    socket?.close();
   }
 
   async execute<Name extends keyof DaemonOperationMap>(

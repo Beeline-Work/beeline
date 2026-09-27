@@ -553,6 +553,7 @@ export class RoomRuntimeCoordinator {
   private drainDeadlineAt: number | undefined;
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
+  private readonly repositoryRevisions = new Map<string, string>();
   private confirmationPending = false;
   private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
@@ -598,6 +599,10 @@ export class RoomRuntimeCoordinator {
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
+      if (event?.repositoryChanged) {
+        this.wakeDiscovery();
+        return;
+      }
       const roomId = event?.roomId;
       if (!roomId) {
         this.wakeDiscovery();
@@ -745,12 +750,26 @@ export class RoomRuntimeCoordinator {
       this.workspaceRemovalConfirmations += 1;
       if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
         this.confirmationPending = true;
+        this.wakeDiscovery();
         return 'unknown';
       }
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
+    for (const room of topLevelRooms) {
+      const revision = room.repositoryRevision;
+      if (revision === undefined) continue;
+      const previous = this.repositoryRevisions.get(room.roomId);
+      this.repositoryRevisions.set(room.roomId, revision);
+      if (previous === undefined || previous === revision) continue;
+      const running = this.running.get(room.roomId);
+      if (running) await this.stopRunning(room.roomId, running);
+      // A restored App grant can also clear a corner's previous standing
+      // checkout fault; those corners retry in this same reconciliation pass.
+      for (const [cornerId, parentId] of this.monolithCornerParents)
+        if (parentId === room.roomId) this.standingCornerStartFaults.delete(cornerId);
+    }
     const desiredTopRooms = topLevelRooms.map((room) => room.roomId);
     const desired = new Set(desiredTopRooms);
     const desiredCorners = new Map<string, DesiredCorner>();
@@ -804,6 +823,7 @@ export class RoomRuntimeCoordinator {
         continue;
       }
       await this.stopRunning(channelId, running);
+      this.roomRemovalConfirmations.delete(channelId);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
@@ -828,6 +848,7 @@ export class RoomRuntimeCoordinator {
     for (const [roomId, running] of this.running)
       if (existingRooms.has(roomId)) running.body.requestReconciliation();
     this.discoveryWakes.completeReconcile(coveredWakes);
+    if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
     return 'member';
   }
 
@@ -1536,6 +1557,7 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.stopped = true;
+    this.options.daemonApi.closeLive?.();
     this.pendingMembershipEvents.clear();
     const deadlineAt = Math.min(
       this.now() + this.drainDeadlineMs,

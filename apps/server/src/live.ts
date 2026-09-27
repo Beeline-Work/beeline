@@ -83,6 +83,8 @@ export type LiveEvent =
       archived?: boolean;
       /** True when this membership row is no longer a current member. */
       removed?: boolean;
+      /** Repository binding or GitHub installation metadata changed. */
+      repositoryChanged?: boolean;
       /** True when the corner_facts row records a requested close. */
       closeRequested?: boolean;
       /** Durable corner lane and whether this notification changed it. */

@@ -102,7 +102,32 @@ BEGIN
     WHEN 'rooms' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.id, OLD.id)
+        'roomId', COALESCE(NEW.id, OLD.id),
+        'repositoryChanged', CASE WHEN TG_OP = 'UPDATE' THEN
+          ROW(NEW.repository_key,NEW.repository_remote,NEW.repository_target_branch,
+              NEW.repository_resolution,NEW.github_installation_id)
+          IS DISTINCT FROM
+          ROW(OLD.repository_key,OLD.repository_remote,OLD.repository_target_branch,
+              OLD.repository_resolution,OLD.github_installation_id)
+          ELSE false END
+      );
+    WHEN 'github_installations' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'installationId', COALESCE(NEW.installation_id,OLD.installation_id)
+      );
+    WHEN 'github_repositories' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'repositoryId', COALESCE(NEW.repository_id,OLD.repository_id)
+      );
+    WHEN 'registry_mcp_oauth_attempts' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'registryState', COALESCE(NEW.state,OLD.state),
+        'registryConnectorId', COALESCE(NEW.connector_id,OLD.connector_id),
+        'registryDueAt', CASE WHEN TG_OP = 'DELETE' OR NEW.code IS NOT NULL THEN NULL
+          ELSE floor(extract(epoch FROM NEW.expires_at) * 1000)::bigint END
       );
     WHEN 'memberships' THEN
       payload = jsonb_build_object(
@@ -159,7 +184,14 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.source_room_id, OLD.source_room_id),
-        'pending', NEW.status = 'pending' AND NEW.next_attempt_at <= now()
+        'jobId', COALESCE(NEW.id,OLD.id),
+        'pending', NEW.status = 'pending' AND NEW.next_attempt_at <= now(),
+        'dueAt', CASE WHEN TG_OP = 'DELETE' THEN NULL
+          WHEN NEW.status IN ('pending','retry') THEN
+            floor(extract(epoch FROM NEW.next_attempt_at) * 1000)::bigint
+          WHEN NEW.status = 'claimed' THEN
+            floor(extract(epoch FROM NEW.lease_expires_at) * 1000)::bigint
+          ELSE NULL END
       );
   END CASE;
   payload = payload || jsonb_build_object(
@@ -181,7 +213,8 @@ BEGIN
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
     'corner_facts', 'permission_authority',
     'agent_grants', 'agent_schedules', 'agent_commands',
-    'institutional_memory_jobs'
+    'institutional_memory_jobs', 'github_installations', 'github_repositories',
+    'registry_mcp_oauth_attempts'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -238,6 +271,14 @@ interface LiveNotificationPayload {
   lane?: string;
   laneChanged?: boolean;
   pending?: boolean;
+  repositoryChanged?: boolean;
+  installationId?: string;
+  repositoryId?: string;
+  jobId?: string;
+  dueAt?: number;
+  registryState?: string;
+  registryConnectorId?: string;
+  registryDueAt?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -275,6 +316,15 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
       ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
+      ...(typeof parsed.repositoryChanged === 'boolean'
+        ? { repositoryChanged: parsed.repositoryChanged } : {}),
+      ...(parsed.installationId !== undefined ? { installationId: String(parsed.installationId) } : {}),
+      ...(parsed.repositoryId !== undefined ? { repositoryId: String(parsed.repositoryId) } : {}),
+      ...(typeof parsed.jobId === 'string' ? { jobId: parsed.jobId } : {}),
+      ...(typeof parsed.dueAt === 'number' ? { dueAt: parsed.dueAt } : {}),
+      ...(typeof parsed.registryState === 'string' ? { registryState: parsed.registryState } : {}),
+      ...(typeof parsed.registryConnectorId === 'string' ? { registryConnectorId: parsed.registryConnectorId } : {}),
+      ...(typeof parsed.registryDueAt === 'number' ? { registryDueAt: parsed.registryDueAt } : {}),
     };
   } catch {
     return undefined;
@@ -291,6 +341,92 @@ const wait = (milliseconds: number) =>
 export class PostgresLiveListener {
   private stopped = false;
   private active?: LivePgClient;
+  private readonly memoryDue = new Map<string, { roomId: string; dueAt: number }>();
+  private memoryDueTimer?: NodeJS.Timeout;
+  private readonly registryDue = new Map<string, { connectorId: string; dueAt: number }>();
+  private registryDueTimer?: NodeJS.Timeout;
+
+  private scheduleRegistryDue(): void {
+    if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
+    this.registryDueTimer = undefined;
+    if (this.stopped || !this.registryDue.size) return;
+    let dueAt = Number.POSITIVE_INFINITY;
+    for (const attempt of this.registryDue.values()) dueAt = Math.min(dueAt, attempt.dueAt);
+    this.registryDueTimer = setTimeout(() => {
+      this.registryDueTimer = undefined;
+      const now = Date.now();
+      for (const [state, attempt] of this.registryDue) {
+        if (attempt.dueAt > now) continue;
+        this.registryDue.delete(state);
+        void notifyConnectorHelper(this.database, attempt.connectorId).catch((error) =>
+          console.error('[live-listener] registry expiry notification failed', error));
+      }
+      this.scheduleRegistryDue();
+    }, Math.max(0, dueAt - Date.now()));
+    this.registryDueTimer.unref?.();
+  }
+
+  private async restoreRegistryDue(): Promise<void> {
+    const rows = await this.database.query<{
+      state: string; connector_id: string; expires_at: Date;
+    }>(`SELECT state,connector_id,expires_at FROM registry_mcp_oauth_attempts WHERE code IS NULL`);
+    this.registryDue.clear();
+    for (const row of rows.rows) {
+      const dueAt = row.expires_at.getTime();
+      if (dueAt <= Date.now()) await notifyConnectorHelper(this.database, row.connector_id);
+      else this.registryDue.set(row.state, { connectorId: row.connector_id, dueAt });
+    }
+    this.scheduleRegistryDue();
+  }
+
+  private async pushMemoryJob(roomId: string): Promise<void> {
+    const members = await this.database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships WHERE room_id=$1 AND removed_at IS NULL`,
+      [roomId],
+    );
+    for (const member of members.rows)
+      this.live.publish({ type: 'invalidate', roomId, reason: 'memory-job',
+        targetAgentId: member.identity_id });
+  }
+
+  private scheduleMemoryDue(): void {
+    if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
+    this.memoryDueTimer = undefined;
+    if (this.stopped || !this.memoryDue.size) return;
+    let dueAt = Number.POSITIVE_INFINITY;
+    for (const job of this.memoryDue.values()) dueAt = Math.min(dueAt, job.dueAt);
+    this.memoryDueTimer = setTimeout(() => {
+      this.memoryDueTimer = undefined;
+      const now = Date.now();
+      for (const [id, job] of this.memoryDue) {
+        if (job.dueAt > now) continue;
+        this.memoryDue.delete(id);
+        void this.pushMemoryJob(job.roomId).catch((error) =>
+          console.error('[live-listener] memory due notification failed', error));
+      }
+      this.scheduleMemoryDue();
+    }, Math.max(0, dueAt - Date.now()));
+    this.memoryDueTimer.unref?.();
+  }
+
+  private async restoreMemoryDue(): Promise<void> {
+    const rows = await this.database.query<{
+      id: string; source_room_id: string; due_at: Date;
+    }>(
+      `SELECT id,source_room_id,
+         CASE WHEN status='claimed' THEN lease_expires_at ELSE next_attempt_at END due_at
+       FROM institutional_memory_jobs WHERE status IN ('pending','retry','claimed')`,
+    );
+    this.memoryDue.clear();
+    for (const row of rows.rows) {
+      if (!row.due_at) continue;
+      const dueAt = row.due_at.getTime();
+      if (dueAt <= Date.now()) {
+        await this.pushMemoryJob(row.source_room_id);
+      } else this.memoryDue.set(row.id, { roomId: row.source_room_id, dueAt });
+    }
+    this.scheduleMemoryDue();
+  }
 
   constructor(
     private readonly database: SqlDatabase,
@@ -334,6 +470,8 @@ export class PostgresLiveListener {
         await client.connect();
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
         console.log('[live-listener] connected');
+        await this.restoreMemoryDue();
+        await this.restoreRegistryDue();
         this.live.resync();
         await disconnected;
       } catch (error) {
@@ -351,6 +489,8 @@ export class PostgresLiveListener {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
+    if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
   }
 
@@ -447,11 +587,44 @@ export class PostgresLiveListener {
       return;
     }
     if (payload.table === 'institutional_memory_jobs') {
-      if (payload.pending === true) this.live.publish({
-        type: 'invalidate',
-        roomId: payload.roomId,
-        reason: 'memory-job',
-      });
+      if (payload.pending === true) await this.pushMemoryJob(payload.roomId);
+      if (payload.jobId) {
+        if (payload.dueAt && payload.dueAt > Date.now())
+          this.memoryDue.set(payload.jobId, { roomId: payload.roomId, dueAt: payload.dueAt });
+        else {
+          this.memoryDue.delete(payload.jobId);
+          if (payload.dueAt && payload.pending !== true)
+            await this.pushMemoryJob(payload.roomId);
+        }
+        this.scheduleMemoryDue();
+      }
+      return;
+    }
+    if (payload.table === 'registry_mcp_oauth_attempts') {
+      if (payload.registryState) {
+        if (payload.registryDueAt && payload.registryConnectorId &&
+            payload.registryDueAt > Date.now())
+          this.registryDue.set(payload.registryState, {
+            connectorId: payload.registryConnectorId, dueAt: payload.registryDueAt });
+        else {
+          this.registryDue.delete(payload.registryState);
+          if (payload.registryDueAt && payload.registryConnectorId)
+            await notifyConnectorHelper(this.database, payload.registryConnectorId);
+        }
+        this.scheduleRegistryDue();
+      }
+      return;
+    }
+    if (payload.table === 'github_installations' || payload.table === 'github_repositories') {
+      const rooms = await this.database.query<{ id: string }>(
+        payload.installationId
+          ? `SELECT id FROM rooms WHERE github_installation_id=$1 AND parent_id IS NULL`
+          : `SELECT id FROM rooms WHERE repository_key='github:' || $1 AND parent_id IS NULL`,
+        [payload.installationId ?? payload.repositoryId],
+      );
+      for (const room of rooms.rows)
+        this.live.publish({ type: 'invalidate', roomId: room.id,
+          reason: 'postgres:rooms', repositoryChanged: true });
       return;
     }
     const event: LiveEvent = {
@@ -472,6 +645,7 @@ export class PostgresLiveListener {
       ...(payload.closeRequested ? { closeRequested: true } : {}),
       ...(payload.lane ? { lane: payload.lane } : {}),
       ...(payload.laneChanged ? { laneChanged: true } : {}),
+      ...(payload.repositoryChanged ? { repositoryChanged: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
       ...(payload.traceId && payload.databaseAt
         ? {

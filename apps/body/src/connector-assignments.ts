@@ -53,7 +53,7 @@ import {
   type InstallSquireResult,
   type SquireMcpClient,
 } from './connector-squire.js';
-import { installTailscale, type InstallTailscaleResult } from './connector-tailscale.js';
+import { installTailscale, watchTailscaleSignIn, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 import {
   CEREMONY_EXPIRED,
@@ -90,6 +90,7 @@ export type ConnectorAssignmentLoopOptions = {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
+  readonly watchTailscaleSignIn?: typeof watchTailscaleSignIn;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
   /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
@@ -123,6 +124,8 @@ export class ConnectorAssignmentLoop {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
+  private readonly watchTailscaleSignIn: typeof watchTailscaleSignIn;
+  private tailscaleWatch?: () => void;
   private readonly googleHomeDir: string;
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
@@ -164,6 +167,7 @@ export class ConnectorAssignmentLoop {
             : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
         }));
     this.installTailscale = options.installTailscale ?? installTailscale;
+    this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
@@ -187,6 +191,8 @@ export class ConnectorAssignmentLoop {
     this.stopped = true;
     this.connectWatch?.();
     this.connectWatch = undefined;
+    this.tailscaleWatch?.();
+    this.tailscaleWatch = undefined;
   }
 
   /**
@@ -421,6 +427,8 @@ export class ConnectorAssignmentLoop {
       ...(existing?.signIn ? { signIn: existing.signIn } : {}),
     });
     if (result.status === 'connected') {
+      this.tailscaleWatch?.();
+      this.tailscaleWatch = undefined;
       await this.api.execute('installConnector', {
         agentId: this.agentId,
         connectorId,
@@ -437,6 +445,11 @@ export class ConnectorAssignmentLoop {
       ...(result.status === 'error' ? { errorMessage: result.errorMessage } : {}),
       ...generation,
     });
+    if (result.status === 'installing' && !this.tailscaleWatch)
+      this.tailscaleWatch = this.watchTailscaleSignIn(() => {
+        this.tailscaleWatch = undefined;
+        if (!this.stopped) this.wake();
+      });
   }
 
   /** Google tool connectors keep their manual credentials next to the runtime. */

@@ -340,13 +340,22 @@ describe('ConnectorAssignmentLoop', () => {
 
   it('routes a Tailscale assignment through its own sign-in ceremony', async () => {
     const api = apiMock([{ kind: 'install', connectorId: 'tail-1', connectorType: 'tailscale' }]);
+    let tailConnected: (() => void) | undefined;
+    let installs = 0;
     const loop = new ConnectorAssignmentLoop({
       api: api as never,
       agentId: 'agent-1',
+      watchTailscaleSignIn: (onConnected) => {
+        tailConnected = onConnected;
+        return () => undefined;
+      },
       install: async () => {
         throw new Error('must not run the Squire installer');
       },
       installTailscale: async ({ onProgress }) => {
+        installs += 1;
+        if (installs === 2)
+          return { status: 'connected', steps: [{ label: 'Tailnet signed in', status: 'done' }] };
         await onProgress([{ label: 'Tailnet signed in', status: 'running' }]);
         return {
           status: 'installing',
@@ -378,6 +387,11 @@ describe('ConnectorAssignmentLoop', () => {
         },
       },
     ]);
+    expect(api.calls.filter((call) => call.op === 'getConnectorAssignments')).toHaveLength(1);
+    tailConnected?.();
+    await settle();
+    expect(api.calls.filter((call) => call.op === 'getConnectorAssignments')).toHaveLength(2);
+    expect(api.calls.some((call) => call.op === 'installConnector')).toBe(true);
     loop.stop();
   });
 

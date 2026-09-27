@@ -330,6 +330,7 @@ describe('DaemonApiClient', () => {
       openedBy: 'opener-agent',
     });
     socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
+    socket.message({ type: 'rooms-changed', roomId: 'room-1', repositoryChanged: true });
     socket.message({ type: 'rooms-changed' });
     socket.message({ type: 'corner-complete', roomId: 'corner-1' });
     socket.message({ type: 'corner-restart', roomId: 'corner-2' });
@@ -363,6 +364,7 @@ describe('DaemonApiClient', () => {
       undefined,
       { roomId: 'corner-1', parentRoomId: 'room-1', openedBy: 'opener-agent' },
       { roomId: 'corner-1', removed: true },
+      { roomId: 'room-1', repositoryChanged: true },
       {},
     ]);
     expect(inbox).toEqual(['open']);

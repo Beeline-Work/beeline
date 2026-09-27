@@ -578,6 +578,12 @@ describe('daemon live command push', () => {
       openedBy: 'opener-agent',
     });
 
+    const repositoryChanged = nextSocketMessage(socket, 'rooms-changed');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:rooms',
+      repositoryChanged: true });
+    await expect(repositoryChanged).resolves.toEqual({ type: 'rooms-changed', roomId,
+      repositoryChanged: true });
+
     const connector = nextSocketMessage(socket, 'connector-assignment');
     live.publish({
       type: 'invalidate',
@@ -586,6 +592,11 @@ describe('daemon live command push', () => {
       targetAgentId: agentId,
     });
     await expect(connector).resolves.toEqual({ type: 'connector-assignment' });
+
+    const globalMemoryJob = nextSocketMessage(socket, 'memory-job');
+    live.publish({ type: 'invalidate', roomId: 'another-room', reason: 'memory-job',
+      targetAgentId: agentId });
+    await expect(globalMemoryJob).resolves.toEqual({ type: 'memory-job', roomId: 'another-room' });
 
     const memoryJob = nextSocketMessage(socket, 'memory-job');
     live.publish({ type: 'invalidate', roomId, reason: 'memory-job' });

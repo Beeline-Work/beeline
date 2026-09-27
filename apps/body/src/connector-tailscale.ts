@@ -121,6 +121,37 @@ async function readStatus(run: TailscaleCommandRunner): Promise<TailscaleStatus 
   return parseStatus(result.stdout || result.stderr);
 }
 
+/** Watch only the local Tailscale daemon while a browser sign-in is open.
+ * The callback triggers one connector drain when the tailnet becomes ready;
+ * no server operation runs on this cadence. */
+export function watchTailscaleSignIn(
+  onConnected: () => void,
+  options: { run?: TailscaleCommandRunner; intervalMs?: number } = {},
+): () => void {
+  const run = options.run ?? runTailscaleCommand;
+  const intervalMs = options.intervalMs ?? 2_000;
+  let stopped = false;
+  let timer: NodeJS.Timeout | undefined;
+  const probe = async () => {
+    timer = undefined;
+    const status = await readStatus(run).catch(() => undefined);
+    if (stopped) return;
+    if (status?.BackendState === 'Running') {
+      stopped = true;
+      onConnected();
+      return;
+    }
+    timer = setTimeout(() => void probe(), intervalMs);
+    timer.unref?.();
+  };
+  timer = setTimeout(() => void probe(), intervalMs);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 async function ensureInstalled(
   run: TailscaleCommandRunner,
   onProgress: (steps: readonly ConnectorStep[]) => void,

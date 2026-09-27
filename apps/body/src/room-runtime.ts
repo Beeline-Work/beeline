@@ -69,6 +69,7 @@ interface DiscoveryChanges {
   cursor: string;
   changes: DiscoveryChange[];
   hasMore: boolean;
+  resetRequired?: boolean;
 }
 
 interface DiscoveryOperations {
@@ -939,6 +940,7 @@ export class RoomRuntimeCoordinator {
         let complete = false;
         for (let page = 0; page < 8; page += 1) {
           const result = await api.execute('getAgentDiscoveryChanges', { after: cursor });
+          if (result.resetRequired) break;
           if (!result.cursor || !Array.isArray(result.changes)) {
             throw new Error('agent discovery delta is incomplete');
           }

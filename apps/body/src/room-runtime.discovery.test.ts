@@ -169,6 +169,25 @@ describe('agent-scoped discovery compatibility', () => {
     await runtime.shutdown();
   });
 
+  it('replaces local state when the server asks for a reset', async () => {
+    let snapshot = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentDiscoverySnapshot') {
+        snapshot += 1;
+        return { cursor: `c${snapshot}`, workspaceIds: ['workspace'], rooms: [] };
+      }
+      if (name === 'getAgentDiscoveryChanges') {
+        return { resetRequired: true, cursor: '', changes: [], hasMore: false };
+      }
+      throw new Error(`unexpected ${name}`);
+    });
+    const { runtime } = await coordinator(execute);
+    expect(await runtime.reconcile()).toBe('member');
+    expect(await runtime.reconcile()).toBe('member');
+    expect(snapshot).toBe(2);
+    await runtime.shutdown();
+  });
+
   it('keeps old servers and mixed HTTP peers on legacy discovery', async () => {
     for (const discovery of [false, true]) {
       const execute = vi.fn(async (name: string) => {

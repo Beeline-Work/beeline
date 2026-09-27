@@ -51,6 +51,7 @@ export function ConversationRow({
   const preview = roomRowPreview(item, viewer);
   const reason = roomRowAttentionReason(item);
   const needsYou = Boolean(reason);
+  const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
   const hasCorners = !item.directMessage && (item.cornerCount ?? 0) > 0;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
@@ -110,13 +111,13 @@ export function ConversationRow({
               numberOfLines={1}
               style={[
                 styles.preview,
-                item.unread && !reason && styles.unreadPreview,
-                reason && styles.reason,
+                item.unread && !showReason && styles.unreadPreview,
+                showReason && styles.reason,
               ]}
               testID={`${testID}-preview`}
             >
-              {reason ? (
-                reason
+              {showReason ? (
+                showReason
               ) : (
                 <>
                   {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (

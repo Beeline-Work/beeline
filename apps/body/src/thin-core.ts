@@ -2,6 +2,7 @@ import type { BodyConfig } from './config.js';
 import { isAgentRemovedError, type DaemonApiClient } from './daemon-api-client.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
+import type { InterruptedTurn } from './force-update-journal.js';
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
@@ -82,6 +83,9 @@ export class ThinDaemonCore {
   }
   async prepareForForcedUpdateRestart(): Promise<void> {
     await this.roomRuntime.prepareForForcedUpdateRestart();
+  }
+  interruptForServerMinimum(): InterruptedTurn[] {
+    return this.roomRuntime.interruptForServerMinimum();
   }
   setDrainDeadlineAt(deadlineAt: number): void {
     this.roomRuntime.setDrainDeadlineAt(deadlineAt);

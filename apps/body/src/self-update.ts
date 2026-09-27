@@ -827,6 +827,8 @@ export interface UpdateAttemptRecord {
   confirmedProbeIds?: string[];
   /** Agent probes blocked by their own selected model; the machine release remains installed. */
   unavailableProbeIds?: string[];
+  /** Server minimum initiated this install; one agent's probe cannot revert the host. */
+  forcedMinimum?: string;
 }
 
 export function updateAttemptPath(layout: BeelineInstallLayout): string {
@@ -918,6 +920,17 @@ export async function settleUpdateAttemptOnStart(
     : record.confirmBy;
   if (now() <= confirmAt) {
     return { kind: 'pending', confirmAt, record };
+  }
+  if (record.forcedMinimum) {
+    // One agent may fail its own probe; it cannot restore a host release the
+    // server has already declared too old. Keep the installed successor.
+    await writeUpdateAttempt(layout, {
+      ...record,
+      confirmBy: confirmAt,
+      status: 'confirmed',
+      failure: 'server-minimum release retained after probe confirmation window',
+    });
+    return { kind: 'none' };
   }
   if (record.previousReleaseId) {
     await rollbackToPreviousRelease(layout, record.previousReleaseId);

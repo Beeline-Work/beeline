@@ -10,6 +10,8 @@ import {
   activeReleaseId,
   readUpdateState,
   readUpdateAttempt,
+  settleUpdateAttemptOnStart,
+  writeUpdateAttemptFixture,
   writeUpdateState,
   type BeelineInstallLayout,
 } from './self-update.js';
@@ -75,6 +77,30 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
+  it('keeps a server-minimum release installed when one agent probe fails', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    await writeUpdateAttemptFixture(layout, {
+      from: { version: 'v0.0.68' },
+      to: { version: 'v0.0.69' },
+      releaseId: 'new',
+      previousReleaseId: 'old',
+      appliedAt: 1_000,
+      forcedMinimum: 'v0.0.69',
+      requiredProbeIds: ['agent', 'other'],
+      confirmedProbeIds: [],
+    });
+    const result = await gateManagedSuccessor({ layout, runtimeDir, loadedRelease: 'new',
+      probeId: 'agent', probe: async () => { throw new Error('agent-specific model failure'); } });
+    expect(result.kind).toBe('agent-failed');
+    expect(await activeReleaseId(layout)).toBe('new');
+    expect((await readUpdateAttempt(layout))?.unavailableProbeIds).toEqual(['agent']);
+    expect(await settleUpdateAttemptOnStart(layout, { now: () => Date.now() + 1_000_000 }))
+      .toEqual({ kind: 'none' });
+    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
+    expect(await activeReleaseId(layout)).toBe('new');
+  });
   it('spreads fifteen agents while respecting the current drain deadline', () => {
     const agents = Array.from({ length: 15 }, (_, index) => index.toString(16).padStart(64, '0'));
     const delays = agents.map((agent) =>

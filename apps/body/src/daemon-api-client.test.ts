@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   activateDaemonTransport,
@@ -85,6 +86,15 @@ describe('DaemonApiClient', () => {
     onmessage?: (event: { data: string }) => void;
     onerror?: () => void;
     onclose?: () => void;
+    private readonly events = new Map<string, (...args: unknown[]) => void>();
+
+    on(event: string, listener: (...args: unknown[]) => void): void {
+      this.events.set(event, listener);
+    }
+
+    unexpectedResponse(response: EventEmitter & { statusCode?: number }): void {
+      this.events.get('unexpected-response')?.(undefined, response);
+    }
 
     constructor(
       readonly url: string,
@@ -198,7 +208,11 @@ describe('DaemonApiClient', () => {
       'x-beeline-helper-version': 'v0.0.69',
     }));
     expect(force).toHaveBeenCalledWith('v0.0.70');
-    const release = client.liveSubscribe('room');
+    const live = new DaemonApiClient('https://server.example', 'token', 'agent', fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    live.setHelperIdentity({ releaseVersion: 'v0.0.69', sourceSha: 'abc1234' });
+    live.setForceUpdateListener(force);
+    const release = live.liveSubscribe('room');
     const socket = FakeWebSocket.instances[0]!;
     expect(socket.url).toBe('wss://server.example/v1/phone/live?helperVersion=v0.0.69&sourceSha=abc1234');
     socket.message({ type: 'force-update', minVersion: 'v0.0.71' });
@@ -230,6 +244,27 @@ describe('DaemonApiClient', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await failed;
     expect(client.metrics()).toMatchObject({ inFlight: 0, timeouts: 1 });
+  });
+
+  it('treats a pre-auth WebSocket 426 as a forced update without reconnecting', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('https://server.example', 'token', 'agent', fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const force = vi.fn();
+    client.setForceUpdateListener(force);
+    const release = client.liveSubscribe('room');
+    const socket = FakeWebSocket.instances[0]!;
+    const response = Object.assign(new EventEmitter(), { statusCode: 426 });
+    socket.unexpectedResponse(response);
+    response.emit('data', Buffer.from('{"error":"update_required","minVersion":"v0.0.70"}'));
+    response.emit('end');
+    socket.close();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(force).toHaveBeenCalledOnce();
+    expect(force).toHaveBeenCalledWith('v0.0.70');
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    release();
   });
 
   it('reconnects the one live socket by cursor and de-duplicates replayed ids', async () => {

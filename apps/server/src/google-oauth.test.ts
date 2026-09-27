@@ -148,6 +148,31 @@ it('only the newest retry state can finish Google sign-in', async () => {
   expect(current.rows[0]!.status).toBe('installing');
 });
 
+it('renews an expired Workbench grant before a Room tool receives it', async () => {
+  const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).endsWith('/userinfo'))
+      return new Response(JSON.stringify({ email: 'owner@example.test' }), { status: 200 });
+    const fields = new URLSearchParams(String(init?.body));
+    if (fields.get('grant_type') === 'refresh_token') {
+      expect(fields.get('refresh_token')).toBe('server-refresh');
+      return new Response(JSON.stringify({ access_token: 'renewed-token', expires_in: 3600 }),
+        { status: 200 });
+    }
+    return new Response(JSON.stringify({ access_token: 'expired-token',
+      refresh_token: 'server-refresh', expires_in: 1,
+      scope: 'https://www.googleapis.com/auth/drive.readonly' }), { status: 200 });
+  }) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  expect(await oauth.complete(state, 'code')).toBe(true);
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toMatchObject({
+    accessToken: 'renewed-token',
+  });
+  expect(await oauth.grantForHelper(CONNECTOR, HELPER)).not.toHaveProperty('refreshToken');
+  expect(transport).toHaveBeenCalledTimes(3);
+});
+
 it('withholds an old machine grant from the retried tool until fresh OAuth completes', async () => {
   let exchange = 0;
   const transport = vi.fn(async (url: string | URL | Request) => {

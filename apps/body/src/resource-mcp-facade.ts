@@ -304,6 +304,7 @@ async function postSquireApproval(
     baseUrl: string;
     daemonToken: string;
     turnContextPath: string;
+    helperVersion?: string;
   };
   const context = JSON.parse(await readFile(auth.turnContextPath, 'utf8')) as Record<
     string,
@@ -317,7 +318,8 @@ async function postSquireApproval(
     return;
   await fetchImpl(new URL('/v1/daemon/operations/postSquireApproval', auth.baseUrl), {
     method: 'POST',
-    headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json',
+      'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
     body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
     signal: AbortSignal.timeout(20_000),
   });
@@ -356,6 +358,7 @@ export async function authorizeResourceMessage(
     baseUrl: string;
     daemonToken: string;
     turnContextPath: string;
+    helperVersion?: string;
   };
   const context = JSON.parse(await readFile(auth.turnContextPath, 'utf8')) as Record<
     string,
@@ -371,7 +374,8 @@ export async function authorizeResourceMessage(
     new URL('/v1/daemon/operations/authorizeResourceCall', auth.baseUrl),
     {
       method: 'POST',
-      headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json',
+        'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
       body: JSON.stringify({
         ...context,
         target,

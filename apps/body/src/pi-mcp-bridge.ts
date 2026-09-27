@@ -228,7 +228,8 @@ async function authorizeSquire(signal) {
   const timeout = AbortSignal.timeout(20000);
   const response = await fetch(new URL('/v1/daemon/operations/authorizeSquireCall', env.BEELINE_DAEMON_BASE_URL), {
     method: 'POST',
-    headers: { authorization: 'Bearer ' + env.BEELINE_DAEMON_TOKEN, 'content-type': 'application/json' },
+    headers: { authorization: 'Bearer ' + env.BEELINE_DAEMON_TOKEN, 'content-type': 'application/json',
+      'x-beeline-helper-version': env.BEELINE_HELPER_VERSION || 'v0.0.0' },
     body: JSON.stringify({ roomId: context.roomId, requestId: context.requestId, generationId: context.generationId }),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });

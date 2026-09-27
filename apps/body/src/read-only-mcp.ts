@@ -1898,6 +1898,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     headers: {
       authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
       'content-type': 'application/json',
+      'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
     },
     body: JSON.stringify({
       ...input,
@@ -3247,6 +3248,7 @@ async function daemonUploadArtifact(
       authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
       'content-type': mime,
       'x-artifact-title': title,
+      'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
     },
     body: bytes,
   });

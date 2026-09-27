@@ -340,6 +340,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
     config.daemonReleaseVersion = loadedReleaseIdentity?.version;
     config.daemonSourceSha = loadedReleaseIdentity?.commit;
+    daemonApi.setHelperIdentity({
+      releaseVersion: loadedReleaseIdentity?.version,
+      sourceSha: loadedReleaseIdentity?.commit,
+    });
     update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
       requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
     });

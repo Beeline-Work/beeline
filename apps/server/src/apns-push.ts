@@ -7,7 +7,7 @@ import {
 } from 'node:http2';
 import { createPrivateKey, sign } from 'node:crypto';
 import type { PushSender } from './background.js';
-import { pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
+import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
 
 const APNS_PRODUCTION_AUTHORITY = 'https://api.push.apple.com';
 const APNS_SANDBOX_AUTHORITY = 'https://api.sandbox.push.apple.com';
@@ -90,7 +90,7 @@ export function apnsPushRequest(
     },
     payload: {
       aps: {
-        alert: { title: 'Beeline', body: message.text.slice(0, 200) },
+        alert: pushAlert(message),
         sound: 'default',
         ...(threadId ? { 'thread-id': threadId } : {}),
         ...(data.categoryId ? { category: data.categoryId } : {}),

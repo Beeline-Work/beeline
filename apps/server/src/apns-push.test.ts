@@ -81,6 +81,26 @@ describe('APNs provider token and request', () => {
     });
   });
 
+  it('sends a permission ask whole, without the app-name title', () => {
+    const text = `Charles wants @wren to use ${'openaiDeveloperDocs '.repeat(12).trim()}`;
+    const request = apnsPushRequest(
+      'device-token',
+      {
+        messageId: 'message-1',
+        workspaceId: 'workspace-1',
+        roomId: 'dm-1',
+        channelId: 'dm-1',
+        target: 'message',
+        type: 'message',
+        text,
+        permission: true,
+      },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    expect((request.payload.aps as { alert: unknown }).alert).toEqual({ body: text });
+  });
+
   it('names the inline-action category so iOS offers Reply or the grant choices', () => {
     const request = apnsPushRequest(
       'device-token',

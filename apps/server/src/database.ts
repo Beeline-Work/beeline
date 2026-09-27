@@ -7,7 +7,7 @@ import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
-import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
+import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
   backfillInheritedCornerMemberships,
@@ -2087,6 +2087,8 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillConnectorMachineId(database);
   await backfillRegistryApps(database);
   await upgradeGrantPolicy(database);
+  const withdrawn = await withdrawSupersededGrantAsks(database);
+  if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

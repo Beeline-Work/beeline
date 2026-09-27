@@ -213,6 +213,16 @@ describe('Firebase push inline actions', () => {
     });
   });
 
+  it('sends a permission ask whole, without spending its first line on the app name', () => {
+    const text = `Charles wants @wren to use ${'openaiDeveloperDocs '.repeat(12).trim()}`;
+    expect(text.length).toBeGreaterThan(200);
+    const payload = firebasePushMessage('device-token', { ...base, text, permission: true });
+    expect(payload.data!.message).toBe(text);
+    expect(payload.data).not.toHaveProperty('title');
+    const chat = firebasePushMessage('device-token', { ...base, text: `Maya: ${text}` });
+    expect(chat.data).toMatchObject({ title: 'Beeline', message: `Maya: ${text}`.slice(0, 200) });
+  });
+
   it('adds no category to a push without an action', () => {
     expect(firebasePushMessage('device-token', { ...base, text: 'hello' }).data).not.toHaveProperty(
       'categoryId',

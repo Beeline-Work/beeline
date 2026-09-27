@@ -180,6 +180,20 @@ describe('answering a tapped action', () => {
     expect(d.presented[0]!.categoryIdentifier).toBeUndefined();
   });
 
+  it('says an MCP tool is used, not routed, after the tap', async () => {
+    const d = deps('ios');
+    await handleNotificationAction(
+      response('grant-once', {
+        ...grantData,
+        grantKind: 'mcp',
+        grantTarget: 'openaiDeveloperDocs',
+        message: 'Charles wants wren to use openaiDeveloperDocs',
+      }),
+      d,
+    );
+    expect(d.presented[0]!.body).toBe('Allowed once · @wren can use openaiDeveloperDocs');
+  });
+
   it('says the grant was already answered when the server refuses a second decision', async () => {
     const d = deps('android', {
       decideGrant: vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { status: 409 })),

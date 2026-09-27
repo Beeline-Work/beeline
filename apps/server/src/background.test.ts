@@ -773,6 +773,73 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it('sends a permission ask whole and stays quiet for an automatic access receipt', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level)
+         VALUES($1,'human','Owner','owner','mine'),($2,'agent','Wren','wren','off')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+        [workspace, human],
+      );
+      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const pending = '55555555-5555-4555-8555-555555555555',
+        auto = '66666666-6666-4666-8666-666666666666';
+      const target = `node scripts/check.mjs ${'--workspace apps/server '.repeat(8).trim()}`;
+      await db.query(
+        `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,auto)
+         VALUES($1,$3,$4,'command',$6,'check',$5,$7,'pending',false),
+               ($2,$3,$4,'mcp','openaiDeveloperDocs','read docs',$5,$7,'approved',true)`,
+        [pending, auto, agent, workspace, human, target, room],
+      );
+      const ask = `Owner wants wren to use ${target}`;
+      expect(ask.length).toBeGreaterThan(200);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,$4,'card','grant-request',$5::jsonb),
+         ($6,$2,$3,'@wren was granted mcp openaiDeveloperDocs · auto-approved','system','grant-auto',$7::jsonb)`,
+        [
+          '1'.repeat(64),
+          systemDm,
+          agent,
+          ask,
+          JSON.stringify({
+            agent: { pubkey: agent, name: 'wren' },
+            grants: [{ grantId: pending, kind: 'command', target }],
+          }),
+          '2'.repeat(64),
+          JSON.stringify({ grantId: auto }),
+        ],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send.mock.calls.map(([, message]) => message)).toEqual([
+        expect.objectContaining({ messageId: '1'.repeat(64), text: ask, permission: true }),
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
   it('delivers member-join pushes at the mine level', async () => {
     const db = new PgliteDatabase();
     try {

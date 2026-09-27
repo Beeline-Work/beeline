@@ -13,7 +13,7 @@ const VERBS: Readonly<Record<AgentGrantView['kind'], string>> = {
   device: 'use',
   budget: 'spend',
   command: 'run',
-  mcp: 'route',
+  mcp: 'use',
   repository: 'edit',
 };
 

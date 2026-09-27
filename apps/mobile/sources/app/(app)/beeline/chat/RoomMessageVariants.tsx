@@ -322,6 +322,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                 size={26}
               />
             }
+            wrapTitle
             title={
               <Text testID={`grant-${grant.grantId}-ask`}>
                 {grantRequestLine(request.requester.name, `@${agentName.replace(/^@/, '')}`, grant)}

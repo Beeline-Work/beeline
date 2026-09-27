@@ -29,10 +29,7 @@ export const UPDATE_PROBE_TURN_TIMEOUT_MS = 45_000;
 export const UPDATE_PROBE_RETRY_DELAY_MS = 2_000;
 
 export type UpdateFunctionalProbeFailure =
-  | 'model-unavailable'
-  | 'sandbox-unavailable'
-  | 'session-start-failed'
-  | 'turn-failed';
+  'model-unavailable' | 'sandbox-unavailable' | 'session-start-failed' | 'turn-failed';
 
 /** A provider-side HTTP refusal pi recorded for the probe turn. */
 export interface ProviderRefusal {
@@ -50,8 +47,7 @@ export interface ProviderRefusal {
  * (OpenRouter throttling z-ai/glm-5.3-flash streams nothing for the whole 45s).
  */
 export type AcpTurnFailure =
-  | { kind: 'server-internal'; code: number }
-  | { kind: 'prompt-inactivity' };
+  { kind: 'server-internal'; code: number } | { kind: 'prompt-inactivity' };
 
 /** Why the successor is appealing to the release it would otherwise roll back to. */
 export type ProbeAppeal =
@@ -204,6 +200,40 @@ export interface UpdateFunctionalProbeResult {
  * successor is forgiven only when the current release fails the same way; a
  * current release that serves the turn still convicts the successor.
  */
+/**
+ * A helper update restarts every agent on the machine at once, and a daemon
+ * whose selected model is missing reinstalls its global ACP adapter at start
+ * (`npm install -g ...@latest`). While that reinstall runs, the adapter binary
+ * is briefly absent, so a sibling agent's probe fails to start with ENOENT —
+ * a machine-wide transient, not this bundle's fault. Wait it out before
+ * letting one missing binary roll the whole machine back.
+ */
+export async function retryWhileAdapterReinstalls<T>(
+  run: () => Promise<T>,
+  options: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const attempts = options.attempts ?? 12;
+  const delayMs = options.delayMs ?? 5_000;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const missingBinary =
+        error instanceof UpdateFunctionalProbeError &&
+        error.reason === 'session-start-failed' &&
+        /No such file or directory|ENOENT/.test(error.message);
+      if (!missingBinary || attempt >= attempts) throw error;
+      console.warn(
+        `[body] update probe: the agent executable is missing (${error.message}); ` +
+          `waiting for a concurrent adapter reinstall (attempt ${attempt}/${attempts})`,
+      );
+      await sleep(delayMs);
+    }
+  }
+}
+
 export async function runUpdateFunctionalProbe(input: {
   config: BodyConfig;
   runtimeDir: string;
@@ -325,7 +355,10 @@ export async function runUpdateFunctionalProbe(input: {
         skillReleaseId: input.releaseId,
         failClosed: true,
         ...openRouterRoutingInput(
-          { ...input.config, openRouterRoutingCacheDir: openRouterRoutingCacheDir(input.runtimeDir) },
+          {
+            ...input.config,
+            openRouterRoutingCacheDir: openRouterRoutingCacheDir(input.runtimeDir),
+          },
           input.config.modelSelection,
         ),
       })),

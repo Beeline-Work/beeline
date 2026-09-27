@@ -105,7 +105,10 @@ import {
   runningRuntimeProbeIds,
   runManagedUpdateWorker,
 } from './managed-update.js';
-import { runUpdateFunctionalProbe } from './update-functional-probe.js';
+import {
+  retryWhileAdapterReinstalls,
+  runUpdateFunctionalProbe,
+} from './update-functional-probe.js';
 import {
   CURRENT_RELEASE_PROBE_TIMEOUT_MS,
   probeReleaseInSubprocess,
@@ -516,30 +519,41 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             loadedRelease,
             probeId: runtime.agent.publicKey,
             probe: () =>
-              runUpdateFunctionalProbe({
-                config,
-                runtimeDir,
-                releaseId: loadedRelease ?? 'unknown',
-                sandboxRequired: runtime.sandbox !== 'off',
-                sandboxUnavailableDetail: sandbox.advisory,
-                ...(currentReleaseId
-                  ? {
-                      compareWithCurrentRelease: async (appeal) => {
-                        console.warn(
-                          `[thin-core] successor probe got no answer from the provider ` +
-                            `(${appeal.reason}); probing the current release ${currentReleaseId} ` +
-                            `for the same outcome`,
-                        );
-                        await extendSystemdStartTimeout(CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000);
-                        return probeReleaseInSubprocess({
-                          layout,
-                          releaseId: currentReleaseId,
-                          runtimeConfigPath: configPath,
-                        });
-                      },
-                    }
-                  : {}),
-              }),
+              retryWhileAdapterReinstalls(
+                () =>
+                  runUpdateFunctionalProbe({
+                    config,
+                    runtimeDir,
+                    releaseId: loadedRelease ?? 'unknown',
+                    sandboxRequired: runtime.sandbox !== 'off',
+                    sandboxUnavailableDetail: sandbox.advisory,
+                    ...(currentReleaseId
+                      ? {
+                          compareWithCurrentRelease: async (appeal) => {
+                            console.warn(
+                              `[thin-core] successor probe got no answer from the provider ` +
+                                `(${appeal.reason}); probing the current release ${currentReleaseId} ` +
+                                `for the same outcome`,
+                            );
+                            await extendSystemdStartTimeout(
+                              CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000,
+                            );
+                            return probeReleaseInSubprocess({
+                              layout,
+                              releaseId: currentReleaseId,
+                              runtimeConfigPath: configPath,
+                            });
+                          },
+                        }
+                      : {}),
+                  }),
+                {
+                  sleep: async (ms) => {
+                    await extendSystemdStartTimeout(ms + 15_000);
+                    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+                  },
+                },
+              ),
           });
           if (gate.kind === 'failed') {
             successorRolledBack = gate.rolledBack;
@@ -552,7 +566,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
                 gate.error.cause ?? gate.error,
               );
             }
-            console.warn(`[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`);
+            console.warn(
+              `[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`,
+            );
           } else {
             functionalProof = gate.proof;
           }
@@ -561,13 +577,14 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           // whichever release it names — it supersedes any stale rollback
           // record from an earlier failed attempt.
           await clearUpdateRollbackAlert(runtimeDir);
-          if (functionalProof) console.log(
-            `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
-              `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
-              (functionalProof?.modelAnswer === 'unavailable'
-                ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
-                : ''),
-          );
+          if (functionalProof)
+            console.log(
+              `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
+                `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
+                (functionalProof?.modelAnswer === 'unavailable'
+                  ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
+                  : ''),
+            );
         }
         await clearDaemonStartFailures(runtimeDir);
         await writeDaemonReleaseStatus(runtimeDir, runtime.agent.publicKey, loadedReleaseIdentity);

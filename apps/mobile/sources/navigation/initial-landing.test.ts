@@ -5,6 +5,7 @@ import {
   isInitialLandingResolved,
   markInitialLandingResolved,
   resetInitialLandingForTests,
+  retryInitialLandingNavigation,
   suppressInitialLandingNavigation,
   whenInitialLandingResolved,
 } from './initial-landing';
@@ -77,6 +78,55 @@ describe('initial landing gate', () => {
     resetInitialLandingForTests();
 
     expect(isInitialLandingNavigationSuppressed()).toBe(false);
+  });
+
+  it('retries a dropped initial replace until a destination commits, then stops', async () => {
+    vi.useFakeTimers();
+    try {
+      let pathname = '/';
+      const replace = vi.fn(() => {
+        if (replace.mock.calls.length === 2) pathname = '/beeline/channels';
+      });
+      const fallback = vi.fn();
+      const stop = retryInitialLandingNavigation(
+        replace,
+        () => pathname === '/' && !isInitialLandingNavigationSuppressed(),
+        fallback,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(pathname).toBe('/');
+      await vi.advanceTimersByTimeAsync(250);
+      expect(replace).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(replace).toHaveBeenCalledTimes(2);
+      expect(fallback).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a fallback while the root is stalled and never replaces after suppression', async () => {
+    vi.useFakeTimers();
+    try {
+      const replace = vi.fn();
+      const fallback = vi.fn();
+      const stop = retryInitialLandingNavigation(
+        replace,
+        () => !isInitialLandingNavigationSuppressed(),
+        fallback,
+      );
+      await vi.advanceTimersByTimeAsync(1250);
+      expect(replace).toHaveBeenCalledTimes(6);
+      expect(fallback).toHaveBeenCalledOnce();
+      suppressInitialLandingNavigation();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(replace).toHaveBeenCalledTimes(6);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // A landing that never lands must not swallow the tap: the app is unusable

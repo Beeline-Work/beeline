@@ -32,13 +32,80 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
-  it('exchanges once and reuses the memory-only access token', async () => {
+  it('exchanges once and reuses the access token', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(session.exchangeGitHubTicket('ticket')).resolves.toBe('a'.repeat(64));
     await expect(session.authorization()).resolves.toBe('access-1');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
+  });
+
+  it('opens a cold session with the still-valid secured access token without a refresh round trip', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
+    const signedIn = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await signedIn.exchangeReviewSecret('review');
+    const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(Promise.all([cold.authorization(), cold.authorization()])).resolves.toEqual([
+      'access-1', 'access-1',
+    ]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(secure.get('buzzy.monolith.access.v1')).toContain('access-1');
+  });
+
+  it('refreshes an expired secured access token on a cold launch', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(tokens(1)), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
+    await new MonolithSession('https://server.example', fetcher as typeof fetch)
+      .exchangeReviewSecret('review');
+    secure.set('buzzy.monolith.access.v1', JSON.stringify({
+      token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
+    }));
+    const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(cold.authorization()).resolves.toBe('access-2');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]?.[0]).toBe('https://server.example/v1/auth/refresh');
+  });
+
+  it('refreshes after a revoked cached access token returns 401', async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/v1/auth/review/exchange'))
+        return new Response(JSON.stringify(tokens(1)), { status: 200 });
+      if (url.endsWith('/v1/auth/refresh'))
+        return new Response(JSON.stringify(tokens(2)), { status: 200 });
+      return new Response(null, {
+        status: new Headers(init?.headers).get('authorization') === 'Bearer access-1' ? 401 : 204,
+      });
+    });
+    await new MonolithSession('https://server.example', fetcher as typeof fetch)
+      .exchangeReviewSecret('review');
+    const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(cold.fetch('https://server.example/v1/phone/rooms/room-a')).resolves.toMatchObject({
+      status: 204,
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://server.example/v1/auth/review/exchange',
+      'https://server.example/v1/phone/rooms/room-a',
+      'https://server.example/v1/auth/refresh',
+      'https://server.example/v1/phone/rooms/room-a',
+    ]);
+  });
+
+  it('does not restore a prior account after account switch or logout', async () => {
+    let issued = tokens(1);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(issued), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeReviewSecret('review-a');
+    issued = { ...tokens(2), identityId: 'b'.repeat(64) };
+    await session.exchangeReviewSecret('review-b');
+    const switched = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(switched.authorization()).resolves.toBe('access-2');
+    await expect(switched.identityId()).resolves.toBe('b'.repeat(64));
+    await switched.clear();
+    expect(secure.has('buzzy.monolith.access.v1')).toBe(false);
+    const signedOut = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(signedOut.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
   });
 
   it('reconnects using the existing session without replacing it, including on account mismatch', async () => {

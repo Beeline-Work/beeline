@@ -4,6 +4,7 @@
 import 'react-native-get-random-values';
 
 import './sources/polyfills/screenOrientation';
+import './sources/push/early-room-prefetch-bootstrap';
 import './sources/unistyles';
 import 'expo-router/entry';
 import { installNotificationActions } from './sources/push/notification-action-runtime';

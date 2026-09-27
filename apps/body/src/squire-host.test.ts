@@ -23,6 +23,7 @@ import {
   SQUIRE_SERVER_ARGS,
   squireBrokerSocketReady,
   squireFacadeLaunch,
+  squireAgentIdentity,
   squireHostBindPaths,
   squireHostPaths,
   squireHostRewriteEnv,
@@ -159,7 +160,7 @@ describe('RED/GREEN broker election', () => {
     const broker = await listenUnix(paths.brokerSocket);
     const hostInode = lstatSync(paths.brokerSocket).ino;
     try {
-      const route = rewriteHostMcpDeclaration('squire', { ...SQUIRE_LAUNCH }, home);
+      const route = rewriteHostMcpDeclaration('squire', { ...SQUIRE_LAUNCH }, home, undefined, { agentId: 'agent-a', roomId: 'room-a' });
       const routeEnv = route.env as Record<string, string>;
       for (const agent of ['agent-a', 'agent-b']) {
         const privateTmp = join(home, agent, 'tmp');
@@ -195,7 +196,7 @@ describe('RED/GREEN broker election', () => {
     const ledger = join(home, 'brokers.jsonl');
     const shimDir = join(home, 'bin');
     installNpxShim(shimDir, ledger);
-    const launch = squireFacadeLaunch(home);
+    const launch = squireFacadeLaunch(home, { agentId: 'agent-a', roomId: 'room-a' });
     expect(squireBrokerSocketReady(launch.env.TRUSTY_SQUIRE_BROKER_SOCKET!)).toBe(false);
     const run = spawnSync(launch.command, launch.args, {
       encoding: 'utf8',
@@ -282,11 +283,26 @@ describe('host broker unit', () => {
 });
 
 describe('façade launch and host binds', () => {
+  it('uses one bounded identity per structured agent and Room across launches', () => {
+    const scope = { agentId: 'a'.repeat(200) + '\nspoof', roomId: 'r'.repeat(200) + '\rroom' };
+    const first = squireFacadeLaunch('/one', scope).env.TRUSTY_SQUIRE_AGENT_IDENTITY;
+    const second = squireFacadeLaunch('/two', scope).env.TRUSTY_SQUIRE_AGENT_IDENTITY;
+    expect(first).toBe(second);
+    expect(first).toMatch(/^beeline:[a-f0-9]{64}$/);
+    expect(first.length).toBeLessThanOrEqual(128);
+    expect(first).not.toMatch(/[\r\n]/);
+    expect(squireAgentIdentity({ ...scope, agentId: 'other-agent' })).not.toBe(first);
+    expect(squireAgentIdentity({ ...scope, roomId: 'other-room' })).not.toBe(first);
+    expect(squireAgentIdentity({ agentId: 'a:b', roomId: 'c' })).not.toBe(
+      squireAgentIdentity({ agentId: 'a', roomId: 'b:c' }),
+    );
+  });
+
   it('writes a per-client façade that carries the three host rewrite vars', () => {
-    const launch = squireFacadeLaunch('/home/op');
+    const launch = squireFacadeLaunch('/home/op', { agentId: 'agent-a', roomId: 'room-a' });
     expect(launch.command).toBe(process.execPath);
     expect(launch.args.at(-1)).toMatch(/squire-facade\.(js|ts)$/);
-    expect(launch.env).toEqual(squireHostRewriteEnv('/home/op'));
+    expect(launch.env).toEqual({ ...squireHostRewriteEnv('/home/op'), TRUSTY_SQUIRE_AGENT_IDENTITY: squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }) });
   });
 
   it('binds the host broker directory only for a Squire route', async () => {

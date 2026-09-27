@@ -14,7 +14,7 @@ import {
   rewriteHostMcpDeclaration,
   ungatedHostServers,
 } from './host-mcp-route.js';
-import { squireHostRewriteEnv } from './squire-host.js';
+import { squireAgentIdentity, squireHostRewriteEnv } from './squire-host.js';
 
 describe('granted MCP host routes', () => {
   it('mounts Once routes without consuming them before a call', async () => {
@@ -54,14 +54,19 @@ describe('granted MCP host routes', () => {
   it('rewrites Squire into a façade route with the three host variables', () => {
     const rewritten = rewriteHostMcpDeclaration(
       'squire',
-      { command: 'npx', args: ['-y', '@trusty-squire/mcp@latest', 'server'] },
+      { command: 'npx', args: ['-y', '@trusty-squire/mcp@latest', 'server'], env: { TRUSTY_SQUIRE_AGENT_IDENTITY: 'spoofed' } },
       '/home/op',
+      undefined,
+      { agentId: 'agent-a', roomId: 'room-a' },
     );
     expect(rewritten.command).toBe(process.execPath);
     expect(rewritten.args).toEqual(
       expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
     );
-    expect(rewritten.env).toEqual(squireHostRewriteEnv('/home/op'));
+    expect(rewritten.env).toMatchObject(squireHostRewriteEnv('/home/op'));
+    expect((rewritten.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(
+      squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }),
+    );
     expect(rewritten).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
 
@@ -142,9 +147,10 @@ describe('granted MCP host routes', () => {
   it('rewrites a code-owned Squire grant with no operator declaration', () => {
     // Grant target is the code-owned name `squire`. The operator file may
     // use another key or be missing; the name itself is still the route.
-    const rewritten = rewriteGrantedHostRoutes({}, ['squire'], '/home/op');
+    const rewritten = rewriteGrantedHostRoutes({}, ['squire'], '/home/op', undefined, { agentId: 'agent-a', roomId: 'room-a' });
     expect(Object.keys(rewritten)).toEqual(['squire']);
-    expect(rewritten.squire?.env).toEqual(squireHostRewriteEnv('/home/op'));
+    expect(rewritten.squire?.env).toMatchObject(squireHostRewriteEnv('/home/op'));
+    expect((rewritten.squire?.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }));
     expect(rewritten.squire).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
 
@@ -160,8 +166,8 @@ describe('granted MCP host routes', () => {
     };
     const names = grantedHostRoutesFromList(standing);
     expect(names).toEqual(['squire']);
-    const first = grantedHostRouteWires(names, '/home/op');
-    const afterRestart = grantedHostRouteWires(grantedHostRoutesFromList(standing), '/home/op');
+    const first = grantedHostRouteWires(names, '/home/op', {}, undefined, { agentId: 'agent-a', roomId: 'room-a' });
+    const afterRestart = grantedHostRouteWires(grantedHostRoutesFromList(standing), '/home/op', {}, undefined, { agentId: 'agent-a', roomId: 'room-a' });
     expect(first).toEqual(afterRestart);
     expect(first).toEqual([
       expect.objectContaining({
@@ -169,7 +175,7 @@ describe('granted MCP host routes', () => {
         command: process.execPath,
         args: expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
         env: expect.arrayContaining(
-          Object.entries(squireHostRewriteEnv('/home/op')).map(([name, value]) => ({
+          Object.entries({ ...squireHostRewriteEnv('/home/op'), TRUSTY_SQUIRE_AGENT_IDENTITY: squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }) }).map(([name, value]) => ({
             name,
             value,
           })),
@@ -187,14 +193,17 @@ describe('granted MCP host routes', () => {
       },
       ['squire'],
       '/home/op',
+      undefined,
+      { agentId: 'agent-a', roomId: 'room-a' },
     );
     expect(Object.keys(rewritten)).toEqual(['squire']);
-    expect(rewritten.squire?.env).toEqual(squireHostRewriteEnv('/home/op'));
+    expect(rewritten.squire?.env).toMatchObject(squireHostRewriteEnv('/home/op'));
+    expect((rewritten.squire?.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }));
   });
 
   it('merges rewritten routes into an isolated TOML home without the operator copy', () => {
     const merged = mergeTomlHostRoutes('[mcp_servers.files]\ncommand = "files-mcp"\n', {
-      squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op'),
+      squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op', undefined, { agentId: 'agent-a', roomId: 'room-a' }),
     });
     expect(merged).toContain('files-mcp');
     expect(merged).toContain('TRUSTY_SQUIRE_BROKER_SOCKET');
@@ -204,7 +213,7 @@ describe('granted MCP host routes', () => {
   it('merges rewritten routes into Claude JSON', () => {
     const merged = mergeJsonHostRoutes(
       { files: { command: 'files-mcp' } },
-      { squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op') },
+      { squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op', undefined, { agentId: 'agent-a', roomId: 'room-a' }) },
     );
     expect(merged?.files).toEqual({ command: 'files-mcp' });
     expect(

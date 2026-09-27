@@ -757,6 +757,7 @@ export class MonolithRoomTurnLoop {
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
+          squireScope: { agentId: this.agent.publicKey, roomId: this.options.roomId },
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes: mountedHostRoutes,
@@ -897,6 +898,7 @@ export class MonolithRoomTurnLoop {
       operatorHome,
       { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
+      { agentId: this.agent.publicKey, roomId: this.options.roomId },
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead

@@ -377,7 +377,9 @@ describe('a helper joining a corner it did not open', () => {
     );
 
     await expect(access(worktree.path)).resolves.toBeUndefined();
-    expect(coordinator.needsFastReconcile()).toBe(true);
+    // A stale checkout is background cleanup. It must not turn every failed
+    // attempt into another full Room discovery and database read burst.
+    expect(coordinator.needsFastReconcile()).toBe(false);
     expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     await coordinator.shutdown();
   });

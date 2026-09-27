@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
@@ -291,13 +291,14 @@ function collectUpdates(payload) {
   const updates = [];
   const groupless = [];
   const seen = new Set();
-  const walk = (value, inherited) => {
+  const walk = (value, inherited, inheritedMessage = null) => {
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, inherited);
+      for (const item of value) walk(item, inherited, inheritedMessage);
       return;
     }
     if (!value || typeof value !== 'object') return;
     const group = groupIdOf(value) ?? inherited;
+    const message = typeof value.message === 'string' ? value.message : inheritedMessage;
     const id = typeof value.id === 'string' ? value.id : null;
     const platform = typeof value.platform === 'string' ? value.platform : null;
     const runtimeVersion = runtimeVersionOf(value);
@@ -309,6 +310,7 @@ function collectUpdates(payload) {
           platform,
           group,
           runtimeVersion,
+          message,
         });
       } else {
         groupless.push({ id, platform });
@@ -329,10 +331,11 @@ function collectUpdates(payload) {
           platform: listedPlatform,
           group,
           runtimeVersion,
+          message,
         });
       }
     }
-    for (const child of Object.values(value)) walk(child, group);
+    for (const child of Object.values(value)) walk(child, group, message);
   };
   walk(payload, null);
   return { updates, groupless };
@@ -405,6 +408,7 @@ function newestTargets(payload, expectedTargets) {
       runtimeVersion: update.runtimeVersion,
       group: update.group,
       updateId: update.id,
+      message: update.message,
     });
   }
   return expectedTargets.flatMap((target) => {
@@ -723,6 +727,73 @@ function markCanary(options) {
     ...(reason ? { reason } : {}),
   };
   writeLedger(options.ledger, ledger);
+}
+
+// A timed-out job may have finished every EAS republish while losing its
+// runner-local ledger. Recover only when the newest production group for
+// EVERY target names this candidate group and SHA in the message written by
+// promote(). A partial or superseded production rollout is never republished
+// by a retry: that would silently create a different OTA.
+function recoverPromotion(options) {
+  const ledger = readLedger(options.ledger);
+  if (ledger.status !== 'beta') fail(`Cannot recover ledger status ${ledger.status}.`);
+  const candidates = ledger.candidateTargets;
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    fail('Recovery requires an exact target-aware OTA candidate ledger.');
+  }
+  const listed = runEas([
+    'update:list', '--branch', 'production', '--limit',
+    productionLookupLimit(candidates), '--json', '--non-interactive',
+  ]);
+  const observed = newestTargets(listed, candidates);
+  const byKey = new Map(observed.map((target) => [targetKey(target), target]));
+  const matched = candidates.flatMap((candidate) => {
+    const target = byKey.get(targetKey(candidate));
+    const message = `promote beta ${candidate.group} (${ledger.sourceSha.slice(0, 12)})`;
+    return target?.message === message ? [target] : [];
+  });
+  if (matched.length === 0) {
+    if (Number(options.retryAttempt ?? 1) > 1) {
+      fail('No complete exact OTA promotion is visible; refusing to republish on a retry.');
+    }
+    writeFileSync(options.result, 'new\n');
+    return;
+  }
+  if (matched.length !== candidates.length) {
+    fail(`Only ${matched.length}/${candidates.length} exact OTA targets are current; refusing to republish.`);
+  }
+  const pins = readPinnedRuntimeVersion(process.cwd());
+  const promotedAt = isoNow();
+  const targets = matched.map(({ message: _message, ...target }) => ({
+    ...target, update: {
+      id: target.updateId, platform: target.platform, runtimeVersion: target.runtimeVersion,
+      group: target.group,
+    },
+  }));
+  const groups = [...new Set(targets.map((target) => target.group))];
+  ledger.status = 'production';
+  ledger.production = {
+    sourceTargets: candidates,
+    sourceGroupIds: platformGroupSummary(candidates, pins),
+    sourceGroupId: joinGroupIds(candidates.map((target) => target.group)),
+    targets: targets.map(({ update: _update, ...target }) => target),
+    groupIds: platformGroupSummary(targets, pins),
+    groupId: joinGroupIds(groups),
+    updates: targets.map((target) => target.update),
+    promotedAt,
+  };
+  ledger.delivery = {
+    ...ledger.delivery, state: 'published', groupIds: groups,
+    groupId: joinGroupIds(groups), publishedAt: promotedAt,
+  };
+  writeLedger(options.ledger, ledger);
+  markPublished(options.index, {
+    groupIds: groups, updateIds: targets.map((target) => target.updateId),
+    headSha: ledger.sourceSha, releaseVersion: ledger.releaseVersion,
+    publishedAt: promotedAt, runId: String(options.runId ?? ledger.delivery?.runId ?? 'unknown'),
+    attempt: Number(options.retryAttempt ?? ledger.delivery?.attempt ?? 1),
+  });
+  writeFileSync(options.result, 'recovered\n');
 }
 
 function promote(options) {
@@ -1112,6 +1183,9 @@ export function main(argv = process.argv.slice(2)) {
       case 'promote':
         promote(options);
         break;
+      case 'recover-promotion':
+        recoverPromotion(options);
+        break;
       case 'assert-promotion':
         assertPromotion(options);
         break;
@@ -1141,7 +1215,7 @@ export function main(argv = process.argv.slice(2)) {
         break;
       default:
         fail(
-          'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|assert-promotion|assert-production-list|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
+          'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|recover-promotion|assert-promotion|assert-production-list|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
         );
     }
   } catch (error) {

@@ -805,11 +805,16 @@ jobs:
       (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
       (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 12
+    # Fourteen runtime targets took 12m10s in v0.0.128; allow the ledger and
+    # artifact uploads to finish after EAS has already changed production.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
+          # A built retry needs the current recovery code; its downloaded
+          # candidate still pins the original release SHA and exact beta groups.
+          # A pending build must compile the original release tree.
+          ref: ${{ needs.initialize.outputs.stage_mobile_ota == 'pending' && needs.initialize.outputs.release_sha || github.sha }}
           fetch-depth: 0
       - uses: ./.github/actions/mobile-ota-leg
         if: needs.initialize.outputs.stage_mobile_ota == 'pending'

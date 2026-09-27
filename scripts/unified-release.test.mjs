@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,87 @@ const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
 const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
+
+test('OTA retry downloads the earlier candidate and recovers only its exact production groups', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const action = parse(readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8'));
+  const reuse = action.runs.steps.find((step) => step.id === 'reuse');
+  const promoteDownload = action.runs.steps.find((step) =>
+    step.uses === 'actions/download-artifact@v4' && step.if === "inputs.phase == 'promote'");
+  const promote = action.runs.steps.find((step) => step.id === 'promotion');
+  assert.match(reuse.if, /inputs\.phase == 'promote'/);
+  assert.match(reuse.with.script, /listArtifactsForRepo/);
+  assert.match(promoteDownload.with['run-id'], /steps\.reuse\.outputs\.run_id/);
+  assert.ok(promoteDownload.with['github-token']);
+  assert.match(promote.run, /recover-promotion/);
+  assert.match(promote.run, /retry-attempt/);
+  assert.match(promote.run, /if \[ "\$\(cat "\$RUNNER_TEMP\/mobile-ota-recovery.txt"\)" = new \]/);
+  assert.equal(workflow.jobs.mobile_ota['timeout-minutes'], 15);
+  assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /stage_mobile_ota == 'pending'/);
+  assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /github\.sha/);
+
+  const dir = mkdtempSync(join(tmpdir(), 'ota-recovery-'));
+  try {
+    const ledgerPath = join(dir, 'ledger.json');
+    const indexPath = join(dir, 'index.json');
+    const resultPath = join(dir, 'result.txt');
+    const mockPath = join(dir, 'eas.cjs');
+    const targetList = [
+      { platform: 'android', runtimeVersion: '31', group: 'beta-android' },
+      { platform: 'ios', runtimeVersion: '31', group: 'beta-ios' },
+    ];
+    const baseLedger = {
+      schemaVersion: 2, status: 'beta', sourceSha: NEW_SHA, releaseVersion: 'v0.0.128',
+      candidateTargets: targetList, updateTargets: targetList.map(({ platform, runtimeVersion }) => ({ platform, runtimeVersion })),
+      delivery: { state: 'built', runId: '36277001426', attempt: 1 },
+    };
+    const baseIndex = { schemaVersion: 1, merges: [{ sha: NEW_SHA, state: 'built', attempts: [] }] };
+    const listed = targetList.map((target) => ({
+      group: `production-${target.platform}`, runtimeVersion: target.runtimeVersion,
+      platforms: target.platform, message: `promote beta ${target.group} (${NEW_SHA.slice(0, 12)})`,
+    }));
+    writeFileSync(mockPath, '#!/usr/bin/env node\nprocess.stdout.write(process.env.MOCK_EAS_LIST);\n');
+    chmodSync(mockPath, 0o755);
+    const run = (payload) => spawnSync(process.execPath, [
+      'scripts/ota-release.mjs', 'recover-promotion', '--ledger', ledgerPath,
+      '--index', indexPath, '--result', resultPath, '--retry-attempt', '3', '--run-id', '36290000000',
+    ], {
+      cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
+      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify(payload) },
+    });
+    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
+    writeFileSync(indexPath, JSON.stringify(baseIndex));
+    const recovered = run(listed);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(readFileSync(resultPath, 'utf8'), 'recovered\n');
+    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'production');
+    assert.deepEqual(JSON.parse(readFileSync(indexPath)).merges[0].published.groupIds.sort(),
+      ['production-android', 'production-ios']);
+    assert.equal(JSON.parse(readFileSync(indexPath)).merges[0].attempts[0].runId, '36290000000');
+    for (const command of ['assert-promotion', 'assert-production-list']) {
+      const verified = spawnSync(process.execPath, [
+        'scripts/ota-release.mjs', command, '--ledger', ledgerPath, '--index', indexPath,
+      ], {
+        cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
+        env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify(listed) },
+      });
+      assert.equal(verified.status, 0, `${command}: ${verified.stderr}`);
+    }
+
+    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
+    writeFileSync(indexPath, JSON.stringify(baseIndex));
+    const missing = run(listed.map((target) => ({ ...target, message: 'different release' })));
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /refusing to republish on a retry/);
+    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'beta');
+    const partial = run([{ ...listed[0] }, { ...listed[1], message: 'different release' }]);
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.stderr, /Only 1\/2 exact OTA targets are current/);
+    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'beta');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('the release planner reads its desktop migration floor from the Tauri version file', () => {
   const desktopVersion = JSON.parse(readFileSync(

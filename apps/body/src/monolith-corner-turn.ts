@@ -51,6 +51,7 @@ import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
 import { institutionalContextForTurn } from './institutional-context.js';
+import { agentMemorySnapshot, prepareAgentMemory } from './agent-memory.js';
 import {
   codegraphFingerprintServers,
   codegraphMcpServer,
@@ -625,6 +626,7 @@ export class MonolithCornerTurnLoop {
   private attachmentDir?: string;
   /** The session's TMPDIR, where a granted command's script argument may also live. */
   private sessionScratchDir?: string;
+  private agentMemoryDir?: string;
   /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
   private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
   /** Operator-local turn traces; built once when the daemon configured a directory. */
@@ -987,6 +989,13 @@ export class MonolithCornerTurnLoop {
     // protected supervisorRoot above, so it needs its own re-bind.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    this.agentMemoryDir = await prepareAgentMemory(
+      this.options.config.agentMemoryRoot,
+      this.options.workspaceId,
+    ).catch((error: unknown) => {
+      console.warn(`[thin-core] corner ${this.options.cornerId}: agent memory unavailable:`, error);
+      return undefined;
+    });
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -1000,6 +1009,7 @@ export class MonolithCornerTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
+          ...(this.agentMemoryDir ? [this.agentMemoryDir] : []),
           // The shared npm cache. npm writes to its cache on every install,
           // and this one is deliberately outside the per-corner home so the
           // download is paid once per host rather than once per corner.
@@ -1094,6 +1104,7 @@ export class MonolithCornerTurnLoop {
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
+        agentMemoryDir: this.agentMemoryDir,
         cornerId: this.options.cornerId,
         agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
         agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
@@ -1438,6 +1449,7 @@ export class MonolithCornerTurnLoop {
                 restored,
                 activeReviewerInstruction,
                 institutionalContext,
+                agentMemory,
               ] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', {
@@ -1451,6 +1463,7 @@ export class MonolithCornerTurnLoop {
                   institutionalContextForTurn(api, cornerId, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
+                  agentMemorySnapshot(this.agentMemoryDir),
                 ]),
               );
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
@@ -1521,6 +1534,10 @@ export class MonolithCornerTurnLoop {
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
                   institutionalContext.text,
+                  this.agentMemoryDir
+                    ? 'For a durable private note, call beeline-agent.write_memory with the complete new MEMORY.md text. Later turns receive that file.'
+                    : '',
+                  agentMemory,
                   activeReviewerInstruction,
                   [
                     ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),

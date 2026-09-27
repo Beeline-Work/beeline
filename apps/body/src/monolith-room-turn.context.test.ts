@@ -1,5 +1,5 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -64,6 +64,7 @@ describe('monolith Room turn context', () => {
       readonlyMcpCommand: '/fake-beeline-mcp',
       agentEnv: {},
       workspaceRoot: join(root, 'room'),
+      agentMemoryRoot: join(root, 'memory'),
       autoApprovePermissions: true,
       accessPolicy: 'everyone',
     } as BodyConfig;
@@ -183,6 +184,9 @@ describe('monolith Room turn context', () => {
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
       async (_sessionId: string, prompt: unknown) => {
         prompts.push(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
+        if (prompts.length === 1) {
+          await writeFile(join(root, 'memory', 'workspace', 'MEMORY.md'), 'Delivery card survives');
+        }
         return { stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] };
       },
     );
@@ -222,6 +226,9 @@ describe('monolith Room turn context', () => {
     expect(prompts[0]).toContain('Institutional memory snapshot 1');
     expect(prompts[1]).not.toContain('Institutional memory snapshot');
     expect(prompts[2]).toContain('Institutional memory snapshot 3');
+    expect(prompts[0]).not.toContain('Delivery card survives');
+    expect(prompts[1]).toContain('Delivery card survives');
+    expect(prompts[2]).toContain('Delivery card survives');
 
     expect(systemPrompts[0]).toContain(
       'Ask one focused question only when an unresolved choice materially changes behavior',

@@ -135,10 +135,13 @@ corners also mount the release-owned `codegraph` server after its local index is
 | `list_files`, `read_file`                       | Walk and read the checkout                    |
 | `search_text`                                   | Search the checkout                           |
 | `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state             |
-| `read_agent_file`                               | Read the agent's approved materialized skills |
+| `read_agent_file`                               | Read approved agent skills or Workspace memory |
 
-The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
-Room/corner runtime. Institutional memory is ON by default on server and Body: host-side review
+`beeline-agent.write_memory` replaces one agent's private `MEMORY.md` in its Workspace-scoped
+runtime root. Each later Room or corner turn reads that file into its prompt; Room agents may also
+call `read_agent_file` with `area: "memory"` and `path: "MEMORY.md"`. The fixed-file writer requires
+an active command and never writes to a repository or another agent's root. Institutional memory
+is separately ON by default on server and Body: host-side review
 records sourced Workspace facts and requester-profile preferences. Each turn receives one
 relevance-selected, command-bound snapshot capped at 8,000 UTF-8 bytes; failures omit the optional
 block. `propose_memory_item` is the active-command-bound write path.

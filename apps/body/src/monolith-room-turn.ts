@@ -51,6 +51,7 @@ import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beel
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
 import { institutionalContextForTurn } from './institutional-context.js';
+import { agentMemorySnapshot, prepareAgentMemory } from './agent-memory.js';
 import {
   codegraphFingerprintServers,
   codegraphIndexDirectory,
@@ -421,6 +422,7 @@ export class MonolithRoomTurnLoop {
   private modelTakesImages?: boolean;
   /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
   private sessionScratchDir?: string;
+  private agentMemoryDir?: string;
   /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
   private sessionStateDirs: string[] = [];
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
@@ -809,6 +811,13 @@ export class MonolithRoomTurnLoop {
     // so the sandbox must leave this writable too.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    this.agentMemoryDir = await prepareAgentMemory(
+      this.options.config.agentMemoryRoot,
+      this.options.workspaceId,
+    ).catch((error: unknown) => {
+      console.warn(`[thin-core] Room ${this.options.roomId}: agent memory unavailable:`, error);
+      return undefined;
+    });
     // Index before constructing the sandbox: a Room keeps the checkout
     // read-only, but CodeGraph's SQLite WAL and connect-time reconciliation
     // need its generated .codegraph directory writable while the MCP lives.
@@ -842,6 +851,7 @@ export class MonolithRoomTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
+          ...(this.agentMemoryDir ? [this.agentMemoryDir] : []),
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...grantedSquireHostBindPaths({
             operatorHome,
@@ -859,10 +869,11 @@ export class MonolithRoomTurnLoop {
     // own tool-dispatch envelope (grok's `use_tool`) against exactly the
     // servers this session mounts, so it has to know them up front.
     const servers: McpServerWire[] = [
-      readOnlyMcpServer(this.options.config, this.options.cwd),
+      readOnlyMcpServer(this.options.config, this.options.cwd, this.agentMemoryDir),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
+        agentMemoryDir: this.agentMemoryDir,
         attachRoot: this.options.cwd,
         // The whole per-session overlay, not an enumerated subset: the agent
         // never picks where a harness writes a file it generates (grok's own
@@ -1209,7 +1220,7 @@ export class MonolithRoomTurnLoop {
                 throw new Error('Room checkout refresh failed before this turn');
               }
               const checkout = this.turnCheckout;
-              const [conversation, roster, delivered, corners, institutionalContext] =
+              const [conversation, roster, delivered, corners, institutionalContext, agentMemory] =
                 await trace.measure('context-fetch', () =>
                   Promise.all([
                     api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
@@ -1219,6 +1230,7 @@ export class MonolithRoomTurnLoop {
                     institutionalContextForTurn(api, this.options.roomId, (message) =>
                       console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
                     ),
+                    agentMemorySnapshot(this.agentMemoryDir),
                   ]),
                 );
               const names = new Map(
@@ -1263,6 +1275,10 @@ export class MonolithRoomTurnLoop {
                   grantDecision ? resumePrompt(item) : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
                   institutionalContext.text,
+                  this.agentMemoryDir
+                    ? 'For a durable private note, call beeline-agent.write_memory with the complete new MEMORY.md text. Later turns receive that file; use beeline-readonly-mcp.read_agent_file with area memory and path MEMORY.md when you need its full contents.'
+                    : '',
+                  agentMemory,
                   (corners.corners ?? []).some((corner) => !corner.archived)
                     ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(
                         (corners.corners ?? []).filter((corner) => !corner.archived),

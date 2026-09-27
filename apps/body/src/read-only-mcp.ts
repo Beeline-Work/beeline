@@ -16,9 +16,16 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  constants,
+  closeSync,
   existsSync,
+  fchmodSync,
+  fstatSync,
+  fsyncSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -80,6 +87,7 @@ import {
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import { MAX_AGENT_MEMORY_BYTES } from './agent-memory.js';
 import {
   YOUTUBE_MCP_SERVER_NAME,
   YOUTUBE_MCP_SURFACE,
@@ -159,12 +167,12 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
   {
     name: 'read_agent_file',
     description:
-      "Read one text file from this agent's approved materialized skills. It cannot access harness config, credentials, repositories, other agents, or execute content.",
+      "Read one text file from this agent's approved skills or Workspace memory. It cannot access harness config, credentials, repositories, other agents, or execute content.",
     inputSchema: {
       type: 'object',
       required: ['area', 'path'],
       properties: {
-        area: { type: 'string', enum: ['skills'] },
+        area: { type: 'string', enum: ['skills', 'memory'] },
         path: { type: 'string', description: 'Path relative to the selected approved area.' },
         start_line: { type: 'integer', minimum: 1 },
         end_line: { type: 'integer', minimum: 1 },
@@ -260,6 +268,17 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 ];
 
 const AGENT_TOOLS: ToolDefinition[] = [
+  {
+    name: 'write_memory',
+    description:
+      'Replace your private MEMORY.md for this Workspace with durable notes you want to recall on later turns. This writes only that approved file, never a repository path. Keep it concise and do not store secrets.',
+    inputSchema: {
+      type: 'object',
+      required: ['content'],
+      properties: { content: { type: 'string', maxLength: MAX_AGENT_MEMORY_BYTES } },
+      additionalProperties: false,
+    },
+  },
   {
     name: 'load_workspace_skill',
     description:
@@ -1367,9 +1386,11 @@ export function agentToolsFor(
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
+  agentMemoryAvailable = Boolean(process.env.BEELINE_READONLY_AGENT_MEMORY_ROOT),
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
+    if (tool.name === 'write_memory') return agentMemoryAvailable;
     if (
       tool.name === 'propose_memory_item' ||
       tool.name === 'search_history' ||
@@ -1411,6 +1432,7 @@ const TOOLS = youtubeSurface
       process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
       process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
       process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
+      Boolean(process.env.BEELINE_READONLY_AGENT_MEMORY_ROOT),
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -1453,7 +1475,10 @@ const EXTRA_ROOTS: string[] = (process.env.BEELINE_READONLY_EXTRA_ROOTS?.trim() 
 
 const repositoryRoot = configuredRoot();
 const approvedAgentRoots = Object.fromEntries(
-  [['skills', process.env.BEELINE_READONLY_AGENT_SKILLS_ROOT]].flatMap(([area, value]) => {
+  [
+    ['skills', process.env.BEELINE_READONLY_AGENT_SKILLS_ROOT],
+    ['memory', process.env.BEELINE_READONLY_AGENT_MEMORY_ROOT],
+  ].flatMap(([area, value]) => {
     if (!value?.trim()) return [];
     try {
       const candidate = resolve(value);
@@ -1465,7 +1490,7 @@ const approvedAgentRoots = Object.fromEntries(
       return [];
     }
   }),
-) as Partial<Record<'skills', string>>;
+) as Partial<Record<'skills' | 'memory', string>>;
 const gitBinary = ['/usr/bin/git', '/bin/git'].find((candidate) => existsSync(candidate));
 
 function asObject(value: unknown): JsonObject {
@@ -1614,7 +1639,7 @@ function readFile(args: JsonObject): string {
 
 function readAgentFile(args: JsonObject): string {
   const area = stringArg(args, 'area');
-  if (area !== 'skills') throw new Error('area must be skills');
+  if (area !== 'skills' && area !== 'memory') throw new Error('area must be skills or memory');
   const root = approvedAgentRoots[area];
   if (!root) throw new Error(`approved ${area} material is unavailable`);
   const input = stringArg(args, 'path') ?? '';
@@ -1657,6 +1682,36 @@ function readAgentFile(args: JsonObject): string {
     .slice(startLine - 1, endLine)
     .map((line, index) => `${startLine + index}: ${line}`)
     .join('\n')}${requestedEnd > endLine ? '\n[truncated at 1000 lines]' : ''}`;
+}
+
+function writeMemory(args: JsonObject): string {
+  const root = approvedAgentRoots.memory;
+  if (!root) throw new Error('approved memory material is unavailable');
+  if (Object.keys(args).some((key) => key !== 'content')) {
+    throw new Error('write_memory accepts only content');
+  }
+  const content = stringArg(args, 'content');
+  if (content === undefined || content.includes('\0')) {
+    throw new Error('memory content must be UTF-8 text');
+  }
+  if (Buffer.byteLength(content, 'utf8') > MAX_AGENT_MEMORY_BYTES) {
+    throw new Error(`memory content must be at most ${MAX_AGENT_MEMORY_BYTES} UTF-8 bytes`);
+  }
+  const file = resolve(root, 'MEMORY.md');
+  const fd = openSync(file, constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  try {
+    const details = fstatSync(fd);
+    if (!details.isFile() || details.nlink !== 1) {
+      throw new Error('approved memory writes require an ordinary file');
+    }
+    fchmodSync(fd, 0o600);
+    ftruncateSync(fd, 0);
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  return 'saved MEMORY.md for this Workspace';
 }
 
 function searchableFiles(start: string): string[] {
@@ -3506,6 +3561,9 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       return prChecksStatus(args);
     case 'approve_merge':
       return approveMerge(args);
+    case 'write_memory':
+      await activeCommandContext();
+      return writeMemory(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
     case 'get_avatar':

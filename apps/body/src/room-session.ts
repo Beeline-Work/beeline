@@ -20,6 +20,8 @@ export function beelineAgentMcpServer(
     roomId: string;
     turnContextPath?: string;
     workspaceId: string;
+    /** Host-selected per-agent, per-Workspace memory directory. */
+    agentMemoryDir?: string;
     cornerId?: string;
     /** Repository-corner authors may close landed or abandoned work. No-code
      *  corners stay open until a human uses the phone's structured close. */
@@ -59,10 +61,11 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_AGENT_ID', value: connection.agentId },
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
-      ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
-      ...(context.agentMayCloseCorner
-        ? [{ name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' }]
+      ...(context.agentMemoryDir
+        ? [{ name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(context.agentMemoryDir) }]
         : []),
+      ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
+      ...(context.agentMayCloseCorner ? [{ name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' }] : []),
       ...(context.agentMayUpgradeCorner
         ? [{ name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' }]
         : []),
@@ -135,15 +138,30 @@ export function youtubeMcpServer(
     env: [
       { name: 'BEELINE_MCP_SURFACE', value: YOUTUBE_MCP_SURFACE },
       { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: accessToken },
-      { name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
-        value: resolve(process.env.BEELINE_AGENT_HOME ?? process.cwd(), 'google-credentials.json') },
+      {
+        name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
+        value: resolve(process.env.BEELINE_AGENT_HOME ?? process.cwd(), 'google-credentials.json'),
+      },
     ],
   };
   if (!resourceAuthFile) return server;
-  const route = rewriteHostMcpDeclaration(server.name, {
-    command: server.command, args: server.args,
-    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
-  }, config.operatorHome ?? '', resourceAuthFile);
-  return { name: server.name, command: String(route.command), args: route.args as string[],
-    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
+  const route = rewriteHostMcpDeclaration(
+    server.name,
+    {
+      command: server.command,
+      args: server.args,
+      env: Object.fromEntries((server.env ?? []).map((entry) => [entry.name, entry.value])),
+    },
+    config.operatorHome ?? '',
+    resourceAuthFile,
+  );
+  return {
+    name: server.name,
+    command: String(route.command),
+    args: route.args as string[],
+    env: Object.entries(route.env as Record<string, string>).map(([name, value]) => ({
+      name,
+      value,
+    })),
+  };
 }

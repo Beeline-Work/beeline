@@ -29,6 +29,16 @@ import { parseDashboardPlatforms, readOperatorDashboard } from './operator-dashb
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
+// A reconnecting helper may send all of its Room subscriptions at once. Keep
+// those reads outside pg-pool's queue, where they would otherwise time out and
+// amplify the reconnect. Older helpers need no new protocol to use this gate.
+const MAX_LIVE_DB_TASKS = 2;
+const MAX_LIVE_WAITING_TASKS = 512;
+const MAX_LIVE_SOCKET_TASKS = 8_192;
+const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
+const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
+const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
+const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
 /**
  * Clearing a chat-list dismissal is per-viewer state that no Room read
  * projects, so it invalidates no Room for anybody. Its writer is the Room that
@@ -159,6 +169,10 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
 function isInboxCursor(value: unknown): value is string {
   return typeof value === 'string' && /^\d+,[0-9a-f]{64}$/.test(value);
 }
+function isRetryableLiveError(error: unknown): boolean {
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return isTransientDatabaseConnectionError(error) || code === '57014' || code === '53300';
+}
 /** Who a rate limit counts against: the edge's client address, else the socket peer. */
 function clientKey(request: IncomingMessage): string {
   const forwarded = request.headers['fly-client-ip'] ?? request.headers['x-forwarded-for'];
@@ -182,14 +196,41 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
-  const webSockets = new WebSocketServer({ noServer: true });
+  const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  let liveDbTasks = 0;
+  const liveDbWaiters: Array<() => void> = [];
+  const socketCounts = new Map<string, number>();
+  const socketSubscriptions = new Map<WebSocket, () => number>();
+  const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
+  const liveHealth = () => ({
+    sockets: webSockets.clients.size,
+    subscriptions: [...socketSubscriptions.values()].reduce((total, count) => total + count(), 0),
+    activeDbTasks: liveDbTasks,
+    waitingDbTasks: liveDbWaiters.length,
+    errors: { ...liveErrors },
+  });
+  const releaseLiveDbTask = () => {
+    const next = liveDbWaiters.shift();
+    if (next) next();
+    else liveDbTasks--;
+  };
+  const acquireLiveDbTask = async (): Promise<() => void> => {
+    if (liveDbTasks < MAX_LIVE_DB_TASKS) {
+      liveDbTasks++;
+      return releaseLiveDbTask;
+    }
+    if (liveDbWaiters.length >= MAX_LIVE_WAITING_TASKS)
+      throw new Error('live admission overloaded');
+    await new Promise<void>((resolve) => liveDbWaiters.push(resolve));
+    return releaseLiveDbTask;
+  };
   const invitePreview = new InvitePreviewAccess(options.database);
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     console.log('[req]', method, url.pathname);
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
-    void route(request, response, options, invitePreview).catch((error) => {
+    void route(request, response, options, invitePreview, liveHealth).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
         message.includes('required') ||
@@ -253,6 +294,19 @@ export function createBeelineServer(options: ServerOptions): Server {
         socket.destroy();
         return;
       }
+      const openSockets = socketCounts.get(identityId) ?? 0;
+      if (openSockets >= (daemonId ? 4 : 8)) {
+        liveErrors.overload++;
+        socket.write('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      socketCounts.set(identityId, openSockets + 1);
+      socket.once('close', () => {
+        const remaining = socketCounts.get(identityId) ?? 1;
+        if (remaining <= 1) socketCounts.delete(identityId);
+        else socketCounts.set(identityId, remaining - 1);
+      });
       webSockets.handleUpgrade(request, socket, head, (client) =>
         webSockets.emit('connection', client, request, {
           identityId,
@@ -268,8 +322,28 @@ export function createBeelineServer(options: ServerOptions): Server {
       _request: IncomingMessage,
       principal: { identityId: string; kind: 'phone' | 'daemon' },
     ) => {
+      const sendLive = (payload: string) => {
+        if (client.readyState !== client.OPEN) return;
+        if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
+          liveErrors.overload++;
+          client.close(1013, 'live backpressure');
+          return;
+        }
+        client.send(payload);
+      };
       if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
+      socketSubscriptions.set(client, () => releases.size);
+      if (principal.kind === 'daemon')
+        sendLive(JSON.stringify({
+          type: 'hello',
+          protocolMin: 1,
+          protocolMax: 1,
+          capabilities: { discoveryWake: true, pushIntake: true },
+        }));
+      let socketTasks = 0;
+      let socketQueuedBytes = 0;
+      let socketTaskTail = Promise.resolve();
       // A fresh Room (or any Room/corner membership change) inserts a
       // `memberships` row whose live notification is Room-scoped — a Room this
       // daemon has never heard of, so it holds no socket subscription for it.
@@ -285,15 +359,15 @@ export function createBeelineServer(options: ServerOptions): Server {
               )
                 return;
               if (event.reason === 'connector-assignment') {
-                client.send(JSON.stringify({ type: 'connector-assignment' }));
+                sendLive(JSON.stringify({ type: 'connector-assignment' }));
                 return;
               }
               if (event.reason === 'memory-job') {
-                client.send(JSON.stringify({ type: 'memory-job', roomId: event.roomId }));
+                sendLive(JSON.stringify({ type: 'memory-job', roomId: event.roomId }));
                 return;
               }
               if (event.reason !== 'postgres:memberships') return;
-              client.send(
+              sendLive(
                 JSON.stringify({
                   type: 'rooms-changed',
                   ...(event.roomId ? { roomId: event.roomId } : {}),
@@ -308,8 +382,18 @@ export function createBeelineServer(options: ServerOptions): Server {
       const helperReleaseSubscription = principal.kind === 'daemon'
         ? options.releaseNotify?.subscribeHelperRelease((release) => {
             if (client.readyState === client.OPEN)
-              client.send(JSON.stringify({ type: 'helper-release', ...release }));
+              sendLive(JSON.stringify({ type: 'helper-release', ...release }));
           })
+        : undefined;
+      const listenerResyncRelease = principal.kind === 'daemon'
+        ? options.live.subscribeResync(() => sendLive(JSON.stringify({
+            type: 'discovery-wake', reason: 'listener-resync',
+          })))
+        : undefined;
+      const databaseRecoveryRelease = principal.kind === 'daemon'
+        ? options.database.onRecovery?.(() => sendLive(JSON.stringify({
+            type: 'discovery-wake', reason: 'database-recovered',
+          })))
         : undefined;
       const pendingPaintTraces = new Map<
         string,
@@ -333,11 +417,24 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
       };
       client.on('message', (raw) => {
-        void (async () => {
+        const frameBytes = Array.isArray(raw)
+          ? raw.reduce((total, part) => total + part.length, 0)
+          : raw.byteLength;
+        if (socketTasks >= MAX_LIVE_SOCKET_TASKS ||
+            socketQueuedBytes + frameBytes > MAX_LIVE_SOCKET_QUEUED_BYTES) {
+          liveErrors.overload++;
+          client.close(1013, 'live admission overloaded');
+          return;
+        }
+        socketTasks++;
+        socketQueuedBytes += frameBytes;
+        const processMessage = async () => {
+          if (client.readyState !== client.OPEN) return;
           let message: unknown;
           try {
             message = JSON.parse(raw.toString());
           } catch {
+            liveErrors.invalid++;
             return;
           }
           if (!message || typeof message !== 'object') return;
@@ -354,7 +451,7 @@ export function createBeelineServer(options: ServerOptions): Server {
               ).rows[0]?.clock_at;
               if (!clock || client.readyState !== client.OPEN) return;
               const databaseClockAt = clock.getTime();
-              client.send(
+              sendLive(
                 JSON.stringify({
                   type: 'trace-painted',
                   id: item.id,
@@ -367,7 +464,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             }
             if (typeof trace.startedAt !== 'number') return;
             const serverReceivedAt = Date.now();
-            client.send(
+            sendLive(
               JSON.stringify({
                 type: 'trace-painted',
                 id: item.id,
@@ -392,6 +489,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? [item.roomId]
                 : [];
             if (requestedRoomIds.length === 0) return;
+            if (requestedRoomIds.length > MAX_LIVE_SUBSCRIBE_FRAME_ROOMS ||
+                releases.size + requestedRoomIds.filter((id) => !releases.has(id)).length >
+                  MAX_LIVE_ROOMS_PER_SOCKET) {
+              liveErrors.invalid++;
+              client.close(1008, 'live subscription limit');
+              return;
+            }
             const readableRooms = await options.phone.canReadRooms(
               requestedRoomIds,
               principal.identityId,
@@ -426,7 +530,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     cursor = inbox.cursor ?? cursor;
                     const currentTrigger = replayTrigger;
                     replayTrigger = undefined;
-                    client.send(
+                    sendLive(
                       JSON.stringify({
                         type: 'inbox',
                         roomId,
@@ -460,7 +564,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     );
                     const currentTrigger = commandTrigger;
                     commandTrigger = undefined;
-                    client.send(
+                    sendLive(
                       JSON.stringify({
                         type: 'commands',
                         roomId,
@@ -502,7 +606,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       event.targetAgentId === principal.identityId &&
                       client.readyState === client.OPEN
                     ) {
-                      client.send(JSON.stringify({ type: 'config-changed', roomId }));
+                      sendLive(JSON.stringify({ type: 'config-changed', roomId }));
                     }
                     return;
                   }
@@ -511,7 +615,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       event.targetAgentId === principal.identityId &&
                       client.readyState === client.OPEN
                     ) {
-                      client.send(
+                      sendLive(
                         JSON.stringify({
                           type: 'hiccup-restart',
                           roomId,
@@ -527,19 +631,19 @@ export function createBeelineServer(options: ServerOptions): Server {
                   }
                   if (event.reason === 'memory-job') {
                     if (!event.targetAgentId && client.readyState === client.OPEN)
-                      client.send(JSON.stringify({ type: 'memory-job', roomId }));
+                      sendLive(JSON.stringify({ type: 'memory-job', roomId }));
                     return;
                   }
                   if (event.reason === 'postgres:rooms' && event.repositoryChanged &&
                       principal.kind === 'daemon') {
                     if (client.readyState === client.OPEN)
-                      client.send(JSON.stringify({ type: 'rooms-changed', roomId,
+                      sendLive(JSON.stringify({ type: 'rooms-changed', roomId,
                         repositoryChanged: true }));
                     return;
                   }
                   if (event.closeRequested && event.reason === 'postgres:corner_facts') {
                     if (client.readyState === client.OPEN)
-                      client.send(JSON.stringify({ type: 'corner-complete', roomId }));
+                      sendLive(JSON.stringify({ type: 'corner-complete', roomId }));
                     return;
                   }
                   if (
@@ -548,7 +652,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     event.lane === 'code'
                   ) {
                     if (client.readyState === client.OPEN)
-                      client.send(JSON.stringify({ type: 'corner-restart', roomId }));
+                      sendLive(JSON.stringify({ type: 'corner-restart', roomId }));
                     return;
                   }
                   void replay(trigger);
@@ -572,17 +676,22 @@ export function createBeelineServer(options: ServerOptions): Server {
                   console.error('[presence] startup announcement failed', error);
                 }
               if (client.readyState !== client.OPEN) return;
-              client.send(
+              sendLive(
                 JSON.stringify({
                   type: 'subscribed',
                   roomId,
                   capabilities: {
                     pushIntake: true,
                     connectionPresence: Boolean(options.connectionPresence),
+                    discoveryWake: true,
                   },
                 }),
               );
-              await Promise.all([replay(), pushCommands()]);
+              // Both projections use the app pool. Keep one socket's startup
+              // reads inside its single admission slot instead of doubling
+              // connection demand during a reconnect fan-in.
+              await replay();
+              await pushCommands();
               continue;
             }
             // Agents whose draft this socket has already been handed live.
@@ -595,7 +704,7 @@ export function createBeelineServer(options: ServerOptions): Server {
               options.live.subscribe(roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
                 if (event.type !== 'invalidate') {
-                  if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                  if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
                   return;
                 }
                 // committedRow is process-local authority input. Strip it
@@ -612,7 +721,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       } as const)
                     : undefined;
                 if (!target) {
-                  if (client.readyState === client.OPEN) client.send(JSON.stringify(wireEvent));
+                  if (client.readyState === client.OPEN) sendLive(JSON.stringify(wireEvent));
                   return;
                 }
                 const trace = event.trace;
@@ -629,7 +738,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 const invalidationSent = !committedRow;
                 if (invalidationSent && client.readyState === client.OPEN) {
                   rememberPaintTrace(wireTrace);
-                  client.send(
+                  sendLive(
                     JSON.stringify({
                       ...wireEvent,
                       ...(wireTrace ? { trace: wireTrace } : {}),
@@ -673,7 +782,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     if ('error' in result) throw result.error;
                     rememberPaintTrace(wireTrace);
                     if (!result.delta && invalidationSent) return;
-                    client.send(
+                    sendLive(
                       JSON.stringify(
                         result.delta
                           ? {
@@ -692,12 +801,12 @@ export function createBeelineServer(options: ServerOptions): Server {
                     );
                     if (!invalidationSent && client.readyState === client.OPEN) {
                       rememberPaintTrace(wireTrace);
-                      client.send(JSON.stringify(fallback));
+                      sendLive(JSON.stringify(fallback));
                     }
                   });
               }),
             );
-            client.send(JSON.stringify({ type: 'subscribed', roomId: roomId }));
+            sendLive(JSON.stringify({ type: 'subscribed', roomId: roomId }));
             // A live lane carries only what is written after this point, so a
             // reader who joins a turn already in progress has missed the draft
             // it is writing. Hand over the running one now; every later delta
@@ -708,10 +817,10 @@ export function createBeelineServer(options: ServerOptions): Server {
               .catch(() => [] as LiveEvent[]);
             for (const event of snapshot) {
               if (event.type === 'draft' && streamed.has(event.agentId)) continue;
-              if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+              if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
             }
             for (const event of options.live.presenceSnapshot(roomId)) {
-              if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+              if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
             }
             }
           }
@@ -719,19 +828,40 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
           }
-        })().catch((error) => {
-          console.error('[live] message failed', error);
+        };
+        socketTaskTail = socketTaskTail.then(async () => {
+          if (client.readyState !== client.OPEN) return;
+          const releaseDbTask = await acquireLiveDbTask();
+          try {
+            if (client.readyState === client.OPEN) await processMessage();
+          } finally {
+            releaseDbTask();
+          }
+        }).catch((error) => {
+          const retryable = isRetryableLiveError(error);
+          const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+          const kind = retryable ? 'database' : code === '22P02' ? 'invalid' : 'internal';
+          liveErrors[kind]++;
+          console.error('[live] message failed', { kind, error });
           if (client.readyState === client.OPEN)
             client.close(
-              isTransientDatabaseConnectionError(error) ? 1013 : 1011,
+              retryable ||
+                (error instanceof Error && error.message === 'live admission overloaded')
+                ? 1013 : 1011,
               'live request failed',
             );
+        }).finally(() => {
+          socketTasks--;
+          socketQueuedBytes -= frameBytes;
         });
       });
       client.on('close', () => {
+        socketSubscriptions.delete(client);
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
         membershipWakeRelease?.();
         helperReleaseSubscription?.();
+        listenerResyncRelease?.();
+        databaseRecoveryRelease?.();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();
@@ -777,6 +907,7 @@ async function route(
   response: ServerResponse,
   options: ServerOptions,
   invitePreview: InvitePreviewAccess,
+  liveHealth: () => object,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -855,6 +986,7 @@ async function route(
         },
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
       },
+      live: liveHealth(),
     });
     return;
   }

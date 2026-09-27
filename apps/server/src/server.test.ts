@@ -73,6 +73,13 @@ describe('server readiness', () => {
         pool: { size: 5, inUse: 3, waiting: 3 },
         oldestActiveQueryAgeMs: 12_345,
       },
+      live: {
+        sockets: 0,
+        subscriptions: 0,
+        activeDbTasks: 0,
+        waitingDbTasks: 0,
+        errors: { database: 0, invalid: 0, internal: 0, overload: 0 },
+      },
     });
   });
 
@@ -350,6 +357,51 @@ describe('daemon live command push', () => {
     await expect(closed).resolves.toBe(1013);
     const response = await fetch(`http://127.0.0.1:${port}/healthz`);
     expect(response.status).toBe(200);
+    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    expect((await health.json()).live.errors.database).toBe(1);
+  });
+
+  it('advertises discovery wake and pushes listener and app-pool recovery', async () => {
+    const live = new LiveHub();
+    let recover: (() => void) | undefined;
+    const onRecovery = vi.fn((listener: () => void) => {
+      recover = listener;
+      return () => { recover = undefined; };
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn(), onRecovery },
+      auth: { authenticateDaemon: vi.fn().mockResolvedValue('agent-live') } as unknown as TokenAuth,
+      phone: { canReadRooms: vi.fn().mockResolvedValue(new Set(['room-live'])) } as unknown as PhoneService,
+      daemon: { execute: vi.fn(async (name: string) => name === 'getAgentCommands'
+        ? { commandProtocol: 1, commands: [] } : { items: [] }) } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    const hello = nextSocketMessage(socket, 'hello');
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    await expect(hello).resolves.toMatchObject({
+      protocolMin: 1, protocolMax: 1,
+      capabilities: { discoveryWake: true },
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: 'room-live' }));
+    await expect(subscribed).resolves.toMatchObject({
+      capabilities: { discoveryWake: true, pushIntake: true },
+    });
+    const listenerWake = nextSocketMessage(socket, 'discovery-wake');
+    live.resync();
+    await expect(listenerWake).resolves.toMatchObject({ reason: 'listener-resync' });
+    const poolWake = nextSocketMessage(socket, 'discovery-wake');
+    recover?.();
+    await expect(poolWake).resolves.toMatchObject({ reason: 'database-recovered' });
   });
 
   it('acknowledges push intake when the separate presence announcement fails', async () => {
@@ -1212,6 +1264,33 @@ describe('phone committed-row live delivery', () => {
     expect(databaseQuery).toHaveBeenCalledOnce();
   });
 
+  it('contains a failed paint-clock read and keeps serving HTTP', async () => {
+    const query = vi.fn().mockRejectedValue(new Error('timeout exceeded when trying to connect'));
+    const { live, roomId, socket, port } = await connect(
+      vi.fn().mockResolvedValue({
+        type: 'turn-delta',
+        roomId: 'room-live',
+        turn: { requestId: 'request', agentId: 'agent', status: 'working', createdAt: 1 },
+      }),
+      undefined,
+      undefined,
+      true,
+      query,
+    );
+    const delivered = nextSocketMessage(socket, 'turn-delta');
+    live.publish({
+      type: 'invalidate', roomId, reason: 'postgres:agent_turns',
+      agentId: 'agent', requestId: 'request',
+      trace: { id: 'failed-clock', databaseAt: 1, emittedAt: 2 },
+    });
+    await delivered;
+    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
+    socket.send(JSON.stringify({ type: 'trace-paint', id: 'failed-clock' }));
+    await expect(closed).resolves.toBe(1013);
+    expect(query).toHaveBeenCalledOnce();
+    expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+  });
+
   it('never subscribes or projects a committed row for an unauthorized viewer', async () => {
     const read = vi.fn();
     const project = vi.fn();
@@ -1370,6 +1449,121 @@ describe('phone committed-row live delivery', () => {
     await expectNoSocketMessage(socket);
     expect(project).toHaveBeenCalledTimes(1);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('live reconnect admission', () => {
+  it('rejects an oversized subscribe frame before asking the database', async () => {
+    const canReadRooms = vi.fn();
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { canReadRooms } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    let socket: WebSocket | undefined;
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+      socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+      await new Promise<void>((resolve, reject) => {
+        socket!.once('open', () => resolve());
+        socket!.once('error', reject);
+      });
+      const closed = new Promise<number>((resolve) => socket!.once('close', resolve));
+      socket.send(JSON.stringify({
+        type: 'subscribe', roomIds: Array.from({ length: 33 }, (_, index) => `room-${index}`),
+      }));
+      await expect(closed).resolves.toBe(1008);
+      expect(canReadRooms).not.toHaveBeenCalled();
+    } finally {
+      socket?.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('recovers 15 agents twice through a two-connection pool without waiters', async () => {
+    let inUse = 0;
+    let waiting = 0;
+    let peakInUse = 0;
+    let peakWaiting = 0;
+    const poolWaiters: Array<() => void> = [];
+    const query = vi.fn(async () => {
+      if (inUse >= 2) {
+        waiting++;
+        peakWaiting = Math.max(peakWaiting, waiting);
+        await new Promise<void>((resolve) => poolWaiters.push(resolve));
+        waiting--;
+      }
+      inUse++;
+      peakInUse = Math.max(peakInUse, inUse);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inUse--;
+      poolWaiters.shift()?.();
+      return { rows: [], rowCount: 0 };
+    });
+    const database = {
+      query,
+      transaction: vi.fn(),
+      poolCounts: () => ({ total: 2, idle: 2 - inUse, waiting }),
+    } as unknown as SqlDatabase;
+    const server = createBeelineServer({
+      database,
+      auth: { authenticateDaemon: vi.fn(async (token: string) => token) } as unknown as TokenAuth,
+      phone: {
+        canReadRooms: vi.fn(async (roomIds: readonly string[]) => {
+          await database.query('SELECT 1');
+          return new Set(roomIds);
+        }),
+      } as unknown as PhoneService,
+      daemon: {
+        execute: vi.fn(async (name: string) => {
+          await database.query('SELECT 1');
+          return name === 'getAgentCommands'
+            ? { commandProtocol: 1, commands: [] }
+            : { items: [] };
+        }),
+      } as unknown as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    const sockets: WebSocket[] = [];
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+      for (let wave = 0; wave < 2; wave++) {
+        const waveSockets = Array.from({ length: 15 }, (_, index) => {
+          const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, [
+            `bearer.bdt_agent_${index}`,
+          ]);
+          sockets.push(socket);
+          return socket;
+        });
+        await Promise.all(waveSockets.map(async (socket, index) => {
+          await new Promise<void>((resolve, reject) => {
+            socket.once('open', () => resolve());
+            socket.once('error', reject);
+          });
+          const commands = nextSocketMessage(socket, 'commands');
+          socket.send(JSON.stringify({ type: 'subscribe', roomId: `room-${index}` }));
+          await commands;
+        }));
+        await Promise.all(waveSockets.map((socket) => new Promise<void>((resolve) => {
+          socket.once('close', () => resolve());
+          socket.close();
+        })));
+      }
+      expect(peakInUse).toBeLessThanOrEqual(2);
+      expect(peakWaiting).toBe(0);
+      const health = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(health.status).toBe(200);
+      expect((await health.json()).database.pool.waiting).toBe(0);
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 

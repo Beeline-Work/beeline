@@ -117,6 +117,13 @@ export class LiveHub {
    * default so a LiveHub without a listener still receives presence. */
   #listenerOwnsPresenceFanout = false;
 
+  constructor() {
+    // Each connected helper contributes a legitimate wildcard listener.
+    // Socket admission bounds the fan-in; Node's default warning at ten
+    // listeners is too low for an ordinary server instance.
+    this.#events.setMaxListeners(0);
+  }
+
   /** Production wires PostgresLiveListener before evidence writes; call once. */
   useListenerPresenceFanout(): void {
     this.#listenerOwnsPresenceFanout = true;

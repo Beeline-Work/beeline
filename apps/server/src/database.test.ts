@@ -129,6 +129,29 @@ describe('a terminated checked-out connection never wedges the pool', () => {
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
 
+  it('announces recovery once after a failed pool read succeeds later', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockResolvedValue(result([{ answer: 2 }])),
+      on: vi.fn(), connect: vi.fn(), end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 2, { pool, pause: async () => {} });
+    const recovered = vi.fn();
+    const release = database.onRecovery(recovered);
+
+    await expect(database.query('SELECT 1')).rejects.toThrow(/Connection terminated/);
+    expect(recovered).not.toHaveBeenCalled();
+    await expect(database.query('SELECT 2')).resolves.toEqual(result([{ answer: 2 }]));
+    expect(recovered).toHaveBeenCalledOnce();
+    await database.query('SELECT 3');
+    expect(recovered).toHaveBeenCalledOnce();
+    release();
+  });
+
   it('bounds every pool acquisition and keeps half-open connections from hanging silently', () => {
     expect(postgresPoolConfig('postgres://app', 1, 'long-running')).toMatchObject({
       connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,

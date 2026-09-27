@@ -352,9 +352,19 @@ const wait = (milliseconds: number) =>
 export class PostgresLiveListener {
   private stopped = false;
   private active?: LivePgClient;
+  private connected = false;
   private readonly projectionQueue: Array<{ raw: string; queuedAt: number; key?: string }> = [];
   private activeProjections = 0;
+  private readonly activeProjectionSince = new Map<number, number>();
+  private nextProjectionTicket = 0;
   private droppedProjections = 0;
+  private deliveredProjections = 0;
+  private failedProjections = 0;
+  private lastNotificationAt: number | null = null;
+  private lastDeliveredAt: number | null = null;
+  private lastDeliveryAgeMs: number | null = null;
+  private maxDeliveryAgeMs = 0;
+  private readonly deliveryAgeBuckets = [0, 0, 0, 0, 0, 0];
   private needsProjectionResync = false;
   private readonly memoryDue = new Map<string, { roomId: string; dueAt: number }>();
   private memoryDueTimer?: NodeJS.Timeout;
@@ -451,18 +461,32 @@ export class PostgresLiveListener {
   ) {}
 
   projectionHealth() {
+    const oldestActive = this.activeProjectionSince.size
+      ? Math.min(...this.activeProjectionSince.values()) : undefined;
     return {
+      connected: this.connected,
       active: this.activeProjections,
       queued: this.projectionQueue.length,
+      oldestActiveAgeMs: oldestActive === undefined
+        ? null : Math.max(0, Date.now() - oldestActive),
       oldestQueuedAgeMs: this.projectionQueue[0]
         ? Math.max(0, Date.now() - this.projectionQueue[0].queuedAt) : null,
       dropped: this.droppedProjections,
+      delivered: this.deliveredProjections,
+      failed: this.failedProjections,
+      lastNotificationAt: this.lastNotificationAt,
+      lastDeliveredAt: this.lastDeliveredAt,
+      lastDeliveryAgeMs: this.lastDeliveryAgeMs,
+      maxDeliveryAgeMs: this.maxDeliveryAgeMs,
+      /** Cumulative receipt-to-projection ages <=10, 50, 100, 500, 2000 ms, then above. */
+      deliveryAgeBuckets: [...this.deliveryAgeBuckets],
       resyncPending: this.needsProjectionResync,
     };
   }
 
   private enqueueProjection(raw: string | undefined): void {
     if (this.stopped || !raw) return;
+    this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
     // These notifications only ask a helper to refresh the latest state or
@@ -491,9 +515,22 @@ export class PostgresLiveListener {
     while (!this.stopped && this.activeProjections < 2 && this.projectionQueue.length) {
       const next = this.projectionQueue.shift()!;
       this.activeProjections++;
-      void this.rebroadcast(next.raw).catch((error) =>
-        console.error('[live-listener] notification failed', error),
-      ).finally(() => {
+      const ticket = this.nextProjectionTicket++;
+      this.activeProjectionSince.set(ticket, next.queuedAt);
+      void this.rebroadcast(next.raw).then(() => {
+        const now = Date.now();
+        const duration = Math.max(0, now - next.queuedAt);
+        this.deliveredProjections++;
+        this.lastDeliveredAt = now;
+        this.lastDeliveryAgeMs = duration;
+        this.maxDeliveryAgeMs = Math.max(this.maxDeliveryAgeMs, duration);
+        const bucket = [10, 50, 100, 500, 2_000].findIndex((bound) => duration <= bound);
+        this.deliveryAgeBuckets[bucket < 0 ? 5 : bucket]!++;
+      }).catch((error) => {
+        this.failedProjections++;
+        console.error('[live-listener] notification failed', error);
+      }).finally(() => {
+        this.activeProjectionSince.delete(ticket);
         this.activeProjections--;
         if (this.projectionQueue.length) this.drainProjections();
         else if (!this.stopped && this.activeProjections === 0 && this.needsProjectionResync) {
@@ -536,6 +573,7 @@ export class PostgresLiveListener {
       try {
         await client.connect();
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
+        this.connected = true;
         console.log('[live-listener] connected');
         await this.restoreMemoryDue();
         await this.restoreRegistryDue();
@@ -547,6 +585,7 @@ export class PostgresLiveListener {
           error instanceof Error ? error.message : String(error),
         );
       } finally {
+        this.connected = false;
         if (this.active === client) this.active = undefined;
         await client.end().catch(() => undefined);
       }

@@ -17,6 +17,7 @@ import {
   ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
   ENRICHMENT_STATEMENT_TIMEOUT_MS,
   postgresPoolConfig,
+  REQUIRED_SCHEMA_VERSION,
   markSchemaCurrent,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
@@ -444,6 +445,18 @@ describe('institutional cascades', () => {
 });
 
 describe('release-owned schema readiness', () => {
+  it('waits through transient pool checkout timeouts without mistaking them for a schema mismatch', async () => {
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'))
+      .mockRejectedValueOnce(new Error('Connection terminated due to connection timeout'))
+      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION }]));
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() }, wait)).resolves.toBeUndefined();
+    expect(wait.mock.calls).toEqual([[1_000], [2_000]]);
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
   it('fails boot clearly until the release migration writes its final marker', async () => {
     const database = new PgliteDatabase();
     await expect(assertSchemaCurrent(database)).rejects.toThrow(
@@ -489,6 +502,16 @@ describe('PostgresDatabase reconnects', () => {
     );
     expect(query).toHaveBeenCalledTimes(2);
     expect(pool.on).toHaveBeenCalledWith('error', expect.any(Function));
+  });
+
+  it('retries pool checkout timeouts and stops after its bounded request attempts', async () => {
+    const timeout = new Error('timeout exceeded when trying to connect');
+    const query = vi.fn().mockRejectedValue(timeout);
+    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+
+    await expect(database.query('SELECT 1')).rejects.toBe(timeout);
+    expect(query).toHaveBeenCalledTimes(4);
   });
 
   it('does not retry non-connection errors', async () => {
@@ -543,6 +566,12 @@ describe('PostgresDatabase reconnects', () => {
     expect(client.listenerCount('error')).toBe(1);
     expect(() => dedicated.emit('error', error)).not.toThrow();
     expect(errorLog).toHaveBeenCalledWith('dedicated postgres client error', error);
+    dedicated.release();
+    expect(client.listenerCount('error')).toBe(0);
+    const reused = await database.connectDedicated();
+    expect(reused.listenerCount('error')).toBe(1);
+    reused.release();
+    expect(client.listenerCount('error')).toBe(0);
   });
 });
 

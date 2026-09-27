@@ -1,7 +1,8 @@
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SqlDatabase } from './database.js';
+import type { Pool } from 'pg';
+import { PostgresDatabase, type SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
@@ -82,6 +83,43 @@ describe('server readiness', () => {
     });
 
     expect(response.status).toBe(503);
+  });
+
+  it('survives an injected pool checkout timeout and serves the next request', async () => {
+    const timeout = new Error('timeout exceeded when trying to connect');
+    const connect = vi.fn()
+      .mockRejectedValueOnce(timeout)
+      .mockRejectedValueOnce(timeout)
+      .mockRejectedValueOnce(timeout)
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce(undefined);
+    const pool = {
+      connect,
+      query: vi.fn(async () => {
+        await connect();
+        return { rows: [], rowCount: 0 };
+      }),
+      on: vi.fn(),
+      end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+    const server = createBeelineServer({
+      database,
+      auth: {} as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: {} as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/readyz`;
+
+    const failed = await fetch(url);
+    expect(failed.status).toBe(503);
+    expect(connect).toHaveBeenCalledTimes(4);
+    const recovered = await fetch(url);
+    expect(recovered.status).toBe(200);
   });
 
   it('reports the release identity baked into the deployed image', async () => {
@@ -285,6 +323,33 @@ describe('daemon live command push', () => {
         .splice(0)
         .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     );
+  });
+
+  it('contains a pool timeout during a live subscription and keeps serving HTTP', async () => {
+    const timeout = new Error('timeout exceeded when trying to connect');
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticateDaemon: vi.fn().mockResolvedValue('agent-live') } as unknown as TokenAuth,
+      phone: { canReadRooms: vi.fn().mockRejectedValue(timeout) } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: 'room-live' }));
+
+    await expect(closed).resolves.toBe(1013);
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    expect(response.status).toBe(200);
   });
 
   it('acknowledges push intake when the separate presence announcement fails', async () => {

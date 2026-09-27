@@ -69,10 +69,11 @@ export function postgresPoolConfig(
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
+const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000', 'ETIMEDOUT']);
 const TRANSIENT_CONNECTION_MESSAGE =
-  /Connection terminated|ECONNRESET|server closed the connection|terminating connection/i;
+  /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 const RETRY_DELAYS_MS = [100, 300, 700];
+const SCHEMA_RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
 
 export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -139,23 +140,31 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   `);
 }
 
-export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
-  try {
-    const result = await database.query<{ version: number }>(
-      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
-    );
+export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = pause): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    let result: QueryResult<{ version: number }>;
+    try {
+      result = await database.query<{ version: number }>(
+        `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+      );
+    } catch (error) {
+      if (isTransientDatabaseConnectionError(error)) {
+        await wait(SCHEMA_RETRY_DELAYS_MS[Math.min(attempt, SCHEMA_RETRY_DELAYS_MS.length - 1)]!);
+        continue;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `database schema is not ready for this server image (${detail}); run the release migration step`,
+        { cause: error },
+      );
+    }
     const version = result.rows[0]?.version;
     if (version !== REQUIRED_SCHEMA_VERSION) {
       throw new Error(
-        `expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}`,
+        `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
       );
     }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `database schema is not ready for this server image (${detail}); run the release migration step`,
-      { cause: error },
-    );
+    return;
   }
 }
 
@@ -293,9 +302,15 @@ export class PostgresDatabase implements ClosableDatabase {
   async connectDedicated(): Promise<PoolClient> {
     return this.#retryTransientConnection(async () => {
       const client = await this.#pool.connect();
-      client.on('error', (error) => {
+      const onError = (error: Error) => {
         console.error('dedicated postgres client error', error);
-      });
+      };
+      client.on('error', onError);
+      const release = client.release.bind(client);
+      client.release = ((destroy?: boolean | Error) => {
+        client.removeListener('error', onError);
+        release(destroy);
+      }) as PoolClient['release'];
       return client;
     });
   }

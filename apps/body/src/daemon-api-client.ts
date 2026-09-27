@@ -6,6 +6,7 @@ import {
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
+import { helperVersion, helperVersionHeader } from './helper-version.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -39,6 +40,7 @@ export class DaemonApiError extends Error {
     readonly retryable: boolean,
     /** The server's machine-readable refusal code, `request_failed` if none. */
     readonly code: string = 'request_failed',
+    readonly minVersion?: string,
   ) {
     super(message);
     this.name = 'DaemonApiError';
@@ -110,9 +112,11 @@ function endpoint(origin: string, path: string): string {
 
 async function responseError(response: Response): Promise<DaemonApiError> {
   let code = 'request_failed';
+  let minVersion: string | undefined;
   try {
-    const value = (await response.json()) as { error?: unknown };
+    const value = (await response.json()) as { error?: unknown; minVersion?: unknown };
     if (typeof value.error === 'string' && value.error) code = value.error;
+    if (typeof value.minVersion === 'string') minVersion = value.minVersion;
   } catch {
     // Bodies are deliberately not reflected: they can contain operator data.
   }
@@ -121,6 +125,7 @@ async function responseError(response: Response): Promise<DaemonApiError> {
     response.status,
     response.status === 408 || response.status === 429 || response.status >= 500,
     code,
+    minVersion,
   );
 }
 
@@ -153,6 +158,10 @@ export class DaemonApiClient {
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
+  private forceUpdateListener?: (minVersion: string) => void;
+  private helperIdentity: { releaseVersion: string; sourceSha?: string } = {
+    releaseVersion: 'v0.0.0',
+  };
 
   constructor(
     readonly baseUrl: string,
@@ -164,8 +173,20 @@ export class DaemonApiClient {
   ) {}
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
-  connection(): { baseUrl: string; daemonToken: string; agentId: string } {
-    return { baseUrl: this.baseUrl, daemonToken: this.daemonToken, agentId: this.agentId };
+  connection(): { baseUrl: string; daemonToken: string; agentId: string; helperVersion: string } {
+    return { baseUrl: this.baseUrl, daemonToken: this.daemonToken, agentId: this.agentId,
+      helperVersion: this.helperIdentity.releaseVersion };
+  }
+
+  setHelperIdentity(identity: { releaseVersion?: string; sourceSha?: string }): void {
+    this.helperIdentity = {
+      releaseVersion: helperVersion(identity.releaseVersion),
+      ...(identity.sourceSha ? { sourceSha: identity.sourceSha } : {}),
+    };
+  }
+
+  setForceUpdateListener(listener: (minVersion: string) => void): void {
+    this.forceUpdateListener = listener;
   }
 
   /** Add one Room to this agent's shared live socket. */
@@ -292,11 +313,17 @@ export class DaemonApiClient {
         headers: {
           authorization: `Bearer ${this.daemonToken}`,
           'content-type': 'application/json',
+          ...helperVersionHeader(this.helperIdentity.releaseVersion),
         },
         body: JSON.stringify(input),
       },
     );
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) {
+      const error = await responseError(response);
+      if (error.status === 426 && error.code === 'update_required' && error.minVersion)
+        this.forceUpdateListener?.(error.minVersion);
+      throw error;
+    }
     const output = (await response.json()) as Output<Name>;
     if (name === 'postAgentTurnReceipt') {
       const receipt = output as { hiccupRestart?: unknown; hiccupAttempt?: unknown };
@@ -311,7 +338,11 @@ export class DaemonApiClient {
 
   private ensureLiveSocket(): void {
     if (this.liveSocket || (!this.liveRooms.size && !this.roomsChangedListener)) return;
-    const socket = this.webSocketFactory(this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live', [
+    const liveUrl = new URL('/v1/phone/live', this.baseUrl);
+    liveUrl.protocol = liveUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    liveUrl.searchParams.set('helperVersion', this.helperIdentity.releaseVersion);
+    if (this.helperIdentity.sourceSha) liveUrl.searchParams.set('sourceSha', this.helperIdentity.sourceSha);
+    const socket = this.webSocketFactory(liveUrl.toString(), [
       `bearer.${this.daemonToken}`,
     ]);
     this.liveSocket = socket;
@@ -335,6 +366,10 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
+      if (event.type === 'force-update' && typeof event.minVersion === 'string') {
+        this.forceUpdateListener?.(event.minVersion);
+        return;
+      }
       if (event.type === 'helper-release' && typeof event.version === 'string' &&
           typeof event.sha === 'string') {
         this.helperReleaseListener?.({ version: event.version, sha: event.sha });

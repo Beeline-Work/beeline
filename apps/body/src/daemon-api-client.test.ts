@@ -124,6 +124,7 @@ describe('DaemonApiClient', () => {
       expect(init?.headers).toEqual({
         authorization: `Bearer bdt_${'y'.repeat(43)}`,
         'content-type': 'application/json',
+        'x-beeline-helper-version': 'v0.0.0',
       });
       return Response.json({ workspaceIds: [runtime.communityId], rooms: [] });
     });
@@ -178,6 +179,30 @@ describe('DaemonApiClient', () => {
     await expect(
       client.execute('getDaemonBootstrap', { agentId: 'b'.repeat(64) }),
     ).rejects.toMatchObject<Partial<DaemonApiError>>({ status: 503, retryable: true });
+  });
+
+  it('reports its release on every operation and live connection, and reacts to both force-update signals', async () => {
+    FakeWebSocket.instances.length = 0;
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({ error: 'update_required', minVersion: 'v0.0.70' }, { status: 426 }),
+    );
+    const client = new DaemonApiClient('https://server.example', 'token', 'agent', request,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    client.setHelperIdentity({ releaseVersion: 'v0.0.69', sourceSha: 'abc1234' });
+    const force = vi.fn();
+    client.setForceUpdateListener(force);
+    await expect(client.execute('getDaemonBootstrap', { agentId: 'agent' }))
+      .rejects.toMatchObject({ status: 426, code: 'update_required', minVersion: 'v0.0.70' });
+    expect(request.mock.calls[0]?.[1]?.headers).toEqual(expect.objectContaining({
+      'x-beeline-helper-version': 'v0.0.69',
+    }));
+    expect(force).toHaveBeenCalledWith('v0.0.70');
+    const release = client.liveSubscribe('room');
+    const socket = FakeWebSocket.instances[0]!;
+    expect(socket.url).toBe('wss://server.example/v1/phone/live?helperVersion=v0.0.69&sourceSha=abc1234');
+    socket.message({ type: 'force-update', minVersion: 'v0.0.71' });
+    expect(force).toHaveBeenCalledWith('v0.0.71');
+    release();
   });
 
   it('reconnects the one live socket by cursor and de-duplicates replayed ids', async () => {

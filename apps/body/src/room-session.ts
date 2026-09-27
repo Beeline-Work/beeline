@@ -81,6 +81,7 @@ export function beelineAgentMcpServer(
       ...(context.directMessage ? [{ name: 'BEELINE_AGENT_DM', value: '1' }] : []),
       { name: 'BEELINE_DAEMON_BASE_URL', value: connection.baseUrl },
       { name: 'BEELINE_DAEMON_TOKEN', value: connection.daemonToken },
+      { name: 'BEELINE_HELPER_VERSION', value: connection.helperVersion },
       { name: 'BEELINE_DAEMON_AGENT_ID', value: connection.agentId },
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },

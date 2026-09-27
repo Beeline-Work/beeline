@@ -111,7 +111,7 @@ describe('daemon API client against the local monolith', () => {
     expect(tagged.rows[0]!.tagged_ids).toEqual([HUMAN]);
   });
 
-  it('spends a non-owner Once Squire grant on exactly one call', async () => {
+  it('lets a non-owner requester use the agent owner’s Squire without a card', async () => {
     const requester = createHash('sha256').update('github:squire-requester').digest('hex');
     const approvalRequestId = createHash('sha256').update('squire-once-approval').digest('hex');
     await database.query(`UPDATE agents SET machine_id='machine-squire-once' WHERE agent_id=$1`, [
@@ -152,56 +152,22 @@ describe('daemon API client against the local monolith', () => {
       requestId: approvalRequestId,
       generationId: 'generation-1',
     });
-    expect(firstAsk).toEqual(
-      expect.objectContaining({ allowed: false, status: 'pending', messageId: expect.any(String) }),
-    );
-    await phone.execute(
-      'decideAgentGrant',
-      { grantId: firstAsk.grantId!, decision: 'once' },
-      HUMAN,
-    );
-
-    const callRequestId = createHash('sha256').update('squire-once-call').digest('hex');
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee use approved Squire')`,
-      [callRequestId, ROOM, requester],
-    );
-    const callCommand = await createAgentCommand(database, {
-      roomId: ROOM,
-      agentId: AGENT,
-      sourceMessageId: callRequestId,
-      reason: 'test approved Squire call',
-    });
-    await claimAgentCommand(database, ROOM, AGENT, callCommand!.id, 'generation-2');
-
+    expect(firstAsk).toEqual({ allowed: true });
+    expect(
+      (await database.query(`SELECT id FROM agent_grants WHERE status='pending'`)).rows,
+    ).toEqual([]);
     const routes = await claimGrantedHostRoutes(
       await client.execute('listAgentGrants', { agentId: AGENT, roomId: ROOM }),
       (grantId) => client.execute('consumeAgentGrant', { grantId }),
     );
     expect(routes).toContain('squire');
-
-    await expect(
-      client.execute('authorizeSquireCall', {
+    expect(
+      await client.execute('authorizeSquireCall', {
         roomId: ROOM,
-        requestId: callRequestId,
-        generationId: 'generation-2',
+        requestId: approvalRequestId,
+        generationId: 'generation-1',
       }),
-    ).resolves.toEqual(expect.objectContaining({ allowed: true, grantId: firstAsk.grantId }));
-    const routesAfterFirstCall = await claimGrantedHostRoutes(
-      await client.execute('listAgentGrants', { agentId: AGENT, roomId: ROOM }),
-      (grantId) => client.execute('consumeAgentGrant', { grantId }),
-    );
-    expect(routesAfterFirstCall).toContain('squire');
-    const secondAsk = await client.execute('authorizeSquireCall', {
-      roomId: ROOM,
-      requestId: callRequestId,
-      generationId: 'generation-2',
-    });
-    expect(secondAsk).toEqual(
-      expect.objectContaining({ allowed: false, status: 'pending', messageId: expect.any(String) }),
-    );
-    expect(secondAsk.grantId).not.toBe(firstAsk.grantId);
-    expect(secondAsk.messageId).not.toBe(firstAsk.messageId);
+    ).toEqual({ allowed: true });
   });
 
   it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(
@@ -655,13 +621,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           // Same layout scripts/verify-beeline-install.mjs materializes:
           // binDir <root>/prefix/bin, libDir <root>/prefix/lib/beeline.
           const installRoot = process.env.BEELINE_ACCEPTANCE_INSTALL_ROOT?.trim();
-          const installedLibDir = installRoot
-            ? `${installRoot}/prefix/lib/beeline`
-            : undefined;
+          const installedLibDir = installRoot ? `${installRoot}/prefix/lib/beeline` : undefined;
           return launchRuntimeDaemon(configPath, {
             entrypoint:
-              (installRoot &&
-                `${installRoot}/prefix/lib/beeline/lib/beeline/beeline-cli.mjs`) ||
+              (installRoot && `${installRoot}/prefix/lib/beeline/lib/beeline/beeline-cli.mjs`) ||
               fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
             env: {
               ...process.env,
@@ -745,16 +708,22 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const received: string[] = [];
     first.setHelperReleaseListener(({ sha }) => received.push(sha));
     let connected = false;
-    const disconnect = first.liveSubscribe(ROOM, undefined, undefined, (value) => { connected = value; });
+    const disconnect = first.liveSubscribe(ROOM, undefined, undefined, (value) => {
+      connected = value;
+    });
     await vi.waitFor(() => expect(connected).toBe(true));
     await releaseNotify.notifyReleaseDelivered({
-      version: 'v0.0.128', sha: 'a'.repeat(40), changelogUrl: 'https://example.test/128',
+      version: 'v0.0.128',
+      sha: 'a'.repeat(40),
+      changelogUrl: 'https://example.test/128',
     });
     await vi.waitFor(() => expect(received).toEqual(['a'.repeat(40)]));
     disconnect();
 
     await releaseNotify.notifyReleaseDelivered({
-      version: 'v0.0.129', sha: 'b'.repeat(40), changelogUrl: 'https://example.test/129',
+      version: 'v0.0.129',
+      sha: 'b'.repeat(40),
+      changelogUrl: 'https://example.test/129',
     });
     const reconnected = new DaemonApiClient(origin, daemonToken, AGENT);
     const recovered: string[] = [];
@@ -769,14 +738,24 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
     const client = new DaemonApiClient(origin, daemonToken, AGENT);
     await client.execute('postAgentModelCatalog', {
-      agentId: AGENT, workspaceId: WORKSPACE, options: [], selection: { model: 'gpt-5' },
+      agentId: AGENT,
+      workspaceId: WORKSPACE,
+      options: [],
+      selection: { model: 'gpt-5' },
     });
-    expect((await database.query(
-      `SELECT count(*)::int count FROM messages WHERE author_id=$1`, [SYSTEM_IDENTITY_ID],
-    )).rows[0]).toEqual({ count: 0 });
+    expect(
+      (
+        await database.query(`SELECT count(*)::int count FROM messages WHERE author_id=$1`, [
+          SYSTEM_IDENTITY_ID,
+        ])
+      ).rows[0],
+    ).toEqual({ count: 0 });
     await client.execute('postAgentModelCatalog', {
-      agentId: AGENT, workspaceId: WORKSPACE, options: [],
-      selection: { model: 'unavailable-model' }, unavailable: 'model',
+      agentId: AGENT,
+      workspaceId: WORKSPACE,
+      options: [],
+      selection: { model: 'unavailable-model' },
+      unavailable: 'model',
     });
     const ownerMessages = await database.query<{ text: string }>(
       `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
@@ -787,8 +766,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     expect(ownerMessages.rows.map((row) => row.text)).toEqual([
       expect.stringContaining('choose an available model or effort'),
     ]);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [PEER_AGENT]);
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [PEER_AGENT, HUMAN]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [
+      PEER_AGENT,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      PEER_AGENT,
+      HUMAN,
+    ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
@@ -798,22 +782,38 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
     const peer = new DaemonApiClient(origin, peerToken, PEER_AGENT);
     await peer.execute('postAgentModelCatalog', {
-      agentId: PEER_AGENT, workspaceId: WORKSPACE, options: [], selection: { model: 'gpt-5' },
+      agentId: PEER_AGENT,
+      workspaceId: WORKSPACE,
+      options: [],
+      selection: { model: 'gpt-5' },
     });
-    expect((await database.query<{ agent_id: string; model_unavailable: string | null }>(
-      `SELECT agent_id,model_unavailable FROM agents WHERE agent_id=ANY($1::text[]) ORDER BY agent_id`,
-      [[AGENT, PEER_AGENT]],
-    )).rows).toEqual([
-      { agent_id: AGENT, model_unavailable: 'model' },
-      { agent_id: PEER_AGENT, model_unavailable: null },
-    ].sort((a, b) => a.agent_id.localeCompare(b.agent_id)));
+    expect(
+      (
+        await database.query<{ agent_id: string; model_unavailable: string | null }>(
+          `SELECT agent_id,model_unavailable FROM agents WHERE agent_id=ANY($1::text[]) ORDER BY agent_id`,
+          [[AGENT, PEER_AGENT]],
+        )
+      ).rows,
+    ).toEqual(
+      [
+        { agent_id: AGENT, model_unavailable: 'model' },
+        { agent_id: PEER_AGENT, model_unavailable: null },
+      ].sort((a, b) => a.agent_id.localeCompare(b.agent_id)),
+    );
     await client.execute('postAgentModelCatalog', {
-      agentId: AGENT, workspaceId: WORKSPACE, options: [],
-      selection: { model: 'unavailable-model' }, unavailable: 'model',
+      agentId: AGENT,
+      workspaceId: WORKSPACE,
+      options: [],
+      selection: { model: 'unavailable-model' },
+      unavailable: 'model',
     });
-    expect((await database.query(
-      `SELECT count(*)::int count FROM messages WHERE author_id=$1`, [SYSTEM_IDENTITY_ID],
-    )).rows[0]).toEqual({ count: 1 });
+    expect(
+      (
+        await database.query(`SELECT count(*)::int count FROM messages WHERE author_id=$1`, [
+          SYSTEM_IDENTITY_ID,
+        ])
+      ).rows[0],
+    ).toEqual({ count: 1 });
   });
 
   it('refreshes authenticated evidence across a socket drop and resumes through push without polling', async () => {

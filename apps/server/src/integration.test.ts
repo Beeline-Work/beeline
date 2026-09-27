@@ -9034,7 +9034,7 @@ describe('monolith integration', () => {
           reason: 'inspect the checkout',
         })
       ).json(),
-    ).toEqual(expect.objectContaining({ status: 'pending', auto: false }));
+    ).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
 
     const rejected = await operation('updateAgentYolo', {
       workspaceId: WORKSPACE,

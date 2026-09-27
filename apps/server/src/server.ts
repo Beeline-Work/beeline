@@ -25,6 +25,7 @@ import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import { parseDashboardPlatforms, readOperatorDashboard } from './operator-dashboard.js';
+import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -83,6 +84,7 @@ export interface ServerOptions {
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
   releaseNotify?: ReleaseNotifier;
+  helperVersionGate?: HelperVersionGate;
   /** Server-side secret for the private operator proxy only. */
   dashboardSecret?: string;
   /** Diagnostics only: one DB-clock read after an authorized cross-process
@@ -204,18 +206,27 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
+  const helperVersionGate = options.helperVersionGate ??
+    new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
   const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   let liveDbTasks = 0;
   const liveDbWaiters: Array<() => void> = [];
   const socketCounts = new Map<string, number>();
   const socketSubscriptions = new Map<WebSocket, () => number>();
   const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
+  let helperVersionRefusals = 0;
+  let helperForceUpdates = 0;
   const liveHealth = () => ({
     sockets: webSockets.clients.size,
     subscriptions: [...socketSubscriptions.values()].reduce((total, count) => total + count(), 0),
     activeDbTasks: liveDbTasks,
     waitingDbTasks: liveDbWaiters.length,
     errors: { ...liveErrors },
+    ...(helperVersionGate.minimum ? { helperMinimum: {
+      minVersion: helperVersionGate.minimum,
+      refusals: helperVersionRefusals,
+      forceUpdates: helperForceUpdates,
+    } } : {}),
   });
   const releaseLiveDbTask = () => {
     const next = liveDbWaiters.shift();
@@ -237,8 +248,16 @@ export function createBeelineServer(options: ServerOptions): Server {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     console.log('[req]', method, url.pathname);
+    const minimum = helperVersionGate.minimum;
+    const reportedVersion = request.headers['x-beeline-helper-version'];
+    if (minimum && method === 'POST' && url.pathname.startsWith('/v1/daemon/') &&
+        helperVersionBelowMinimum(typeof reportedVersion === 'string' ? reportedVersion : undefined, minimum)) {
+      helperVersionRefusals++;
+      json(response, 426, { error: 'update_required', minVersion: minimum });
+      return;
+    }
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
-    void route(request, response, options, invitePreview, liveHealth).catch((error) => {
+    void route(request, response, options, invitePreview, liveHealth, helperVersionGate).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
         message.includes('required') ||
@@ -291,6 +310,17 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       const raw = tokenFromProtocol(request);
+      const helperVersion = url.searchParams.get('helperVersion') ?? undefined;
+      const helperSourceSha = url.searchParams.get('sourceSha') ?? undefined;
+      const minimum = helperVersionGate.minimum;
+      if (raw?.startsWith('bdt_') && minimum &&
+          helperVersionBelowMinimum(helperVersion, minimum)) {
+        helperVersionRefusals++;
+        const payload = JSON.stringify({ error: 'update_required', minVersion: minimum });
+        socket.write(`HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`);
+        socket.destroy();
+        return;
+      }
       // Daemon tokens have a distinct prefix. Avoid making every phone socket
       // pay for a failed daemon-auth query before its ordinary session lookup.
       const daemonId = raw?.startsWith('bdt_') ? await options.auth.authenticateDaemon(raw) : null;
@@ -319,6 +349,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         webSockets.emit('connection', client, request, {
           identityId,
           kind: daemonId ? 'daemon' : 'phone',
+          helperVersion,
+          helperSourceSha,
         }),
       );
     })().catch(() => socket.destroy());
@@ -328,7 +360,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     (
       client: WebSocket,
       _request: IncomingMessage,
-      principal: { identityId: string; kind: 'phone' | 'daemon' },
+      principal: { identityId: string; kind: 'phone' | 'daemon'; helperVersion?: string; helperSourceSha?: string },
     ) => {
       const sendLive = (payload: string) => {
         if (client.readyState !== client.OPEN) return;
@@ -341,6 +373,22 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
+      let helperVersion = principal.helperVersion;
+      let pushedMinimum: string | undefined;
+      const forceUpdate = (minimum: string) => {
+        if (principal.kind !== 'daemon' ||
+            !helperVersionBelowMinimum(helperVersion, minimum) ||
+            pushedMinimum === minimum) return false;
+        pushedMinimum = minimum;
+        helperForceUpdates++;
+        sendLive(JSON.stringify({ type: 'force-update', minVersion: minimum }));
+        return true;
+      };
+      const helperMinimumRelease = principal.kind === 'daemon'
+        ? helperVersionGate.subscribe((minimum) => {
+            if (forceUpdate(minimum)) client.close(1008, 'update required');
+          })
+        : undefined;
       socketSubscriptions.set(client, () => releases.size);
       if (principal.kind === 'daemon')
         sendLive(JSON.stringify({
@@ -348,6 +396,10 @@ export function createBeelineServer(options: ServerOptions): Server {
           protocolMin: 1,
           protocolMax: 1,
           capabilities: { discoveryWake: true, pushIntake: true },
+          ...(principal.helperVersion ? { reportedHelper: {
+            releaseVersion: principal.helperVersion,
+            ...(principal.helperSourceSha ? { sourceSha: principal.helperSourceSha } : {}),
+          } } : {}),
         }));
       let socketTasks = 0;
       let socketQueuedBytes = 0;
@@ -425,6 +477,14 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
       };
       client.on('message', (raw) => {
+        const minimum = helperVersionGate.minimum;
+        if (principal.kind === 'daemon' && minimum &&
+            helperVersionBelowMinimum(helperVersion, minimum)) {
+          helperVersionRefusals++;
+          forceUpdate(minimum);
+          client.close(1008, 'update required');
+          return;
+        }
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
           : raw.byteLength;
@@ -447,6 +507,21 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (principal.kind === 'daemon') {
+            if (!helperVersion && item.type === 'subscribe' &&
+                typeof item.releaseVersion === 'string') helperVersion = item.releaseVersion;
+            const minimum = helperVersionGate.minimum;
+            if (minimum && forceUpdate(minimum)) {
+              helperVersionRefusals++;
+              client.close(1008, 'update required');
+              return;
+            }
+            if (minimum && helperVersionBelowMinimum(helperVersion, minimum)) {
+              helperVersionRefusals++;
+              client.close(1008, 'update required');
+              return;
+            }
+          }
           if (item.type === 'trace-paint' && typeof item.id === 'string') {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;
@@ -868,6 +943,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
         membershipWakeRelease?.();
         helperReleaseSubscription?.();
+        helperMinimumRelease?.();
         listenerResyncRelease?.();
         databaseRecoveryRelease?.();
         pendingPaintTraces.clear();
@@ -916,6 +992,7 @@ async function route(
   options: ServerOptions,
   invitePreview: InvitePreviewAccess,
   liveHealth: () => object,
+  helperVersionGate: HelperVersionGate,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -1035,6 +1112,7 @@ async function route(
     json(response, 200, {
       version: process.env.BEELINE_RELEASE_VERSION ?? 'development',
       sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
+      ...(helperVersionGate.minimum ? { minimumHelperVersion: helperVersionGate.minimum } : {}),
     });
     return;
   }
@@ -1086,6 +1164,27 @@ async function route(
   }
   if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
     json(response, 200, await options.daemon.releaseReadiness());
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/releases/helper-minimum') {
+    if (!options.releaseNotify?.secret ||
+        !bearerSecretMatches(options.releaseNotify.secret, request)) {
+      json(response, 403, { error: 'release_notify_access_denied' });
+      return;
+    }
+    const input = await body(request);
+    if (typeof input.minVersion !== 'string') {
+      json(response, 400, { error: 'minVersion_required' });
+      return;
+    }
+    try {
+      helperVersionGate.raise(input.minVersion);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'invalid minimum helper version';
+      json(response, reason.includes('cannot decrease') ? 409 : 400, { error: reason });
+      return;
+    }
+    json(response, 200, { minVersion: helperVersionGate.minimum });
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/releases/notify') {

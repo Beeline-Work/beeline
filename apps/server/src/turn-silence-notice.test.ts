@@ -105,6 +105,46 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('requeues the exact interrupted command without spending a hiccup attempt or restarting the helper', async () => {
+    const requestId = 'e'.repeat(64);
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, new LiveHub());
+    const receipt = {
+      roomId: ROOM,
+      requestId,
+      generationId: 'g1',
+      status: 'failed' as const,
+      reason: 'helper updated while the turn was running',
+      reasonKind: 'update-interrupted' as const,
+    };
+    const result = await daemon.execute('postAgentTurnReceipt', receipt, AGENT);
+    expect(result).toMatchObject({ updateRequeued: true });
+    expect(result.hiccupRestart).toBeUndefined();
+    expect(await failureLine(database, requestId)).toEqual({
+      text: '@candy was interrupted by an update · her request is queued to resume.',
+      silence: 'update-interrupted',
+      state: 'failed',
+    });
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'pending',
+      hiccup_attempts: 0,
+      generation_id: null,
+    });
+    expect(await daemon.execute('postAgentTurnReceipt', receipt, AGENT)).toMatchObject({
+      updateRequeued: true,
+    });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2`,
+          [ROOM, requestId],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'g2');
+    expect((await commandState(database, command.id))?.state).toBe('claimed');
+  });
+
   it('maps each standing condition to its approved line and does not restart', async () => {
     const cases = [
       {

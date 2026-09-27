@@ -13,11 +13,14 @@ Beeline's production monolith is one framework-free TypeScript process backed by
 - `/v1/phone/*`: the complete indexed phone read surface, named writes from `@beeline/api-contract/phone`, read marks, media, GitHub room tokens, push registration, and OTA receipts.
 - `/v1/phone/live`: authenticated WebSocket invalidation plus draft, thought, and presence overlays.
 - `/v1/daemon/operations/:name`: only names in `DaemonOperationMap`. There is no event filter, event query, or generic publish endpoint.
+- `/v1/releases/helper-minimum`: release-secret-authenticated, per-Machine live raise of the minimum helper version.
 - `/v1/github/install/callback`: one-use GitHub App installation completion.
 - `/v1/github/webhook`: signature-checked, delivery-ID-deduplicated GitHub events.
 - `/healthz`: process health.
 
 All state shared by the two configured Fly Machines is in PostgreSQL. At boot, the server reads PostgreSQL's `max_connections`, reserves at least six connections for releases and operations, and divides the remainder across `BEELINE_SERVER_MACHINES` (default two). Within each machine's budget it caps the app pool at `DATABASE_POOL_MAX` (default five), then allocates enrichment, diagnostics, two job slots, and one separate listener. `/health` reports the measured budget and pressure in each pool. One jobs connection elects the sole push/maintenance owner; its peer takes ownership when the connection dies. The listener uses a session-persistent connection for cross-machine live fanout. Set `DATABASE_LISTENER_URL` when `DATABASE_URL` points through a transaction pooler; it must be a direct PostgreSQL connection string.
+
+Set `BEELINE_MIN_HELPER_VERSION=vX.Y.Z` to enforce a minimum helper release at boot. A helper sends `x-beeline-helper-version` on every daemon HTTP POST and `helperVersion` plus `sourceSha` in its live WebSocket URL; the socket hello echoes the reported helper identity. Once a minimum is active, missing or older versions receive HTTP `426 {"error":"update_required","minVersion":"vX.Y.Z"}` before authentication or database access. A connected older helper receives `{"type":"force-update","minVersion":"vX.Y.Z"}` and the socket closes with code `1008`. Before raising a minimum, deploy helpers that send these fields; earlier servers ignore them. The release owner may raise the minimum without restarting a Machine by POSTing `{"minVersion":"vX.Y.Z"}` to `/v1/releases/helper-minimum` with `BEELINE_RELEASE_NOTIFY_SECRET` as a bearer token on **each pinned Machine**. The endpoint only raises; set the same environment value for restart persistence. `/version` reports the active minimum so the release owner can verify both Machines.
 
 ## Local development
 

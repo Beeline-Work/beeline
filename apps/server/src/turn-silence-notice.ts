@@ -21,10 +21,16 @@ export const TURN_FAILURE_REASON_MAX = 200;
 export type TurnSilenceOutcome = {
   readonly kind: TurnSilenceKind;
   readonly hiccupRestart: boolean;
+  readonly updateRequeued: boolean;
   readonly attempt: number;
 };
 
-const NO_RESTART: TurnSilenceOutcome = { kind: 'hiccup', hiccupRestart: false, attempt: 0 };
+const NO_RESTART: TurnSilenceOutcome = {
+  kind: 'hiccup',
+  hiccupRestart: false,
+  updateRequeued: false,
+  attempt: 0,
+};
 
 export function turnSilenceLockKey(roomId: string, requestId: string, agentId: string): string {
   return `silence:${roomId}:${requestId}:${agentId}`;
@@ -159,6 +165,7 @@ async function inscribeSilence(
   }
 
   let hiccupRestart = false;
+  let updateRequeued = false;
   if (restart && command) {
     const reopened = await reopenCommand(
       database,
@@ -180,6 +187,18 @@ async function inscribeSilence(
         hiccupAttempt: attempt,
       });
     }
+  } else if (classified.kind === 'update-interrupted' && command?.state === 'claimed') {
+    // The old process has already stopped. Requeue exactly its original command
+    // with the same request and provenance, without spending a hiccup attempt.
+    updateRequeued = await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      command.generation_id,
+      command.hiccup_attempts,
+    );
   } else if (classified.kind === 'offline' && command?.state === 'claimed') {
     // The helper never posted a turn. Leave the original request eligible for
     // `beeline start` instead of completing it the way a spent hiccup is.
@@ -205,7 +224,7 @@ async function inscribeSilence(
     );
   }
 
-  return { kind: classified.kind, hiccupRestart, attempt };
+  return { kind: classified.kind, hiccupRestart, updateRequeued, attempt };
 }
 
 async function reopenCommand(

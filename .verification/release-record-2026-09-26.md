@@ -37,8 +37,10 @@ the outcome. Never change, push, or merge code; never submit stores.
   `component:website` and preserved the failure record instead. A later
   successful dispatch may publish a durable release record; that does not change
   this attempt's outcome.
-- No code changed, pushed, or merged. No store submission. Emulator device proof
-  was not run (opt-in; skipped).
+- During this workflow attempt, this corner made no repository or store changes.
+  Emulator device proof was not run (opt-in; skipped). This record was later
+  committed and pushed as documentation in PR #1788 under a subsequent human
+  instruction; that publication did not change the release attempt.
 
 ## Google Workspace verification
 - The released SHA contains the Beeline OAuth path for Google connector setup

@@ -2163,7 +2163,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
   // Install the change journal after release backfills so they do not emit
   // thousands of synthetic discovery deltas while old servers still serve.
-  await database.query(AGENT_DISCOVERY_SCHEMA);
+  await ddlScript('agent discovery schema', AGENT_DISCOVERY_SCHEMA);
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

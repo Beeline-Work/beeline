@@ -6,13 +6,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { SquireTaskRelay } from './squire-task-relay.js';
+import { SQUIRE_TASK_IDLE_LEASE_MS, SquireTaskRelay } from './squire-task-relay.js';
 import { grantedHostRouteWires } from './host-mcp-route.js';
 import { piMcpBridgeSource } from './pi-mcp-bridge.js';
 import type { StdioSquireMcpClient } from './squire-mcp-client.js';
 
 const relays: SquireTaskRelay[] = [];
-afterEach(() => { for (const relay of relays.splice(0)) relay.close(); vi.restoreAllMocks(); });
+afterEach(() => { for (const relay of relays.splice(0)) relay.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 function command(taskId: string, requestId: string): AgentCommand {
   return {
@@ -78,8 +78,13 @@ describe('helper-owned Squire task relay', () => {
     relay.activate(command('root', 'turn-one'), 'generation');
     expect((await request(relay, 'root', 'turn-one', 'tools/list')).status).toBe(200);
     expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status).toBe(200);
+    vi.useFakeTimers();
     relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
     relay.activate(command('root', 'turn-two'), 'generation');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(0);
+    vi.useRealTimers();
     expect((await request(relay, 'root', 'turn-two', 'initialize')).status).toBe(200);
     expect((await request(relay, 'root', 'turn-two', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
@@ -91,6 +96,28 @@ describe('helper-owned Squire task relay', () => {
     expect(new Set(calls.map((call) => call.mcpConnectionId)).size).toBe(1);
     expect(new Set(calls.map((call) => call.requestId))).toEqual(new Set(['turn-one', 'turn-two']));
     expect(logs.join('\n')).not.toContain('browser-1');
+  });
+
+  it('closes a terminal root at its idle lease without waiting for another task', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
+    const { relay, stats } = fixture();
+    relay.activate(command('finished', 'turn-one'), 'generation');
+    await request(relay, 'finished', 'turn-one', 'tools/call', { name: 'operate_start' });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
+    expect(stats().exits).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stats().exits).toBe(1);
+    expect(logs.join('\n')).toContain('"reason":"task-lease-expired"');
+    vi.useRealTimers();
+    relay.activate(command('finished', 'turn-two'), 'generation');
+    const stale = await request(relay, 'finished', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    });
+    expect(stale.status).toBe(400);
+    expect(stale.body.error).toMatch(/no longer owned/);
   });
 
   it('cancellation closes the connection; the next task and helper cannot reuse its session', async () => {

@@ -15,6 +15,8 @@ import { StdioSquireMcpClient } from './squire-mcp-client.js';
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
 export type SquireTaskCall = TurnKey & { tool: string; args: Record<string, unknown> };
+/** A completed command may receive an explicit resume; idle roots are retired. */
+export const SQUIRE_TASK_IDLE_LEASE_MS = 15 * 60_000;
 
 function sessionIds(value: unknown, depth = 0): string[] {
   if (depth > 8 || !value) return [];
@@ -54,6 +56,7 @@ export class SquireTaskRelay {
   private readonly token = randomUUID();
   private active?: TurnKey;
   private task?: TaskConnection;
+  private leaseTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
 
@@ -108,6 +111,8 @@ export class SquireTaskRelay {
   activate(command: AgentCommand, generationId: string): void {
     if (command.agentId !== this.agentId || command.roomId !== this.roomId)
       throw new Error('Squire task scope does not match the server command');
+    if (this.leaseTimer) clearTimeout(this.leaseTimer);
+    this.leaseTimer = undefined;
     if (this.task && this.task.taskId !== command.rootCommandId) this.retire('task-ended');
     this.active = {
       roomId: command.roomId,
@@ -119,7 +124,15 @@ export class SquireTaskRelay {
   }
 
   deactivate(requestId: string): void {
-    if (this.active?.requestId === requestId) this.active = undefined;
+    if (this.active?.requestId !== requestId) return;
+    const taskId = this.active.taskId;
+    this.active = undefined;
+    if (!this.task || this.task.taskId !== taskId) return;
+    this.leaseTimer = setTimeout(() => {
+      this.leaseTimer = undefined;
+      if (!this.active && this.task?.taskId === taskId) this.retire('task-lease-expired');
+    }, SQUIRE_TASK_IDLE_LEASE_MS);
+    this.leaseTimer.unref?.();
   }
 
   cancel(requestId: string): void {
@@ -168,6 +181,8 @@ export class SquireTaskRelay {
   }
 
   private retire(reason: string): void {
+    if (this.leaseTimer) clearTimeout(this.leaseTimer);
+    this.leaseTimer = undefined;
     if (!this.task) return;
     this.log('relay-close', this.task, { reason,
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });

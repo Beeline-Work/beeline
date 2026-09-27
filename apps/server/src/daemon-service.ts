@@ -2542,6 +2542,8 @@ export class DaemonService {
       : [];
     const row = (
       await this.database.query<{
+        parent_room_id: string;
+        archived: boolean;
         objective: string;
         title: string;
         kind: 'agent' | 'human';
@@ -2554,7 +2556,8 @@ export class DaemonService {
         pull_request_number: number | null;
         approval_head_sha: string | null;
       }>(
-        `SELECT fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+        `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
+           fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
@@ -2569,6 +2572,7 @@ export class DaemonService {
     ).rows[0];
     return {
       cornerId,
+      ...(row ? { archived: row.archived, parentRoomId: row.parent_room_id } : {}),
       objective: row?.objective ?? '',
       ...(brief ? { brief } : {}),
       ...(brief

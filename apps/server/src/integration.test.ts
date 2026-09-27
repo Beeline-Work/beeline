@@ -5198,6 +5198,11 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+      cornerId,
+      parentRoomId: ROOM,
+      archived: false,
+    });
     const mediaId = '66666666-6666-4666-8666-666666666666';
     const clipDigest = createHash('sha256').update('video-bytes').digest('hex');
     await objectStorage.putObject(
@@ -5231,6 +5236,12 @@ describe('monolith integration', () => {
     ).toBe(200);
 
     expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+      cornerId,
+      parentRoomId: ROOM,
+      archived: true,
+      closeRequested: true,
+    });
     expect(
       (
         await database.query<{

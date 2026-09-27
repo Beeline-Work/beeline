@@ -52,8 +52,8 @@ describe('beeline-agent request_grant', () => {
 
   it('offers every grant kind the contract defines, and names each one where the agent reads it', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'request_grant');
-    const kinds = (tool?.inputSchema as { properties: { kind: { enum: string[] } } }).properties.kind
-      .enum;
+    const kinds = (tool?.inputSchema as { properties: { kind: { enum: string[] } } }).properties
+      .kind.enum;
     expect([...kinds].sort()).toEqual([...REQUESTABLE_AGENT_GRANT_KINDS].sort());
     // The description is the interface the model reads to pick a kind: a kind
     // the schema offers but the prose never names is one nobody asks for.
@@ -64,13 +64,16 @@ describe('beeline-agent request_grant', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await requestGrant(
       { kind: 'mcp', target: ' squire ', reason: 'vault the provider key' },
-      deps({
-        grantId: 'g-9',
-        status: 'pending',
-        auto: false,
-        messageId: 'm-9',
-        approval: { destination: 'trusty-squire-dm', authority: 'resource-owner' },
-      }, ops),
+      deps(
+        {
+          grantId: 'g-9',
+          status: 'pending',
+          auto: false,
+          messageId: 'm-9',
+          approval: { destination: 'trusty-squire-dm', authority: 'resource-owner' },
+        },
+        ops,
+      ),
     );
     expect(ops).toEqual([
       {
@@ -85,7 +88,9 @@ describe('beeline-agent request_grant', () => {
     ]);
     expect(reply).toMatch(/^pending, card posted: route squire \[grant g-9\]/);
     expect(reply).toContain('paused');
-    expect(reply).toContain("The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private Trusty Squire DM");
+    expect(reply).toContain(
+      "The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private Trusty Squire DM",
+    );
     expect(reply).toContain('approval wake starts the fresh session with that route mounted');
     expect(reply).toContain('without restarting or scheduling another turn');
   });
@@ -99,13 +104,16 @@ describe('beeline-agent request_grant', () => {
         reason: 'publish the preview build',
         ttl: 3600,
       },
-      deps({
-        grantId: 'g-1',
-        status: 'pending',
-        auto: false,
-        messageId: 'm-1',
-        approval: { destination: 'system-dm', authority: 'resource-owner' },
-      }, ops),
+      deps(
+        {
+          grantId: 'g-1',
+          status: 'pending',
+          auto: false,
+          messageId: 'm-1',
+          approval: { destination: 'system-dm', authority: 'resource-owner' },
+        },
+        ops,
+      ),
     );
     expect(ops).toEqual([
       {
@@ -119,26 +127,32 @@ describe('beeline-agent request_grant', () => {
         },
       },
     ]);
-    expect(reply).toMatch(/^pending, card posted: run fly deploy -a beeline-preview --with FLY_TOKEN \[grant g-1\]/);
+    expect(reply).toMatch(
+      /^pending, card posted: run fly deploy -a beeline-preview --with FLY_TOKEN \[grant g-1\]/,
+    );
     expect(reply).toContain('paused');
     expect(reply).toContain('ALWAYS, ONCE, or NO');
-    expect(reply).toContain("The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private @system DM");
+    expect(reply).toContain(
+      "The resource owner must answer ALWAYS, ONCE, or NO in the resource owner's private @system DM",
+    );
     expect(reply).not.toContain('in this Room');
   });
 
-  it('returns "approved (yolo)" and, for a command, points at run_granted_command', async () => {
+  it('returns approval and, for a command, points at run_granted_command', async () => {
     const command = await requestGrant(
       { kind: 'command', target: 'npm test', reason: 'run the suite' },
       deps({ grantId: 'g-2', status: 'approved', auto: true }),
     );
     expect(command).toBe(
-      'approved (yolo): run npm test [grant g-2]. Run it now with run_granted_command and the argv.',
+      'approved: run npm test [grant g-2]. Run it now with run_granted_command and the argv.',
     );
     const host = await requestGrant(
       { kind: 'host', target: ' api.fly.io ', reason: 'reach the Fly API' },
       deps({ grantId: 'g-3', status: 'approved', auto: true }),
     );
-    expect(host).toBe("approved (yolo): reach api.fly.io [grant g-3]; applies at the agent's next session.");
+    expect(host).toBe(
+      "approved: reach api.fly.io [grant g-3]; applies at the agent's next session.",
+    );
   });
 
   it('refuses shell metacharacters and malformed asks before the server is called', async () => {
@@ -156,9 +170,9 @@ describe('beeline-agent request_grant', () => {
     await expect(requestGrant({ kind: 'host', target: '  ', reason: 'x' }, answer)).rejects.toThrow(
       'target must be a non-empty string',
     );
-    await expect(requestGrant({ kind: 'host', target: 'api.fly.io', reason: ' ' }, answer)).rejects.toThrow(
-      'reason must be a non-empty string',
-    );
+    await expect(
+      requestGrant({ kind: 'host', target: 'api.fly.io', reason: ' ' }, answer),
+    ).rejects.toThrow('reason must be a non-empty string');
     await expect(
       requestGrant({ kind: 'host', target: 'api.fly.io', reason: 'x', ttl: 5 }, answer),
     ).rejects.toThrow('ttl must be');
@@ -176,7 +190,10 @@ describe('beeline-agent run_granted_command', () => {
         return { grantId: 'g-1', exitCode: 0, timedOut: false, output: 'deployed\n' };
       },
     };
-    const reply = await runGrantedCommand({ argv: ['fly', 'deploy', '-a', 'beeline-preview'] }, run);
+    const reply = await runGrantedCommand(
+      { argv: ['fly', 'deploy', '-a', 'beeline-preview'] },
+      run,
+    );
     expect(runs).toEqual([{ roomId: 'room-1', argv: ['fly', 'deploy', '-a', 'beeline-preview'] }]);
     expect(reply).toBe('ran under grant g-1: exit 0\ndeployed\n');
   });
@@ -227,7 +244,13 @@ describe('request_grant carries the script an interpreter will run', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await requestGrant(
       { kind: 'command', target: 'python3 fix.py', reason: 'clean up' },
-      { ...deps({ grantId: 'g-1', status: 'pending', auto: false, escalations: ['unseen-script'] }, ops), scriptRoots: [root] },
+      {
+        ...deps(
+          { grantId: 'g-1', status: 'pending', auto: false, escalations: ['unseen-script'] },
+          ops,
+        ),
+        scriptRoots: [root],
+      },
     );
     expect(ops[0]!.input.script).toEqual({
       path: 'fix.py',

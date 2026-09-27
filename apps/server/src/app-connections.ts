@@ -854,7 +854,23 @@ export async function appGateFor(
       [input.agentId, registryName ?? null, keys],
     )
   ).rows;
-  if (!rows.length) return { kind: 'resource', target: input.target };
+  if (!rows.length) {
+    // A name that resolves only to another person's connected app is not an
+    // owner-machine resource of this helper. Its credentials are never mounted
+    // here, so a grant cannot turn this helper into that person's connection.
+    const foreign = await database.query(
+      `SELECT 1 FROM workspace_apps app
+       LEFT JOIN workspace_connectors k ON k.id=app.connector_id
+       WHERE app.owner_identity_id<>(SELECT owner_id FROM agents WHERE agent_id=$1)
+         AND app.state='active'
+         AND (($2::text IS NOT NULL AND app.transport='registry-mcp' AND k.registry_server_name=$2)
+           OR app.app_key=ANY($3::text[]))
+       LIMIT 1`,
+      [input.agentId, registryName ?? null, keys],
+    );
+    if (foreign.rowCount) return { kind: 'refuse' };
+    return { kind: 'resource', target: input.target };
+  }
   // A call that names a disconnected app is refused, whatever else it names:
   // an active sibling's approval never covers it.
   if (rows.some((row) => row.state !== 'active')) return { kind: 'refuse' };

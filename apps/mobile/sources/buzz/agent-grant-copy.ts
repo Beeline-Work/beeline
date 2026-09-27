@@ -21,6 +21,16 @@ export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target'>): st
   return `${VERBS[grant.kind]} ${grant.target}`;
 }
 
+/** The single action line on a pending resource permission. */
+export function grantRequestLine(
+  requester: string,
+  agent: string,
+  grant: Pick<AgentGrantView, 'kind' | 'target'>,
+): string {
+  const action = grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : 'use';
+  return `${requester} wants ${agent} to ${action} ${grant.target}`;
+}
+
 function clock(seconds: number): string {
   return new Date(seconds * 1000).toLocaleTimeString(undefined, {
     hour: '2-digit',
@@ -33,7 +43,7 @@ export function grantOutcomeLine(
   grant: Pick<AgentGrantView, 'status' | 'decidedBy' | 'decidedAt' | 'auto'>,
 ): string | null {
   if (grant.status === 'pending') return null;
-  const who = grant.auto ? 'yolo' : (grant.decidedBy?.name ?? 'the owner');
+  const who = grant.auto ? 'Beeline' : (grant.decidedBy?.name ?? 'the owner');
   const verb =
     grant.status === 'approved'
       ? grant.auto
@@ -61,7 +71,7 @@ function day(seconds: number): string {
  * `approved by Charles, 24 Sep 2026 · standing` for a standing approval,
  * `· one-time` for a grant consumed by its first run, and `denied by` /
  * `revoked by` for the two settled refusals (a refusal has no duration to
- * state). `· auto-approved` marks a yolo decision, and an expiry is appended
+ * state). `· auto-approved` marks automatic access, and an expiry is appended
  * when the vault recorded one. Distinct from `grantOutcomeLine`, which stamps
  * the decision with a clock for the transcript card; this one states a date
  * and the grant's standing, which is what a ledger row is read for.
@@ -72,7 +82,7 @@ export function grantProvenanceLine(
     'status' | 'decidedBy' | 'decidedAt' | 'createdAt' | 'expiresAt' | 'auto'
   >,
 ): string {
-  const who = grant.auto && !grant.decidedBy ? 'yolo' : (grant.decidedBy?.name ?? 'the owner');
+  const who = grant.auto && !grant.decidedBy ? 'Beeline' : (grant.decidedBy?.name ?? 'the owner');
   const settledAt = grant.decidedAt ?? grant.createdAt;
   const verb =
     grant.status === 'denied'

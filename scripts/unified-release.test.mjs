@@ -78,7 +78,8 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
     const baseIndex = { schemaVersion: 1, merges: [{ sha: NEW_SHA, state: 'built', attempts: [] }] };
     const listed = targetList.map((target) => ({
       group: `production-${target.platform}`, runtimeVersion: target.runtimeVersion,
-      platforms: target.platform, message: `promote beta ${target.group} (${NEW_SHA.slice(0, 12)})`,
+      platforms: target.platform,
+      message: `"promote beta ${target.group} (${NEW_SHA.slice(0, 12)})" (55 minutes ago by lunchboxfortwo)`,
     }));
     writeFileSync(mockPath, '#!/usr/bin/env node\nprocess.stdout.write(process.env.MOCK_EAS_LIST);\n');
     chmodSync(mockPath, 0o755);
@@ -87,7 +88,7 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
       '--index', indexPath, '--result', resultPath, '--retry-attempt', '3', '--run-id', '36290000000',
     ], {
       cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
-      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify(payload) },
+      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: payload }) },
     });
     writeFileSync(ledgerPath, JSON.stringify(baseLedger));
     writeFileSync(indexPath, JSON.stringify(baseIndex));
@@ -103,7 +104,7 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
         'scripts/ota-release.mjs', command, '--ledger', ledgerPath, '--index', indexPath,
       ], {
         cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
-        env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify(listed) },
+        env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: listed }) },
       });
       assert.equal(verified.status, 0, `${command}: ${verified.stderr}`);
     }
@@ -118,6 +119,11 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
     assert.notEqual(partial.status, 0);
     assert.match(partial.stderr, /Only 1\/2 exact OTA targets are current/);
     assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'beta');
+    const prefixOnly = run(listed.map((target) => ({
+      ...target, message: target.message.replace('" (55 minutes', ' with different bytes" (55 minutes'),
+    })));
+    assert.notEqual(prefixOnly.status, 0);
+    assert.match(prefixOnly.stderr, /refusing to republish on a retry/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

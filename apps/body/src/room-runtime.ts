@@ -1371,7 +1371,8 @@ export class RoomRuntimeCoordinator {
         await this.reapCornerWorktree(worktree);
       } catch (error) {
         console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
-        this.confirmationPending = true;
+        // Cleanup retries ride the normal reconciliation heartbeat. Re-arming
+        // fast discovery here repeats every Room and archived-corner read.
       }
     }
   }
@@ -1424,12 +1425,8 @@ export class RoomRuntimeCoordinator {
         console.log(`[thin-core] swept archived corner worktree ${corner.cornerId}`);
       } catch (error) {
         console.error(`[thin-core] archived corner ${corner.cornerId} cleanup deferred:`, error);
-        if (discovered) {
-          // Keep retrying only a path that discovery proved belongs to the
-          // managed corner/repository roots. Missing metadata is uncertainty,
-          // never permission to invent a branch name.
-          this.confirmationPending = true;
-        }
+        // The checkout remains for the next heartbeat. A stale or unsafe
+        // checkout cannot require another full discovery immediately.
       }
     }
   }
@@ -1468,7 +1465,6 @@ export class RoomRuntimeCoordinator {
       }
     } catch (error) {
       this.pendingCornerReaps.set(worktree.cornerId, { ...worktree, token: '' });
-      this.confirmationPending = true;
       throw error;
     }
   }

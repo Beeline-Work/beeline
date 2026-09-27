@@ -25,6 +25,7 @@ import { LiveHub } from '../../server/src/live.js';
 import { AcpClient, AcpRequestTimeoutError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { MonolithRoomTurnLoop, ROOM_PROMPT_INACTIVITY_TIMEOUT_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -144,9 +145,17 @@ async function runScenario(options: {
     agentHomeRoot,
     operatorHome: join(root, roomId, 'operator-home'),
   } as BodyConfig;
+  let pushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
   const api = {
     execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
     connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
+    liveSubscribe: (_roomId: string, _cursor: unknown, _items: unknown,
+      onState: (connected: boolean, capabilities: { pushIntake: boolean; connectionPresence: boolean }) => void,
+      _presence: unknown, onCommands: (commands: readonly AgentCommand[]) => void) => {
+      pushCommands = onCommands;
+      onState(true, { pushIntake: true, connectionPresence: true });
+      return () => { pushCommands = undefined; };
+    },
   } as unknown as DaemonApiClient;
   const acp = new AcpClient({ agentBinary: agentCommand, agentEnv: {} });
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
@@ -189,6 +198,8 @@ async function runScenario(options: {
   const running = loop.run();
   try {
     await phone.execute('sendRoomMessage', { roomId, text: `@bee ${options.ask}` }, HUMAN);
+    await vi.waitFor(() => expect(pushCommands).toBeTypeOf('function'));
+    pushCommands?.((await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands);
     await vi.waitFor(
       async () =>
         expect(

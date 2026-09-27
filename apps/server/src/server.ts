@@ -515,6 +515,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;
                   }
+                  if (event.reason === 'memory-job') {
+                    if (client.readyState === client.OPEN)
+                      client.send(JSON.stringify({ type: 'memory-job', roomId }));
+                    return;
+                  }
                   if (event.closeRequested && event.reason === 'postgres:corner_facts') {
                     if (client.readyState === client.OPEN)
                       client.send(JSON.stringify({ type: 'corner-complete', roomId }));

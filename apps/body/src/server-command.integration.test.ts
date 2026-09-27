@@ -14,6 +14,7 @@ import { SessionScheduler } from './session-scheduler.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
 const identity = identityFromKey('11'.repeat(32), 'Hoots');
 const A = identity.publicKey,
   H = 'a'.repeat(64),
@@ -67,6 +68,11 @@ describe.each([
   it('replays Hoots/Goosy with exact tags and tagged replies; untagged messages start no turn', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4 });
     const controller = new AbortController();
+    const subscriptions = new Map<string, (commands: readonly AgentCommand[]) => void>();
+    const notifyAll = async () => {
+      for (const [agentId, notify] of subscriptions)
+        notify((await daemon.execute('getAgentCommands', { roomId }, agentId)).commands);
+    };
     const helpers = [A, B].map((agentId) => {
       const name = agentId === A ? 'Hoots' : 'Goosy';
       const runtime = {
@@ -93,12 +99,21 @@ describe.each([
         autoApprovePermissions: true,
         accessPolicy: 'everyone',
       } as BodyConfig;
-      const execute = vi.fn(async (name: string, input: never) =>
-        daemon.execute(name as never, input, agentId),
-      );
+      const execute = vi.fn(async (name: string, input: never) => {
+        const result = await daemon.execute(name as never, input, agentId);
+        if (name === 'postRoomMessage') queueMicrotask(() => void notifyAll());
+        return result;
+      });
       const api = {
         execute,
         connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId }),
+        liveSubscribe: (_roomId: string, _cursor: unknown, _items: unknown,
+          onState: (connected: boolean, capabilities: { pushIntake: boolean; connectionPresence: boolean }) => void,
+          _presence: unknown, onCommands: (commands: readonly AgentCommand[]) => void) => {
+          subscriptions.set(agentId, onCommands);
+          onState(true, { pushIntake: true, connectionPresence: true });
+          return () => { subscriptions.delete(agentId); };
+        },
       } as unknown as DaemonApiClient;
       const acp = new AcpClient({ agentBinary: '/fake', agentEnv: {} });
       vi.spyOn(acp, 'start').mockResolvedValue();
@@ -162,10 +177,13 @@ describe.each([
     const waitAnswers = async (n: number) =>
       vi.waitFor(async () => expect((await answers()).rowCount).toBe(n), { timeout: 10000 });
     try {
+      await vi.waitFor(() => expect(subscriptions.size).toBe(2));
       await phone.execute('sendRoomMessage', { roomId, text: '@hoots ask Goosy' }, H);
+      await notifyAll();
       await waitAnswers(2);
       expect(helpers.map((h) => h.prompt.mock.calls.length)).toEqual([1, 1]);
       await phone.execute('sendRoomMessage', { roomId, text: '@hoots explain tags' }, H);
+      await notifyAll();
       await waitAnswers(3);
       expect(helpers.map((h) => h.prompt.mock.calls.length)).toEqual([2, 1]);
       const goosy = (await answers()).rows.find((row) => row.author_id === B)!;
@@ -174,6 +192,7 @@ describe.each([
         { roomId, parentMessageId: goosy.id, text: '@goosy Please continue' },
         H,
       );
+      await notifyAll();
       await waitAnswers(4);
       expect(helpers.map((h) => h.prompt.mock.calls.length)).toEqual([2, 2]);
       const untagged = await phone.execute(

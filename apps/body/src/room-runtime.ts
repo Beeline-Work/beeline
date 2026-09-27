@@ -561,6 +561,8 @@ export class RoomRuntimeCoordinator {
    *  heartbeat for a wake the daemon already received. A scoped membership
    *  event applies incrementally and never touches this latch. */
   private readonly discoveryWakes = new DiscoveryWakes();
+  private discoveryWakeListener?: () => void;
+  private interactiveIdleListener?: () => void;
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
   private readonly grantRunnerServer: GrantRunnerServer;
@@ -598,7 +600,7 @@ export class RoomRuntimeCoordinator {
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
       const roomId = event?.roomId;
       if (!roomId) {
-        this.discoveryWakes.wake();
+        this.wakeDiscovery();
         return;
       }
       this.queueMembershipEvent({ ...event, roomId });
@@ -649,6 +651,23 @@ export class RoomRuntimeCoordinator {
 
   activeRoomIds(): string[] {
     return [...this.running.keys()].sort();
+  }
+
+  setDiscoveryWakeListener(listener: () => void): void {
+    this.discoveryWakeListener = listener;
+  }
+
+  setInteractiveIdleListener(listener: () => void): void {
+    this.interactiveIdleListener = listener;
+  }
+
+  reconnectAfterFailure(): void {
+    this.options.daemonApi.reconnectLive?.();
+  }
+
+  private wakeDiscovery(): void {
+    this.discoveryWakes.wake();
+    this.discoveryWakeListener?.();
   }
 
   activeRoomCount(): number {
@@ -714,6 +733,7 @@ export class RoomRuntimeCoordinator {
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {
     this.confirmationPending = false;
+    const existingRooms = new Set(this.running.keys());
     // Everything this reconcile reads happens after this point, so every wake
     // that has arrived by now is covered by its start pass. Wakes landing
     // DURING the reconcile re-arm fast reconcile instead of being swallowed.
@@ -805,7 +825,8 @@ export class RoomRuntimeCoordinator {
         if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
       },
     );
-    for (const running of this.running.values()) running.body.requestReconciliation();
+    for (const [roomId, running] of this.running)
+      if (existingRooms.has(roomId)) running.body.requestReconciliation();
     this.discoveryWakes.completeReconcile(coveredWakes);
     return 'member';
   }
@@ -832,7 +853,7 @@ export class RoomRuntimeCoordinator {
       await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
         this.applyMembershipEvent(event).catch((error) => {
           console.error('[thin-core] live membership apply failed', error);
-          this.discoveryWakes.wake();
+          this.wakeDiscovery();
         }),
       );
     }
@@ -845,7 +866,7 @@ export class RoomRuntimeCoordinator {
   async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
     const roomId = event.roomId;
     if (!roomId) {
-      this.discoveryWakes.wake();
+      this.wakeDiscovery();
       return;
     }
     if (event.removed === true) {
@@ -869,7 +890,7 @@ export class RoomRuntimeCoordinator {
       // resolved by — would never happen. Fall back to the reconcile read that
       // carries the corner's recorded opener rather than starting it blind.
       if (!event.openedBy) {
-        this.discoveryWakes.wake();
+        this.wakeDiscovery();
         return;
       }
       await this.startCorner({
@@ -881,7 +902,7 @@ export class RoomRuntimeCoordinator {
       // transient token or clone fault leaves nothing running and nothing
       // scheduled. Arm the fast reconcile the pushed Room path already gets
       // from its throw, so the retry is now rather than a heartbeat away.
-      if (!this.running.has(roomId)) this.discoveryWakes.wake();
+      if (!this.running.has(roomId)) this.wakeDiscovery();
       return;
     }
     await this.startRoom(roomId);
@@ -896,11 +917,11 @@ export class RoomRuntimeCoordinator {
   async applyCornerRestart(cornerId: string): Promise<void> {
     const running = this.running.get(cornerId);
     if (!running) {
-      this.discoveryWakes.wake();
+      this.wakeDiscovery();
       return;
     }
     await this.stopRunning(cornerId, running);
-    this.discoveryWakes.wake();
+    this.wakeDiscovery();
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
@@ -1484,6 +1505,7 @@ export class RoomRuntimeCoordinator {
     if (!room) return;
     room.lastPollAt = this.now();
     room.backoffUntil = 0;
+    if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();
   }
 
   private noteFailure(roomId: string, retryInMs: number): void {

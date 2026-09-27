@@ -636,6 +636,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             isInteractiveIdle: () => core.isWorkspaceIdle(),
             log: (message) => console.log(`[body] institutional memory: ${message}`),
           });
+          daemonApi.setMemoryJobListener(() => institutionalMemoryWorker?.wake());
+          core.setInteractiveIdleListener(() => institutionalMemoryWorker?.wake());
           institutionalMemoryWorker.start();
         }
       },

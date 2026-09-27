@@ -587,6 +587,10 @@ describe('daemon live command push', () => {
     });
     await expect(connector).resolves.toEqual({ type: 'connector-assignment' });
 
+    const memoryJob = nextSocketMessage(socket, 'memory-job');
+    live.publish({ type: 'invalidate', roomId, reason: 'memory-job' });
+    await expect(memoryJob).resolves.toEqual({ type: 'memory-job', roomId });
+
     const closed = nextSocketMessage(socket, 'corner-complete');
     live.publish({
       type: 'invalidate',

@@ -1,0 +1,130 @@
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import ts from 'typescript';
+import type WebSocket from 'ws';
+import { DaemonApiClient } from './daemon-api-client.js';
+import { ConnectorAssignmentLoop } from './connector-assignments.js';
+import { InstitutionalMemoryShadowWorker } from './institutional-memory-shadow-worker.js';
+import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
+import { ThinDaemonCore } from './thin-core.js';
+import type { BodyConfig } from './config.js';
+
+const roots: string[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+// NEVER DELETE, SKIP, OR WEAKEN THIS TEST. Timer-based polling saturated the production
+// database on 2026-09-27; recurring helper server reads are banned.
+describe('no timer-driven helper server reads', () => {
+  it('makes zero daemon API calls across hours of connected idle time', async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-no-polling-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace', pairedBy: 'human', daemonExchangeToken: `bde_${'a'.repeat(43)}`,
+      agentBinary: '/nonexistent', agentKind: 'codex', agentCommand: '/nonexistent',
+      agentArgs: [], mcpBinary: 'unused',
+      agentIdentity: identityFromKey('33'.repeat(32), 'Bee'),
+      bodyIdentity: identityFromKey('44'.repeat(32), 'Body'), supervisorRoot: root,
+    });
+    const operations: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      const name = url.split('/').at(-1)!;
+      operations.push(name);
+      if (name === 'getDaemonBootstrap')
+        return Response.json({ workspaceIds: ['workspace'], rooms: [] });
+      if (name === 'getConnectorAssignments') return Response.json({ assignments: [] });
+      if (name === 'claimInstitutionalMemoryJob') return Response.json({ enabled: true, job: null });
+      throw new Error(`unexpected daemon operation ${name}`);
+    });
+    let socket!: { readyState: number; onopen?: () => void; onclose?: () => void;
+      send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
+    const client = new DaemonApiClient('http://localhost:3000', 'token', staged.runtime.agent.publicKey,
+      fetchImpl as typeof fetch, () => {
+        socket = { readyState: 0, send: vi.fn(), close: vi.fn() };
+        return socket as unknown as WebSocket;
+      });
+    const config: BodyConfig = { agentBinary: '/nonexistent', agentKind: 'codex',
+      agentCommand: '/nonexistent', agentArgs: [], mcpBinary: 'unused', readonlyMcpCommand: '/nonexistent',
+      agentEnv: {}, workspaceRoot: root, autoApprovePermissions: false };
+    const core = new ThinDaemonCore(staged.runtime, staged.configPath, config, { daemonApi: client });
+    const connector = new ConnectorAssignmentLoop({ api: client, agentId: staged.runtime.agent.publicKey });
+    const memory = new InstitutionalMemoryShadowWorker({ api: client,
+      agentId: staged.runtime.agent.publicKey,
+      agent: { kind: 'reference', command: '/nonexistent', args: [] }, agentEnv: {},
+      isInteractiveIdle: () => core.isWorkspaceIdle(), extract: async () => { throw new Error('no job'); } });
+    const abort = new AbortController();
+    const running = core.run({ signal: abort.signal, onEstablished: () => {
+      client.setConnectorAssignmentListener(() => connector.wake());
+      client.setMemoryJobListener(() => memory.wake());
+      connector.start(); memory.start();
+    } });
+    socket.readyState = 1;
+    socket.onopen?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(operations).toContain('getDaemonBootstrap');
+    const baseline = [...operations];
+    await vi.advanceTimersByTimeAsync(4 * 60 * 60_000);
+    expect(operations).toEqual(baseline);
+    abort.abort(); connector.stop(); memory.stop();
+    await running;
+  });
+
+  it('has no interval or timeout callback that can reach a daemon read', async () => {
+    const dir = new URL('.', import.meta.url);
+    const names = (await readdir(dir)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+    const violations: string[] = [];
+    for (const name of names) {
+      const source = ts.createSourceFile(name, await readFile(new URL(name, dir), 'utf8'),
+        ts.ScriptTarget.Latest, true);
+      const functions = new Map<string, ts.Node>();
+      const index = (node: ts.Node): void => {
+        if ((ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name)
+          functions.set(node.name.getText(source), node);
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
+          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)))
+          functions.set(node.name.text, node.initializer);
+        ts.forEachChild(node, index);
+      };
+      index(source);
+      const reachesRead = (node: ts.Node, seen = new Set<string>()): boolean => {
+        let found = false;
+        const walk = (child: ts.Node): void => {
+          if (found) return;
+          if (ts.isCallExpression(child)) {
+            const expression = child.expression;
+            if (ts.isPropertyAccessExpression(expression) && expression.name.text === 'execute' &&
+              child.arguments[0] && /^(get|list|claim|read|search)[A-Z]/.test(
+                child.arguments[0].getText(source).replace(/^['"]|['"]$/g, '')))
+              found = true;
+            const called = ts.isPropertyAccessExpression(expression) ? expression.name.text :
+              ts.isIdentifier(expression) ? expression.text : undefined;
+            if (called && !seen.has(called) && functions.has(called)) {
+              seen.add(called);
+              if (reachesRead(functions.get(called)!, seen)) found = true;
+            }
+          }
+          ts.forEachChild(child, walk);
+        };
+        walk(node);
+        return found;
+      };
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.expression.getText(source).match(/^(setInterval|setTimeout)$/)) {
+          const callback = node.arguments[0];
+          if (callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) {
+            if (reachesRead(callback))
+              violations.push(`${name}:${source.getLineAndCharacterOfPosition(node.pos).line + 1}`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    expect(violations).toEqual([]);
+  });
+});

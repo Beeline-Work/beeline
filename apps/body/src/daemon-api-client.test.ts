@@ -211,7 +211,7 @@ describe('DaemonApiClient', () => {
     first.message({ type: 'subscribed', roomId: 'room-1' });
 
     first.close();
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_250);
     const second = FakeWebSocket.instances[1]!;
     second.open();
     expect(second.sent).toEqual(first.sent);

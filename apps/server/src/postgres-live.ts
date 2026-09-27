@@ -155,6 +155,12 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
+    WHEN 'institutional_memory_jobs' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', COALESCE(NEW.source_room_id, OLD.source_room_id),
+        'pending', NEW.status = 'pending' AND NEW.next_attempt_at <= now()
+      );
   END CASE;
   payload = payload || jsonb_build_object(
     'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
@@ -174,7 +180,8 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
     'corner_facts', 'permission_authority',
-    'agent_grants', 'agent_schedules', 'agent_commands'
+    'agent_grants', 'agent_schedules', 'agent_commands',
+    'institutional_memory_jobs'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -230,6 +237,7 @@ interface LiveNotificationPayload {
   closeRequested?: boolean;
   lane?: string;
   laneChanged?: boolean;
+  pending?: boolean;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -266,6 +274,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
         : {}),
       ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
       ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
+      ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
     };
   } catch {
     return undefined;
@@ -434,6 +443,14 @@ export class PostgresLiveListener {
         roomId: payload.roomId,
         reason: 'connector-assignment',
         targetAgentId: payload.agentId,
+      });
+      return;
+    }
+    if (payload.table === 'institutional_memory_jobs') {
+      if (payload.pending === true) this.live.publish({
+        type: 'invalidate',
+        roomId: payload.roomId,
+        reason: 'memory-job',
       });
       return;
     }

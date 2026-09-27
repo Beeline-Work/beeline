@@ -233,6 +233,30 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('pushes newly queued institutional memory work to the source Room', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'source')`,
+      ['f'.repeat(64), ROOM, AUTHOR],
+    );
+    received.length = 0;
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'turn_review',$3,$4,$5,'workspace_candidate','memory-push-test')`,
+      ['33333333-3333-4333-8333-333333333333', WORKSPACE, ROOM, 'f'.repeat(64), AUTHOR],
+    );
+    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'memory-job'));
+  });
+
   it('names the parent Room and the corner opener on a corner membership invalidate', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

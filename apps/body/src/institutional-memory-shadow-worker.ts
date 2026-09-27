@@ -190,57 +190,52 @@ export async function extractInstitutionalMemoryShadowJob(
 
 /** One low-priority, one-at-a-time queue consumer per daemon process. */
 export class InstitutionalMemoryShadowWorker {
-  private readonly intervalMs: number;
   private readonly log: (message: string) => void;
   private readonly extract: (
     job: InstitutionalMemoryShadowJob,
     signal?: AbortSignal,
   ) => Promise<InstitutionalMemoryShadowExtraction>;
-  private readonly schedule: (fn: () => void, ms: number) => unknown;
-  private readonly cancel: (handle: unknown) => void;
-  private timer?: unknown;
   private running = false;
+  private wakePending = false;
+  private draining = false;
   private stopped = false;
   private activeAbort?: AbortController;
   constructor(private readonly options: InstitutionalMemoryShadowWorkerOptions) {
-    this.intervalMs = options.intervalMs ?? INSTITUTIONAL_MEMORY_SHADOW_POLL_MS;
     this.log = options.log ?? (() => {});
     this.extract =
       options.extract ??
       ((job, signal) => extractInstitutionalMemoryShadowJob(job, options, signal));
-    this.schedule =
-      options.schedule ??
-      ((fn, ms) => {
-        const timer = setTimeout(fn, ms);
-        timer.unref?.();
-        return timer;
-      });
-    this.cancel = options.cancel ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
   }
 
   start(): void {
-    if (this.stopped || this.timer !== undefined) return;
-    void this.runOnce();
-    this.arm();
+    if (this.stopped) return;
+    this.wake();
+  }
+
+  wake(): void {
+    if (this.stopped) return;
+    this.wakePending = true;
+    if (this.draining) return;
+    this.draining = true;
+    void (async () => {
+      try {
+        do {
+          this.wakePending = false;
+        } while ((await this.runOnce()) && !this.stopped);
+      } finally {
+        this.draining = false;
+        if (this.wakePending && !this.stopped) this.wake();
+      }
+    })();
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.timer !== undefined) this.cancel(this.timer);
-    this.timer = undefined;
     this.activeAbort?.abort();
   }
 
-  private arm(): void {
-    if (this.stopped) return;
-    this.timer = this.schedule(() => {
-      this.timer = undefined;
-      void this.runOnce().finally(() => this.arm());
-    }, this.intervalMs);
-  }
-
-  async runOnce(): Promise<void> {
-    if (this.stopped || this.running || !this.options.isInteractiveIdle()) return;
+  async runOnce(): Promise<boolean> {
+    if (this.stopped || this.running || !this.options.isInteractiveIdle()) return false;
     this.running = true;
     let job: InstitutionalMemoryShadowJob | undefined;
     let heartbeat: NodeJS.Timeout | undefined;
@@ -250,7 +245,7 @@ export class InstitutionalMemoryShadowWorker {
       const claimed = await this.options.api.execute('claimInstitutionalMemoryJob', {
         agentId: this.options.agentId,
       });
-      if (!claimed.enabled || !claimed.job) return;
+      if (!claimed.enabled || !claimed.job) return false;
       job = claimed.job;
       heartbeat = setInterval(() => {
         void this.options.api
@@ -270,6 +265,7 @@ export class InstitutionalMemoryShadowWorker {
         proposal: extraction.proposal,
         usage: extraction.usage,
       });
+      return true;
     } catch (error) {
       if (!this.stopped) this.log(`shadow extraction failed: ${errorText(error)}`);
       if (job && !this.stopped) {
@@ -283,6 +279,7 @@ export class InstitutionalMemoryShadowWorker {
           })
           .catch((failure) => this.log(`shadow failure report failed: ${errorText(failure)}`));
       }
+      return false;
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       if (this.activeAbort === abort) this.activeAbort = undefined;

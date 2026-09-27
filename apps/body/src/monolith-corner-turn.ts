@@ -583,7 +583,7 @@ export class MonolithCornerTurnLoop {
    * idle timer. Intake clears it itself when it exits.
    */
   requestReconciliation(): void {
-    this.lastCloseCheck = 0;
+    this.reconcileCloseRequested = true;
     this.wakeIntake?.();
   }
   private client?: AcpClient;
@@ -644,16 +644,13 @@ export class MonolithCornerTurnLoop {
   private readonly stoppedTurns = new Set<string>();
   /** Live corner-complete: close now, do not wait for the recovery GET. */
   private closePushed = false;
-  /** Last durable close read; 0 means the first check still runs. */
-  private lastCloseCheck = 0;
-  /** This corner's own jittered recovery interval, drawn once. */
-  private readonly closePollMs: number;
+  /** One durable state read after a socket reconnect/discovery pass. */
+  private reconcileCloseRequested = false;
 
   /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
   private harvest: Promise<void> | undefined;
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
-    this.closePollMs = options.closePollMs ?? cornerClosePollMs();
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
@@ -2135,10 +2132,8 @@ export class MonolithCornerTurnLoop {
             await this.options.onCloseRequested();
             return true;
           }
-          const now = Date.now();
-          if (this.lastCloseCheck !== 0 && now - this.lastCloseCheck < this.closePollMs)
-            return false;
-          this.lastCloseCheck = now;
+          if (!this.reconcileCloseRequested) return false;
+          this.reconcileCloseRequested = false;
           const state = await api.execute('getCornerRestoreState', { cornerId });
           // The lane upgrade's retire arrives as an ephemeral live push, which a
           // disconnected socket never receives. This timed read is the recovery:
@@ -2162,10 +2157,7 @@ export class MonolithCornerTurnLoop {
             command.source.authorId,
             command.reason === 'corner_check' ? [command.source.body] : undefined,
             command.source.type === 'message' ? command.sourceMessageId : undefined,
-          ).finally(() => {
-            // One recovery GET after the turn; idle ticks stay on the 10 min net.
-            this.lastCloseCheck = 0;
-          }),
+          ),
       });
     } finally {
       this.squireRelay.close();

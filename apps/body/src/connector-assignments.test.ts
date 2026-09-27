@@ -129,7 +129,7 @@ describe('ConnectorAssignmentLoop', () => {
       clock.mockReturnValue(started);
       await loop.runOnce();
       await settle();
-      expect(timers.length).toBe(1);
+      expect(timers.length).toBe(0);
 
       // Still inside the ceremony's life: the watch keeps re-arming.
       clock.mockReturnValue(attemptEndsAt - 1);
@@ -149,13 +149,13 @@ describe('ConnectorAssignmentLoop', () => {
       const expired = api.calls.filter((call) => call.op === 'postConnectorStatus').at(-1);
       expect(expired?.input.errorMessage).toBe(CEREMONY_EXPIRED);
       expect(expired?.input.signIn).toBeNull();
-      expect(cancelled).toEqual([1]);
+      expect(cancelled).toEqual([]);
 
       // And the row is done: a later pass arms no further watch.
       clock.mockReturnValue(attemptEndsAt + 60_000);
       await loop.runOnce();
       await settle();
-      expect(timers.length).toBe(1);
+      expect(timers.length).toBe(0);
     } finally {
       clock.mockRestore();
       loop.stop();
@@ -408,7 +408,7 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
-  it('drains immediately on wake without waiting for the recovery poll', async () => {
+  it('drains on wake without scheduling a recovery poll', async () => {
     const api = apiMock([]);
     let scheduled = 0;
     const loop = new ConnectorAssignmentLoop({
@@ -427,7 +427,7 @@ describe('ConnectorAssignmentLoop', () => {
     loop.wake();
     await settle();
     expect(api.calls.filter((call) => call.op === 'getConnectorAssignments')).toHaveLength(2);
-    expect(scheduled).toBe(1);
+    expect(scheduled).toBe(0);
     loop.stop();
   });
 
@@ -592,8 +592,7 @@ describe('ConnectorAssignmentLoop', () => {
     // assignment is an ordinary fresh install again.
     connect.abort();
     releaseSquireConnectSession();
-    await loop.runOnce();
-    await settle();
+    await vi.waitFor(() => expect(started).toBe(1));
     expect(started).toBe(1);
     loop.stop();
   });
@@ -638,7 +637,7 @@ describe('ConnectorAssignmentLoop', () => {
     }
   });
 
-  it('drains the moment the sign-in this helper owns exits, not on the recovery poll', async () => {
+  it('drains on the sign-in process exit event without a server polling timer', async () => {
     // Nothing on the wire says the human finished signing in: the row stays
     // `installing` until a LATER run reaches Squire's already-connected
     // short-circuit. The connect process exiting is that signal, so the phone
@@ -667,20 +666,16 @@ describe('ConnectorAssignmentLoop', () => {
       await loop.runOnce();
       await settle();
       expect(started).toBe(0);
-      // While the ceremony is live the watch only re-arms itself.
-      expect(armed).toHaveLength(1);
-      armed.pop()!();
-      await settle();
+      // A live ceremony waits for its process exit event without a timer.
       expect(started).toBe(0);
-      expect(armed).toHaveLength(1);
+      expect(armed).toHaveLength(0);
 
       // The human finished and connect exited.
       connect.abort();
       for (let attempt = 0; attempt < 200 && isProcessAlive(claimed?.pid); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      armed.pop()!();
-      await settle();
+      await vi.waitFor(() => expect(started).toBe(1));
       expect(started).toBe(1);
       expect(
         api.calls.some(

@@ -208,13 +208,14 @@ describe('a Room turn the requester stopped', () => {
 
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
+    const fixtureApi = commandFixtureApi(api, 'room-id', agent.publicKey);
     const loop = new MonolithRoomTurnLoop({
       roomId: 'room-id',
       workspaceId: 'workspace',
       cwd: config.workspaceRoot,
       runtime,
       config,
-      api: commandFixtureApi(api, 'room-id', agent.publicKey),
+      api: fixtureApi,
       scheduler,
       health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
@@ -223,6 +224,7 @@ describe('a Room turn the requester stopped', () => {
     });
     const running = loop.run();
     await promptRunning;
+    await (fixtureApi as DaemonApiClient & { flushFixtureInbox(): Promise<void> }).flushFixtureInbox();
     await vi.waitFor(() => expect(sessionCancel).toHaveBeenCalledWith('room-session'), {
       timeout: 5_000,
     });

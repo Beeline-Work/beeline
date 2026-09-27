@@ -79,7 +79,7 @@ describe('helper-owned Squire task relay', () => {
     expect((await request(relay, 'root', 'turn-one', 'tools/list')).status).toBe(200);
     expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status).toBe(200);
     vi.useFakeTimers();
-    relay.deactivate('turn-one');
+    relay.deactivate('turn-one', 'grant-decision');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
     relay.activate(command('root', 'turn-two'), 'generation');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
@@ -98,26 +98,33 @@ describe('helper-owned Squire task relay', () => {
     expect(logs.join('\n')).not.toContain('browser-1');
   });
 
-  it('closes a terminal root at its idle lease without waiting for another task', async () => {
+  it('closes a terminal root immediately without waiting for another task', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
     const { relay, stats } = fixture();
     relay.activate(command('finished', 'turn-one'), 'generation');
     await request(relay, 'finished', 'turn-one', 'tools/call', { name: 'operate_start' });
-    vi.useFakeTimers();
     relay.deactivate('turn-one');
-    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
-    expect(stats().exits).toBe(0);
-    await vi.advanceTimersByTimeAsync(1);
     expect(stats().exits).toBe(1);
-    expect(logs.join('\n')).toContain('"reason":"task-lease-expired"');
-    vi.useRealTimers();
+    expect(logs.join('\n')).toContain('"reason":"task-complete"');
     relay.activate(command('finished', 'turn-two'), 'generation');
     const stale = await request(relay, 'finished', 'turn-two', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     });
     expect(stale.status).toBe(400);
     expect(stale.body.error).toMatch(/no longer owned/);
+  });
+
+  it('bounds a paused root if its explicit continuation never arrives', async () => {
+    const { relay, stats } = fixture();
+    relay.activate(command('paused', 'turn-one'), 'generation');
+    await request(relay, 'paused', 'turn-one', 'tools/call', { name: 'operate_start' });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one', 'grant-decision');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
+    expect(stats().exits).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stats().exits).toBe(1);
   });
 
   it('cancellation closes the connection; the next task and helper cannot reuse its session', async () => {
@@ -143,7 +150,7 @@ describe('helper-owned Squire task relay', () => {
     const { relay, stats } = fixture();
     relay.activate(command('first', 'turn-one'), 'generation');
     await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
-    relay.deactivate('turn-one');
+    relay.deactivate('turn-one', 'grant-decision');
     relay.activate(command('second', 'turn-two'), 'generation');
     expect(stats().exits).toBe(1);
     expect((await request(relay, 'first', 'turn-one', 'tools/call', {
@@ -226,7 +233,7 @@ describe('helper-owned Squire task relay', () => {
       };
       relay.activate(command('root', 'turn-one'), 'generation');
       expect(await invoke('turn-one', 'operate_start')).toHaveProperty('result');
-      relay.deactivate('turn-one');
+      relay.deactivate('turn-one', 'grant-decision');
       relay.activate(command('root', 'turn-two'), 'generation');
       expect(await invoke('turn-two', 'operate_observe', { sessionId: 'browser-1' })).toHaveProperty('result');
       expect(stats().spawns).toBe(1);

@@ -1654,7 +1654,10 @@ export class MonolithRoomTurnLoop {
         onPoll: () => this.options.health.poll(),
         onError: (error) => console.error('[thin-core] Room command failed', error),
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
-        onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
+        onLeave: (command) => this.squireRelay.deactivate(
+          command.turnRequestId,
+          this.pausedOnGrantRequestId === command.turnRequestId ? 'grant-decision' : null,
+        ),
         stop: (requestId) => this.stopTurn(requestId),
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,

@@ -15,7 +15,7 @@ import { StdioSquireMcpClient } from './squire-mcp-client.js';
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
 export type SquireTaskCall = TurnKey & { tool: string; args: Record<string, unknown> };
-/** A completed command may receive an explicit resume; idle roots are retired. */
+/** A turn paused on a grant may resume; abandon its idle connection after this bound. */
 export const SQUIRE_TASK_IDLE_LEASE_MS = 15 * 60_000;
 
 function sessionIds(value: unknown, depth = 0): string[] {
@@ -123,11 +123,15 @@ export class SquireTaskRelay {
     if (this.task) this.task.lastRequestId = command.turnRequestId;
   }
 
-  deactivate(requestId: string): void {
+  deactivate(requestId: string, continuation: 'grant-decision' | null = null): void {
     if (this.active?.requestId !== requestId) return;
     const taskId = this.active.taskId;
     this.active = undefined;
     if (!this.task || this.task.taskId !== taskId) return;
+    if (continuation !== 'grant-decision') {
+      this.retire('task-complete');
+      return;
+    }
     this.leaseTimer = setTimeout(() => {
       this.leaseTimer = undefined;
       if (!this.active && this.task?.taskId === taskId) this.retire('task-lease-expired');

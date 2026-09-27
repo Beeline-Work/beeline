@@ -176,8 +176,8 @@ const styles = StyleSheet.create((theme) => ({
   tray: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
   needsCount: {
     position: 'absolute',
-    top: 2,
-    right: 1,
+    top: 8,
+    right: 7,
     minWidth: 17,
     height: 17,
     paddingHorizontal: 4,

@@ -20,9 +20,12 @@ export function retainRoomHistoryCursor(
   if (current?.roomId === roomId) return current;
   if (!messages) return null;
   const oldest = messages[0];
+  // An empty cached response is not a history boundary. A later server read
+  // may contain the real tail, so leave the cursor unpinned until then.
+  if (!oldest) return null;
   return {
     roomId,
-    before: oldest ? { createdAt: oldest.createdAt, id: oldest.id } : null,
+    before: { createdAt: oldest.createdAt, id: oldest.id },
   };
 }
 

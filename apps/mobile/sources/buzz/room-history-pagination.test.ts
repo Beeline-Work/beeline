@@ -11,6 +11,17 @@ const message = (id: string, createdAt: number): RoomViewMessage => ({
 });
 
 describe('Room history pagination cursor', () => {
+  it('does not pin an empty cached window before the server tail arrives', () => {
+    const empty = retainRoomHistoryCursor(null, 'corner', []);
+    expect(empty).toBeNull();
+    expect(retainRoomHistoryCursor(empty, 'corner', [message('1'.repeat(64), 10)])?.before).toEqual(
+      {
+        createdAt: 10,
+        id: '1'.repeat(64),
+      },
+    );
+  });
+
   it('starts from the bounded conversation tail, never the separate corner tool payload', () => {
     const messages = [message('2'.repeat(64), 20), message('3'.repeat(64), 30)];
     const state = retainRoomHistoryCursor(null, 'corner', messages);

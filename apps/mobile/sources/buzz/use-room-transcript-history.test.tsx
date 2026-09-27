@@ -45,7 +45,7 @@ function Transcript({
   corner = true,
 }: {
   tail: readonly RoomViewMessage[];
-  history: (roomId: string, before: { createdAt: number; id: string }) => Promise<RoomHistoryView>;
+  history: (roomId: string, before?: { createdAt: number; id: string }) => Promise<RoomHistoryView>;
   corner?: boolean;
 }) {
   const page = useRoomTranscriptHistory({
@@ -71,6 +71,7 @@ function Transcript({
     {
       onEndReached: () => page.loadOlder(rows.length),
       onRetry: () => page.retry(rows.length),
+      onReset: page.reset,
     },
     line ? React.createElement('HistoryLine', null, line) : null,
     rows.map((row) => React.createElement('Message', { key: row.id }, row.text)),
@@ -129,6 +130,92 @@ describe('Room transcript history', () => {
     expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
     act(() => renderer.root.findByType('Transcript').props.onEndReached());
     expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks successive server pages without a polling refresh before marking completion', async () => {
+    const history = vi
+      .fn()
+      .mockResolvedValueOnce({
+        roomId: 'corner',
+        messages: [message('2', 20)],
+        nextBefore: { createdAt: 20, id: '2'.repeat(64) },
+      })
+      .mockResolvedValueOnce({ roomId: 'corner', messages: [message('1', 10)] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[message('3', 30)]} history={history} />);
+    });
+
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(textRows(renderer, 'HistoryLine')).toEqual([]);
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(textRows(renderer, 'Message')).toEqual(['message-1', 'message-2', 'message-3']);
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
+  });
+
+  it('does not infer the beginning from an empty cached tail before a server read', async () => {
+    const request = deferred<RoomHistoryView>();
+    const history = vi.fn(() => request.promise);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[]} history={history} />);
+    });
+
+    act(() => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Loading earlier messages…']);
+    expect(history).toHaveBeenCalledWith('corner', undefined);
+
+    await act(async () => {
+      request.resolve({ roomId: 'corner', messages: [message('1', 10)] });
+      await request.promise;
+    });
+    expect(textRows(renderer, 'Message')).toEqual(['message-1']);
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
+  });
+
+  it('repins after an empty cache is replaced by a populated server tail', async () => {
+    const history = vi.fn(async () => ({ roomId: 'corner', messages: [message('1', 10)] }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[]} history={history} />);
+    });
+    await act(async () => {
+      renderer.update(<Transcript tail={[message('2', 20)]} history={history} />);
+    });
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(history).toHaveBeenCalledWith('corner', { createdAt: 20, id: '2'.repeat(64) });
+    expect(textRows(renderer, 'Message')).toEqual(['message-1', 'message-2']);
+  });
+
+  it('invalidates completion when a reconnect supplies an earlier tail boundary', async () => {
+    const history = vi.fn(async () => ({ roomId: 'corner', messages: [] }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[message('3', 30)]} history={history} />);
+    });
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
+
+    await act(async () => {
+      renderer.update(<Transcript tail={[message('1', 10), message('3', 30)]} history={history} />);
+    });
+    expect(textRows(renderer, 'HistoryLine')).toEqual([]);
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(history).toHaveBeenLastCalledWith('corner', { createdAt: 10, id: '1'.repeat(64) });
+  });
+
+  it('does not turn a reset or a short seeded quote window into server completion', async () => {
+    const history = vi.fn(async () => ({ roomId: 'corner', messages: [message('1', 10)] }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[message('2', 20)]} history={history} />);
+    });
+    act(() => renderer.root.findByType('Transcript').props.onReset());
+    expect(textRows(renderer, 'HistoryLine')).toEqual([]);
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(textRows(renderer, 'Message')).toEqual(['message-1', 'message-2']);
+    expect(history).toHaveBeenCalledWith('corner', { createdAt: 20, id: '2'.repeat(64) });
   });
 
   it('holds a failed page for an explicit tap-to-retry', async () => {

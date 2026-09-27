@@ -86,8 +86,12 @@ describe('a removed agent retires its own helper', () => {
       throw new DaemonApiError('unauthorized', 401, false, 'daemon_token_required');
     });
     const controller = new AbortController();
+    let reconnect: (() => void) | undefined;
     const core = new ThinDaemonCore(staged.runtime, staged.configPath, config, {
-      daemonApi: { execute } as unknown as DaemonApiClient,
+      daemonApi: {
+        execute,
+        setRoomsChangedListener: (listener: () => void) => { reconnect = listener; },
+      } as unknown as DaemonApiClient,
     });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
@@ -98,6 +102,7 @@ describe('a removed agent retires its own helper', () => {
       onProgress: (status) => {
         progress.push(status);
         if (progress.length >= failures.length) controller.abort();
+        else reconnect?.();
       },
     });
 

@@ -553,6 +553,7 @@ export class RoomRuntimeCoordinator {
   private drainDeadlineAt: number | undefined;
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
+  private readonly repositoryRevisions = new Map<string, string>();
   private confirmationPending = false;
   private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
@@ -561,6 +562,8 @@ export class RoomRuntimeCoordinator {
    *  heartbeat for a wake the daemon already received. A scoped membership
    *  event applies incrementally and never touches this latch. */
   private readonly discoveryWakes = new DiscoveryWakes();
+  private discoveryWakeListener?: () => void;
+  private interactiveIdleListener?: () => void;
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
   private readonly grantRunnerServer: GrantRunnerServer;
@@ -596,9 +599,13 @@ export class RoomRuntimeCoordinator {
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
+      if (event?.repositoryChanged) {
+        this.wakeDiscovery();
+        return;
+      }
       const roomId = event?.roomId;
       if (!roomId) {
-        this.discoveryWakes.wake();
+        this.wakeDiscovery();
         return;
       }
       this.queueMembershipEvent({ ...event, roomId });
@@ -649,6 +656,23 @@ export class RoomRuntimeCoordinator {
 
   activeRoomIds(): string[] {
     return [...this.running.keys()].sort();
+  }
+
+  setDiscoveryWakeListener(listener: () => void): void {
+    this.discoveryWakeListener = listener;
+  }
+
+  setInteractiveIdleListener(listener: () => void): void {
+    this.interactiveIdleListener = listener;
+  }
+
+  reconnectAfterFailure(): void {
+    this.options.daemonApi.reconnectLive?.();
+  }
+
+  private wakeDiscovery(): void {
+    this.discoveryWakes.wake();
+    this.discoveryWakeListener?.();
   }
 
   activeRoomCount(): number {
@@ -714,6 +738,7 @@ export class RoomRuntimeCoordinator {
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {
     this.confirmationPending = false;
+    const existingRooms = new Set(this.running.keys());
     // Everything this reconcile reads happens after this point, so every wake
     // that has arrived by now is covered by its start pass. Wakes landing
     // DURING the reconcile re-arm fast reconcile instead of being swallowed.
@@ -725,12 +750,26 @@ export class RoomRuntimeCoordinator {
       this.workspaceRemovalConfirmations += 1;
       if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
         this.confirmationPending = true;
+        this.wakeDiscovery();
         return 'unknown';
       }
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
+    for (const room of topLevelRooms) {
+      const revision = room.repositoryRevision;
+      if (revision === undefined) continue;
+      const previous = this.repositoryRevisions.get(room.roomId);
+      this.repositoryRevisions.set(room.roomId, revision);
+      if (previous === undefined || previous === revision) continue;
+      const running = this.running.get(room.roomId);
+      if (running) await this.stopRunning(room.roomId, running);
+      // A restored App grant can also clear a corner's previous standing
+      // checkout fault; those corners retry in this same reconciliation pass.
+      for (const [cornerId, parentId] of this.monolithCornerParents)
+        if (parentId === room.roomId) this.standingCornerStartFaults.delete(cornerId);
+    }
     const desiredTopRooms = topLevelRooms.map((room) => room.roomId);
     const desired = new Set(desiredTopRooms);
     const desiredCorners = new Map<string, DesiredCorner>();
@@ -784,6 +823,7 @@ export class RoomRuntimeCoordinator {
         continue;
       }
       await this.stopRunning(channelId, running);
+      this.roomRemovalConfirmations.delete(channelId);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
@@ -805,8 +845,10 @@ export class RoomRuntimeCoordinator {
         if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
       },
     );
-    for (const running of this.running.values()) running.body.requestReconciliation();
+    for (const [roomId, running] of this.running)
+      if (existingRooms.has(roomId)) running.body.requestReconciliation();
     this.discoveryWakes.completeReconcile(coveredWakes);
+    if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
     return 'member';
   }
 
@@ -832,7 +874,7 @@ export class RoomRuntimeCoordinator {
       await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
         this.applyMembershipEvent(event).catch((error) => {
           console.error('[thin-core] live membership apply failed', error);
-          this.discoveryWakes.wake();
+          this.wakeDiscovery();
         }),
       );
     }
@@ -845,7 +887,7 @@ export class RoomRuntimeCoordinator {
   async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
     const roomId = event.roomId;
     if (!roomId) {
-      this.discoveryWakes.wake();
+      this.wakeDiscovery();
       return;
     }
     if (event.removed === true) {
@@ -869,7 +911,7 @@ export class RoomRuntimeCoordinator {
       // resolved by — would never happen. Fall back to the reconcile read that
       // carries the corner's recorded opener rather than starting it blind.
       if (!event.openedBy) {
-        this.discoveryWakes.wake();
+        this.wakeDiscovery();
         return;
       }
       await this.startCorner({
@@ -881,7 +923,7 @@ export class RoomRuntimeCoordinator {
       // transient token or clone fault leaves nothing running and nothing
       // scheduled. Arm the fast reconcile the pushed Room path already gets
       // from its throw, so the retry is now rather than a heartbeat away.
-      if (!this.running.has(roomId)) this.discoveryWakes.wake();
+      if (!this.running.has(roomId)) this.wakeDiscovery();
       return;
     }
     await this.startRoom(roomId);
@@ -896,11 +938,11 @@ export class RoomRuntimeCoordinator {
   async applyCornerRestart(cornerId: string): Promise<void> {
     const running = this.running.get(cornerId);
     if (!running) {
-      this.discoveryWakes.wake();
+      this.wakeDiscovery();
       return;
     }
     await this.stopRunning(cornerId, running);
-    this.discoveryWakes.wake();
+    this.wakeDiscovery();
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
@@ -1484,6 +1526,7 @@ export class RoomRuntimeCoordinator {
     if (!room) return;
     room.lastPollAt = this.now();
     room.backoffUntil = 0;
+    if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();
   }
 
   private noteFailure(roomId: string, retryInMs: number): void {
@@ -1514,6 +1557,7 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.stopped = true;
+    this.options.daemonApi.closeLive?.();
     this.pendingMembershipEvents.clear();
     const deadlineAt = Math.min(
       this.now() + this.drainDeadlineMs,

@@ -196,7 +196,9 @@ describe('fresh Room discovery through the live membership wake', () => {
   let server: ReturnType<typeof createBeelineServer>;
   let accessToken: string;
   let core: ThinDaemonCore;
+  let daemonApi: DaemonApiClient;
   let abort: AbortController;
+  let coreRun: Promise<'aborted' | 'agent-removed'>;
   let supervisorRoot: string;
   let live: LiveHub;
   let listener: PostgresLiveListener;
@@ -305,17 +307,18 @@ describe('fresh Room discovery through the live membership wake', () => {
       autoApprovePermissions: false,
       accessPolicy: 'everyone',
     } as never;
-    const api = new DaemonApiClient(origin, daemonToken, AGENT);
+    daemonApi = new DaemonApiClient(origin, daemonToken, AGENT);
     core = new ThinDaemonCore(runtime, configPath, config, {
-      daemonApi: api,
+      daemonApi,
       reconcileHeartbeatMs: RECONCILE_HEARTBEAT_MS,
     });
     abort = new AbortController();
-    void core.run({ pollMs: 100, signal: abort.signal });
+    coreRun = core.run({ pollMs: 100, signal: abort.signal });
   });
 
   afterEach(async () => {
     abort?.abort();
+    await coreRun;
     await listener?.stop();
     await new Promise((r) => setTimeout(r, 150));
     if (server) await new Promise<void>((resolve2) => server.close(() => resolve2()));
@@ -648,6 +651,43 @@ describe('fresh Room discovery through the live membership wake', () => {
       await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 10_000 });
     } finally {
       unsubscribe();
+      watcher.closeLive();
     }
+  });
+
+  it('refreshes a running Room when its repository binding changes over the socket', async () => {
+    const execute = vi.spyOn(daemonApi, 'execute');
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM));
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0));
+    execute.mockClear();
+    await database.query(
+      `UPDATE rooms SET repository_resolution='unverified',repository_updated_at=now() WHERE id=$1`,
+      [ROOM],
+    );
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
+      { timeout: 10_000 });
+    expect(core.activeRoomIds()).toContain(ROOM);
+  });
+
+  it('refreshes a running Room when its GitHub installation changes over the socket', async () => {
+    const execute = vi.spyOn(daemonApi, 'execute');
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM));
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0));
+    execute.mockClear();
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type)
+       VALUES(77,$1,'owner','User')`, [HUMAN],
+    );
+    await database.query(
+      `UPDATE rooms SET github_installation_id=77,repository_updated_at=now() WHERE id=$1`, [ROOM],
+    );
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
+      { timeout: 10_000 });
+    execute.mockClear();
+    await database.query(
+      `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=77`,
+    );
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
+      { timeout: 10_000 });
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
@@ -64,4 +64,15 @@ it('reports an authorization attempt nobody started as expired', async () => {
   expect(await oauth.claim(CONNECTOR, 'never-issued-state', HELPER)).toEqual({
     status: 'expired',
   });
+});
+
+it('pushes a connector wake when the human cancels a registry sign-in', async () => {
+  const oauth = new RegistryMcpOAuth(database, 'https://beeline.example');
+  const started = await oauth.begin(CONNECTOR, HELPER);
+  const query = vi.spyOn(database, 'query');
+  expect(await oauth.cancel(started.state)).toBe(true);
+  expect(query.mock.calls).toContainEqual([
+    `SELECT pg_notify($1, $2)`,
+    expect.arrayContaining([expect.any(String), expect.stringContaining(HELPER)]),
+  ]);
 });

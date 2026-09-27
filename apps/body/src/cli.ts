@@ -91,6 +91,7 @@ import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
   SystemdNotifier,
+  startLocalWatchdog,
   UNKNOWN_AGENT_EXIT_STATUS,
   disableAgentService,
   extendSystemdStartTimeout,
@@ -389,6 +390,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     SCRATCH_SWEEP_INTERVAL_MS,
   );
   scratchSweepTimer.unref();
+  // Socket-idle is healthy. Keep systemd's local watchdog alive without a
+  // discovery tick or any daemon API read.
+  let lastCoreStatus = 'starting';
+  const stopWatchdog = startLocalWatchdog(notifier,
+    () => `loaded_release=${loadedRelease ?? 'development'}; ${lastCoreStatus}`);
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
@@ -505,6 +511,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       update?.notifyReleaseAvailable(`${version}:${sha}`);
       void updateDrain?.tick();
     });
+    core.setInteractiveIdleListener(() => {
+      institutionalMemoryWorker?.wake();
+      void updateDrain?.tick();
+    });
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
@@ -609,12 +619,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // collapse multiple agents on one physical host into one machine row
         // in readWorkbench. Best-effort: a failed report does not block
         // readiness or the Room loop.
-        void readMachineId(process.env).then(({ machineId, machineName }) =>
-          daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
-        );
-        // The connector work queue drains on the live Connect push; the
-        // interval is only recovery. One loop per daemon process, started
-        // idempotently so a reconnect never stacks a second timer.
+        void readMachineId(process.env)
+          .then(({ machineId, machineName }) =>
+            daemonApi.execute('postAgentMachineReport', { machineId, machineName }))
+          .then(() => institutionalMemoryWorker?.wake())
+          .catch((error) => console.warn('[body] machine report failed:', error));
+        // The connector work queue drains on the live Connect push.
+        // One loop per daemon process also handles reconnects.
         connectorLoop ??= new ConnectorAssignmentLoop({
           api: daemonApi,
           agentId: runtime.agent.publicKey,
@@ -636,12 +647,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             isInteractiveIdle: () => core.isWorkspaceIdle(),
             log: (message) => console.log(`[body] institutional memory: ${message}`),
           });
+          daemonApi.setMemoryJobListener(() => institutionalMemoryWorker?.wake());
           institutionalMemoryWorker.start();
         }
       },
       onProgress: async (status) => {
+        lastCoreStatus = status;
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
-        // The watchdog heartbeat is coupled to this completed progress tick.
+        // Reconciliation refreshes the status; the local timer keeps an idle
+        // connected helper healthy between pushed events.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
         await updateDrain?.tick();
       },
@@ -674,6 +688,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     throw error;
   } finally {
     clearInterval(scratchSweepTimer);
+    stopWatchdog();
     connectorLoop?.stop();
     delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
     await registryMcpBroker?.stop();

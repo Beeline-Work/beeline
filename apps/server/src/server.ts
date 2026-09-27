@@ -226,10 +226,14 @@ export function createBeelineServer(options: ServerOptions): Server {
       json(response, status, { error: message });
     });
   });
-  server.on('close', () => {
+  // HTTP `close` waits for upgraded sockets. Terminate them before starting
+  // that wait, otherwise an idle daemon subscription can hold shutdown open.
+  const closeHttp = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
-  });
+    return closeHttp(callback);
+  }) as Server['close'];
   server.on('upgrade', (request, socket, head) => {
     void (async () => {
       const url = exactPath(request.url);
@@ -282,6 +286,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                 return;
               if (event.reason === 'connector-assignment') {
                 client.send(JSON.stringify({ type: 'connector-assignment' }));
+                return;
+              }
+              if (event.reason === 'memory-job') {
+                client.send(JSON.stringify({ type: 'memory-job', roomId: event.roomId }));
                 return;
               }
               if (event.reason !== 'postgres:memberships') return;
@@ -513,6 +521,18 @@ export function createBeelineServer(options: ServerOptions): Server {
                   }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
+                    return;
+                  }
+                  if (event.reason === 'memory-job') {
+                    if (!event.targetAgentId && client.readyState === client.OPEN)
+                      client.send(JSON.stringify({ type: 'memory-job', roomId }));
+                    return;
+                  }
+                  if (event.reason === 'postgres:rooms' && event.repositoryChanged &&
+                      principal.kind === 'daemon') {
+                    if (client.readyState === client.OPEN)
+                      client.send(JSON.stringify({ type: 'rooms-changed', roomId,
+                        repositoryChanged: true }));
                     return;
                   }
                   if (event.closeRequested && event.reason === 'postgres:corner_facts') {

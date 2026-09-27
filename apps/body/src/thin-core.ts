@@ -1,7 +1,7 @@
 import type { BodyConfig } from './config.js';
 import { isAgentRemovedError, type DaemonApiClient } from './daemon-api-client.js';
 import type { AgentRuntimeRecord } from './runtime.js';
-import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
+import { RoomRuntimeCoordinator } from './room-runtime.js';
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
@@ -13,23 +13,11 @@ export {
   type WorkspaceMembershipStatus,
 } from './room-runtime.js';
 
-async function waitForNextTick(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolveWait) => {
-    const finish = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', finish);
-      resolveWait();
-    };
-    const timer = setTimeout(finish, ms);
-    signal?.addEventListener('abort', finish, { once: true });
-  });
-}
-
 /** Process supervision for the monolith Room client. */
 export class ThinDaemonCore {
   private readonly roomRuntime: RoomRuntimeCoordinator;
-  private readonly now: () => number;
+  private pendingDiscovery = false;
+  private discoveryWaiter?: () => void;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -47,12 +35,32 @@ export class ThinDaemonCore {
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
-    this.now = options.now ?? Date.now;
     this.roomRuntime = new RoomRuntimeCoordinator(runtime, configPath, baseConfig, options);
+    this.roomRuntime.setDiscoveryWakeListener(() => {
+      this.pendingDiscovery = true;
+      this.discoveryWaiter?.();
+    });
+  }
+
+  private async waitForDiscovery(signal?: AbortSignal): Promise<void> {
+    if (this.pendingDiscovery || signal?.aborted) return;
+    await new Promise<void>((resolveWait) => {
+      const done = () => {
+        signal?.removeEventListener('abort', done);
+        this.discoveryWaiter = undefined;
+        resolveWait();
+      };
+      this.discoveryWaiter = done;
+      signal?.addEventListener('abort', done, { once: true });
+      if (this.pendingDiscovery) done();
+    });
   }
 
   activeRoomIds(): string[] {
     return this.roomRuntime.activeRoomIds();
+  }
+  setInteractiveIdleListener(listener: () => void): void {
+    this.roomRuntime.setInteractiveIdleListener(listener);
   }
   isWorkspaceIdle(): boolean {
     return this.roomRuntime.isWorkspaceIdle();
@@ -78,44 +86,27 @@ export class ThinDaemonCore {
       onProgress?: (status: string) => void | Promise<void>;
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
-    const watchdogTickMs = opts.pollMs ?? 5_000;
-    let nextReconcileAt = 0;
     let degraded = 'starting';
     await opts.onEstablished?.();
     try {
       while (!opts.signal?.aborted) {
-        let waitMs = watchdogTickMs;
-        if (this.roomRuntime.needsFastReconcile()) nextReconcileAt = 0;
-        if (this.now() >= nextReconcileAt) {
-          try {
-            const membership = await this.roomRuntime.reconcile();
-            if (membership === 'not-member') return 'agent-removed';
-            degraded = membership === 'unknown' ? 'monolith membership degraded' : '';
-            nextReconcileAt =
-              this.now() +
-              (membership === 'unknown' || this.roomRuntime.needsFastReconcile()
-                ? watchdogTickMs
-                : this.roomRuntime.reconcileHeartbeatIntervalMs());
-          } catch (error) {
-            // The server has settled the question: this agent is gone. Every
-            // other failure — transport, 5xx, a plain 401 — is uncertainty and
-            // keeps retrying, because a helper must never retire itself over a
-            // server it merely could not reach.
-            if (isAgentRemovedError(error)) return 'agent-removed';
-            const retryMs = reconcileRetryMs(error, watchdogTickMs);
-            nextReconcileAt = this.now() + retryMs;
-            waitMs = Math.min(waitMs, retryMs);
-            console.error(`[thin-core] discovery failed; retrying in ${retryMs}ms:`, error);
-            degraded = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
-          }
+        this.pendingDiscovery = false;
+        try {
+          const membership = await this.roomRuntime.reconcile();
+          if (membership === 'not-member') return 'agent-removed';
+          degraded = membership === 'unknown' ? 'monolith membership degraded' : '';
+        } catch (error) {
+          if (isAgentRemovedError(error)) return 'agent-removed';
+          console.error('[thin-core] discovery failed; waiting for socket reconnect:', error);
+          degraded = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
+          this.roomRuntime.reconnectAfterFailure();
         }
-        await this.roomRuntime.watchdogTick();
         await opts.onProgress?.(
           degraded ||
             `healthy; ${this.roomRuntime.activeRoomCount()} ` +
               `Room${this.roomRuntime.activeRoomCount() === 1 ? '' : 's'} active`,
         );
-        await waitForNextTick(waitMs, opts.signal);
+        if (!this.pendingDiscovery) await this.waitForDiscovery(opts.signal);
       }
       return 'aborted';
     } finally {

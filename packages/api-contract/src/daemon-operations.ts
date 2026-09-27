@@ -449,7 +449,12 @@ export type DaemonBootstrapInput = AgentInput;
 export type WorkspaceRosterInput = AgentInput & { readonly workspaceId: string };
 export type DaemonBootstrapResult = {
   readonly workspaceIds: readonly string[];
-  readonly rooms: readonly { readonly roomId: string; readonly archived: boolean }[];
+  readonly rooms: readonly {
+    readonly roomId: string;
+    readonly archived: boolean;
+    /** Changes when the repository binding or its GitHub installation changes. */
+    readonly repositoryRevision?: string;
+  }[];
 };
 export type WorkspaceRosterResult = {
   readonly members: readonly {

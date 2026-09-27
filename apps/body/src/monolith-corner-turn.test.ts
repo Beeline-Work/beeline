@@ -10,12 +10,10 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CORNER_AUTHOR_CONTRACT,
-  CORNER_CLOSE_POLL_BASE_MS,
   CORNER_DELIVERY_NUDGE,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
   CORNER_YOLO_MERGE_NUDGE,
-  cornerClosePollMs,
   cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerReviewerInstruction,
@@ -54,6 +52,28 @@ function stored(hex: string, name: string) {
 }
 
 const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
+
+/** The server's corner-complete frame follows a settled turn in these fixtures. */
+function closePushAfterReceipt(
+  api: DaemonApiClient,
+  loop: () => MonolithCornerTurnLoop,
+  afterReceipts = 1,
+): DaemonApiClient {
+  let receipts = 0;
+  return new Proxy(api, {
+    get(target, key) {
+      if (key === 'execute')
+        return async (name: Parameters<DaemonApiClient['execute']>[0], input: Record<string, unknown>) => {
+          const result = await target.execute(name, input as never);
+          if (name === 'postAgentTurnReceipt' && input.status !== 'working' && ++receipts === afterReceipts)
+            queueMicrotask(() => loop().requestClose());
+          return result;
+        };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
 
 describe('corner merge instructions', () => {
   it('does not reuse a startup token after the Room denies a fresh credential', async () => {
@@ -483,14 +503,7 @@ describe('corner merge instructions', () => {
   });
 });
 
-describe('corner close-request polling cadence', () => {
-  it('spreads the recovery poll across five minutes', () => {
-    expect(cornerClosePollMs(() => 0)).toBe(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThan(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 5 * 60_000);
-    expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
-  });
-
+describe('corner close-request delivery', () => {
   it('runs a chat-only corner in scratch and attaches a generated file without git', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-chat-corner-'));
     roots.push(root);
@@ -598,7 +611,8 @@ describe('corner close-request polling cadence', () => {
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const onCloseRequested = vi.fn(async () => undefined);
-    await new MonolithCornerTurnLoop({
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
@@ -607,7 +621,7 @@ describe('corner close-request polling cadence', () => {
       runtime,
       config,
       api: commandFixtureApi(
-        api,
+        closePushAfterReceipt(api, () => loop),
         'corner-id',
         runtime.agent.publicKey,
         'Generate and attach a clip',
@@ -618,7 +632,8 @@ describe('corner close-request polling cadence', () => {
       onFailure: vi.fn(),
       onCloseRequested,
       createAcpClient: () => acp,
-    }).run();
+    });
+    await loop.run();
     await scheduler.dispose();
 
     expect(sessionInput).toMatchObject({
@@ -642,10 +657,9 @@ describe('corner close-request polling cadence', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
-  it('re-checks close requests immediately after a turn completes', async () => {
-    // pollMs is far beyond the test timeout: the flow turns once, then the
-    // next close-request read must happen without any idle wait — a
-    // regression that waits the full interval after a turn would hang.
+  it('closes on a pushed completion immediately after a turn completes', async () => {
+    // The socket completion arrives after the turn's terminal receipt; no
+    // idle timer or close-request read is involved.
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-immediate-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -745,7 +759,8 @@ describe('corner close-request polling cadence', () => {
       });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const onCloseRequested = vi.fn(async () => undefined);
-    await new MonolithCornerTurnLoop({
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
@@ -759,7 +774,7 @@ describe('corner close-request polling cadence', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+      api: commandFixtureApi(closePushAfterReceipt(api, () => loop), 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -767,9 +782,10 @@ describe('corner close-request polling cadence', () => {
       onFailure: vi.fn(),
       onCloseRequested,
       createAcpClient: () => acp,
-    }).run();
+    });
+    await loop.run();
     await scheduler.dispose();
-    expect(sessionPrompt).toHaveBeenCalledTimes(3);
+    expect(sessionPrompt).toHaveBeenCalledTimes(2);
     expect(sessionPrompt.mock.calls[1]?.[1]).toBe(CORNER_DELIVERY_NUDGE);
     expect(execute).toHaveBeenCalledWith(
       'postRoomMessage',
@@ -819,6 +835,7 @@ describe('corner close-request polling cadence', () => {
     };
     const abort = new AbortController();
     let inboxReads = 0;
+    let initialCommandDelivered = false;
     let activityWrites = 0;
     const activityAttempts: Record<string, unknown>[] = [];
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
@@ -829,7 +846,14 @@ describe('corner close-request polling cadence', () => {
           members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
         };
       }
-      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomInbox') {
+        if (initialCommandDelivered) return { items: [], cursor: 'human-msg' };
+        initialCommandDelivered = true;
+        return { items: [{
+          id: 'human-msg', authorId: '22'.repeat(32), createdAt: 1,
+          type: 'message', body: 'Please continue', attachments: [],
+        }], cursor: 'human-msg' };
+      }
       if (name === 'getCornerCloseRequests') {
         inboxReads += 1;
         if (inboxReads === 1) {
@@ -972,7 +996,7 @@ describe('corner close-request polling cadence', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, null),
+      api: commandFixtureApi(closePushAfterReceipt(api, () => loop), 'corner-id', runtime.agent.publicKey, null),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -1107,8 +1131,29 @@ describe('corner close-request polling cadence', () => {
       workspaceRoot: root,
       autoApprovePermissions: true,
     };
+    let loop: MonolithCornerTurnLoop;
+    let inboxSent = false;
     const api = {
-      execute,
+      execute: async (name: string, input: Record<string, unknown>) => {
+        if (!liveSubscribe && name === 'getRoomInbox') {
+          if (inboxSent) return { items: [], cursor: 'human-msg' };
+          inboxSent = true;
+          return {
+            items: [{
+              id: 'human-msg', authorId: '22'.repeat(32), createdAt: 1,
+              type: 'message', body: 'Please continue', attachments: [],
+            }],
+            cursor: 'human-msg',
+          };
+        }
+        const result = await execute(name, input);
+        // The server closes a corner through the live socket. Most mechanics
+        // fixtures settle one command and then receive that push; the tests
+        // with an explicit live socket drive their own close/reconnect events.
+        if (!liveSubscribe && name === 'postAgentTurnReceipt' && input.status !== 'working')
+          queueMicrotask(() => loop.requestClose());
+        return result;
+      },
       connection: () => ({
         baseUrl: 'https://server.example',
         daemonToken: 'daemon-token',
@@ -1133,7 +1178,7 @@ describe('corner close-request polling cadence', () => {
       abort,
       onPoll,
       root,
-      loop: new MonolithCornerTurnLoop({
+      loop: (loop = new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
         workspaceId: 'workspace',
@@ -1156,7 +1201,7 @@ describe('corner close-request polling cadence', () => {
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
         createAcpClient: () => acp,
-      }),
+      })),
       scheduler,
     };
   }
@@ -2049,12 +2094,12 @@ describe('corner close-request polling cadence', () => {
     loop.requestClose();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(1);
+    expect(closeReads).toBe(0);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it('keeps the timed fallback against an older server without live subscriptions', async () => {
+  it('closes from a pushed completion without a timed fallback', async () => {
     let closeReads = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -2069,13 +2114,11 @@ describe('corner close-request polling cadence', () => {
       }
       return { id: 'write-id', createdAt: 1 };
     });
-    // A dropped `corner-complete` costs latency, never correctness: with no
-    // push at all the corner is still reaped by the durable close read, here
-    // on a short stand-in for the 10-minute recovery interval.
+    // The fixture emits the close push after the terminal turn receipt.
     const { loop, scheduler } = await cornerHarness(execute, 20, undefined, 20);
     await loop.run();
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBe(0);
   });
 
   it('still closes on a pushed corner-complete after a reconciliation sweep', async () => {
@@ -2086,9 +2129,9 @@ describe('corner close-request polling cadence', () => {
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getRoomConversation')
         return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
-      if (name === 'getCornerCloseRequests') {
+      if (name === 'getCornerRestoreState') {
         closeReads += 1;
-        return { items: [], cursor: 'latest' };
+        return { cornerId: 'corner-id', closeRequested: false };
       }
       return { id: 'write-id', createdAt: 1 };
     });
@@ -2100,20 +2143,20 @@ describe('corner close-request polling cadence', () => {
     const started = Date.now();
     const running = loop.run();
     await vi.waitFor(() => expect(onPoll).toHaveBeenCalledTimes(1));
-    // The sweep's wake must not consume the intake wake: the close below is
+    // The reconnect wake must not consume the intake wake: the close below is
     // the only thing that can end this loop inside the test's deadline.
     loop.requestReconciliation();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => expect(closeReads).toBe(1));
     loop.requestClose();
     await running;
     await scheduler.dispose();
-    // One read at intake start and one the sweep asked for; neither reports a
-    // close, so only the pushed close can have ended the loop.
-    expect(closeReads).toBe(2);
+    // One durable read on reconciliation reports no close. Only the pushed
+    // completion ends the loop.
+    expect(closeReads).toBe(1);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it('runs the throttled close read again when the reconcile sweep asks', async () => {
+  it('reads durable close state once on reconnect reconciliation', async () => {
     let closeReads = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -2121,10 +2164,9 @@ describe('corner close-request polling cadence', () => {
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getRoomConversation')
         return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
-      if (name === 'getCornerCloseRequests') {
+      if (name === 'getCornerRestoreState') {
         closeReads += 1;
-        if (closeReads === 1) return { items: [], cursor: 'latest' };
-        return { items: [], cursor: 'latest', closeRequested: true };
+        return { cornerId: 'corner-id', closeRequested: true };
       }
       return { id: 'write-id', createdAt: 1 };
     });
@@ -2132,8 +2174,8 @@ describe('corner close-request polling cadence', () => {
       onState?.(true, { pushIntake: true, connectionPresence: true });
       return () => undefined;
     }) as unknown as DaemonApiClient['liveSubscribe'];
-    // A close published while the socket was down reaches nobody, and the
-    // throttle would otherwise hold the durable read for the whole interval.
+    // A close published while the socket was down reaches nobody, so one
+    // reconciliation read recovers it when the socket reconnects.
     const { loop, scheduler, onPoll } = await cornerHarness(
       execute,
       60_000,
@@ -2146,7 +2188,7 @@ describe('corner close-request polling cadence', () => {
     loop.requestReconciliation();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBe(1);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
@@ -2174,7 +2216,7 @@ describe('corner close-request polling cadence', () => {
     abort.abort();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(1);
+    expect(closeReads).toBe(0);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
   });
 });
@@ -2543,7 +2585,7 @@ describe('thin monolith corner turn', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+      api: commandFixtureApi(closePushAfterReceipt(api, () => loop, 2), 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
       scheduler,
       signal: abort.signal,
       pollMs: 1,

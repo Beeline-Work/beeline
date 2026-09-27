@@ -90,6 +90,8 @@ export type ConnectSessionClaim = {
   readonly claimedAt: number;
   /** Kill the owning connect process. */
   readonly abort: () => void;
+  /** Local process-exit event; no server read timer is needed to notice sign-in. */
+  readonly onExit?: (listener: () => void) => () => void;
 };
 
 let activeConnectSession: ConnectSessionClaim | undefined;
@@ -264,6 +266,19 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       pid: child.pid ?? undefined,
       claimedAt: Date.now(),
       abort,
+      onExit: (listener) => {
+        if (exited) queueMicrotask(listener);
+        else exitListeners.add(listener);
+        return () => exitListeners.delete(listener);
+      },
+    };
+    let exited = false;
+    const exitListeners = new Set<() => void>();
+    const notifyExit = () => {
+      if (exited) return;
+      exited = true;
+      for (const listener of exitListeners) listener();
+      exitListeners.clear();
     };
     activeConnectSession = claim;
 
@@ -320,6 +335,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     });
 
     child.on('close', () => {
+      notifyExit();
       consumeReports(true);
       settle({
         stdout,
@@ -331,6 +347,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     });
 
     child.on('error', () => {
+      notifyExit();
       settle({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
     });
   });

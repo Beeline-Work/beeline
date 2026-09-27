@@ -294,7 +294,6 @@ describe('monolith-only thin daemon', () => {
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' as const };
       if (name === 'getRoomInbox') {
-        if (input?.startAtLatest) return { items: [], cursor: 'latest', rewindIds: [] };
         inboxReads += 1;
         if (inboxReads === 1) {
           const firstMessage = {

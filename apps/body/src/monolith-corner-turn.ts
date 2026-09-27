@@ -552,18 +552,6 @@ export interface MonolithCornerTurnOptions {
   connectorUsage?: ConnectorUsageRecorder;
 }
 
-/**
- * Close-request recovery poll: 10 to 15 min, spread across corners.
- * `corner-complete` on the live socket closes immediately via `requestClose`.
- * The GET is the dropped-socket net: once at intake start, once after a turn
- * (a close during that turn must not wait the idle interval), then only every
- * 10 min while idle.
- */
-export const CORNER_CLOSE_POLL_BASE_MS = 10 * 60_000;
-export function cornerClosePollMs(random: () => number = Math.random): number {
-  return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 5 * 60_000);
-}
-
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly commandContext: CommandExecutionContext;
@@ -572,18 +560,15 @@ export class MonolithCornerTurnLoop {
   private wakeIntake?: () => void;
 
   /**
-   * Called by the daemon's one slow workspace reconciliation sweep, and by the
-   * fast reconcile a socket reconnect arms. A `corner-complete` published while
-   * that socket was down is never replayed, so the sweep clears the close
-   * throttle too: the durable read is what recovers the frame nobody heard.
+   * Called on socket resubscription. A `corner-complete` published while that
+   * socket was down is recovered by a single durable read.
    *
    * The wake is the intake loop's own stable notify and is handed back exactly
    * once, so it is kept: clearing it here left `requestClose` waking nothing
-   * after the first sweep, and a pushed `corner-complete` then waited out the
-   * idle timer. Intake clears it itself when it exits.
+   * after the first reconciliation. Intake clears it itself when it exits.
    */
   requestReconciliation(): void {
-    this.lastCloseCheck = 0;
+    this.reconcileCloseRequested = true;
     this.wakeIntake?.();
   }
   private client?: AcpClient;
@@ -644,16 +629,13 @@ export class MonolithCornerTurnLoop {
   private readonly stoppedTurns = new Set<string>();
   /** Live corner-complete: close now, do not wait for the recovery GET. */
   private closePushed = false;
-  /** Last durable close read; 0 means the first check still runs. */
-  private lastCloseCheck = 0;
-  /** This corner's own jittered recovery interval, drawn once. */
-  private readonly closePollMs: number;
+  /** One durable state read after a socket reconnect/discovery pass. */
+  private reconcileCloseRequested = false;
 
   /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
   private harvest: Promise<void> | undefined;
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
-    this.closePollMs = options.closePollMs ?? cornerClosePollMs();
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
@@ -2135,10 +2117,8 @@ export class MonolithCornerTurnLoop {
             await this.options.onCloseRequested();
             return true;
           }
-          const now = Date.now();
-          if (this.lastCloseCheck !== 0 && now - this.lastCloseCheck < this.closePollMs)
-            return false;
-          this.lastCloseCheck = now;
+          if (!this.reconcileCloseRequested) return false;
+          this.reconcileCloseRequested = false;
           const state = await api.execute('getCornerRestoreState', { cornerId });
           // The lane upgrade's retire arrives as an ephemeral live push, which a
           // disconnected socket never receives. This timed read is the recovery:
@@ -2162,10 +2142,7 @@ export class MonolithCornerTurnLoop {
             command.source.authorId,
             command.reason === 'corner_check' ? [command.source.body] : undefined,
             command.source.type === 'message' ? command.sourceMessageId : undefined,
-          ).finally(() => {
-            // One recovery GET after the turn; idle ticks stay on the 10 min net.
-            this.lastCloseCheck = 0;
-          }),
+          ),
       });
     } finally {
       this.squireRelay.close();

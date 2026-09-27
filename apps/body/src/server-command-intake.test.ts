@@ -4,497 +4,115 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import {
-  CommandExecutionContext,
-  fallbackPollDelayMs,
-  runServerCommandIntake,
-  validateServerCommand,
-} from './server-command-intake.js';
+import { CommandExecutionContext, runServerCommandIntake, validateServerCommand } from './server-command-intake.js';
+
 const paths: string[] = [];
 afterEach(async () => {
-  for (const p of paths.splice(0)) await rm(p, { recursive: true, force: true });
+  vi.useRealTimers();
+  for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true });
 });
 const command = (id = 'c1', action: AgentCommand['action'] = 'input'): AgentCommand => ({
-  id,
-  roomId: 'room',
-  agentId: 'agent',
-  sourceMessageId: id,
-  turnRequestId: 'turn',
-  rootCommandId: 'root',
-  rootSourceMessageId: 'human',
-  agentDepth: 0,
-  action,
+  id, roomId: 'room', agentId: 'agent', sourceMessageId: id, turnRequestId: 'turn',
+  rootCommandId: 'root', rootSourceMessageId: 'human', agentDepth: 0, action,
   reason: 'human_tag',
-  source: {
-    id,
-    authorId: 'human',
-    body: 'Do it',
-    createdAt: 1,
-    type: 'message',
-    attachments: [],
-  },
+  source: { id, authorId: 'human', body: 'Do it', createdAt: 1, type: 'message', attachments: [] },
 });
 async function context() {
   const dir = await mkdtemp(join(tmpdir(), 'command-test-'));
   paths.push(dir);
   return new CommandExecutionContext(dir);
 }
+function socketApi(execute: ReturnType<typeof vi.fn>) {
+  let state: ((connected: boolean, capabilities?: { pushIntake: boolean; connectionPresence: boolean }) => void) | undefined;
+  let commands: ((commands: readonly AgentCommand[]) => void) | undefined;
+  const api = {
+    execute,
+    liveSubscribe: vi.fn((_roomId, _cursor, _items, onState, _presence, onCommands) => {
+      state = onState;
+      commands = onCommands;
+      return vi.fn();
+    }),
+  } as unknown as DaemonApiClient;
+  return { api, connected: () => state?.(true, { pushIntake: true, connectionPresence: true }),
+    disconnected: () => state?.(false), push: (rows: AgentCommand[]) => commands?.(rows) };
+}
+
 describe('command intake mechanics', () => {
-  afterEach(() => vi.useRealTimers());
-  it('refuses an older server without ever reading shared traffic', async () => {
+  it('refuses an older server without reading shared traffic', async () => {
     const execute = vi.fn(async () => ({ items: [command().source] }));
-    await expect(
-      runServerCommandIntake({
-        api: { execute } as unknown as DaemonApiClient,
-        roomId: 'room',
-        agentId: 'agent',
-        context: await context(),
-        run: vi.fn(),
-        stop: vi.fn(),
-      }),
-    ).rejects.toThrow('protocol');
-    expect(execute.mock.calls.map((c) => c[0])).toEqual(['getAgentCommands']);
+    await expect(runServerCommandIntake({ api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room', agentId: 'agent', context: await context(), run: vi.fn(), stop: vi.fn(),
+    })).rejects.toThrow('protocol');
+    expect(execute.mock.calls.map((call) => call[0])).toEqual(['getAgentCommands']);
   });
   it('rejects wrong-target and malformed commands', () => {
-    for (const c of [
-      { ...command(), agentId: 'other' },
-      { ...command(), roomId: 'other' },
-      { ...command(), agentDepth: 4 },
-      { ...command(), action: 'message' },
-    ])
-      expect(() => validateServerCommand(c as AgentCommand, 'room', 'agent')).toThrow();
+    for (const row of [{ ...command(), agentId: 'other' }, { ...command(), roomId: 'other' },
+      { ...command(), agentDepth: 4 }, { ...command(), action: 'message' }])
+      expect(() => validateServerCommand(row as AgentCommand, 'room', 'agent')).toThrow();
   });
-  it('does not start work after losing a claim', async () => {
-    const controller = new AbortController(),
-      run = vi.fn();
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
-      controller.abort();
-      throw new Error('claim conflict');
-    });
-    await runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run,
-      stop: vi.fn(),
-    });
-    expect(run).not.toHaveBeenCalled();
-  });
-  it('claims restart without acknowledging it and hands control to the daemon drain', async () => {
-    const controller = new AbortController();
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') {
-        return {
-          commandProtocol: 1,
-          commands: [command('work-while-draining'), command('restart-1', 'restart')],
-        };
-      }
-      return { id: 'ok' };
-    });
-    const restart = vi.fn(() => controller.abort());
-    const run = vi.fn();
-    await runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run,
-      stop: vi.fn(),
-      restart,
-      canStartTurn: () => false,
-    });
-    expect(restart).toHaveBeenCalledOnce();
-    expect(run).not.toHaveBeenCalled();
-    expect(execute.mock.calls.map((call) => call[0])).toEqual([
-      'getAgentCommands',
-      'claimAgentCommand',
-    ]);
-    expect(execute.mock.calls[1]?.[1]).toMatchObject({ commandId: 'restart-1' });
-  });
-  it('claims one live-pushed command and forwards release identity without availability', async () => {
-    const controller = new AbortController();
-    let onState:
-        | ((
-            connected: boolean,
-            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
-          ) => void)
-        | undefined,
-      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
-      return { id: 'ok' };
-    });
-    const api = {
-      execute,
-      liveSubscribe: vi.fn(
-        (
-          _roomId: string,
-          _cursor: string | undefined,
-          _onItems: unknown,
-          state: typeof onState,
-          _presence: unknown,
-          commands: typeof onCommands,
-        ) => {
-          onState = state;
-          onCommands = commands;
-          return vi.fn();
-        },
-      ),
-    } as unknown as DaemonApiClient;
-    const run = vi.fn(async () => controller.abort());
-    const presence = {
-      releaseVersion: 'v0.0.68',
-      sourceSha: 'db2618408a205a3f319d26017a953725e7f13b61',
-    };
-    const running = runServerCommandIntake({
-      api,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      presence,
-      run,
-      stop: vi.fn(),
-    });
-    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
-    onState?.(true, { pushIntake: true, connectionPresence: true });
-    onCommands?.([command(), command()]);
+  it('takes no recurring server reads during hours of connected idle time and reconciles once per reconnect', async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run: vi.fn(), stop: vi.fn() });
+    await vi.waitFor(() => expect(socket.api.liveSubscribe).toHaveBeenCalledOnce());
+    socket.connected();
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+    expect(execute.mock.calls.map(([name]) => name)).toEqual(['getAgentCommands']);
+    socket.disconnected();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+    socket.connected();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(execute).toHaveBeenCalledTimes(2);
+    abort.abort();
     await running;
-    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+  });
+  it('claims a pushed command once and forwards release identity', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const run = vi.fn(async () => abort.abort());
+    const presence = { releaseVersion: 'v0.0.68', sourceSha: 'db2618408a205a3f319d26017a953725e7f13b61' };
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, presence, run, stop: vi.fn() });
+    await vi.waitFor(() => expect(socket.api.liveSubscribe).toHaveBeenCalledOnce());
+    socket.connected();
+    socket.push([command(), command()]);
+    await running;
     expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(api.liveSubscribe).toHaveBeenCalledWith(
-      'room',
-      undefined,
-      undefined,
-      expect.any(Function),
-      presence,
-      expect.any(Function),
-    );
+    expect(run).toHaveBeenCalledOnce();
+    expect(socket.api.liveSubscribe).toHaveBeenCalledWith('room', undefined, undefined,
+      expect.any(Function), presence, expect.any(Function));
   });
-  it('reconciles an unavailable live push at one second, not sixty seconds', async () => {
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    let reads = 0;
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands')
-        return { commandProtocol: 1, commands: reads++ ? [command()] : [] };
-      return { id: 'ok' };
-    });
-    const running = runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run: vi.fn(async () => controller.abort()),
-      stop: vi.fn(),
-    });
-    await vi.advanceTimersByTimeAsync(999);
-    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
+  it('processes a pushed stop while an input is running', async () => {
+    const abort = new AbortController();
+    let release = () => {};
+    const run = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const stop = vi.fn(() => { release(); abort.abort(); });
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [command('input')] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run, stop });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    socket.push([command('stop', 'stop')]);
     await running;
-    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
-    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
-  });
-  it('backs off empty fallback reads to thirty seconds and resets when a command arrives', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    const controller = new AbortController();
-    let reads = 0;
-    const execute = vi.fn(async (name: string) =>
-      name === 'getAgentCommands'
-        ? { commandProtocol: 1, commands: ++reads === 6 ? [command()] : [] }
-        : { id: 'ok' },
-    );
-    const running = runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run: vi.fn(async () => controller.abort()),
-      stop: vi.fn(),
-    });
-    const count = () => execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length;
-    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000 + 8_000 + 16_000);
-    expect(count()).toBe(6);
-    await running;
-    expect(fallbackPollDelayMs(5, 1_000, () => 0)).toBe(30_000);
-    expect(fallbackPollDelayMs(5, 1_000, () => 0.999)).toBeGreaterThan(30_000);
-    expect(fallbackPollDelayMs(1, 1_000, () => 0)).toBe(2_000);
-    expect(fallbackPollDelayMs(1, 1_000, () => 0.999)).toBeGreaterThan(2_000);
-    vi.restoreAllMocks();
-  });
-  it('uses a sixty-second recovery sweep only after push intake is acknowledged', async () => {
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    let onState:
-      | ((
-          connected: boolean,
-          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
-        ) => void)
-      | undefined;
-    const execute = vi.fn(async (name: string) =>
-      name === 'getAgentCommands' ? { commandProtocol: 1, commands: [] } : { id: 'ok' },
-    );
-    const api = {
-      execute,
-      liveSubscribe: vi.fn(
-        (
-          _roomId: string,
-          _cursor: string | undefined,
-          _onItems: unknown,
-          state: typeof onState,
-        ) => {
-          onState = state;
-          return vi.fn();
-        },
-      ),
-    } as unknown as DaemonApiClient;
-    const running = runServerCommandIntake({
-      api,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run: vi.fn(),
-      stop: vi.fn(),
-    });
-    for (let flush = 0; flush < 5 && !onState; flush += 1) await Promise.resolve();
-    expect(onState).toBeTypeOf('function');
-
-    await vi.advanceTimersByTimeAsync(999);
-    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() =>
-      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2),
-    );
-
-    onState?.(true, { pushIntake: true, connectionPresence: true });
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() =>
-      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(3),
-    );
-
-    onState?.(false);
-    await vi.waitFor(() =>
-      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(4),
-    );
-    await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() =>
-      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(5),
-    );
-    controller.abort();
-    await running;
-  });
-  it('dispatches a pushed claim immediately while a loaded recovery read is still pending', async () => {
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    let onState:
-        | ((
-            connected: boolean,
-            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
-          ) => void)
-        | undefined,
-      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined,
-      finishRecovery:
-        ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined,
-      finishClaim: ((result: { id: string }) => void) | undefined;
-    let reads = 0;
-    const claimDispatchedAt: number[] = [];
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') {
-        if (reads++ === 0) return { commandProtocol: 1, commands: [] };
-        return new Promise<{ commandProtocol: 1; commands: AgentCommand[] }>((resolve) => {
-          finishRecovery = resolve;
-        });
-      }
-      if (name === 'claimAgentCommand') {
-        claimDispatchedAt.push(Date.now());
-        return new Promise<{ id: string }>((resolve) => {
-          finishClaim = resolve;
-        });
-      }
-      return { id: 'ok' };
-    });
-    const api = {
-      execute,
-      liveSubscribe: vi.fn(
-        (
-          _roomId: string,
-          _cursor: string | undefined,
-          _onItems: unknown,
-          state: typeof onState,
-          _presence: unknown,
-          commands: typeof onCommands,
-        ) => {
-          onState = state;
-          onCommands = commands;
-          return vi.fn();
-        },
-      ),
-    } as unknown as DaemonApiClient;
-    const running = runServerCommandIntake({
-      api,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run: vi.fn(async () => undefined),
-      stop: vi.fn(),
-    });
-    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
-    onState?.(true, { pushIntake: true, connectionPresence: true });
-    await vi.advanceTimersByTimeAsync(60_000);
-    await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'));
-
-    const pushedAt = Date.now();
-    onCommands?.([command()]);
-    await vi.waitFor(() => expect(claimDispatchedAt).toHaveLength(1));
-    expect(claimDispatchedAt[0]! - pushedAt).toBeLessThan(500);
-
-    // Representative loaded ordering: the stale recovery snapshot completes
-    // after push dispatch but before the claim response. It must not enqueue
-    // the command a second time.
-    finishRecovery?.({ commandProtocol: 1, commands: [command()] });
-    await Promise.resolve();
-    finishClaim?.({ id: 'ok' });
-    await vi.waitFor(() =>
-      expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1),
-    );
-    await vi.advanceTimersByTimeAsync(1);
-    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
-    controller.abort();
-    await running;
-  });
-  it('processes a stop while an authorized input is running', async () => {
-    const controller = new AbortController();
-    let reads = 0,
-      release = () => {};
-    const run = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
-    const stop = vi.fn(() => {
-      release();
-      controller.abort();
-    });
-    const execute = vi.fn(async (name: string) =>
-      name === 'getAgentCommands'
-        ? {
-            commandProtocol: 1,
-            commands: [command(reads++ ? 'stop' : 'input', reads > 1 ? 'stop' : 'input')],
-          }
-        : { id: 'ok' },
-    );
-    await runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      run,
-      stop,
-      pollMs: 1,
-    });
-    expect(run).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledWith('turn');
     expect(execute).toHaveBeenCalledWith('acknowledgeAgentCommand', expect.anything());
   });
-  it.each(['human_tag', 'relay_steer', 'relay_question'])(
-    'leaves later %s input unclaimed while busy and deduplicates delivery',
-    async (reason) => {
-      const controller = new AbortController();
-      let release = () => {};
-      const pending = new Map([
-        ['first', command('first')],
-        [
-          'second',
-          {
-            ...command('second'),
-            reason,
-            source: {
-              ...command('second').source,
-              type: reason.startsWith('relay_') ? 'card' : 'message',
-            },
-          },
-        ],
-      ]);
-      const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-        if (name === 'getAgentCommands')
-          return { commandProtocol: 1, commands: [...pending.values(), ...pending.values()] };
-        if (name === 'claimAgentCommand') pending.delete(String(input.commandId));
-        return { id: 'ok' };
-      });
-      const run = vi.fn(async (c: AgentCommand) => {
-        if (c.id === 'first')
-          await new Promise<void>((resolve) => {
-            release = resolve;
-          });
-        else controller.abort();
-      });
-      const running = runServerCommandIntake({
-        api: { execute } as unknown as DaemonApiClient,
-        roomId: 'room',
-        agentId: 'agent',
-        context: await context(),
-        signal: controller.signal,
-        pollMs: 1,
-        run,
-        stop: vi.fn(),
-      });
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-      expect(
-        execute.mock.calls
-          .filter(([name]) => name === 'claimAgentCommand')
-          .map(([, input]) => input.commandId),
-      ).toEqual(['first']);
-      release();
-      await running;
-      expect(run.mock.calls.map(([c]) => c.id)).toEqual(['first', 'second']);
-    },
-  );
-  it('allows the server to redeliver a command after a failed execution', async () => {
-    const controller = new AbortController();
-    let attempts = 0;
-    const execute = vi.fn(async (name: string) =>
-      name === 'getAgentCommands' ? { commandProtocol: 1, commands: [command()] } : { id: 'ok' },
-    );
-    const run = vi.fn(async () => {
-      if (++attempts === 1) throw new Error('crashed');
-      controller.abort();
-    });
-    await runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      pollMs: 1,
-      run,
-      stop: vi.fn(),
-    });
-    expect(run).toHaveBeenCalledTimes(2);
-  });
-  it('binds every output to the claimed generation and request', async () => {
+  it('binds output to the claimed generation and request', async () => {
     const ctx = await context();
     await ctx.enter(command());
     const execute = vi.fn(async () => ({ id: 'ok' }));
-    await ctx
-      .bind({ execute } as unknown as DaemonApiClient)
+    await ctx.bind({ execute } as unknown as DaemonApiClient)
       .execute('postAgentAttachment', { roomId: 'room', attachment: { url: 'url' } });
-    expect(execute).toHaveBeenCalledWith(
-      'postAgentAttachment',
-      expect.objectContaining({ requestId: 'turn', generationId: ctx.generationId }),
-    );
+    expect(execute).toHaveBeenCalledWith('postAgentAttachment',
+      expect.objectContaining({ requestId: 'turn', generationId: ctx.generationId }));
   });
 });

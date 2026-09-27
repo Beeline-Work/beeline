@@ -16,6 +16,18 @@ export function commandFixtureApi(
     settled = objective === null,
     closed = false;
   let notify: ((commands: readonly AgentCommand[]) => void) | undefined;
+  let pumping = false;
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    try {
+      const page = await api.execute('getRoomInbox', { roomId });
+      closed ||= page.closeRequested === true;
+      for (const source of page.items ?? []) add(source);
+    } finally {
+      pumping = false;
+    }
+  };
   function add(source: InboxItem, reason = 'human_tag') {
     const fixture = source as InboxItem & {
       fixtureCommand?: boolean;
@@ -54,11 +66,13 @@ export function commandFixtureApi(
     );
   return new Proxy(api, {
     get(target, key) {
+      if (key === 'flushFixtureInbox') return pump;
       if (key === 'liveSubscribe')
         return (...args: unknown[]) => {
           const onItems = args[2] as
             ((items: readonly InboxItem[], cursor?: string) => void) | undefined;
           notify = args[5] as ((commands: readonly AgentCommand[]) => void) | undefined;
+          void pump();
           args[2] = (items: readonly InboxItem[], cursor?: string) => {
             for (const source of items) add(source);
             onItems?.(items, cursor);
@@ -90,18 +104,13 @@ export function commandFixtureApi(
         if (name === 'acknowledgeAgentCommand') return { id: input.commandId, createdAt: 1 };
         if (name === 'getCornerRestoreState' && closed && settled && !pending.size)
           return { cornerId: roomId, closeRequested: true };
-        if (
-          name === 'getCornerRestoreState' &&
-          objective !== undefined &&
-          settled &&
-          !pending.size
-        ) {
-          const page = await target.execute('getCornerCloseRequests', { cornerId: roomId });
-          for (const source of page.items ?? []) add(source);
-          return { cornerId: roomId, closeRequested: page.closeRequested ?? false };
+        const pendingResult = target.execute(name, input as never);
+        if (name === 'postRoomMessage') queueMicrotask(() => void pump());
+        const result = await pendingResult;
+        if (name === 'postAgentTurnReceipt' && input.status !== 'working') {
+          settled = true;
+          queueMicrotask(() => void pump());
         }
-        const result = await target.execute(name, input as never);
-        if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
         return result;
       };
     },

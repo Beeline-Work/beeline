@@ -16,6 +16,16 @@ const AUTHOR = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
+const DATABASE_SNAPSHOT = await (async () => {
+  const database = new PgliteDatabase();
+  try {
+    await migrate(database);
+    return await database.snapshot();
+  } finally {
+    await database.close();
+  }
+})();
+
 class PgliteListenClient extends EventEmitter implements LivePgClient {
   private release?: () => Promise<void>;
   readonly payloads: string[] = [];
@@ -60,8 +70,7 @@ describe('Postgres live fanout', () => {
 
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = PgliteDatabase.fromSnapshot(DATABASE_SNAPSHOT);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
       AUTHOR,
     ]);
@@ -231,6 +240,95 @@ describe('Postgres live fanout', () => {
           event.roomId === freshRoom,
       ),
     );
+  });
+
+  it('pushes newly queued institutional memory work to the source Room', async () => {
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AUTHOR],
+    );
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'source')`,
+      ['f'.repeat(64), ROOM, AUTHOR],
+    );
+    received.length = 0;
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key)
+       VALUES($1,$2,'turn_review',$3,$4,$5,'workspace_candidate','memory-push-test')`,
+      ['33333333-3333-4333-8333-333333333333', WORKSPACE, ROOM, 'f'.repeat(64), AUTHOR],
+    );
+    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'memory-job'));
+  });
+
+  it('pushes a retry when it becomes due without a helper claim timer', async () => {
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AUTHOR],
+    );
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'source')`,
+      ['e'.repeat(64), ROOM, AUTHOR],
+    );
+    received.length = 0;
+    await database.query(
+      `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,source_room_id,source_message_id,
+        requester_identity_id,source_audience_kind,idempotency_key,status,next_attempt_at)
+       VALUES($1,$2,'turn_review',$3,$4,$5,'workspace_candidate','memory-retry-push',
+         'retry',now()+interval '100 milliseconds')`,
+      ['44444444-4444-4444-8444-444444444444', WORKSPACE, ROOM, 'e'.repeat(64), AUTHOR],
+    );
+    expect(received.filter((event) => event.type === 'invalidate' && event.reason === 'memory-job')).toHaveLength(0);
+    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'memory-job'));
+  });
+
+  it('pushes an expired Registry OAuth attempt when its server clock ends', async () => {
+    const helper = 'b'.repeat(64);
+    const connector = '55555555-5555-4555-8555-555555555555';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [helper]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [helper, AUTHOR]);
+    await database.query(
+      `INSERT INTO workspace_connectors(
+        id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status,
+        registry_server_name,registry_version,registry_manifest,display_name)
+       VALUES($1,$2,$3,'registry-mcp',$4,$4,'installing','app.linear/linear','1.0.1',
+         $5::jsonb,'Linear')`,
+      [connector, WORKSPACE, AUTHOR, helper,
+        JSON.stringify({ name: 'app.linear/linear', version: '1.0.1' })],
+    );
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(
+      `INSERT INTO registry_mcp_oauth_attempts(state,connector_id,expires_at)
+       VALUES('registry-expiry-test',$1,now()+interval '100 milliseconds')`,
+      [connector],
+    );
+    await eventually(() => received.some((event) => event.type === 'invalidate' &&
+      event.reason === 'connector-assignment' && event.targetAgentId === helper));
   });
 
   it('names the parent Room and the corner opener on a corner membership invalidate', async () => {
@@ -562,7 +660,9 @@ describe('Postgres live fanout', () => {
     listeners.push(listenerA, listenerB);
     void listenerA.run();
     void listenerB.run();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await eventually(() => queryA.mock.calls.length > 0 && queryB.mock.calls.length > 0);
+    queryA.mockClear();
+    queryB.mockClear();
 
     const publishA = vi.spyOn(liveA, 'publish');
     const publishB = vi.spyOn(liveB, 'publish');

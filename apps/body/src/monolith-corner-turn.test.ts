@@ -24,7 +24,7 @@ import {
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { SOUL_HOUSE_RULE } from './response-directives.js';
+import { AGENT_PROSE_REFERENCE_RULE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
@@ -2681,6 +2681,13 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
     );
+    // Every exact @handle is a wake, so peers are named in prose (shared
+    // beside the house rule in both turn loops).
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(AGENT_PROSE_REFERENCE_RULE),
+      }),
+    );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
       expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
       expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
@@ -2695,6 +2702,7 @@ describe('thin monolith corner turn', () => {
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
       );
       expect(call[1]).toContain(SOUL_HOUSE_RULE);
+      expect(call[1]).toContain(AGENT_PROSE_REFERENCE_RULE);
       expect(call[1]).toMatch(
         /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
       );

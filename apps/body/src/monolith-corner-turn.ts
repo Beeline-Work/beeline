@@ -78,7 +78,11 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
+import {
+  AGENT_PROSE_REFERENCE_RULE,
+  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+  SOUL_HOUSE_RULE,
+} from './response-directives.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -1142,6 +1146,7 @@ export class MonolithCornerTurnLoop {
         ? [`Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`]
         : []),
       SOUL_HOUSE_RULE,
+      AGENT_PROSE_REFERENCE_RULE,
     ].join('\n');
     this.turnIdentityInstructions = harnessHonorsSessionSystemPrompt(command)
       ? ''

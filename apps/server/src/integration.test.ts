@@ -2013,7 +2013,17 @@ describe('monolith integration', () => {
     const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
       (message) => message.id === authorMessageId,
     );
-    expect(authorDeleted).toMatchObject({ text: 'Message deleted', deleted: true });
+    expect(authorDeleted).toMatchObject({
+      text: '@bee deleted a message',
+      presentation: 'system',
+      deleted: true,
+      systemEvent: {
+        subject: { kind: 'agent', id: AGENT, name: '@bee' },
+        verb: 'deleted',
+        object: { text: 'a message' },
+      },
+    });
+    expect(authorDeleted?.systemEvent?.consequence).toBeUndefined();
     expect(authorDeleted?.attachments).toBeUndefined();
     expect(authorDeleted?.reactions).toBeUndefined();
     expect(
@@ -2034,12 +2044,39 @@ describe('monolith integration', () => {
       { roomId: ROOM, messageId: managerMessageId, text: 'manager removes this' },
       AGENT,
     );
+    const laterMessageId = 'f'.repeat(64);
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: laterMessageId, text: 'said after' },
+      HUMAN,
+    );
+    const beforeDelete = (await phone.readRoom(ROOM, HUMAN))!.messages;
     await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, HUMAN);
+    const afterDelete = (await phone.readRoom(ROOM, HUMAN))!.messages;
+    const managerDeleted = afterDelete.find((message) => message.id === managerMessageId);
+    expect(managerDeleted).toMatchObject({
+      text: '@owner deleted a message · sent by @bee',
+      presentation: 'system',
+      deleted: true,
+      createdAtMs: beforeDelete.find((message) => message.id === managerMessageId)?.createdAtMs,
+      systemEvent: {
+        subject: { kind: 'person', id: HUMAN, name: '@owner' },
+        verb: 'deleted',
+        object: { text: 'a message' },
+        consequence: 'sent by @bee',
+      },
+    });
+    // The line takes the deleted message's place; nothing new lands at the bottom.
+    expect(afterDelete.map((message) => message.id)).toEqual(
+      beforeDelete.map((message) => message.id),
+    );
+    expect(afterDelete.at(-1)?.id).toBe(laterMessageId);
+    await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: managerMessageId }, AGENT);
     expect(
       (await phone.readRoom(ROOM, HUMAN))!.messages.find(
         (message) => message.id === managerMessageId,
-      ),
-    ).toMatchObject({ text: 'Message deleted', deleted: true });
+      )?.text,
+    ).toBe('@owner deleted a message · sent by @bee');
 
     await expect(
       phone.execute(

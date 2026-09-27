@@ -51,6 +51,29 @@ describe('imported MCP host/local classification', () => {
     ).toBe('host');
   });
 
+  it('copies credential-free public HTTPS routes without an owner grant', () => {
+    expect(
+      classifyImportedMcpServer({
+        name: 'reference',
+        declaration: { url: 'https://docs.example.test/mcp', enabled: true },
+      }),
+    ).toBe('local');
+  });
+
+  it.each([
+    { url: 'https://docs.example.test/mcp', headers: { authorization: 'Bearer secret' } },
+    { url: 'https://docs.example.test/mcp', bearer_token_env_var: 'API_TOKEN' },
+    { url: 'https://user:password@docs.example.test/mcp' },
+    { url: 'https://docs.example.test/mcp?key=secret' },
+    { url: 'http://docs.example.test/mcp' },
+    { url: 'https://localhost/mcp' },
+    { url: 'https://127.0.0.1/mcp' },
+    { url: 'https://internal.local/mcp' },
+    { url: 'https://docs.example.test/mcp', command: 'spend-money' },
+  ])('keeps an authority-bearing or ambiguous route behind the grant gate: %j', (declaration) => {
+    expect(classifyImportedMcpServer({ name: 'reference', declaration })).toBe('host');
+  });
+
   it('matches host identities across harness permission spellings', () => {
     expect(isHostMcpIdentity('squire')).toBe(true);
     expect(isHostMcpIdentity('mcp__squire__use_credential')).toBe(true);

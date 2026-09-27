@@ -7,7 +7,8 @@ import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createBeelineServer } from './server.js';
+import { createBeelineServer, type ServerOptions } from './server.js';
+import { databaseConnectionBudget } from './database-budget.js';
 
 
 function canReadRoomsFrom(canReadRoom: (roomId: string, identityId: string) => Promise<boolean>) {
@@ -32,7 +33,7 @@ describe('server readiness', () => {
     );
   });
 
-  async function get(path: string, database: SqlDatabase): Promise<Response> {
+  async function get(path: string, database: SqlDatabase, extra: Partial<ServerOptions> = {}): Promise<Response> {
     const server = createBeelineServer({
       database,
       auth: {} as TokenAuth,
@@ -40,6 +41,7 @@ describe('server readiness', () => {
       daemon: {} as DaemonService,
       live: {} as LiveHub,
       mediaMaximumBytes: 1,
+      ...extra,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -92,6 +94,28 @@ describe('server readiness', () => {
     });
     expect((await response.json()).database.queryProfiles).toMatchObject({
       top: [{ fingerprint: 'abc123', totalMs: 8 }], overflow: 0,
+    });
+  });
+
+  it('reports measured deployment headroom and all pool pressure from the diagnostics lane', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const pool = (total: number, idle: number, waiting: number): SqlDatabase => ({
+      query, transaction: vi.fn(), poolCounts: () => ({ total, idle, waiting }),
+    });
+    const response = await get('/health', pool(5, 1, 2), {
+      databaseBudget: databaseConnectionBudget(100),
+      enrichmentDatabase: pool(2, 0, 1),
+      healthDatabase: pool(1, 0, 0),
+      jobsDatabase: pool(2, 1, 1),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).database).toMatchObject({
+      budget: { maxConnections: 100, reservedConnections: 20, app: 5 },
+      pools: {
+        enrichment: { size: 2, inUse: 2, waiting: 1 },
+        diagnostics: { size: 1, inUse: 1, waiting: 0 },
+        jobs: { size: 2, inUse: 1, waiting: 1 },
+      },
     });
   });
 

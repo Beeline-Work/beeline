@@ -154,6 +154,52 @@ describe('GitHub sign-in without a network', () => {
     ).rejects.toMatchObject({ code: 'offline', status: undefined });
     expect(storage.get('buzzy.github-sign-in-recovery.v1')).toBe(RECOVERY_TOKEN);
   });
+
+  it('stops cold callback recovery offline without background retries', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Network request failed');
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    vi.useFakeTimers();
+    try {
+      const pending = resumeInitialGitHubSignIn(
+        async () => `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+      );
+      const outcome = expect(pending).rejects.toMatchObject({ code: 'offline', status: undefined });
+      await vi.advanceTimersByTimeAsync(11_000);
+      await outcome;
+      const requestsAtNotice = fetchImpl.mock.calls.length;
+      expect(requestsAtNotice).toBeGreaterThan(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchImpl).toHaveBeenCalledTimes(requestsAtNotice);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refuses a cold callback if another sign-in replaces its pending state while polling', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    const fetchImpl = vi.fn(async () => {
+      await persistGitHubSignInState(OTHER_STATE, 'signin', 'n'.repeat(43));
+      return new Response(null, { status: 202 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      await expect(
+        resumeInitialGitHubSignIn(
+          async () => `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        ),
+      ).rejects.toMatchObject({ code: 'state_mismatch' });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(storage.get('buzzy.github-sign-in-session.v2')!)).toMatchObject({
+        state: OTHER_STATE,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('GitHub auth session redirects', () => {

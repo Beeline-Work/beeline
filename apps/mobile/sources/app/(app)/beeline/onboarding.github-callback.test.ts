@@ -190,6 +190,7 @@ const { default: BuzzOnboarding } = await import('./onboarding');
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const STATE = 's'.repeat(43);
+const RECOVERY_TOKEN = 'r'.repeat(43);
 
 function callbackUrl(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)): string {
   const params = new URLSearchParams({
@@ -374,6 +375,36 @@ describe('GitHub callback delivery into onboarding', () => {
 
     act(() => ceremony.props.onEntered());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('finishes a cold completed callback after the server initially reports pending', async () => {
+    runtime.current.monolithEnabled = true;
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    linking.initialUrl = `beeline://beeline/github-callback?state=${STATE}&completed=1`;
+    let completionReads = 0;
+    network.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (!String(input).endsWith('/auth/github/completion')) {
+        throw new Error(`Unexpected auth request: ${String(input)}`);
+      }
+      completionReads += 1;
+      if (completionReads <= 2) return new Response(null, { status: 202 });
+      const challenge = Object.fromEntries(new URL(callbackUrl()).searchParams);
+      return new Response(JSON.stringify({ ...challenge, ticket: RECOVERY_TOKEN }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const tree = await render();
+
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith(RECOVERY_TOKEN),
+      );
+    });
+    expect(completionReads).toBe(3);
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(tree.root.findAllByType('FaceCeremonyStep' as never)).toHaveLength(1);
   });
 
   it('skips the face ceremony for a person who already chose a face', async () => {

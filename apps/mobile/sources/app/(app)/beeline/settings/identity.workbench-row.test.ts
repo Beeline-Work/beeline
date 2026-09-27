@@ -3,10 +3,17 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Reproduction R-1: Settings read the Workbench once on mount. Opened before
+// the Workbench's vault sync, the "Tools and keys" row showed 0 and stayed 0
+// after the Workbench listed keys, until Settings was closed and reopened.
+
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const client = vi.hoisted(() => ({
   listCommunities: vi.fn(async () => []),
   getGlobalPersonProfile: vi.fn(async () => ({ name: 'Captain' })),
+}));
+const workspaceRead = vi.hoisted(() => ({
+  workspaces: vi.fn(async () => ({ workspaces: [] as { id: string }[] })),
 }));
 const pushModule = vi.hoisted(() => ({
   getBuzzPushEnabled: vi.fn(async () => true),
@@ -29,11 +36,21 @@ const notificationApi = vi.hoisted(() => ({
   setBadgeCountAsync: vi.fn(async () => true),
 }));
 
+const focus = vi.hoisted(() => ({ refocus: undefined as undefined | (() => void) }));
+const workbench = vi.hoisted(() => ({ readWorkbench: vi.fn() }));
+
+// Focus is a counter the test bumps: each bump re-runs the effect, the way
+// expo-router runs a focus effect again when the screen regains focus.
 vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => ({}),
-  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const [generation, setGeneration] = React.useState(0);
+    focus.refocus = () => setGeneration((value) => value + 1);
+    React.useEffect(effect, [effect, generation]);
+  },
 }));
+vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: () => workbench }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-linking', () => ({
@@ -86,14 +103,17 @@ vi.mock('@beeline/buzz-client', () => ({
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,
-  personHandle: (name: string) => name.toLowerCase(),
-  RoomViewClient: class {
-    workspaces = vi.fn(async () => ({ workspaces: [] }));
-  },
+  personHandle: (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, ''),
   startGitHubBind: vi.fn(),
+}));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class {
+    workspaces = workspaceRead.workspaces;
+  },
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+  clearBuzzIdentity: vi.fn(async () => undefined),
   loadBuzzIdentity: vi.fn(async () => ({
     publicKey: 'a'.repeat(64),
     secretKey: new Uint8Array(32).fill(1),
@@ -120,10 +140,7 @@ vi.mock('@/sync/appConfig', () => ({
 }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
-  Typography: {
-    default: () => ({}),
-    mono: () => ({}),
-  },
+  Typography: { default: () => ({}), mono: () => ({}) },
 }));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
@@ -150,9 +167,7 @@ vi.mock('@/components/buzz/BeelineMark', async () => {
   const ReactModule = await import('react');
   return { BeelineMark: (props: unknown) => ReactModule.createElement('BeelineMark', props) };
 });
-vi.mock('@/utils/open-external-url', () => ({
-  openExternalUrl: vi.fn(async () => undefined),
-}));
+vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: vi.fn(async () => undefined) }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -182,7 +197,10 @@ vi.mock('@/components/buzz/UiSizeSetting', async () => {
   const ReactModule = await import('react');
   return {
     UiSizeSetting: (props: unknown) =>
-      ReactModule.createElement('UiSizeSetting', { ...(props as object), testID: 'ui-size-setting' }),
+      ReactModule.createElement('UiSizeSetting', {
+        ...(props as object),
+        testID: 'ui-size-setting',
+      }),
   };
 });
 vi.mock('@/components/buzz/SettingsRow', async () => {
@@ -191,16 +209,12 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
     SettingsRow: (props: unknown) => ReactModule.createElement('SettingsRow', props as never),
   };
 });
-// Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
-// which this screen's own tests exercise or mock elsewhere.
 vi.mock('@/unistyles', () => ({ applyAppearanceChoice: vi.fn(), setAppDisplay: vi.fn() }));
 vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
-vi.mock('@/push/push-level-storage', () => ({
-  saveStoredPushLevel: vi.fn(async () => undefined),
-}));
+vi.mock('@/push/push-level-storage', () => ({ saveStoredPushLevel: vi.fn(async () => undefined) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
@@ -221,9 +235,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props as never);
   return {
     Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
-    AppState: {
-      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
@@ -238,8 +250,8 @@ vi.mock('react-native', async () => {
 // The theme has to be live before the screen evaluates, because the mocked
 // StyleSheet.create calls the screen's theme-taking factory as it imports.
 import { beelineThemes } from '@/buzz/groknight';
+import type { WorkbenchConnection, WorkbenchConnector, WorkbenchView } from '@/buzz/workbench';
 import IdentitySettingsScreen from './identity';
-import { openExternalUrl } from '@/utils/open-external-url';
 
 const originalConsoleError = console.error;
 
@@ -259,17 +271,6 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function registrationState(overrides: Record<string, unknown>) {
-  return {
-    registered: false,
-    retryable: true,
-    phase: 'registered',
-    failedAttempts: 1,
-    updatedAt: Date.now(),
-    ...overrides,
-  };
-}
-
 async function renderScreen(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -278,119 +279,116 @@ async function renderScreen(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-describe('identity settings push row honesty', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    runtime.monolithEnabled = false;
-    pushModule.getBuzzPushEnabled.mockResolvedValue(true);
-    pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
-    permissionInfo.getPushPermissionInfo.mockResolvedValue({
-      status: 'granted',
-      granted: true,
-      canAskAgain: true,
-    });
+function headings(renderer: ReactTestRenderer): string[] {
+  return renderer.root
+    .findAllByType('Text')
+    .map((node: { props: { children?: unknown } }) => node.props.children)
+    .filter((value: unknown): value is string => typeof value === 'string');
+}
+
+const VIEWER = 'a'.repeat(64);
+
+function key(ref: string): WorkbenchConnection {
+  return { ref, name: ref, hosts: [], state: 'active', ownerId: VIEWER };
+}
+
+function view(keys: number, connectors: WorkbenchConnector[] = []): WorkbenchView {
+  return {
+    connectors,
+    connections: Array.from({ length: keys }, (_, index) => key(`key-${index}`)),
+    apps: [],
+    helpers: [],
+  };
+}
+
+function tool(id: string, name: string, status: WorkbenchConnector['status']): WorkbenchConnector {
+  return { id, name, description: '', available: true, status };
+}
+
+const googleError: WorkbenchConnector[] = [
+  tool('trusty-squire', 'Trusty Squire', 'connected'),
+  tool('google-gmail', 'Gmail', 'error'),
+  tool('google-calendar', 'Google Calendar', 'error'),
+  tool('google-drive', 'Google Drive', 'error'),
+  tool('google-youtube', 'YouTube', 'error'),
+];
+
+function workbenchRow(renderer: ReactTestRenderer) {
+  return renderer.root.findByProps({ testID: 'settings-workbench-row' });
+}
+
+async function refocus(): Promise<void> {
+  await act(async () => {
+    focus.refocus?.();
   });
+}
 
-  it('reads the default level and saves a picker change through the phone operation', async () => {
-    phoneOperation.mockImplementation(async (name: string, input: { pushLevel?: string }) => {
-      if (name === 'updateIdentityPushLevel')
-        return {
-          personId: 'a'.repeat(64),
-          name: 'Captain',
-          pushLevel: input.pushLevel,
-        };
-      throw new Error(`unexpected operation ${name}`);
-    });
-    const renderer = await renderScreen();
-    await vi.waitFor(() =>
-      expect(renderer.root.findAllByProps({ testID: 'push-level-setting' })).toHaveLength(1),
-    );
-    const picker = renderer.root.findByProps({ testID: 'push-level-setting' });
-    expect(picker.props.value).toBe('mine');
-
-    await act(async () => picker.props.onSave('off'));
-    expect(phoneOperation).toHaveBeenCalledWith('updateIdentityPushLevel', { pushLevel: 'off' });
-    expect(notificationApi.setBadgeCountAsync).toHaveBeenCalledWith(0);
-    expect(renderer.root.findByProps({ testID: 'push-level-setting' }).props.value).toBe('off');
+beforeEach(() => {
+  vi.clearAllMocks();
+  runtime.monolithEnabled = true;
+  workspaceRead.workspaces.mockResolvedValue({ workspaces: [{ id: 'workspace-1' }] });
+  client.getGlobalPersonProfile.mockResolvedValue({ name: 'Captain' });
+  pushModule.getBuzzPushEnabled.mockResolvedValue(true);
+  pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
+  permissionInfo.getPushPermissionInfo.mockResolvedValue({
+    status: 'granted',
+    granted: true,
+    canAskAgain: true,
   });
-
-  it('keeps the level picker and retry action visible when registration failed', async () => {
-    // Forced failure: token acquisition timed out on last launch.
-    pushModule.getBuzzPushRegistrationState.mockResolvedValue(
-      registrationState({ phase: 'token-timed-out' }),
-    );
-    pushModule.registerBuzzPushNotifications.mockResolvedValue(
-      registrationState({ registered: true, retryable: false, phase: 'registered' }),
-    );
-    const renderer = await renderScreen();
-
-    expect(renderer.root.findByProps({ testID: 'push-level-setting' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'push-retry-registration' })).toBeDefined();
-
-    // The user taps RETRY NOW; this time the gateway accepts.
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'push-retry-registration' }).props.onPress();
-    });
-
-    expect(pushModule.registerBuzzPushNotifications).toHaveBeenCalledTimes(1);
-    expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
-  });
-
-  it('shows no retry action when the device is registered', async () => {
-    pushModule.getBuzzPushRegistrationState.mockResolvedValue(
-      registrationState({
-        registered: true,
-        retryable: false,
-        phase: 'registered',
-        failedAttempts: 0,
-      }),
-    );
-    const renderer = await renderScreen();
-
-    expect(renderer.root.findByProps({ testID: 'push-level-setting' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
-  });
-
-  it('never renders a push test action on any registration state', async () => {
-    // Registered (previously showed "Send test notification")…
-    pushModule.getBuzzPushRegistrationState.mockResolvedValue(
-      registrationState({
-        registered: true,
-        retryable: false,
-        phase: 'registered',
-        failedAttempts: 0,
-      }),
-    );
-    const registered = await renderScreen();
-    expect(registered.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(
-      0,
-    );
-
-    // …and unregistered / failed states.
-    const failed = await renderScreen();
-    expect(failed.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
-  });
+  phoneOperation.mockResolvedValue({ face: null, pushLevel: 'mine', handle: null, name: 'C' });
 });
 
-describe('settings legal links', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    runtime.monolithEnabled = false;
-    permissionInfo.getPushPermissionInfo.mockResolvedValue({
-      status: 'granted',
-      granted: true,
-      canAskAgain: true,
+describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () => {
+  it('shows 57 keys after refocus when the first read returned 0', async () => {
+    workbench.readWorkbench
+      .mockResolvedValueOnce(view(0, googleError))
+      .mockResolvedValue(view(57, googleError));
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 0 keys'));
+
+    await refocus();
+
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+    expect(workbench.readWorkbench).toHaveBeenLastCalledWith({
+      workspaceId: 'workspace-1',
+      viewerId: VIEWER,
     });
   });
 
-  it('opens privacy, terms, and feedback through openExternalUrl', async () => {
+  it('names the one broken tool in a danger subtitle', async () => {
+    workbench.readWorkbench.mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
-    act(() => renderer.root.findByProps({ testID: 'settings-privacy-row' }).props.onPress());
-    expect(openExternalUrl).toHaveBeenCalledWith('https://usebeeline.app/privacy/');
-    act(() => renderer.root.findByProps({ testID: 'settings-terms-row' }).props.onPress());
-    expect(openExternalUrl).toHaveBeenCalledWith('https://usebeeline.app/terms/');
-    act(() => renderer.root.findByProps({ testID: 'settings-feedback-row' }).props.onPress());
-    expect(openExternalUrl).toHaveBeenCalledWith('mailto:hello@usebeeline.app');
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+    expect(workbenchRow(renderer).props).toMatchObject({
+      title: 'Tools and keys',
+      chevron: 'right',
+      description: 'Google Workspace needs attention',
+      descriptionTone: 'danger',
+    });
+  });
+
+  it('keeps the last value and shows no error when a later read fails', async () => {
+    workbench.readWorkbench
+      .mockResolvedValueOnce(view(57, googleError))
+      .mockRejectedValue(new Error('offline'));
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+
+    await refocus();
+
+    await vi.waitFor(() => expect(workbench.readWorkbench).toHaveBeenCalledTimes(2));
+    expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys');
+    expect(workbenchRow(renderer).props.description).toBe('Google Workspace needs attention');
+    expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);
+  });
+
+  it('shows no value when the first read fails, and the row still opens the Workbench', async () => {
+    workbench.readWorkbench.mockRejectedValue(new Error('offline'));
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(workbench.readWorkbench).toHaveBeenCalled());
+    expect(workbenchRow(renderer).props.value).toBeUndefined();
+    expect(workbenchRow(renderer).props.description).toBeUndefined();
+    act(() => workbenchRow(renderer).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith('/beeline/settings/workbench');
   });
 });

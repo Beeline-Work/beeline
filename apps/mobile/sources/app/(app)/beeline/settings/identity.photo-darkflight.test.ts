@@ -34,7 +34,11 @@ const identityApi = vi.hoisted(() => ({
   lookupManagedIdentity: vi.fn(async () => null),
 }));
 
-vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({}) }));
+vi.mock('expo-router', () => ({
+  router: navigation,
+  useLocalSearchParams: () => ({}),
+  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
+}));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-linking', () => ({

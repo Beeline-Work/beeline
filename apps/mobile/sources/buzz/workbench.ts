@@ -430,6 +430,45 @@ export function connectionsForViewer(
   return view.connections.filter((connection) => connection.ownerId === viewerId);
 }
 
+/** What the Settings "Tools and keys" row states about the Workbench. */
+export type WorkbenchSummary = {
+  /** `<T> tool(s) · <K> key(s)` — connected Tools rows and the viewer's keys. */
+  value: string;
+  /** The danger subtitle naming Tools rows in error; absent when none are. */
+  attention?: string;
+};
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * Counts the Tools rows exactly as the Workbench page displays them: the
+ * four google connectors fold into the one Google Workspace entry, an
+ * unavailable connector reads `soon` whatever its status, and apps are not
+ * tools. Keys are `connectionsForViewer`, the same count as before.
+ */
+export function workbenchSummary(view: WorkbenchView, viewerId: string): WorkbenchSummary {
+  const google = googleEntryConnector(view.connectors);
+  const rows = [
+    ...view.connectors.filter((connector) => !isGoogleToolConnectorId(connector.id)),
+    ...(google ? [google] : []),
+  ];
+  const shown = rows.filter((row) => row.available);
+  const connected = shown.filter((row) => row.status === 'connected').length;
+  const broken = shown.filter((row) => row.status === 'error');
+  const keys = connectionsForViewer(view, viewerId).length;
+  const value = `${plural(connected, 'tool')} · ${plural(keys, 'key')}`;
+  if (broken.length === 0) return { value };
+  return {
+    value,
+    attention:
+      broken.length === 1
+        ? `${broken[0].name} needs attention`
+        : `${broken.length} tools need attention`,
+  };
+}
+
 /** The quiet line under a connected connector: what it runs on. */
 export function connectorDescription(
   connector: Omit<WorkbenchConnector, 'id'> & { id: string },

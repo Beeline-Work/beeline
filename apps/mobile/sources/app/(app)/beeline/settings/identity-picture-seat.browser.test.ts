@@ -16,6 +16,7 @@ function seatShims(mobile: string): Record<string, string> {
     'expo-router': `import React from 'react';
     export const router = { back: () => undefined, push: () => undefined, replace: () => undefined };
     export const useLocalSearchParams = () => ({});
+    export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
     'expo-updates': `export const isEnabled = false;
     export const channel = null;
@@ -35,7 +36,7 @@ function seatShims(mobile: string): Record<string, string> {
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
-    '@/buzz/workbench': `export const connectionsForViewer = () => [];`,
+    '@/buzz/workbench': `export const workbenchSummary = () => ({ value: '0 tools · 0 keys' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
     '@/buzz/surface-storage': `export const clearMobileSurfaceStorage = async () => undefined;`,
     '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,

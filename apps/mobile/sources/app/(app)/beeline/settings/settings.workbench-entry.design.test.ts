@@ -19,10 +19,18 @@ describe('Settings Workbench entry', () => {
 
   // Captain ruling 2026-09-15 (mock 91aa0358328d716e) and the 2026-09-20
   // settings rebuild: the row speaks the Workbench vocabulary — Tools and
-  // keys — and carries the viewer's key count.
-  it('names the row Tools and keys and shows the viewer’s key count', () => {
+  // keys. Option B (mock 644e6683): it states both counts and names a
+  // broken tool in the danger subtitle, from `workbenchSummary`.
+  it('names the row Tools and keys and shows the Workbench summary', () => {
     expect(settings).toContain('title="Tools and keys"');
-    expect(settings).toMatch(/String\(keyCount\)/);
+    expect(settings).toContain('value={workbench?.value}');
+    expect(settings).toContain('description={workbench?.attention}');
+    expect(settings).toContain("descriptionTone={workbench?.attention ? 'danger' : undefined}");
     expect(settings).not.toMatch(/title="Connections"/);
+  });
+
+  it('re-reads the Workbench on focus without a vault sync', () => {
+    expect(settings).toMatch(/useFocusEffect\(/);
+    expect(settings).not.toMatch(/refreshVault/);
   });
 });

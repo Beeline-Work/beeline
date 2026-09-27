@@ -37,7 +37,11 @@ const notificationApi = vi.hoisted(() => ({
   setBadgeCountAsync: vi.fn(async () => true),
 }));
 
-vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({}) }));
+vi.mock('expo-router', () => ({
+  router: navigation,
+  useLocalSearchParams: () => ({}),
+  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
+}));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-linking', () => ({

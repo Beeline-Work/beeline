@@ -9,20 +9,21 @@ import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
+  cornerHasUndeliveredRepositoryWork,
+  cornerToolActivity,
+  MonolithCornerTurnLoop,
+} from './monolith-corner-turn.js';
+import {
   CORNER_AUTHOR_CONTRACT,
   CORNER_DELIVERY_NUDGE,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
   CORNER_YOLO_MERGE_NUDGE,
-  cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
-  cornerToolActivity,
-  MonolithCornerTurnLoop,
-} from './monolith-corner-turn.js';
+} from './prompt-assembly.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { AGENT_PROSE_REFERENCE_RULE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
@@ -30,6 +31,12 @@ import {
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
 } from './warm-node-modules.js';
+
+/** `core.voice` and `core.tagging` from `prompt-assembly.ts`. */
+const VOICE_RULE =
+  'Your voice never changes the facts: never trim, soften, exaggerate, or invent a detail for style.';
+const TAGGING_RULE =
+  'Every exact @handle you write wakes that member. Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.
@@ -63,9 +70,16 @@ function closePushAfterReceipt(
   return new Proxy(api, {
     get(target, key) {
       if (key === 'execute')
-        return async (name: Parameters<DaemonApiClient['execute']>[0], input: Record<string, unknown>) => {
+        return async (
+          name: Parameters<DaemonApiClient['execute']>[0],
+          input: Record<string, unknown>,
+        ) => {
           const result = await target.execute(name, input as never);
-          if (name === 'postAgentTurnReceipt' && input.status !== 'working' && ++receipts === afterReceipts)
+          if (
+            name === 'postAgentTurnReceipt' &&
+            input.status !== 'working' &&
+            ++receipts === afterReceipts
+          )
             queueMicrotask(() => loop().requestClose());
           return result;
         };
@@ -98,16 +112,25 @@ describe('corner merge instructions', () => {
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {
-    expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
-    expect(cornerMergeInstruction(false)).toContain('never merge');
-    expect(cornerMergeInstruction(false)).toContain('human owner to turn yolo on');
+    // pr_checks_status only sets mergeAllowed with a reviewer AND yolo on, so
+    // only that variant may tell the author to merge.
     for (const yolo of [false, true]) {
-      const instruction = cornerMergeInstruction(yolo, 'echo');
+      expect(cornerMergeInstruction(yolo)).toContain('no configured reviewer');
+      expect(cornerMergeInstruction(yolo)).toContain('never merge');
+      expect(cornerMergeInstruction(yolo)).not.toContain('gh pr merge');
+    }
+    const off = cornerMergeInstruction(false, 'echo');
+    expect(off).toContain('Yolo is off');
+    expect(off).toContain('never merge');
+    expect(off).not.toContain('gh pr merge');
+    const on = cornerMergeInstruction(true, 'echo');
+    expect(on).toContain('the end of that review wakes you, whether or not it tags you');
+    expect(on).toContain('checks="passed" and mergeAllowed=true');
+    expect(on).toContain('gh pr merge --squash --match-head-commit <sha>');
+    for (const instruction of [off, on]) {
       expect(instruction).not.toContain('please review');
-      expect(instruction).toContain('do not merge until @echo has reviewed');
-      expect(instruction).toContain('whether or not it tags you');
-      expect(instruction).toContain('only if the complete gate passes');
-      expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
+      expect(instruction).not.toContain('@echo');
+      expect(instruction).toContain('the reviewer (echo)');
     }
   });
 
@@ -140,8 +163,8 @@ describe('corner merge instructions', () => {
     const instruction = cornerSelfReviewerInstruction(selfReviewer)!;
     expect(instruction).toContain("You are this Room's reviewer");
     expect(instruction).toContain('do not request one');
-    expect(instruction).toContain('do not tag any agent for review');
-    expect(instruction).toContain('merge yourself');
+    expect(instruction).toContain('tag any agent for review');
+    expect(instruction).toContain('checks="passed" and mergeAllowed=true');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
     expect(cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' })).toBeUndefined();
     // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
@@ -774,7 +797,12 @@ describe('corner close-request delivery', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(closePushAfterReceipt(api, () => loop), 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+      api: commandFixtureApi(
+        closePushAfterReceipt(api, () => loop),
+        'corner-id',
+        runtime.agent.publicKey,
+        'Implement the widget',
+      ),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -849,10 +877,19 @@ describe('corner close-request delivery', () => {
       if (name === 'getRoomInbox') {
         if (initialCommandDelivered) return { items: [], cursor: 'human-msg' };
         initialCommandDelivered = true;
-        return { items: [{
-          id: 'human-msg', authorId: '22'.repeat(32), createdAt: 1,
-          type: 'message', body: 'Please continue', attachments: [],
-        }], cursor: 'human-msg' };
+        return {
+          items: [
+            {
+              id: 'human-msg',
+              authorId: '22'.repeat(32),
+              createdAt: 1,
+              type: 'message',
+              body: 'Please continue',
+              attachments: [],
+            },
+          ],
+          cursor: 'human-msg',
+        };
       }
       if (name === 'getCornerCloseRequests') {
         inboxReads += 1;
@@ -996,7 +1033,12 @@ describe('corner close-request delivery', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(closePushAfterReceipt(api, () => loop), 'corner-id', runtime.agent.publicKey, null),
+      api: commandFixtureApi(
+        closePushAfterReceipt(api, () => loop),
+        'corner-id',
+        runtime.agent.publicKey,
+        null,
+      ),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -1139,10 +1181,16 @@ describe('corner close-request delivery', () => {
           if (inboxSent) return { items: [], cursor: 'human-msg' };
           inboxSent = true;
           return {
-            items: [{
-              id: 'human-msg', authorId: '22'.repeat(32), createdAt: 1,
-              type: 'message', body: 'Please continue', attachments: [],
-            }],
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                attachments: [],
+              },
+            ],
             cursor: 'human-msg',
           };
         }
@@ -2585,7 +2633,12 @@ describe('thin monolith corner turn', () => {
       },
       runtime,
       config,
-      api: commandFixtureApi(closePushAfterReceipt(api, () => loop, 2), 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+      api: commandFixtureApi(
+        closePushAfterReceipt(api, () => loop, 2),
+        'corner-id',
+        runtime.agent.publicKey,
+        'Implement the widget',
+      ),
       scheduler,
       signal: abort.signal,
       pollMs: 1,
@@ -2611,20 +2664,20 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain('Corner institutional snapshot 2');
     expect(firstPrompt).toContain('[message id: corner-row-1]\nBeeline [message]: corner row 1');
     expect(firstPrompt).toContain('corner row 1');
-    expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest trigger:');
-    // The second turn is the SAME warm session: it sends only what is new, and
-    // the objective — which lives outside the transcript window — still rides
-    // on every prompt.
-    expect(secondPrompt).toContain('New in the corner since your last turn');
-    expect(secondPrompt).not.toContain('corner row 1\n');
+    expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest message:');
+    // The second turn is the SAME warm session: it sends only what is new —
+    // here nothing, so no transcript at all — and the objective, which lives
+    // outside the transcript window, still rides on every prompt.
+    expect(secondPrompt).not.toContain('Corner transcript:');
+    expect(secondPrompt).not.toContain('corner row');
     expect(firstPrompt).toContain(
-      'Corner navigation summary (not product authority):\nImplement the widget',
+      'Corner objective (navigation only, not product authority): Implement the widget',
     );
     expect(secondPrompt).toContain(
-      'Corner navigation summary (not product authority):\nImplement the widget',
+      'Corner objective (navigation only, not product authority): Implement the widget',
     );
-    expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
-    expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(firstPrompt).toContain('Members (exact tag spellings):');
+    expect(secondPrompt).toContain('Members (exact tag spellings):');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(secondPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(sessionNew).toHaveBeenCalledWith(
@@ -2647,7 +2700,7 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining('On a later checks turn, call pr_checks_status'),
+        systemPrompt: expect.stringContaining('the merge gate never opens for you: never merge'),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
@@ -2673,7 +2726,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion.',
+          'The server merge card and its push announce a finished corner, so do not tag anyone for it.',
         ),
       }),
     );
@@ -2694,40 +2747,38 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'Never create a schedule to poll pr_checks_status or the merge gate',
+          'Never schedule polls of pr_checks_status or the merge gate',
         ),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'tagging any agent other than the configured reviewer cannot clear the gate',
+          'On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line.',
         ),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+          'If a schedule wakes you here anyway, treat it as a checks turn.',
         ),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
-        ),
+        systemPrompt: expect.stringContaining('Soul (Terra): Steady, exact, and kind.'),
       }),
     );
-    // One shared house rule, said once beside the persona and never per soul.
+    // One shared voice rule (core.voice), said once beside the soul and never per soul.
     expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
+      expect.objectContaining({ systemPrompt: expect.stringContaining(VOICE_RULE) }),
     );
-    // Every exact @handle is a wake, so peers are named in prose (shared
-    // beside the house rule in both turn loops).
+    // Every exact @handle is a wake, so peers are named in prose (core.tagging,
+    // shared by both turn loops).
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(AGENT_PROSE_REFERENCE_RULE),
+        systemPrompt: expect.stringContaining(TAGGING_RULE),
       }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
@@ -2739,15 +2790,13 @@ describe('thin monolith corner turn', () => {
       expect(call[1]).toContain('AC-2: The label remains amber.');
       expect(call[1]).toContain('Approval basis bound to this revision:');
       expect(call[1]).toContain('explicit-human-answer by human-pubkey');
-      expect(call[1]).toContain('Your Beeline identity is Bee.');
+      // This harness drops the session prompt, so the session rules ride every turn.
       expect(call[1]).toContain(
-        'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
+        'You are Bee in Beeline. Stay Bee in every reply, including when a tool or permission blocks you.',
       );
-      expect(call[1]).toContain(SOUL_HOUSE_RULE);
-      expect(call[1]).toContain(AGENT_PROSE_REFERENCE_RULE);
-      expect(call[1]).toMatch(
-        /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
-      );
+      expect(call[1]).toContain('Soul (Terra): Steady, exact, and kind.');
+      expect(call[1]).toContain(VOICE_RULE);
+      expect(call[1]).toContain(TAGGING_RULE);
     }
     expect(writes).toContainEqual(
       expect.objectContaining({

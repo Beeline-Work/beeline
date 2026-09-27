@@ -14,7 +14,8 @@ import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { CORNER_AUTHOR_CONTRACT, MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import { CORNER_AUTHOR_CONTRACT } from './prompt-assembly.js';
 import { agentToolsFor } from './read-only-mcp.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, stageMonolithAgentRuntime, type AgentRuntimeRecord } from './runtime.js';
@@ -345,8 +346,8 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('no-code corner with no repository checkout');
-  expect(prompt).toContain('post_artifact everything the assigned intent and criteria require');
-  expect(prompt).toContain('The corner stays open until a human explicitly closes it');
+  expect(prompt).toContain('then send them with post_artifact');
+  expect(prompt).toContain('Only a human closes this corner.');
   expect(prompt).not.toContain('close_corner');
   const agentServer = sessionInput?.mcpServers.find((server) => server.name === 'beeline-agent');
   const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
@@ -362,7 +363,9 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
     ).map((tool) => tool.name),
   ).not.toContain('close_corner');
   // The requester still has to receive the delivery report.
-  expect(prompt).toContain('@ada');
+  expect(prompt).toContain(
+    'Tag @ada once, when the deliverable is posted or you need their input.',
+  );
   expect(prompt).toContain('Do not initialize a repository, create a branch, commit, push');
   expect(prompt).not.toContain('Open the pull request with gh');
   expect(prompt).not.toContain('gh pr merge');

@@ -16,6 +16,7 @@
       "subjectIdentityId": "human-alice",
       "canonicalKey": "alice-wants-mockups-first",
       "body": "Alice prefers reviewing a mockup before implementation.",
+      "keywords": ["mockup", "implementation"],
       "source": {
         "roomId": "room-fixture",
         "messageIds": ["message-preference"]
@@ -48,6 +49,7 @@
       "memoryKind": "workspace_fact",
       "canonicalKey": "deploy-requires-release-marker-last",
       "body": "Release migrations write the schema marker last.",
+      "keywords": ["release", "migrations", "marker"],
       "source": {
         "roomId": "room-fixture",
         "messageIds": ["message-fact"]
@@ -75,7 +77,8 @@
       "candidateType": "fact_candidate",
       "memoryKind": "workspace_fact",
       "canonicalKey": "temporary-greeting",
-      "body": "The requester said hello.",
+      "body": "Bob said hello.",
+      "keywords": ["hello"],
       "source": {
         "roomId": "room-fixture",
         "messageIds": ["message-greeting"]

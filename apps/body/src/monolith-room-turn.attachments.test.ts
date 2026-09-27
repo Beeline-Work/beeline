@@ -8,7 +8,6 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { AGENT_PROSE_REFERENCE_RULE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
@@ -199,13 +198,17 @@ async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) 
 }
 
 describe('Room turn voice', () => {
-  it('carries the shared house rule even when the Workspace grants no persona', async () => {
+  it('carries the shared voice rule even when the Workspace grants no persona', async () => {
     // `getAgentConfiguration` returns no soul here — the switched-off case.
-    // The house rule is said once and stands on its own.
+    // The voice rule (core.voice) is said once and stands on its own.
     const { prompt } = await runTurn(false);
-    expect(String(prompt)).toContain(SOUL_HOUSE_RULE);
-    expect(String(prompt)).toContain(AGENT_PROSE_REFERENCE_RULE);
-    expect(String(prompt)).not.toContain('Soul instructions:');
+    expect(String(prompt)).toContain(
+      'Your voice never changes the facts: never trim, soften, exaggerate, or invent a detail for style.',
+    );
+    expect(String(prompt)).toContain(
+      'Every exact @handle you write wakes that member. Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.',
+    );
+    expect(String(prompt)).not.toContain('Soul (');
   });
 });
 

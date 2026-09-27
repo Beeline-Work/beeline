@@ -109,6 +109,8 @@ export interface TurnTraceRecord {
     atQueue?: SessionSchedulerSnapshot;
     atAdmission?: SessionSchedulerSnapshot;
   };
+  /** Bytes per prompt section of the last prompt built (`prompt-assembly.ts`). */
+  promptSections?: Record<string, number>;
 }
 
 export interface TurnTraceSink {
@@ -161,6 +163,7 @@ export class TurnTrace {
   private atQueue?: SessionSchedulerSnapshot;
   private atAdmission?: SessionSchedulerSnapshot;
   private finished = false;
+  private promptSections?: Record<string, number>;
   /** Every distinct tool call id this turn has seen, across retries. */
   private readonly toolCallIds = new Set<string>();
 
@@ -224,6 +227,11 @@ export class TurnTrace {
 
   noteActivation(kind: 'cold' | 'warm'): void {
     this.current.activation = kind;
+  }
+
+  /** What each section of the assembled prompt cost, so growth shows in the trace. */
+  notePromptSections(report: readonly { id: string; bytes: number }[]): void {
+    this.promptSections = Object.fromEntries(report.map((entry) => [entry.id, entry.bytes]));
   }
 
   /** The prompt left for the harness. Idempotent: a steer resume is the same attempt. */
@@ -335,6 +343,7 @@ export class TurnTrace {
         ...(this.atQueue ? { atQueue: this.atQueue } : {}),
         ...(this.atAdmission ? { atAdmission: this.atAdmission } : {}),
       },
+      ...(this.promptSections ? { promptSections: this.promptSections } : {}),
     };
   }
 

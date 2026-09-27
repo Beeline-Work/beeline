@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { WARM_TRANSCRIPT_OVERLAP, WarmTranscript, type TranscriptRow } from './warm-transcript.js';
+import { WarmTranscript, type TranscriptRow } from './warm-transcript.js';
 
-const rows = (count: number, from = 1): TranscriptRow[] =>
+const rows = (count: number, from = 1, authorId = 'human'): TranscriptRow[] =>
   Array.from({ length: count }, (_, index) => ({
     id: `m${index + from}`,
     line: `line ${index + from}`,
+    authorId,
   }));
 
 describe('warm transcript', () => {
@@ -15,19 +16,29 @@ describe('warm transcript', () => {
     expect(selection.elided).toBe(0);
   });
 
-  it('sends only what is new to the same warm session, keeping a recency overlap', () => {
+  it('sends only rows the same warm session has not seen', () => {
     const warm = new WarmTranscript();
     const first = rows(30);
     warm.select('session-a', first);
     // Two more messages arrived; the window slid by two.
     const second = [...first.slice(2), ...rows(2, 31)];
     const selection = warm.select('session-a', second);
-    expect(selection.rows.map((row) => row.id)).toEqual([
-      ...second.slice(-WARM_TRANSCRIPT_OVERLAP).map((row) => row.id),
-    ]);
-    expect(selection.rows.map((row) => row.id)).toContain('m31');
-    expect(selection.rows.map((row) => row.id)).toContain('m32');
-    expect(selection.elided).toBe(second.length - WARM_TRANSCRIPT_OVERLAP);
+    expect(selection.rows.map((row) => row.id)).toEqual(['m31', 'm32']);
+    expect(selection.elided).toBe(second.length - 2);
+  });
+
+  it("never resends the agent's own reply to the warm session that wrote it", () => {
+    const warm = new WarmTranscript();
+    const first = rows(5);
+    warm.select('session-a', first, 'self');
+    const second = [...first, ...rows(1, 6, 'self'), ...rows(1, 7)];
+    expect(warm.select('session-a', second, 'self').rows.map((row) => row.id)).toEqual(['m7']);
+  });
+
+  it("keeps the agent's own rows when the session is cold", () => {
+    const warm = new WarmTranscript();
+    const window = [...rows(2), ...rows(1, 3, 'self')];
+    expect(warm.select('session-a', window, 'self').rows).toHaveLength(3);
   });
 
   it('replays everything to a session evicted and started cold again', () => {
@@ -45,7 +56,8 @@ describe('warm transcript', () => {
     const window = rows(30);
     warm.select('session-a', window);
     const attemptOne = warm.select('session-a', window);
-    expect(attemptOne.elided).toBeGreaterThan(0);
+    expect(attemptOne.rows).toHaveLength(0);
+    expect(attemptOne.elided).toBe(30);
     // repinNextProvider() cleared the client and opened a new session.
     const attemptTwo = warm.select('session-c', window);
     expect(attemptTwo.rows).toHaveLength(30);
@@ -57,24 +69,5 @@ describe('warm transcript', () => {
     const window = rows(30);
     warm.select(undefined, window);
     expect(warm.select(undefined, window).elided).toBe(0);
-  });
-
-  it('never elides a window shorter than the overlap', () => {
-    const warm = new WarmTranscript();
-    const window = rows(WARM_TRANSCRIPT_OVERLAP);
-    warm.select('session-a', window);
-    expect(warm.select('session-a', window).elided).toBe(0);
-  });
-
-  it('says plainly when a render is only what is new', () => {
-    const warm = new WarmTranscript();
-    const window = rows(30);
-    const whole = WarmTranscript.render(warm.select('session-a', window), 'Whole:', 'Since:');
-    expect(whole.startsWith('Whole:\n')).toBe(true);
-    expect(whole).toContain('line 1');
-    const partial = WarmTranscript.render(warm.select('session-a', window), 'Whole:', 'Since:');
-    expect(partial.startsWith('Since:\n')).toBe(true);
-    expect(partial).not.toContain('line 1\n');
-    expect(WarmTranscript.render(warm.select('session-a', []), 'Whole:', 'Since:')).toBe('');
   });
 });

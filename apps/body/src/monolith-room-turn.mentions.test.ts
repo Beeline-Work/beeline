@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { MonolithRoomTurnLoop, roomMentionDirectory } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { roomMentionDirectory } from './prompt-assembly.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -60,7 +61,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(directory).toContain('- @goosy-2 — Goosy (agent)');
     // Never the agent itself: it cannot tag itself, and the resolver drops it.
     expect(directory).not.toContain('Greeter');
-    expect(directory).toContain('Never invent a handle');
+    expect(directory.split('\n')[0]).toBe('Members (exact tag spellings):');
   });
 
   it('omits a member with no handle and says nothing when no member is taggable', () => {
@@ -251,7 +252,12 @@ describe('who an agent can tag, and how it is spelled', () => {
     await running.catch(() => undefined);
     await scheduler.dispose();
 
-    expect(prompts[0]).toContain('Room members, and the exact spelling that tags each one:');
+    expect(prompts[0]).toContain('Members (exact tag spellings):');
+    // The rule for using them rides the session text (core.tagging), which this
+    // harness receives on every turn.
+    expect(prompts[0]).toContain(
+      'Copy handles only from the member list in the turn prompt; any other spelling reaches nobody.',
+    );
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));

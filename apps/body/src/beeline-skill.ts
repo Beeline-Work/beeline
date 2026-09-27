@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MESSAGE_REACTION_EMOJIS, SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
-import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
@@ -25,17 +24,13 @@ export function isConfiguredReviewer(
   );
 }
 
-const BEELINE_AMBIENT_CONNECTOR_CAPABILITY =
-  'For every user request, first call beeline-agent workbench_status to check whether a Workbench connector can solve it. If one can, use an applicable connector when it is already added, or call offer_connector when it is available but not added. Continue without a connector when none applies.';
-
-const BEELINE_ROOM_CAPABILITIES = [
-  'The repository filesystem is read-only in this Room session.',
-  'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
-  'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
-  'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
-  'If a shell command is refused, say so plainly rather than retrying it, and continue with read-only inspection: call beeline-readonly-mcp.search_text to find code and beeline-readonly-mcp.read_file to read it. Use CodeGraph first when it is available for indexed code relationships.',
-  'An agent may use its own owner’s tools and resources regardless of who started the turn or whether yolo is on. Access to another person’s files or tools outside the sandbox asks that resource owner. Wallet access keeps its separate approval rule. The two command hard stops remain: credential files named by argv and scripts nobody has read. Delegation and follow-up work retain the original requester. Network web search is enabled.',
-  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
+/**
+ * Room mechanics a model looks up when it needs them. This list rides only in
+ * the on-demand using-beeline skill, never in the always-on prompt: the rules
+ * every turn needs live in `prompt-assembly.ts`, and each tool's own
+ * description says how to call it.
+ */
+const BEELINE_ROOM_MECHANICS = [
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
   'To create a file you can send, call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
@@ -43,102 +38,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   `To react to things that HAPPEN in this Room rather than only to what is said to you, call beeline-agent subscribe_events with the kinds you want (${SERVER_EVENT_KINDS.join(', ')}); each one then wakes you for a turn. Subscriptions are per Room and cover every way the event lands: joining a Room you subscribed to wakes you, and so does a person arriving in the Workspace when that arrival projects into this Room - subscribe to joined in an onboarding Room and every newcomer wakes you, exactly like a greeter. It replaces your list, so send every kind you want - list_event_subscriptions shows the current one. You do this yourself: nobody has to configure it for you. grant-decided carries the grant id and status and resumes the turn that asked for the grant. choice-answered, choice-skipped, and poll-closed start a new input turn for the asking agent; they do not resume a paused grant.`,
   'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Open-ended asks stay tagged prose. Never put Always / Once / No on a preference.',
   'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
-  'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words and a navigation objective of no more than 24 words. The objective titles and locates the work; it is never the product authority. The host-governed call is the only way to start write work.',
-  'Before opening a corner, consult beeline-triage and beeline-spec. Pass the typed brief authority contract in open_corner for every repository or research assignment: compact for a settled small fix, complete with relevant Room file identifiers for complex work.',
-  'Use existing authorization only when the initiating human command already settles the exact material scope, and record that exact command as the approval basis. Ask one focused question only when an unresolved choice materially changes behavior, scope, irreversible effects, or the intended result; record the exact answer against the resulting brief revision. Never infer approval from silence. Do not require approval merely because a brief was written or a task is large, and honor an explicit request to review the brief first.',
-  'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
-  'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
-
-const BEELINE_DM_CAPABILITIES = [
-  'This is a private direct-message conversation with one person. Every message they send is addressed to you; reply without tagging.',
-  'This Room is strictly conversational: there is no repository binding and no corner can be opened from here.',
-  'The repository filesystem is read-only in this session.',
-  'An agent may use its own owner’s tools and resources regardless of who started the turn or whether yolo is on. Access to another person’s files or tools outside the sandbox asks that resource owner. Wallet access keeps its separate approval rule. The two command hard stops remain: credential files named by argv and scripts nobody has read. Delegation and follow-up work retain the original requester. Network web search is enabled.',
-  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
-  'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
-  'To create a file you can send, call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
-  'Tag the person only when you need a decision or input, or when the task they asked for is finished.',
-  `To react to a message in this Room, call beeline-agent react_to_message with its message id and one supported emoji (${MESSAGE_REACTION_EMOJIS.join(' ')}).`,
-  'If you already know discrete options, call beeline-agent ask_choice. A pick is a preference, never sandbox, spend, or merge authority. open_poll is refused here: one human is a question.',
-  'Never claim an action or reply happened unless the prompt or a tool result proves it.',
-].join(' ');
-
-export interface RepositoryPrimerInfo {
-  name: string;
-  branch: string;
-}
-
-/**
- * Whether this session can run shell commands, and why not when it cannot.
- * `roomShellCapability` (`harness-capabilities.ts`) settles it from the harness
- * and the sandbox together, because a model told nothing keeps asking for a
- * shell it cannot have — and a model told the wrong thing stops using one it
- * has. An unmeasured harness passes no state at all and the standing
- * "if a shell command is refused, say so plainly rather than retrying it"
- * line carries the case.
- *
- * `detail` is the ONE bounded sentence from `BwrapAvailability.shellDetail`,
- * carrying the operator's one-line fix and nothing else: the model is told to
- * relay it into a Room every Workspace member can read.
- */
-export type RoomShellState =
-  { readonly available: true } | { readonly available: false; readonly detail?: string };
-
-function shellLine(shell: RoomShellState | undefined): string {
-  if (!shell) return '';
-  if (shell.available) {
-    return (
-      ' Shell commands are available in this session: run one with your own shell tool when the' +
-      ' work needs it, and report its output in your reply.'
-    );
-  }
-  return (
-    ' Shell commands are NOT available in this session, so a request that needs one cannot be run.' +
-    ' Say that plainly in your reply instead of retrying it.' +
-    `${shell.detail ? ` ${shell.detail}` : ''}`
-  );
-}
-
-export function beelinePrimer(
-  repository?: RepositoryPrimerInfo,
-  directMessage?: boolean,
-  shell?: RoomShellState,
-): string {
-  if (directMessage) {
-    return (
-      'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-      `Room mechanics. ${BEELINE_DM_CAPABILITIES}${shellLine(shell)}`
-    );
-  }
-  const repositoryLine = repository
-    ? ` This Room is bound to ${repository.name} (branch ${repository.branch}); you have a read-only checkout at the session root.`
-    : '';
-  return (
-    'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-    `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}${repositoryLine}${shellLine(shell)}`
-  );
-}
-
-export const BEELINE_CAPABILITIES_PRIMER = beelinePrimer();
-
-export interface BeelineCapabilityContext {
-  sessionPrompt: string;
-  compatibilityTurnPrefix?: string;
-}
-
-export function beelineCapabilityContextForHarness(
-  agentCommand: string | undefined,
-  repository?: RepositoryPrimerInfo,
-  directMessage?: boolean,
-  shell?: RoomShellState,
-): BeelineCapabilityContext {
-  const primer = beelinePrimer(repository, directMessage, shell);
-  return {
-    sessionPrompt: primer,
-    ...(harnessHonorsSessionSystemPrompt(agentCommand) ? {} : { compatibilityTurnPrefix: primer }),
-  };
-}
 
 export function runningBeelineReleaseId(
   env: NodeJS.ProcessEnv = process.env,
@@ -167,13 +67,11 @@ description: How to answer inside a Beeline Room.
 
 # Using Beeline
 
-You are answering inside a Room whose filesystem is read-only. ${BEELINE_ROOM_CAPABILITIES}
+These mechanics apply in Rooms and corners. ${BEELINE_ROOM_MECHANICS}
 
 ## Conflicting human instructions
 
-Follow your own owner first, then this Workspace's master and admins, then members. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation; there is no separate hold list. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
-
-When your corner's pull request is ready, merging is your step: once the configured reviewer approves and tags you, you run \`gh pr merge\` yourself - nothing merges it for you.
+Follow your own owner first, then this Workspace's owner and admins, then members. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
 
 ## Tools and the Workbench
 
@@ -181,7 +79,7 @@ A **tool** is something you can use once a human adds it; a **key** is the crede
 
 The tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent workbench_status. That read is the Workbench of the machine and owner you actually run on, not the person who asked. Trusty Squire is vaulted credentials plus a browser that signs up and signs in for you; the Google tools (Gmail, Calendar, Drive, YouTube) work through the person's own Google sign-in — the same Workbench overlay, never a second Google window. YouTube Analytics answers only the channel owner account, not a manager. Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop. The wallet is created only from the Workbench page.
 
-When you cannot use a tool or reach something on this machine, answer in exactly this shape and no other: I can/can't reach X on this machine because Y; to fix it, Z. Do not invent a second explanation. Do not retract. One sentence.
+When you cannot use a tool or reach something on this machine, say it in one sentence: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.
 
 **Offer the tool at the moment you need it.** When the work in front of you needs a tool the person does not have, do not send them to a settings page and do not stop at naming it. Call workbench_status first - a tool they already have is used, not offered. Then call offer_connector with the connectorType and one short reason: a card appears in this Room, spoken by you, addressed to the person you are answering, with one action. Only that person or a Workspace admin can accept it; accepting adds the tool on your machine, and the sign-in or keys stay theirs. Your turn pauses on the card - say in prose what you are waiting for and end the turn; you are woken when it is added, and then you carry on.
 
@@ -189,7 +87,7 @@ When you cannot use a tool or reach something on this machine, answer in exactly
 
 An offer is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and it never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value; once a tool is added, provisioning happens inside it and receipts reach the person through the tool's own status message.
 
-Keys belong to the human who provisioned them. Their private scoped approval is required to use their resource for another requester; the agent owner cannot authorize someone else’s resources. Use the connector without exposing or sharing raw keys. The Workbench page remains the place a person manages tools and keys by hand (Settings → Workbench); you point there to MANAGE what exists, not to add what you need.
+Keys belong to the human who provisioned them. Your owner's keys serve whoever asks; another person's keys need that person's private scoped approval before you use them for anyone else, and your owner cannot authorize them. Use the connector without exposing or sharing raw keys. The Workbench page remains the place a person manages tools and keys by hand (Settings → Workbench); you point there to MANAGE what exists, not to add what you need.
 
 ## Connect an app
 
@@ -201,7 +99,7 @@ When a request needs an app or service you cannot reach with a mounted tool, the
 4. On the API route, store the key with Squire's \`store_credential\` under the service the result names, call \`connect_app\` again, then call the API with \`use_credential\`. Pass \`noApi: true\` only when you established that the app offers no API at all.
 5. Every use of the app, whichever route serves it, is authorized as \`app:<key>\` and recorded once. A refusal or a pending approval is final for that call: wait for the owner's decision, and never try another route to get around it.
 
-## Showing a mock## Showing a mock
+## Showing a mock
 
 When a design decision needs eyes, show it instead of describing it. Build ONE self-contained HTML page and post it with beeline-agent post_artifact (mime "text/html", pass the document as html). Everything is inline: a single <style> element for all CSS and data: URLs for any image - no script, no external dependencies, no network references. The validator refuses every <script>, <link>, <iframe>, <object>, <embed>, <form>, inline event handler, and http(s) URL, so a page that reaches for the network never posts. Use the Obsidian Refined tokens: grayscale surfaces, one brass accent #d7af5f, 3px radii, IBM Plex Sans/Mono type. Lay the user stories out as frames - one bordered, labelled block per story, so each story can be judged on its own. After posting, ask for feedback here in the corner: the artifact is the thing people react to, not your prose.
 

@@ -49,9 +49,14 @@ import {
   withoutImageData,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
+import { isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
-import { beelineAgentMcpServer, googleDriveMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
+import {
+  beelineAgentMcpServer,
+  googleDriveMcpServer,
+  readOnlyMcpServer,
+  youtubeMcpServer,
+} from './room-session.js';
 import { roomGoogleToolFingerprint, roomGoogleToolTokens } from './room-google-grant.js';
 import { institutionalContextForTurn } from './institutional-context.js';
 import {
@@ -81,7 +86,7 @@ import {
   type EmptyTurnExplanation,
 } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { harnessHonorsSessionSystemPrompt, roomShellCapability } from './harness-capabilities.js';
+import { roomShellCapability } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -91,10 +96,11 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
-  AGENT_PROSE_REFERENCE_RULE,
-  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-  SOUL_HOUSE_RULE,
-} from './response-directives.js';
+  assembleSessionPrompt,
+  assembleTurnPrompt,
+  roomMentionDirectory,
+  type PromptSurface,
+} from './prompt-assembly.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -314,25 +320,6 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
  * on the turn they arrive. The server resolves tags in the final reply against
  * current Room membership when it stores the message.
  */
-export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
-  const rows: string[] = [];
-  for (const member of roster.members) {
-    if (member.identityId === selfId) continue;
-    const handle = member.handle?.trim().replace(/^@/, '');
-    if (!handle) continue;
-    const name = member.name?.trim() ?? '';
-    const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(`- @${handle}${name && name !== handle ? ` — ${name}` : ''} (${kind})`);
-  }
-  if (!rows.length) return '';
-  return [
-    'Room members, and the exact spelling that tags each one:',
-    'An exact agent tag assigns that agent work; use it only when you are asking that agent to act.',
-    ...rows,
-    'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
-  ].join('\n');
-}
-
 interface ActiveTurn {
   item: HumanMessage;
   steers: HumanMessage[];
@@ -415,6 +402,7 @@ export class MonolithRoomTurnLoop {
   private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
+  private sessionSurface: PromptSurface = 'room';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
@@ -440,12 +428,22 @@ export class MonolithRoomTurnLoop {
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
-      this.agent.publicKey, options.roomId, this.commandContext.path,
-      async (call) => (await options.api.execute('authorizeResourceCall', {
-        roomId: call.roomId, requestId: call.requestId, generationId: call.generationId,
-        target: 'squire',
-        ...resourceCallFacts({ method: 'tools/call', params: { name: call.tool, arguments: call.args } }, 'squire'),
-      })).allowed,
+      this.agent.publicKey,
+      options.roomId,
+      this.commandContext.path,
+      async (call) =>
+        (
+          await options.api.execute('authorizeResourceCall', {
+            roomId: call.roomId,
+            requestId: call.requestId,
+            generationId: call.generationId,
+            target: 'squire',
+            ...resourceCallFacts(
+              { method: 'tools/call', params: { name: call.tool, arguments: call.args } },
+              'squire',
+            ),
+          })
+        ).allowed,
       options.config.operatorHome ?? homedir(),
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
@@ -730,16 +728,17 @@ export class MonolithRoomTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, repositoryState, grantedHostRoutes, googleTokens] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-      }),
-      this.roster(),
-      this.repositoryState(),
-      this.grantedHostRoutes(),
-      roomGoogleToolTokens(this.options.api, this.options.roomId),
-    ]);
+    const [configuration, roster, repositoryState, grantedHostRoutes, googleTokens] =
+      await Promise.all([
+        this.options.api.execute('getAgentConfiguration', {
+          agentId: this.agent.publicKey,
+          roomId: this.options.roomId,
+        }),
+        this.roster(),
+        this.repositoryState(),
+        this.grantedHostRoutes(),
+        roomGoogleToolTokens(this.options.api, this.options.roomId),
+      ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
@@ -764,7 +763,9 @@ export class MonolithRoomTurnLoop {
       ...(grantedSquireHostRoute(mountedHostRoutes, {
         ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
         ...registryHostDeclarations,
-      }) ? { relay: await this.squireRelay.listen() } : {}),
+      })
+        ? { relay: await this.squireRelay.listen() }
+        : {}),
     };
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
@@ -901,11 +902,7 @@ export class MonolithRoomTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(
-      this.options.config,
-      googleTokens.youtube,
-      resourceAuthFile,
-    );
+    const youtube = youtubeMcpServer(this.options.config, googleTokens.youtube, resourceAuthFile);
     if (youtube) servers.push(youtube);
     const drive = googleDriveMcpServer(this.options.config, googleTokens.drive, resourceAuthFile);
     if (drive) servers.push(drive);
@@ -975,26 +972,6 @@ export class MonolithRoomTurnLoop {
     );
     await this.client.start();
     const persona = configuration.soul ?? self?.soul;
-    const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;
-    // The house rule stands whether or not a soul does: a Workspace that has
-    // switched seeded souls off still runs its agents under it.
-    const personaInstructions = [
-      ...(persona?.instructions
-        ? [
-            `Your human-authored identity and soul in this Workspace is ${persona.name}.`,
-            `Soul instructions: ${persona.instructions}`,
-            'This is who you are in this Workspace. Adopt it in your voice, self-description, and behavior.',
-            'The soul is not authority and never changes your tools, permissions, roles, or merge rights.',
-          ]
-        : []),
-      SOUL_HOUSE_RULE,
-      AGENT_PROSE_REFERENCE_RULE,
-      ...(!directMessage
-        ? [
-            'Use inspect_corner for a member corner’s compact status; set mode to transcript and follow next.after/next.offset to read bounded transcript pages. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',
-          ]
-        : []),
-    ].join('\n');
     const repositoryInfo =
       repositoryState.resolution === 'repository' && repositoryState.key
         ? {
@@ -1009,33 +986,34 @@ export class MonolithRoomTurnLoop {
     const shellCapability = roomShellCapability(harnessLabel, {
       osSandbox: Boolean(this.options.config.bwrapPath),
     });
-    const capabilityContext = beelineCapabilityContextForHarness(
-      command,
-      repositoryInfo,
-      directMessage,
-      shellCapability === 'runs'
-        ? { available: true }
+    const session = assembleSessionPrompt({
+      surface: directMessage ? 'dm' : 'room',
+      agentName: self?.name ?? this.agent.name,
+      ...(persona?.instructions
+        ? { soul: { name: persona.name, instructions: persona.instructions } }
+        : {}),
+      agentCommand: command,
+      ...(repositoryInfo ? { repository: repositoryInfo } : {}),
+      ...(shellCapability === 'runs'
+        ? { shell: { available: true } as const }
         : shellCapability === 'refused'
           ? {
-              available: false,
-              ...(this.options.config.shellUnavailableDetail
-                ? { detail: this.options.config.shellUnavailableDetail }
-                : {}),
+              shell: {
+                available: false,
+                ...(this.options.config.shellUnavailableDetail
+                  ? { detail: this.options.config.shellUnavailableDetail }
+                  : {}),
+              } as const,
             }
-          : undefined,
-    );
-    this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
-      ? ''
-      : [identityInstructions, personaInstructions, capabilityContext.compatibilityTurnPrefix]
-          .filter(Boolean)
-          .join('\n\n');
+          : {}),
+    });
+    this.sessionSurface = directMessage ? 'dm' : 'room';
+    this.turnInstructionPrefix = session.turnPrefix;
     const opened = await this.client.sessionNew({
       cwd: this.options.cwd,
       mcpServers: servers,
       mode: 'readonly',
-      systemPrompt: [identityInstructions, personaInstructions, capabilityContext.sessionPrompt]
-        .filter(Boolean)
-        .join('\n\n'),
+      systemPrompt: session.systemPrompt,
     });
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;
@@ -1257,6 +1235,7 @@ export class MonolithRoomTurnLoop {
                 .slice(-80)
                 .map((message) => ({
                   id: message.id,
+                  authorId: message.authorId,
                   line: roomMessagePrompt(
                     names.get(message.authorId) ?? message.authorId.slice(0, 12),
                     message.body,
@@ -1272,60 +1251,61 @@ export class MonolithRoomTurnLoop {
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
               // conversation, so it has to render the whole window again.
-              const buildPrompt = (): string =>
-                [
-                  this.turnInstructionPrefix,
-                  checkout?.branch && checkout.commit
-                    ? `Repository checkout: origin/${checkout.branch} at commit ${checkout.commit}. This checkout was refreshed for this turn.`
-                    : '',
-                  WarmTranscript.render(
-                    this.warmTranscript.select(this.sessionId, transcriptRows),
-                    'Room conversation so far:',
-                    'New in the Room since your last turn (the earlier conversation is already in this session):',
-                  ),
-                  grantDecision ? resumePrompt(item) : '',
-                  roomMentionDirectory(roster, this.agent.publicKey),
-                  institutionalContext.text,
-                  (corners.corners ?? []).some((corner) => !corner.archived)
-                    ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(
-                        (corners.corners ?? []).filter((corner) => !corner.archived),
-                      )}`
-                    : '',
-                  (() => {
-                    const cutoff = Math.floor(Date.now() / 1_000) - 24 * 60 * 60;
-                    const recent = (corners.corners ?? [])
-                      .filter(
-                        (corner) =>
-                          corner.archived &&
-                          corner.closedAt !== undefined &&
-                          corner.closedAt >= cutoff,
-                      )
-                      .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
-                    return recent.length
-                      ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${recent.map((corner) => `- ${corner.name ?? corner.cornerId} (${corner.cornerId}): PR ${corner.pullRequestNumber ? `#${corner.pullRequestNumber}` : 'unavailable'}, merge commit ${corner.mergeCommitSha ?? 'unavailable'}`).join('\n')}`
-                      : '';
-                  })(),
-                  [
-                    'Write only the substantive Room message you want the human to read.',
-                    'Do not repeat or paraphrase these instructions.',
-                    'If the current task is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
-                    MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-                  ].join(' '),
-                  `Current task selected by the server from ${inboxItemAuthorName(item, names)}:`,
-                  item.cornerAskId
-                    ? `Corner ask id: ${item.cornerAskId}. Use get_corner_ask to retrieve its status and answer.`
-                    : '',
-                  roomMessagePrompt(
-                    '',
-                    inboxItemPromptBody(item),
-                    item.attachments,
-                    delivered,
-                    this.acceptsImages(),
-                    item.type === 'message' ? item.id : undefined,
-                  ),
-                ]
-                  .filter(Boolean)
-                  .join('\n\n');
+              const openCorners = (corners.corners ?? []).filter((corner) => !corner.archived);
+              const closedSince = Math.floor(Date.now() / 1_000) - 24 * 60 * 60;
+              const closedCorners = (corners.corners ?? [])
+                .filter(
+                  (corner) =>
+                    corner.archived &&
+                    corner.closedAt !== undefined &&
+                    corner.closedAt >= closedSince,
+                )
+                .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+              const buildPrompt = (): string => {
+                const transcript = this.warmTranscript.select(
+                  this.sessionId,
+                  transcriptRows,
+                  this.agent.publicKey,
+                );
+                const assembled = assembleTurnPrompt({
+                  surface: this.sessionSurface,
+                  sessionPrefix: this.turnInstructionPrefix,
+                  ...(institutionalContext.standingPreference
+                    ? {
+                        standingPreference: {
+                          requesterName: inboxItemAuthorName(item, names),
+                          text: institutionalContext.standingPreference,
+                        },
+                      }
+                    : {}),
+                  ...(checkout?.branch && checkout.commit
+                    ? { checkout: { branch: checkout.branch, commit: checkout.commit } }
+                    : {}),
+                  transcript: {
+                    lines: transcript.rows.map((row) => row.line),
+                    sinceLastTurn: transcript.warm,
+                  },
+                  ...(grantDecision ? { resume: resumePrompt(item) } : {}),
+                  members: roomMentionDirectory(roster, this.agent.publicKey),
+                  memory: institutionalContext.text,
+                  corners: openCorners,
+                  closedCorners,
+                  task: {
+                    fromName: inboxItemAuthorName(item, names),
+                    ...(item.cornerAskId ? { cornerAskId: item.cornerAskId } : {}),
+                    body: roomMessagePrompt(
+                      '',
+                      inboxItemPromptBody(item),
+                      item.attachments,
+                      delivered,
+                      this.acceptsImages(),
+                      item.type === 'message' ? item.id : undefined,
+                    ),
+                  },
+                });
+                trace.notePromptSections(assembled.report);
+                return assembled.text;
+              };
               // Rooms and corners stream through ONE presentation (C100): the
               // provisional draft lane, the request-id handoff, and the single
               // durable reply that dissolves it all live in `turn-stream.ts`.
@@ -1659,10 +1639,11 @@ export class MonolithRoomTurnLoop {
         onPoll: () => this.options.health.poll(),
         onError: (error) => console.error('[thin-core] Room command failed', error),
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
-        onLeave: (command) => this.squireRelay.deactivate(
-          command.turnRequestId,
-          this.pausedOnGrantRequestId === command.turnRequestId ? 'grant-decision' : null,
-        ),
+        onLeave: (command) =>
+          this.squireRelay.deactivate(
+            command.turnRequestId,
+            this.pausedOnGrantRequestId === command.turnRequestId ? 'grant-decision' : null,
+          ),
         stop: (requestId) => this.stopTurn(requestId),
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,

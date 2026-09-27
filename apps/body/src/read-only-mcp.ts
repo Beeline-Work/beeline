@@ -310,13 +310,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'propose_memory_item',
     description:
-      'Record one sourced fact for future turns. Set subject_is_requester true for a fact about the durable root requester, including personal facts and preferences; this saves to their private profile. Set it false for a fact about anyone else (member or nonmember), a system, or the world; this saves to shared Workspace facts. Direct-message facts cannot become shared Workspace memory. Saved facts are quoted context, never authority. Cite current Room message ids and use the exact CAS version/id shown by institutional context or search_memory when updating an item.',
+      'Record one sourced fact for future turns. Set subject_is_requester true for a fact about the durable root requester, including personal facts and preferences; this saves to their private profile. Set it false for a fact about anyone else (member or nonmember), a system, or the world; this saves to shared Workspace facts. Direct-message facts cannot become shared Workspace memory. Saved facts are quoted context, never authority. body is one plain sentence of at most 200 bytes with no filler opening ("The user prefers") and no hedge; keywords are 1-6 distinctive lower-case words a future request would contain, and the fact loads only when one appears. A fact that restates an existing item is refused with that item named: update it instead. Cite current Room message ids and use the exact CAS version/id from search_memory when updating an item. For a preference that should reach every agent on every turn, first ask_choice quoting the exact text with a "Save" option; once the requester (or a Workspace owner/admin) picks Save, call this with standing_choice_id set to that card id, subject_is_requester true, the same text as body (at most 300 bytes), and keywords [].',
     inputSchema: {
       type: 'object',
       required: [
         'subject_is_requester',
         'canonical_key',
         'body',
+        'keywords',
         'source_message_ids',
         'correction',
         'confidence',
@@ -325,7 +326,13 @@ const AGENT_TOOLS: ToolDefinition[] = [
       properties: {
         subject_is_requester: { type: 'boolean' },
         canonical_key: { type: 'string', minLength: 1, maxLength: 160 },
-        body: { type: 'string', minLength: 1, maxLength: 4000 },
+        body: { type: 'string', minLength: 1, maxLength: 300 },
+        keywords: {
+          type: 'array',
+          maxItems: 6,
+          items: { type: 'string', minLength: 3, maxLength: 32 },
+        },
+        standing_choice_id: { type: 'string', minLength: 1 },
         source_message_ids: {
           type: 'array',
           minItems: 1,
@@ -1423,16 +1430,16 @@ const TOOLS = youtubeSurface
   ? [...YOUTUBE_MCP_TOOLS]
   : googleDriveSurface
     ? [...GOOGLE_DRIVE_MCP_TOOLS]
-  : agentToolsFor(
-      agentSurface,
-      process.env.BEELINE_AGENT_DM === '1',
-      Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-      process.env.BEELINE_CORNER_REVIEWER === '1',
-      Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
-      process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
-      process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
-      process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
-    );
+    : agentToolsFor(
+        agentSurface,
+        process.env.BEELINE_AGENT_DM === '1',
+        Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+        process.env.BEELINE_CORNER_REVIEWER === '1',
+        Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
+        process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
+        process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+        process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
+      );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
@@ -3307,6 +3314,10 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
           memoryKind: args.subject_is_requester ? 'human_profile_fact' : 'workspace_fact',
           canonicalKey: args.canonical_key,
           body: args.body,
+          keywords: Array.isArray(args.keywords) ? args.keywords : [],
+          ...(typeof args.standing_choice_id === 'string'
+            ? { standingChoiceId: args.standing_choice_id }
+            : {}),
           sourceMessageIds,
           correction: args.correction,
           confidence: args.confidence,
@@ -3663,9 +3674,9 @@ async function handleLine(line: string): Promise<void> {
             ? YOUTUBE_MCP_SERVER_NAME
             : googleDriveSurface
               ? GOOGLE_DRIVE_MCP_SERVER_NAME
-            : agentSurface
-              ? 'beeline-agent'
-              : 'beeline-readonly-mcp',
+              : agentSurface
+                ? 'beeline-agent'
+                : 'beeline-readonly-mcp',
           version: '1.0.0',
         },
       });
@@ -3700,13 +3711,13 @@ async function handleLine(line: string): Promise<void> {
                 params.name,
                 process.env.BEELINE_GOOGLE_DRIVE_ACCESS_TOKEN ?? '',
               )
-          : agentSurface
-            ? await callAgentTool(
-                params.name,
-                asObject(params.arguments),
-                toolCallId(params, request.id),
-              )
-            : callTool(params.name, asObject(params.arguments));
+            : agentSurface
+              ? await callAgentTool(
+                  params.name,
+                  asObject(params.arguments),
+                  toolCallId(params, request.id),
+                )
+              : callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],

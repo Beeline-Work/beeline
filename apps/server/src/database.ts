@@ -14,6 +14,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
@@ -22,15 +23,18 @@ export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
 export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
+export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export const APP_DATABASE_NAME = 'beeline_app';
 export const ENRICHMENT_DATABASE_NAME = 'beeline_enrichment';
 export const LONG_RUNNING_DATABASE_NAME = 'beeline_long_running';
 export const DIAGNOSTICS_DATABASE_NAME = 'beeline_diagnostics';
+export const MIGRATION_DATABASE_NAME = 'beeline_migration';
 
 export function postgresPoolConfig(
   connectionString: string,
   maximumConnections: number,
-  mode: 'app' | 'enrichment' | 'long-running' | 'diagnostics' = 'app',
+  mode: 'app' | 'enrichment' | 'long-running' | 'diagnostics' | 'migration' = 'app',
 ): PoolConfig {
   return {
     connectionString,
@@ -47,6 +51,8 @@ export function postgresPoolConfig(
           ? LONG_RUNNING_DATABASE_NAME
           : mode === 'diagnostics'
             ? DIAGNOSTICS_DATABASE_NAME
+            : mode === 'migration'
+              ? MIGRATION_DATABASE_NAME
             : APP_DATABASE_NAME,
     ...(mode === 'app'
       ? {
@@ -63,7 +69,12 @@ export function postgresPoolConfig(
               statement_timeout: HEALTH_STATEMENT_TIMEOUT_MS,
               connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
             }
-          : {
+          : mode === 'migration'
+            ? {
+                connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+                options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+              }
+            : {
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };
@@ -218,7 +229,7 @@ export class PostgresDatabase implements ClosableDatabase {
     connectionString: string,
     maximumConnections = 5,
     options: PostgresDatabaseOptions & {
-      mode?: 'app' | 'enrichment' | 'long-running' | 'diagnostics';
+      mode?: 'app' | 'enrichment' | 'long-running' | 'diagnostics' | 'migration';
     } = {},
   ) {
     this.#pool =
@@ -2061,26 +2072,36 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 `;
 
 export async function migrate(database: SqlDatabase): Promise<void> {
-  await database.query(SCHEMA);
-  await database.query(
+  const ddl = (name: string, sql: string) =>
+    retryMigrationStep(name, async () => { await database.query(sql); });
+  const ddlScript = async (name: string, sql: string) => {
+    const statements = splitMigrationStatements(sql);
+    for (const [index, statement] of statements.entries())
+      await ddl(`${name} ${index + 1}/${statements.length}`, statement);
+  };
+  await ddlScript('server schema', SCHEMA);
+  await ddl('wallet delegation',
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
-  await database.query(AGENT_COMMAND_SCHEMA);
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
+  await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await retryMigrationStep('message cursor index', () => createIndexConcurrently(
+    database, 'messages_room_cursor_idx',
+    `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,
-  );
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_live_activity_idx
+  ));
+  await retryMigrationStep('live activity index', () => createIndexConcurrently(
+    database, 'messages_live_activity_idx',
+    `CREATE INDEX CONCURRENTLY messages_live_activity_idx
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
-  );
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_unread_cursor_idx
+  ));
+  await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
+    database, 'messages_unread_cursor_idx',
+    `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx
      ON messages(room_id,created_at,id) INCLUDE(author_id)
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
-  );
+  ));
   // Without this the drained backfill's first probe is a full heap read of the
   // busiest table on EVERY release, including every release that has nothing
   // left to fill. It is not empty once the backfill converges and is not meant
@@ -2088,29 +2109,30 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   // which is every pre-window row the backfill deliberately skips below. The
   // drain reads newest-first and stops at the window edge, so those entries are
   // never visited — they are exactly what makes a converged probe free.
-  await createIndexConcurrently(
+  await retryMigrationStep('search backfill index', () => createIndexConcurrently(
     database,
     'messages_search_document_backfill_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_backfill_idx
      ON messages(created_at DESC)
      WHERE search_document IS NULL AND presentation='message'`,
-  );
+  ));
   const searchDocuments = await backfillMessageSearchDocuments(database);
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await createIndexConcurrently(
+  await retryMigrationStep('search document index', () => createIndexConcurrently(
     database,
     'messages_search_document_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_idx
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
-  );
+  ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_grant_request_idx
+  await retryMigrationStep('grant request index', () => createIndexConcurrently(
+    database, 'messages_grant_request_idx',
+    `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
-  );
-  await database.query(POSTGRES_LIVE_SCHEMA);
+  ));
+  await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);
   const blockers = await reconcileCornerMergeBlockers(database);

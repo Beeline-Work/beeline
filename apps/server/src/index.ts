@@ -1,5 +1,5 @@
 import { assertSchemaCurrent, markSchemaCurrent, migrate, PostgresDatabase } from './database.js';
-import { retryOnDeadlock } from './migration-retry.js';
+import { retryMigrationStep } from './migration-retry.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -45,11 +45,11 @@ function required(name: string) {
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
-    mode: 'long-running',
+    mode: 'migration',
   });
   try {
-    await retryOnDeadlock(async () => {
-      await migrate(database);
+    await migrate(database);
+    await retryMigrationStep('auth schema', async () => {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
     // Armed only by the release owner, once the create-or-join onboarding is
@@ -61,7 +61,7 @@ async function runReleaseMigration(): Promise<void> {
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
-    await markSchemaCurrent(database);
+    await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
     console.log('[migration] server and auth schemas are current');
   } finally {
     await database.close();

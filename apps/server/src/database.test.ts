@@ -21,6 +21,8 @@ import {
   markSchemaCurrent,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
+  MIGRATION_LOCK_TIMEOUT_MS,
+  MIGRATION_STATEMENT_TIMEOUT_MS,
   type SqlDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
@@ -160,6 +162,10 @@ describe('a terminated checked-out connection never wedges the pool', () => {
     expect(postgresPoolConfig('postgres://app', 1, 'diagnostics')).toMatchObject({
       connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
       keepAlive: true,
+    });
+    expect(postgresPoolConfig('postgres://app', 1, 'migration')).toMatchObject({
+      application_name: 'beeline_migration',
+      options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
     });
   });
 });

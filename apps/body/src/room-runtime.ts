@@ -525,6 +525,9 @@ export class RoomRuntimeCoordinator {
   private readonly running = new Map<string, RunningRoom>();
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
+  /** Idle corners listen for durable commands without obtaining a token or checkout. */
+  private readonly idleCornerSubscriptions = new Map<string, () => void>();
+  private readonly pendingCornerCommands = new Set<string>();
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -555,7 +558,10 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
-  private readonly repositoryStateCache = new Map<string, { value: RoomRepositoryStateResult; until: number }>();
+  private readonly repositoryStateCache = new Map<
+    string,
+    { value: RoomRepositoryStateResult; until: number }
+  >();
   private readonly repositoryStateFlights = new Map<string, Promise<RoomRepositoryStateResult>>();
   private readonly tokenCache = new Map<string, RoomGitHubTokenResult>();
   private readonly tokenFlights = new Map<string, Promise<RoomGitHubTokenResult>>();
@@ -824,6 +830,10 @@ export class RoomRuntimeCoordinator {
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
     await this.sweepArchivedCornerWorktrees(archivedCorners);
+    for (const cornerId of this.idleCornerSubscriptions.keys()) {
+      if (desired.has(cornerId)) continue;
+      this.unwatchCorner(cornerId);
+    }
     for (const [channelId, running] of [...this.running]) {
       if (desired.has(channelId)) continue;
       const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
@@ -852,7 +862,7 @@ export class RoomRuntimeCoordinator {
       [...desiredCorners.values()],
       ROOM_JOIN_CONCURRENCY,
       async (corner) => {
-        if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
+        if (!this.running.has(corner.cornerId)) await this.watchCorner(corner);
       },
     );
     for (const [roomId, running] of this.running)
@@ -901,6 +911,7 @@ export class RoomRuntimeCoordinator {
       return;
     }
     if (event.removed === true) {
+      this.unwatchCorner(roomId);
       const running = this.running.get(roomId);
       if (running) await this.stopRunning(roomId, running);
       this.monolithCornerParents.delete(roomId);
@@ -910,7 +921,10 @@ export class RoomRuntimeCoordinator {
     // ones included, and the reviewer projection rewrites every row again. An
     // archived Room or corner is nothing to start, so the event is dropped here
     // rather than after a restore read per row.
-    if (event.archived === true) return;
+    if (event.archived === true) {
+      this.unwatchCorner(roomId);
+      return;
+    }
     this.roomRemovalConfirmations.delete(roomId);
     if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
     if (event.parentRoomId) {
@@ -924,16 +938,11 @@ export class RoomRuntimeCoordinator {
         this.wakeDiscovery();
         return;
       }
-      await this.startCorner({
+      await this.watchCorner({
         cornerId: roomId,
         parentRoomId: event.parentRoomId,
         openedBy: event.openedBy,
       });
-      // `startCorner` reports its own failures and resolves either way, so a
-      // transient token or clone fault leaves nothing running and nothing
-      // scheduled. Arm the fast reconcile the pushed Room path already gets
-      // from its throw, so the retry is now rather than a heartbeat away.
-      if (!this.running.has(roomId)) this.wakeDiscovery();
       return;
     }
     await this.startRoom(roomId);
@@ -1333,6 +1342,58 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async watchCorner(corner: DesiredCorner): Promise<void> {
+    const cornerId = corner.cornerId;
+    if (this.running.has(cornerId)) return;
+    if (this.idleCornerSubscriptions.has(cornerId)) {
+      if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+      return;
+    }
+    if (!this.options.daemonApi.liveSubscribe) {
+      await this.startCorner(corner);
+      if (!this.running.has(cornerId)) this.wakeDiscovery();
+      return;
+    }
+    this.idleCornerSubscriptions.set(cornerId, () => undefined);
+    const release = this.options.daemonApi.liveSubscribe(
+      cornerId,
+      undefined,
+      undefined,
+      (connected, capabilities) => {
+        if (connected && capabilities?.pushIntake !== true) {
+          // A rolling old server cannot deliver command snapshots; retain
+          // the pre-lazy startup path until it can.
+          this.pendingCornerCommands.add(cornerId);
+          void this.activateWatchedCorner(corner, true);
+        }
+      },
+      undefined,
+      (commands) => {
+        if (!commands.length) return;
+        this.pendingCornerCommands.add(cornerId);
+        void this.activateWatchedCorner(corner, true);
+      },
+    );
+    this.idleCornerSubscriptions.set(cornerId, release);
+    if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+  }
+
+  private unwatchCorner(cornerId: string): void {
+    this.idleCornerSubscriptions.get(cornerId)?.();
+    this.idleCornerSubscriptions.delete(cornerId);
+    this.pendingCornerCommands.delete(cornerId);
+  }
+
+  private async activateWatchedCorner(corner: DesiredCorner, wakeOnFailure = false): Promise<void> {
+    if (this.stopped || !this.idleCornerSubscriptions.has(corner.cornerId)) return;
+    await this.startCorner(corner);
+    if (this.running.has(corner.cornerId)) {
+      this.unwatchCorner(corner.cornerId);
+    } else if (wakeOnFailure) {
+      this.wakeDiscovery();
+    }
+  }
+
   private async cornerRepositoryToken(
     roomId: string,
   ): Promise<{ token: string; expiresAt: number }> {
@@ -1382,8 +1443,7 @@ export class RoomRuntimeCoordinator {
         this.tokenCache.set(roomId, value);
       return value;
     } finally {
-      if (this.tokenFlights.get(roomId) === flight)
-        this.tokenFlights.delete(roomId);
+      if (this.tokenFlights.get(roomId) === flight) this.tokenFlights.delete(roomId);
     }
   }
 
@@ -1605,6 +1665,7 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.stopped = true;
+    for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
     this.options.daemonApi.closeLive?.();
     this.pendingMembershipEvents.clear();
     const deadlineAt = Math.min(

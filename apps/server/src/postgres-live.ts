@@ -352,6 +352,10 @@ const wait = (milliseconds: number) =>
 export class PostgresLiveListener {
   private stopped = false;
   private active?: LivePgClient;
+  private readonly projectionQueue: Array<{ raw: string; queuedAt: number; key?: string }> = [];
+  private activeProjections = 0;
+  private droppedProjections = 0;
+  private needsProjectionResync = false;
   private readonly memoryDue = new Map<string, { roomId: string; dueAt: number }>();
   private memoryDueTimer?: NodeJS.Timeout;
   private readonly registryDue = new Map<string, { connectorId: string; dueAt: number }>();
@@ -446,6 +450,60 @@ export class PostgresLiveListener {
     private readonly retryDelayMs = 1_000,
   ) {}
 
+  projectionHealth() {
+    return {
+      active: this.activeProjections,
+      queued: this.projectionQueue.length,
+      oldestQueuedAgeMs: this.projectionQueue[0]
+        ? Math.max(0, Date.now() - this.projectionQueue[0].queuedAt) : null,
+      dropped: this.droppedProjections,
+      resyncPending: this.needsProjectionResync,
+    };
+  }
+
+  private enqueueProjection(raw: string | undefined): void {
+    if (this.stopped || !raw) return;
+    const payload = decodePayload(raw);
+    if (!payload) return;
+    // These notifications only ask a helper to refresh the latest state or
+    // drain durable pending operations; the newest one supersedes earlier ones.
+    const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
+        payload.agentId
+      ? `${payload.table}:${payload.agentId}`
+      : (payload.table === 'github_installations' && payload.installationId) ||
+          (payload.table === 'github_repositories' && payload.repositoryId)
+        ? `${payload.table}:${payload.installationId ?? payload.repositoryId}`
+        : undefined;
+    if (key) {
+      const queued = this.projectionQueue.find((item) => item.key === key);
+      if (queued) { queued.raw = raw; return; }
+    }
+    if (this.projectionQueue.length >= 512) {
+      this.droppedProjections++;
+      this.needsProjectionResync = true;
+      return;
+    }
+    this.projectionQueue.push({ raw, queuedAt: Date.now(), ...(key ? { key } : {}) });
+    this.drainProjections();
+  }
+
+  private drainProjections(): void {
+    while (!this.stopped && this.activeProjections < 2 && this.projectionQueue.length) {
+      const next = this.projectionQueue.shift()!;
+      this.activeProjections++;
+      void this.rebroadcast(next.raw).catch((error) =>
+        console.error('[live-listener] notification failed', error),
+      ).finally(() => {
+        this.activeProjections--;
+        if (this.projectionQueue.length) this.drainProjections();
+        else if (!this.stopped && this.activeProjections === 0 && this.needsProjectionResync) {
+          this.needsProjectionResync = false;
+          this.live.resync();
+        }
+      });
+    }
+  }
+
   static forConnectionString(
     connectionString: string,
     database: SqlDatabase,
@@ -468,9 +526,7 @@ export class PostgresLiveListener {
       this.active = client;
       client.on('notification', (message) => {
         if (message.channel !== POSTGRES_LIVE_CHANNEL) return;
-        void this.rebroadcast(message.payload).catch((error) =>
-          console.error('[live-listener] notification failed', error),
-        );
+        this.enqueueProjection(message.payload);
       });
       client.on('error', (error) => {
         console.error('[live-listener] connection failed', error.message);
@@ -500,6 +556,7 @@ export class PostgresLiveListener {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.projectionQueue.length = 0;
     if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
     if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);

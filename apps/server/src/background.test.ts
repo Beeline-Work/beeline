@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   BackgroundLeader,
+  BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
   PUSH_DELIVERY_CONCURRENCY,
@@ -24,6 +25,28 @@ import { ensureSystemDirectMessageRoom } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 describe('background advisory-lock ownership', () => {
+  it('records a failed job and still runs the next independent job', async () => {
+    let clock = 1_000;
+    const runner = new BackgroundJobRunner(() => clock);
+    const later = vi.fn(async () => { clock += 5; });
+    expect(await runner.run('push', async () => {
+      clock += 7;
+      throw new Error('provider unavailable');
+    })).toEqual({ ok: false });
+    await runner.run('schedules', later);
+    expect(later).toHaveBeenCalledOnce();
+    expect(runner.snapshot()).toEqual({
+      push: { lastSuccessAt: null, lastErrorAt: 1_007,
+        lastDurationMs: 7, consecutiveFailures: 1 },
+      schedules: { lastSuccessAt: 1_012, lastErrorAt: null,
+        lastDurationMs: 5, consecutiveFailures: 0 },
+    });
+    await runner.run('push', async () => { clock += 2; });
+    expect(runner.snapshot().push).toMatchObject({
+      lastSuccessAt: 1_014, consecutiveFailures: 0,
+    });
+  });
+
   it('releases and reconnects after its dedicated connection health check fails', async () => {
     let connections = 0;
     let released = false;

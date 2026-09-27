@@ -7,6 +7,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
   BackgroundLeader,
+  BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
@@ -276,11 +277,14 @@ async function main() {
       ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
       : {}),
   });
+  const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
     googleOAuth,
     registryMcpOAuth,
     healthDatabase,
+    backgroundHealth: () => backgroundJobs.snapshot(),
+    liveBridgeHealth: () => liveListener.projectionHealth(),
     auth,
     phone,
     daemon,
@@ -311,38 +315,28 @@ async function main() {
   const leader = new BackgroundLeader(
     jobsDatabase,
     async () => {
-      if (push) await push.runIfDue();
-      await schedules.runOnce();
-      await choiceExpiry.runOnce();
+      if (push) await backgroundJobs.run('push', () => push.runIfDue());
+      await backgroundJobs.run('schedules', () => schedules.runOnce());
+      await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
-        await mediaExpiry.runOnce(now);
-        await runMaintenance(jobsDatabase);
-        try {
-          await runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
+        await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
+        await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        await backgroundJobs.run('institutional-curator', () =>
+          runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
-          });
-        } catch (error) {
-          console.error('[server] institutional curator cycle failed:', error);
-        }
+          }));
         if (githubJobs) {
-          try {
-            await githubJobs.refreshUnknownMergeability();
-          } catch (error) {
-            console.error('[server] mergeability refresh failed:', error);
-          }
-          try {
-            await githubJobs.reconcileMergedCorners();
-          } catch (error) {
-            console.error('[server] merged corner reconciliation failed:', error);
-          }
+          await backgroundJobs.run('github-mergeability', () => githubJobs.refreshUnknownMergeability());
+          await backgroundJobs.run('github-merged-corners', () => githubJobs.reconcileMergedCorners());
         }
       }
-      const nextDue = await schedules.nextDueAt();
+      const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
       return Math.min(
         reconciliationMs,
-        ...(nextDue ? [Math.max(0, nextDue.getTime() - Date.now())] : []),
+        ...(nextDue.ok && nextDue.value
+          ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
         ...(push ? [push.millisecondsUntilNextRun()] : []),
       );
     },

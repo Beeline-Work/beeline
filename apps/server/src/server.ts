@@ -59,6 +59,10 @@ export interface ServerOptions {
   /** A one-connection app-role pool kept outside request traffic so health
    * remains observable while the main pool is saturated. */
   healthDatabase?: SqlDatabase;
+  /** Per-job last success, duration, and error counters from the leader. */
+  backgroundHealth?: () => Record<string, unknown>;
+  /** PostgreSQL notification projection pressure for this server instance. */
+  liveBridgeHealth?: () => Record<string, unknown>;
   auth: TokenAuth;
   phone: PhoneService;
   daemon: DaemonService;
@@ -987,6 +991,8 @@ async function route(
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
       },
       live: liveHealth(),
+      ...(options.backgroundHealth ? { background: options.backgroundHealth() } : {}),
+      ...(options.liveBridgeHealth ? { liveBridge: options.liveBridgeHealth() } : {}),
     });
     return;
   }

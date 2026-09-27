@@ -87,6 +87,90 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('bounds notification DB projections and coalesces a repeated repository wake', async () => {
+    let releaseReads!: () => void;
+    const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });
+    let active = 0;
+    let peak = 0;
+    let repositoryReads = 0;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM rooms WHERE repository_key')) {
+        active++;
+        peak = Math.max(peak, active);
+        await readBarrier;
+        active--;
+        repositoryReads++;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const client = new EventEmitter() as EventEmitter & LivePgClient;
+    let listening = false;
+    client.connect = async () => undefined;
+    client.query = async () => { listening = true; };
+    client.end = async () => { client.emit('end'); };
+    const live = new LiveHub();
+    const listener = new PostgresLiveListener(
+      { query, transaction: vi.fn() }, live, () => client, 1,
+    );
+    listeners.push(listener);
+    const running = listener.run();
+    await eventually(() => listening);
+    for (let index = 0; index < 15; index++)
+      client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+        table: 'github_repositories', operation: 'UPDATE', roomId: ROOM,
+        repositoryId: String(index),
+      }) });
+    expect(listener.projectionHealth()).toMatchObject({ active: 2, queued: 13 });
+    client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+      table: 'github_repositories', operation: 'UPDATE', roomId: ROOM, repositoryId: '5',
+    }) });
+    expect(listener.projectionHealth().queued).toBe(13);
+    releaseReads();
+    await eventually(() => repositoryReads === 15);
+    expect(peak).toBe(2);
+    expect(listener.projectionHealth()).toMatchObject({ active: 0, queued: 0, dropped: 0 });
+    await listener.stop();
+    await running;
+  });
+
+  it('sends one recovery resync after a saturated notification backlog drains', async () => {
+    let releaseReads!: () => void;
+    const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM rooms WHERE repository_key')) await readBarrier;
+      return { rows: [], rowCount: 0 };
+    });
+    const client = new EventEmitter() as EventEmitter & LivePgClient;
+    let listening = false;
+    client.connect = async () => undefined;
+    client.query = async () => { listening = true; };
+    client.end = async () => { client.emit('end'); };
+    const live = new LiveHub();
+    const resync = vi.fn();
+    live.subscribeResync(resync);
+    const listener = new PostgresLiveListener(
+      { query, transaction: vi.fn() }, live, () => client, 1,
+    );
+    listeners.push(listener);
+    const running = listener.run();
+    await eventually(() => listening && resync.mock.calls.length === 1);
+    resync.mockClear();
+    for (let index = 0; index < 520; index++)
+      client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+        table: 'github_repositories', operation: 'UPDATE', roomId: ROOM,
+        repositoryId: String(index),
+      }) });
+    expect(listener.projectionHealth()).toMatchObject({
+      active: 2, queued: 512, dropped: 6, resyncPending: true,
+    });
+    releaseReads();
+    await eventually(() => listener.projectionHealth().active === 0 &&
+      listener.projectionHealth().queued === 0);
+    expect(resync).toHaveBeenCalledOnce();
+    await listener.stop();
+    await running;
+  });
+
   it('fans a committed write from server A to a subscriber on server B', async () => {
     const liveA = new LiveHub();
     const liveB = new LiveHub();

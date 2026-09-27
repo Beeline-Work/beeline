@@ -614,7 +614,8 @@ export class BackgroundLeader {
               : this.reconciliationMs,
           );
         }
-      } catch {
+      } catch (error) {
+        console.error('[background] leader cycle failed', error);
         await this.wait();
       } finally {
         this.#client?.release(true);
@@ -653,6 +654,45 @@ export class BackgroundLeader {
       }
       this.#wake = done;
     });
+  }
+}
+
+export interface BackgroundJobHealth {
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastDurationMs: number | null;
+  consecutiveFailures: number;
+}
+
+/** One advisory leader, independent failure boundaries for each job class. */
+export class BackgroundJobRunner {
+  readonly #health = new Map<string, BackgroundJobHealth>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  snapshot(): Record<string, BackgroundJobHealth> {
+    return Object.fromEntries([...this.#health].map(([name, health]) => [name, { ...health }]));
+  }
+
+  async run<T>(name: string, work: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+    const health = this.#health.get(name) ?? {
+      lastSuccessAt: null, lastErrorAt: null, lastDurationMs: null, consecutiveFailures: 0,
+    };
+    this.#health.set(name, health);
+    const startedAt = this.now();
+    try {
+      const value = await work();
+      health.lastSuccessAt = this.now();
+      health.consecutiveFailures = 0;
+      return { ok: true, value };
+    } catch (error) {
+      health.lastErrorAt = this.now();
+      health.consecutiveFailures++;
+      console.error(`[background] ${name} failed`, error);
+      return { ok: false };
+    } finally {
+      health.lastDurationMs = Math.max(0, this.now() - startedAt);
+    }
   }
 }
 

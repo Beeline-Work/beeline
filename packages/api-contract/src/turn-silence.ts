@@ -20,6 +20,7 @@ export const TURN_SILENCE_KINDS = [
   'not-signed-in',
   'workspace-failure',
   'helper-out-of-date',
+  'update-interrupted',
   'offline',
 ] as const;
 export type TurnSilenceKind = (typeof TURN_SILENCE_KINDS)[number];
@@ -32,6 +33,7 @@ export const TURN_RECEIPT_REASON_KINDS = [
   'not-signed-in',
   'workspace-failure',
   'helper-out-of-date',
+  'update-interrupted',
   'offline',
   'model-selection-unavailable',
 ] as const;
@@ -185,7 +187,7 @@ export function isStandingWorkspaceConfigurationFault(text: string): boolean {
  * startCorner can answer the original request without a helper-process restart.
  */
 export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason = ''): boolean {
-  if (kind === 'hiccup' || kind === 'offline') return false;
+  if (kind === 'hiccup' || kind === 'offline' || kind === 'update-interrupted') return false;
   if (kind === 'workspace-failure') return isStandingWorkspaceConfigurationFault(reason);
   return true;
 }
@@ -248,6 +250,8 @@ export function phraseTurnSilence(
         'could not answer',
         'her helper is out of date. Run `beeline start` on her machine.',
       );
+    case 'update-interrupted':
+      return capLine(agent, 'was interrupted by an update', 'her request is queued to resume.');
     case 'offline':
       return capLine(
         agent,

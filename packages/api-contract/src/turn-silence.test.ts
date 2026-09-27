@@ -67,6 +67,9 @@ describe('turn silence classification', () => {
       'helper-out-of-date',
     );
     expect(classifyTurnSilence("Candy is offline - her helper isn't running").kind).toBe('offline');
+    expect(classifyTurnSilence('old process stopped', 'update-interrupted').kind).toBe(
+      'update-interrupted',
+    );
   });
 
   it('lets an explicit receipt kind win over ambiguous text', () => {
@@ -91,6 +94,7 @@ describe('turn silence phrasing', () => {
       phraseTurnSilence('Candy', { kind: 'workspace-failure', repo: 'acme/widgets' }),
       phraseTurnSilence('Candy', { kind: 'helper-out-of-date' }),
       phraseTurnSilence('Candy', { kind: 'offline' }),
+      phraseTurnSilence('Candy', { kind: 'update-interrupted' }),
     ];
     expect(lines.map((line) => `Candy ${line.verb} · ${line.consequence}`)).toEqual([
       'Candy could not answer · the turn stalled. Restarting her and resending your message.',
@@ -100,6 +104,7 @@ describe('turn silence phrasing', () => {
       "Candy could not answer · she couldn't get a working copy of acme/widgets. Check the repository is reachable.",
       'Candy could not answer · her helper is out of date. Run `beeline start` on her machine.',
       "Candy is offline · her helper isn't running. Run `beeline start` on her machine.",
+      'Candy was interrupted by an update · her request is queued to resume.',
     ]);
     for (const line of lines) {
       expect(`Candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
@@ -155,6 +160,7 @@ describe('pending failed-command completion', () => {
       ),
     ).toBe(false);
     expect(shouldCompletePendingFailedCommand('hiccup', 'the turn stalled')).toBe(false);
+    expect(shouldCompletePendingFailedCommand('update-interrupted')).toBe(false);
     expect(shouldCompletePendingFailedCommand('wrong-model')).toBe(true);
   });
 });

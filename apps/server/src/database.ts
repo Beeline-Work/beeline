@@ -112,6 +112,9 @@ export interface SqlDatabase {
    *  the field was permanently null in production — a monitor that could not
    *  fail. This one is scoped to this process's own pool and says so. */
   oldestActiveQueryAgeMs?(): Promise<number | null>;
+  /** Fires once after an app-pool failure is followed by a successful read.
+   * Live subscribers use it to retry discovery without closing their socket. */
+  onRecovery?(listener: () => void): () => void;
 }
 
 export interface ClosableDatabase extends SqlDatabase {
@@ -174,7 +177,32 @@ export class PostgresDatabase implements ClosableDatabase {
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
   readonly #inFlight = new Map<number, number>();
+  readonly #recoveryListeners = new Set<() => void>();
+  #unavailable = false;
   #nextTicket = 0;
+
+  onRecovery(listener: () => void): () => void {
+    this.#recoveryListeners.add(listener);
+    return () => this.#recoveryListeners.delete(listener);
+  }
+
+  #noteFailure(error: unknown): void {
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    if (isTransientDatabaseConnectionError(error) || code === '57014' || code === '53300')
+      this.#unavailable = true;
+  }
+
+  #noteSuccess(): void {
+    if (!this.#unavailable) return;
+    this.#unavailable = false;
+    for (const listener of this.#recoveryListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('postgres recovery listener failed', error);
+      }
+    }
+  }
 
   async #timed<T>(work: () => Promise<T>): Promise<T> {
     const ticket = this.#nextTicket++;
@@ -221,13 +249,19 @@ export class PostgresDatabase implements ClosableDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    const raw = await this.#timed(() =>
-      this.#retryTransientConnection(() =>
-        values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
-      ),
-    );
-    const result = Array.isArray(raw) ? raw.at(-1) : raw;
-    return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
+    try {
+      const raw = await this.#timed(() =>
+        this.#retryTransientConnection(() =>
+          values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
+        ),
+      );
+      this.#noteSuccess();
+      const result = Array.isArray(raw) ? raw.at(-1) : raw;
+      return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
+    } catch (error) {
+      this.#noteFailure(error);
+      throw error;
+    }
   }
 
   // pg-pool removes its idle error listener while a client is checked out, so

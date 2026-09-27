@@ -83,6 +83,22 @@ describe('web app CORS', () => {
     expect(redeem).toHaveBeenCalledWith('review-secret', '127.0.0.1');
   });
 
+  it('lets the production web app read its connection check without opening healthz to other origins', async () => {
+    const { origin } = await start([deployedWebOrigin]);
+    const allowed = await fetch(`${origin}/healthz`, {
+      headers: { origin: deployedWebOrigin },
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(deployedWebOrigin);
+    await expect(allowed.json()).resolves.toEqual({ ok: true });
+
+    const rejected = await fetch(`${origin}/healthz`, {
+      headers: { origin: 'https://unrelated.example' },
+    });
+    expect(rejected.status).toBe(200);
+    expect(rejected.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
   it('does not grant CORS access to an unlisted browser origin', async () => {
     const { origin, redeem } = await start([deployedWebOrigin]);
     const response = await fetch(`${origin}/v1/auth/review/exchange`, {

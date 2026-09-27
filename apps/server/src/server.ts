@@ -100,6 +100,7 @@ function applyWebAppCors(
 function isWebAppCorsPath(pathname: string): boolean {
   if (pathname === '/v1/admin/dashboard') return false;
   return (
+    pathname === '/healthz' ||
     pathname.startsWith('/v1/') ||
     pathname === '/auth/github/completion' ||
     pathname === '/auth/github/completion/cancel'

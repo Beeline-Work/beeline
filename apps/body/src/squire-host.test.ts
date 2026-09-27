@@ -23,7 +23,6 @@ import {
   SQUIRE_SERVER_ARGS,
   squireBrokerSocketReady,
   squireFacadeLaunch,
-  squireAgentIdentity,
   squireHostBindPaths,
   squireHostPaths,
   squireHostRewriteEnv,
@@ -283,26 +282,23 @@ describe('host broker unit', () => {
 });
 
 describe('façade launch and host binds', () => {
-  it('uses one bounded identity per structured agent and Room across launches', () => {
-    const scope = { agentId: 'a'.repeat(200) + '\nspoof', roomId: 'r'.repeat(200) + '\rroom' };
-    const first = squireFacadeLaunch('/one', scope).env.TRUSTY_SQUIRE_AGENT_IDENTITY;
-    const second = squireFacadeLaunch('/two', scope).env.TRUSTY_SQUIRE_AGENT_IDENTITY;
-    expect(first).toBe(second);
-    expect(first).toMatch(/^beeline:[a-f0-9]{64}$/);
-    expect(first.length).toBeLessThanOrEqual(128);
-    expect(first).not.toMatch(/[\r\n]/);
-    expect(squireAgentIdentity({ ...scope, agentId: 'other-agent' })).not.toBe(first);
-    expect(squireAgentIdentity({ ...scope, roomId: 'other-room' })).not.toBe(first);
-    expect(squireAgentIdentity({ agentId: 'a:b', roomId: 'c' })).not.toBe(
-      squireAgentIdentity({ agentId: 'a', roomId: 'b:c' }),
-    );
+  it('routes a task facade to the helper without broker or identity env', () => {
+    const launch = squireFacadeLaunch('/home/op', {
+      agentId: 'agent-a', roomId: 'room-a',
+      relay: { url: 'http://127.0.0.1:1234', token: 'secret', contextFile: '/tmp/context' },
+    });
+    expect(launch.env).toEqual({
+      BEELINE_SQUIRE_RELAY_URL: 'http://127.0.0.1:1234',
+      BEELINE_SQUIRE_RELAY_TOKEN: 'secret',
+      BEELINE_TURN_CONTEXT_FILE: '/tmp/context',
+    });
   });
 
   it('writes a per-client façade that carries the three host rewrite vars', () => {
     const launch = squireFacadeLaunch('/home/op', { agentId: 'agent-a', roomId: 'room-a' });
     expect(launch.command).toBe(process.execPath);
     expect(launch.args.at(-1)).toMatch(/squire-facade\.(js|ts)$/);
-    expect(launch.env).toEqual({ ...squireHostRewriteEnv('/home/op'), TRUSTY_SQUIRE_AGENT_IDENTITY: squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }) });
+    expect(launch.env).toEqual(squireHostRewriteEnv('/home/op'));
   });
 
   it('binds the host broker directory only for a Squire route', async () => {

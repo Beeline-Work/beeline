@@ -14,7 +14,7 @@ import {
   rewriteHostMcpDeclaration,
   ungatedHostServers,
 } from './host-mcp-route.js';
-import { squireAgentIdentity, squireHostRewriteEnv } from './squire-host.js';
+import { squireHostRewriteEnv } from './squire-host.js';
 
 describe('granted MCP host routes', () => {
   it('mounts Once routes without consuming them before a call', async () => {
@@ -64,9 +64,7 @@ describe('granted MCP host routes', () => {
       expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
     );
     expect(rewritten.env).toMatchObject(squireHostRewriteEnv('/home/op'));
-    expect((rewritten.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(
-      squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }),
-    );
+    expect(rewritten.env).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     expect(rewritten).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
 
@@ -150,7 +148,7 @@ describe('granted MCP host routes', () => {
     const rewritten = rewriteGrantedHostRoutes({}, ['squire'], '/home/op', undefined, { agentId: 'agent-a', roomId: 'room-a' });
     expect(Object.keys(rewritten)).toEqual(['squire']);
     expect(rewritten.squire?.env).toMatchObject(squireHostRewriteEnv('/home/op'));
-    expect((rewritten.squire?.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }));
+    expect(rewritten.squire?.env).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     expect(rewritten.squire).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
 
@@ -175,7 +173,7 @@ describe('granted MCP host routes', () => {
         command: process.execPath,
         args: expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
         env: expect.arrayContaining(
-          Object.entries({ ...squireHostRewriteEnv('/home/op'), TRUSTY_SQUIRE_AGENT_IDENTITY: squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }) }).map(([name, value]) => ({
+          Object.entries(squireHostRewriteEnv('/home/op')).map(([name, value]) => ({
             name,
             value,
           })),
@@ -198,7 +196,7 @@ describe('granted MCP host routes', () => {
     );
     expect(Object.keys(rewritten)).toEqual(['squire']);
     expect(rewritten.squire?.env).toMatchObject(squireHostRewriteEnv('/home/op'));
-    expect((rewritten.squire?.env as Record<string, string>).TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }));
+    expect(rewritten.squire?.env).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
   });
 
   it('merges rewritten routes into an isolated TOML home without the operator copy', () => {

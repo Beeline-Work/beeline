@@ -28,6 +28,7 @@ import {
   SQUIRE_BROKER_FLAG,
   SQUIRE_FACADE_FLAG,
 } from './squire-host.js';
+import { runSquireTaskProxy } from './squire-task-relay.js';
 import {
   formatAdapterInstallCommand,
   formatAgentCommand,
@@ -685,7 +686,8 @@ async function main(): Promise<void> {
     return;
   }
   if (command === SQUIRE_FACADE_FLAG) {
-    runSquireFacade();
+    if (process.env.BEELINE_SQUIRE_RELAY_URL) runSquireTaskProxy();
+    else runSquireFacade();
     return;
   }
   if (command === SQUIRE_BROKER_FLAG) {

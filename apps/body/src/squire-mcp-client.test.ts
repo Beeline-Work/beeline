@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
-import { squireAgentIdentity } from './squire-host.js';
 
 /** A fake Squire MCP child: newline JSON-RPC in, scripted newline JSON-RPC out. */
 function fakeChild(handlers: Record<string, unknown>) {
@@ -181,9 +180,7 @@ describe('StdioSquireMcpClient', () => {
     expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
       join(home, '.trusty-squire', 'broker.sock'),
     );
-    expect(spawnedEnv?.TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(
-      squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }),
-    );
+    expect(spawnedEnv).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     client.close();
   });
 });

@@ -143,12 +143,9 @@ import { readFile } from 'node:fs/promises';
 const BRIDGE_BODY = `const LIST_TIMEOUT_MS = 20000;
 
 /**
- * One request/response against one MCP server over a short-lived process.
- *
- * A fresh process per call keeps nothing alive between turns: these servers
- * hold no session state - each tool call is a bounded daemon HTTP request - so
- * a pool would buy latency at the cost of processes outliving the session that
- * spawned them.
+ * One request/response against a short-lived stdio route. Squire's route is
+ * only a proxy: its real MCP connection is held by SquireTaskRelay in the
+ * helper across these processes and across Pi ACP replacements.
  */
 function callServer(server, request, signal, timeoutMs) {
   return new Promise((resolvePromise, rejectPromise) => {

@@ -341,7 +341,7 @@ export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
   root: string;
   /** Server-provided identity of the agent and this Room. */
-  squireScope?: { readonly agentId: string; readonly roomId: string };
+  squireScope?: { readonly agentId: string; readonly roomId: string; readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string } };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
   failClosed?: boolean;

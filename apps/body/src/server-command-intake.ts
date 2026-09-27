@@ -21,6 +21,7 @@ export class CommandExecutionContext {
       JSON.stringify({
         roomId: command.roomId,
         requestId: command.turnRequestId,
+        taskId: command.rootCommandId,
         generationId: this.generationId,
       }),
       { mode: 0o600 },
@@ -86,6 +87,8 @@ export async function runServerCommandIntake(options: {
   onWake?: (wake: (() => void) | undefined) => void;
   onPoll?: () => void;
   onError?: (error: unknown) => void;
+  onEnter?: (command: AgentCommand) => void;
+  onLeave?: (command: AgentCommand) => void;
   closed?: () => Promise<boolean>;
 }): Promise<void> {
   const { api, roomId, agentId, context, signal } = options;
@@ -182,6 +185,7 @@ export async function runServerCommandIntake(options: {
           });
         } else {
           await context.enter(command);
+          options.onEnter?.(command);
           busy = options
             .run(command)
             .catch((error) => {
@@ -189,6 +193,7 @@ export async function runServerCommandIntake(options: {
               options.onError?.(error);
             })
             .finally(async () => {
+              options.onLeave?.(command);
               await context.leave();
               busy = undefined;
               notify();

@@ -149,7 +149,8 @@ export function rewriteHostMcpDeclaration(
     typeof next[MCP_RESOURCE_TARGET_KEY] === 'string'
       ? (next[MCP_RESOURCE_TARGET_KEY] as string)
       : undefined;
-  const transportGate = next[MCP_RESOURCE_GATE_KEY] === MCP_RESOURCE_GATE_TRANSPORT;
+  const transportGate = next[MCP_RESOURCE_GATE_KEY] === MCP_RESOURCE_GATE_TRANSPORT ||
+    isSquireDeclaration(name, declaration);
   delete next[MCP_RESOURCE_TARGET_KEY];
   delete next[MCP_RESOURCE_GATE_KEY];
   const launch = isSquireDeclaration(name, declaration)
@@ -164,6 +165,11 @@ export function rewriteHostMcpDeclaration(
   }
   if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
   else next.env = { ...recordValue(declaration.env), ...routeEnv };
+  // 1.1.19 owns browser sessions by MCP process, never by this retired env.
+  if (launch) {
+    delete (next.env as Record<string, unknown> | undefined)?.TRUSTY_SQUIRE_AGENT_IDENTITY;
+    delete (next.envs as Record<string, unknown> | undefined)?.TRUSTY_SQUIRE_AGENT_IDENTITY;
+  }
   if (resourceAuthFile) {
     const target =
       explicitResourceTarget ?? (isSquireDeclaration(name, declaration) ? 'squire' : name);

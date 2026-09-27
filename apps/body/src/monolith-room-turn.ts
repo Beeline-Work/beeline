@@ -1,5 +1,7 @@
 import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import { SquireTaskRelay } from './squire-task-relay.js';
+import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,7 +24,6 @@ import {
 } from './acp.js';
 import {
   expectedMountedImportedMcpServerNames,
-  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
   hostImportedMcpServerNames,
@@ -35,6 +36,7 @@ import {
 import {
   claimGrantedHostRoutes,
   grantedHostRouteWires,
+  grantedSquireHostRoute,
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -382,6 +384,7 @@ export interface MonolithRoomTurnOptions {
  */
 export class MonolithRoomTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
 
@@ -437,6 +440,15 @@ export class MonolithRoomTurnLoop {
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
+    this.squireRelay = new SquireTaskRelay(
+      this.agent.publicKey, options.roomId, this.commandContext.path,
+      async (call) => (await options.api.execute('authorizeResourceCall', {
+        roomId: call.roomId, requestId: call.requestId, generationId: call.generationId,
+        target: 'squire',
+        ...resourceCallFacts({ method: 'tools/call', params: { name: call.tool, arguments: call.args } }, 'squire'),
+      })).allowed,
+      options.config.operatorHome ?? homedir(),
+    );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {
       workspaceId: options.workspaceId,
@@ -744,6 +756,14 @@ export class MonolithRoomTurnLoop {
       this.commandContext.path,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
+    const squireScope = {
+      agentId: this.agent.publicKey,
+      roomId: this.options.roomId,
+      ...(grantedSquireHostRoute(mountedHostRoutes, {
+        ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
+        ...registryHostDeclarations,
+      }) ? { relay: await this.squireRelay.listen() } : {}),
+    };
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -757,7 +777,7 @@ export class MonolithRoomTurnLoop {
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
-          squireScope: { agentId: this.agent.publicKey, roomId: this.options.roomId },
+          squireScope,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes: mountedHostRoutes,
@@ -844,11 +864,6 @@ export class MonolithRoomTurnLoop {
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
-          ...grantedSquireHostBindPaths({
-            operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
@@ -898,7 +913,7 @@ export class MonolithRoomTurnLoop {
       operatorHome,
       { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
-      { agentId: this.agent.publicKey, roomId: this.options.roomId },
+      squireScope,
     );
     // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
     // daemon tool panel is written into its own extensions directory instead
@@ -1140,6 +1155,7 @@ export class MonolithRoomTurnLoop {
    * the press and the delivery, and the server's own receipt already said so.
    */
   private stopTurn(requestId: string): void {
+    this.squireRelay.cancel(requestId);
     for (let index = this.queuedTurns.length - 1; index >= 0; index -= 1)
       if (this.queuedTurns[index]!.id === requestId) this.queuedTurns.splice(index, 1);
     const active = this.activeTurn;
@@ -1637,6 +1653,8 @@ export class MonolithRoomTurnLoop {
         },
         onPoll: () => this.options.health.poll(),
         onError: (error) => console.error('[thin-core] Room command failed', error),
+        onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
+        onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
         stop: (requestId) => this.stopTurn(requestId),
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,
@@ -1654,6 +1672,7 @@ export class MonolithRoomTurnLoop {
         },
       });
     } finally {
+      this.squireRelay.close();
       this.options.grantRunner?.unregister(roomId);
       await this.options.scheduler.suspend(roomId);
     }

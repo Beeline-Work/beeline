@@ -44,7 +44,9 @@ function required(name: string) {
 }
 
 async function runReleaseMigration(): Promise<void> {
-  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
+    mode: 'long-running',
+  });
   try {
     await retryOnDeadlock(async () => {
       await migrate(database);
@@ -377,7 +379,9 @@ async function main() {
 }
 
 async function runWelcomeRetirementPreflight(): Promise<void> {
-  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
+    mode: 'long-running',
+  });
   try {
     console.log(JSON.stringify(await welcomeRetirementPreflight(database), null, 2));
   } finally {

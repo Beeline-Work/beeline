@@ -448,8 +448,12 @@ export async function cancelPendingGitHubSignIn(
 export async function recoverPendingGitHubBindChallenge(
   runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
   fetchImpl: typeof fetch = githubAuthFetch,
+  expectedState?: string,
 ): Promise<OidcBindChallenge | null> {
   const session = await readPendingSession();
+  if (expectedState && session?.state !== expectedState) {
+    throw new OidcBindError('state_mismatch', 'This GitHub callback does not match this sign-in.');
+  }
   const recoveryToken = session?.recoveryToken;
   const state = session?.state;
   if (!recoveryToken || !STATE_RE.test(recoveryToken) || !state || !STATE_RE.test(state))
@@ -459,6 +463,40 @@ export async function recoverPendingGitHubBindChallenge(
     await persistPendingCallback(challengeCallbackUrl(challenge, state), state);
   }
   return challenge;
+}
+
+/** A cold callback has no live browser press to keep polling a still-pending completion. */
+async function awaitCompletedGitHubBindChallenge(expectedState: string): Promise<OidcBindChallenge> {
+  const session = await readPendingSession();
+  if (session?.state !== expectedState || !session.recoveryToken) {
+    throw new OidcBindError('state_mismatch', 'This GitHub callback has no pending recovery.');
+  }
+  const runtime = getBuzzRuntimeConfig();
+  const deadline = Date.now() + GITHUB_RECOVERY_WAIT_MS;
+  let unreachableSince: number | null = null;
+  do {
+    try {
+      const challenge = await recoverPendingGitHubBindChallenge(
+        runtime,
+        githubAuthFetch,
+        expectedState,
+      );
+      if (challenge) return challenge;
+      unreachableSince = null;
+    } catch (error) {
+      if (!(error instanceof OidcBindError) || !error.retryable) throw error;
+      if (isUnreachable(error)) {
+        unreachableSince ??= Date.now();
+        if (Date.now() - unreachableSince >= GITHUB_OFFLINE_GIVE_UP_MS) throw error;
+      } else {
+        unreachableSince = null;
+      }
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(200, remainingMs)));
+  } while (Date.now() <= deadline);
+  throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
 }
 
 interface ResilientGitHubSessionInput {
@@ -600,7 +638,7 @@ export async function resumeInitialGitHubSignIn(
 
   const expectedState = (await readPendingSession())?.state;
   if (expectedState && recoverySignal(callbackUrl, expectedState)) {
-    return recoverPendingGitHubBindChallenge();
+    return awaitCompletedGitHubBindChallenge(expectedState);
   }
 
   return resumeGitHubSignInCallback(callbackUrl, nowSeconds);

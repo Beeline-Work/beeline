@@ -14,6 +14,7 @@ import {
   DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
+  evaluateServerCanaryPromotion,
   evaluateServerCanaryWindow,
   RELEASE_BUDGET_MINUTES,
   RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
@@ -347,6 +348,38 @@ test('server canary samples and the bounded window fail closed', () => {
   assert.equal(evaluateServerCanaryWindow(samples.map((sample, index) => index ? {
     ...sample, verdict: { clean: false, reasons: ['Room read failed'] },
   } : sample)).clean, false);
+});
+
+test('server promotion needs sustained clean samples and rejects a late relapse', () => {
+  const start = Date.UTC(2026, 8, 27, 12);
+  const sample = (index, verdict = { clean: true, reasons: [] }) => ({
+    at: new Date(start + index * 15_000).toISOString(), verdict,
+  });
+  const clean = Array.from({ length: 21 }, (_, index) => sample(index));
+  assert.deepEqual(evaluateServerCanaryPromotion(clean), {
+    clean: true, cleanCount: 21, elapsedSeconds: 300,
+  });
+  const oneClean = clean.map((entry, index) => index === 0 ? entry :
+    sample(index, { clean: false, reasons: ['authenticated Room read returned HTTP 503'] }));
+  assert.match(evaluateServerCanaryPromotion(oneClean).reason, /only 1 of 21/);
+  const lateRelapse = [...clean];
+  lateRelapse[20] = sample(20, { clean: false, reasons: ['database pool has 2 waiter(s)'] });
+  assert.match(evaluateServerCanaryPromotion(lateRelapse).reason, /final five/);
+  const sustained = [...clean];
+  for (const index of [3, 4, 5])
+    sustained[index] = sample(index, { clean: false, reasons: ['database pool has 1 waiter(s)'] });
+  assert.match(evaluateServerCanaryPromotion(sustained).reason, /sustained pool wait/);
+  const warmup = [...clean];
+  for (const index of [0, 2, 4, 6, 8])
+    warmup[index] = sample(index, { clean: false, reasons: ['health endpoint is not ok'] });
+  assert.equal(evaluateServerCanaryPromotion(warmup).clean, true);
+  assert.equal(evaluateServerCanaryPromotion(clean.slice(1)).clean, false);
+
+  const action = parse(readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8'));
+  const promotion = action.runs.steps.find((step) =>
+    typeof step.run === 'string' && step.run.includes('server-canary-promotion'));
+  assert.ok(promotion, 'Machine promotion must use the sustained verdict');
+  assert.doesNotMatch(promotion.run, /canary_ever_clean/);
 });
 
 test('server image ledger pins the automatic and manual rollback image', () => {

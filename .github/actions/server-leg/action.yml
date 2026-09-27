@@ -400,35 +400,39 @@ runs:
           exit 1
         fi
 
-        canary_ever_clean=false
+        canary_samples="$RUNNER_TEMP/server-release/canary-samples.jsonl"
+        : > "$canary_samples"
 
         for sample in $(seq 0 20); do
           if [ "$sample" -gt 0 ]; then sleep 15; fi
           force_header="fly-force-instance-id: $canary"
-          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/health \
-            -o "$RUNNER_TEMP/server-release/health.json"
-          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/version \
-            -o "$RUNNER_TEMP/server-release/version.json"
+          if ! curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/health \
+            -o "$RUNNER_TEMP/server-release/health.json"; then
+            printf '{"ok":false}\n' > "$RUNNER_TEMP/server-release/health.json"
+          fi
+          if ! curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/version \
+            -o "$RUNNER_TEMP/server-release/version.json"; then
+            printf '{}\n' > "$RUNNER_TEMP/server-release/version.json"
+          fi
           room_status="$(curl -sS --max-time 12 -o "$RUNNER_TEMP/server-release/room.json" -w '%{http_code}' \
             -H "$force_header" -H "Authorization: Bearer $canary_access_token" \
-            "https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID")"
-          # Run the sample; do not fail on a transient unclean verdict (e.g.
-          # pool warmup right after restart). Only fail after the full window
-          # if the canary was never fully clean.
+            "https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID" || true)"
+          sample_verdict="$RUNNER_TEMP/server-release/canary-sample-$sample.json"
+          # Keep every verdict, including transient warmup failures. The
+          # sustained-window check below decides whether promotion is safe.
           if node scripts/unified-release.mjs server-canary-sample \
             --health "$RUNNER_TEMP/server-release/health.json" \
             --version "$RUNNER_TEMP/server-release/version.json" --room-status "$room_status" \
-            --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA"; then
-            canary_ever_clean=true
-          fi
+            --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA" \
+            --output "$sample_verdict"; then :; fi
+          node - "$canary_samples" "$sample_verdict" <<'NODE'
+        const fs = require('node:fs');
+        const verdict = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+        fs.appendFileSync(process.argv[2], JSON.stringify({ at: new Date().toISOString(), verdict }) + '\n');
+        NODE
         done
 
-        # After the full observation window, fail only if the canary was
-        # never healthy (sustained failure), not on a transient warmup blip.
-        if [ "$canary_ever_clean" != true ]; then
-          echo "CRITICAL: Canary never reported clean health during the 5-minute observation window" >&2
-          exit 1
-        fi
+        node scripts/unified-release.mjs server-canary-promotion --samples "$canary_samples"
         second_update_attempted=1
         retry_flyctl_update "$second" "$image_ref" "second"
         wait_for_machine_ready "$second"

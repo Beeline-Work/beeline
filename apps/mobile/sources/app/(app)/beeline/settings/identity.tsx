@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useReducer, useRef, useState } from 'rea
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Updates from 'expo-updates';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fallbackPersonName,
@@ -25,7 +25,7 @@ import {
   savePreferredPersonName,
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { connectionsForViewer } from '@/buzz/workbench';
+import { workbenchSummary, type WorkbenchSummary } from '@/buzz/workbench';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { Typography } from '@/constants/Typography';
 import { PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
@@ -85,7 +85,11 @@ export default function BuzzIdentitySettings() {
   const [pushWorking, setPushWorking] = useState(false);
   const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
-  const [keyCount, setKeyCount] = useState<number | null>(null);
+  const [workbenchScope, setWorkbenchScope] = useState<{
+    workspaceId: string;
+    viewerId: string;
+  } | null>(null);
+  const [workbench, setWorkbench] = useState<WorkbenchSummary | null>(null);
   const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
@@ -234,18 +238,8 @@ export default function BuzzIdentitySettings() {
           setPushRegistration(registration);
           setPushPermission(permission);
         }
-        try {
-          if (communityId) {
-            const view = await getWorkbenchSource().readWorkbench({
-              workspaceId: communityId,
-              viewerId: identity.publicKey,
-            });
-            if (!cancelled) {
-              setKeyCount(connectionsForViewer(view, identity.publicKey).length);
-            }
-          }
-        } catch {
-          // The key count is best-effort; the row still opens the Workbench.
+        if (communityId && !cancelled) {
+          setWorkbenchScope({ workspaceId: communityId, viewerId: identity.publicKey });
         }
         try {
           if (monolithEnabled) {
@@ -287,6 +281,26 @@ export default function BuzzIdentitySettings() {
       cancelled = true;
     };
   }, [monolithEnabled]);
+
+  // Re-read on every focus, not only on mount: the Workbench page's vault
+  // sync can change the counts while Settings sits underneath it.
+  useFocusEffect(
+    useCallback(() => {
+      if (!workbenchScope) return;
+      let cancelled = false;
+      void (async () => {
+        try {
+          const view = await getWorkbenchSource().readWorkbench(workbenchScope);
+          if (!cancelled) setWorkbench(workbenchSummary(view, workbenchScope.viewerId));
+        } catch {
+          // Best-effort: the row keeps its last value and still opens the Workbench.
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [workbenchScope]),
+  );
 
   const applyPushResult = useCallback(
     async (
@@ -426,7 +440,9 @@ export default function BuzzIdentitySettings() {
               onPress={() => router.push('/beeline/settings/workbench' as never)}
               testID="settings-workbench-row"
               title="Tools and keys"
-              value={keyCount !== null ? String(keyCount) : undefined}
+              value={workbench?.value}
+              description={workbench?.attention}
+              descriptionTone={workbench?.attention ? 'danger' : undefined}
             />
           </View>
         )}

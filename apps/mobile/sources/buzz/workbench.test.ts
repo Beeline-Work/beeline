@@ -28,6 +28,7 @@ import {
   ledgerStamp,
   resolveGoogleConnectTarget,
   serviceMonogram,
+  workbenchSummary,
   type ConnectionDetailView,
   type WorkbenchConnector,
   type WorkbenchConnectorId,
@@ -503,5 +504,98 @@ describe('the ONE Google entry', () => {
     ];
     expect(googleEntryState(failed)).toBe('error');
     expect(googleEntryConnector(failed)?.errorMessage).toBe('scope refused');
+  });
+});
+
+describe('workbenchSummary', () => {
+  const tool = (
+    id: string,
+    name: string,
+    status: WorkbenchConnectorStatus,
+    available = true,
+  ): WorkbenchConnector => ({ id, name, description: '', available, status });
+  const google = (status: WorkbenchConnectorStatus): WorkbenchConnector[] => [
+    tool('google-gmail', 'Gmail', status),
+    tool('google-calendar', 'Google Calendar', status),
+    tool('google-drive', 'Google Drive', status),
+    tool('google-youtube', 'YouTube', status),
+  ];
+  const summary = (connectors: WorkbenchConnector[], keys = 0, apps: WorkbenchView['apps'] = []) =>
+    workbenchSummary(
+      {
+        connectors,
+        connections: Array.from({ length: keys }, (_, index) => ({
+          ref: `key-${index}`,
+          name: `key-${index}`,
+          hosts: [],
+          state: 'active' as const,
+          ownerId: VIEWER_A,
+        })),
+        apps,
+        helpers: [],
+      },
+      VIEWER_A,
+    );
+
+  it('pluralises tools and keys', () => {
+    expect(summary([], 0).value).toBe('0 tools · 0 keys');
+    expect(summary([tool('trusty-squire', 'Trusty Squire', 'connected')], 1).value).toBe(
+      '1 tool · 1 key',
+    );
+    expect(
+      summary(
+        [
+          tool('trusty-squire', 'Trusty Squire', 'connected'),
+          tool('wallet', 'Wallet', 'connected'),
+        ],
+        57,
+      ).value,
+    ).toBe('2 tools · 57 keys');
+  });
+
+  it('counts the four google connectors as one Google Workspace tool', () => {
+    expect(summary(google('connected')).value).toBe('1 tool · 0 keys');
+  });
+
+  it('counts only connected, available rows', () => {
+    expect(
+      summary([
+        tool('trusty-squire', 'Trusty Squire', 'installing'),
+        tool('wallet', 'Wallet', 'disconnected'),
+        tool('tailscale', 'Tailscale', 'connected', false),
+        ...google('disconnected'),
+      ]).value,
+    ).toBe('0 tools · 0 keys');
+  });
+
+  it('excludes apps from the tool count', () => {
+    const app = {
+      id: 'app-1',
+      key: 'linear',
+      name: 'Linear',
+      transport: 'registry-mcp' as const,
+      status: 'connected' as const,
+      useCount: 0,
+    };
+    expect(summary([], 0, [app]).value).toBe('0 tools · 0 keys');
+  });
+
+  it('has no attention line when nothing is in error', () => {
+    expect(
+      summary([tool('trusty-squire', 'Trusty Squire', 'connected')]).attention,
+    ).toBeUndefined();
+  });
+
+  it('names the one broken tool, folding Google into Google Workspace', () => {
+    expect(
+      summary([tool('trusty-squire', 'Trusty Squire', 'connected'), ...google('error')], 57),
+    ).toEqual({ value: '1 tool · 57 keys', attention: 'Google Workspace needs attention' });
+    expect(summary([tool('wallet', 'Wallet', 'error')]).attention).toBe('Wallet needs attention');
+  });
+
+  it('counts two or more broken tools', () => {
+    expect(
+      summary([tool('trusty-squire', 'Trusty Squire', 'error'), ...google('error')]).attention,
+    ).toBe('2 tools need attention');
   });
 });

@@ -340,6 +340,8 @@ export const HOME_SUBDIRS = [
 export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
   root: string;
+  /** Server-provided identity of the agent and this Room. */
+  squireScope?: { readonly agentId: string; readonly roomId: string };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
   failClosed?: boolean;
@@ -470,6 +472,7 @@ export async function prepareRoomAgentHome(
         input.extraHostRoutes ?? {},
         input.agentKind,
         input.resourceAuthFile,
+        input.squireScope,
       ),
     );
   agentHomeProvisionQueues.set(root, provision);
@@ -505,6 +508,7 @@ async function provisionAgentSkillsAndMcp(
   extraHostRoutes: Record<string, Record<string, unknown>>,
   agentKind: AgentKind | undefined,
   resourceAuthFile?: string,
+  squireScope?: RoomAgentHomeInput['squireScope'],
 ): Promise<void> {
   const managedSkills = [
     { name: DRAW_AVATAR_SKILL_NAME, content: drawAvatarSkillMarkdown(skillReleaseId) },
@@ -631,6 +635,7 @@ async function provisionAgentSkillsAndMcp(
     failClosed,
     resourceAuthFile,
     extraHostRoutes,
+    squireScope,
   );
   await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
 }
@@ -647,6 +652,7 @@ async function applyGrantedHostRoutes(
   failClosed: boolean,
   resourceAuthFile?: string,
   extraHostRoutes: Record<string, Record<string, unknown>> = {},
+  squireScope?: RoomAgentHomeInput['squireScope'],
 ): Promise<void> {
   if (granted.length === 0) return;
   try {
@@ -658,6 +664,7 @@ async function applyGrantedHostRoutes(
         granted,
         operatorHome,
         resourceAuthFile,
+        squireScope,
       );
     for (const config of HARNESS_MCP_CONFIGS) {
       if (!appliesToHarness(agentKind, config.dir)) continue;

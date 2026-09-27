@@ -351,7 +351,8 @@ export class ConnectorAssignmentLoop {
   }
 
   private squire(): SquireMcpClient {
-    this.mcp ??= defaultSquireMcpClient();
+    // Connector work is agent-wide; use a reserved scope shared by its restarts.
+    this.mcp ??= defaultSquireMcpClient({ agentId: this.agentId, roomId: 'connector' });
     return this.mcp;
   }
 

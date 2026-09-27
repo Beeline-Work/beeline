@@ -1424,7 +1424,7 @@ server.listen(socket, () => {
       server.listen(paths.brokerSocket, resolveListen);
     });
     const runFacade = (granted: readonly string[]) => {
-      const launch = squireFacadeLaunch(operatorHome);
+      const launch = squireFacadeLaunch(operatorHome, { agentId: 'agent-a', roomId: 'room-a' });
       const wrapped = wrapAgentCommand({
         bwrapPath: bwrap.path!,
         spec: {

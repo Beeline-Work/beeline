@@ -20,12 +20,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
-import { squireFacadeLaunch } from './squire-host.js';
+import { squireFacadeLaunch, type SquireAgentScope } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
 
 export type SquireMcpClientOptions = {
+  readonly scope: SquireAgentScope;
   /** Spawn command; defaults to the published package through npx. */
   readonly command?: string;
   readonly args?: readonly string[];
@@ -51,7 +52,7 @@ export class StdioSquireMcpClient {
   private closed = false;
   private readonly log: (message: string) => void;
 
-  constructor(private readonly options: SquireMcpClientOptions = {}) {
+  constructor(private readonly options: SquireMcpClientOptions) {
     this.log = options.log ?? (() => {});
   }
 
@@ -98,11 +99,16 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
-    const launch = squireFacadeLaunch(homedir());
+    const launch = squireFacadeLaunch(homedir(), this.options.scope);
     const child = (this.options.spawn ?? spawn)(
       this.options.command ?? launch.command,
       [...(this.options.args ?? launch.args)],
-      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env } },
+      {
+        env: {
+          ...(this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env }),
+          TRUSTY_SQUIRE_AGENT_IDENTITY: launch.env.TRUSTY_SQUIRE_AGENT_IDENTITY,
+        },
+      },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';
@@ -184,8 +190,8 @@ export class StdioSquireMcpClient {
  * The one Squire MCP client the helper loop uses. Injectable so tests drive a
  * mock; the real helper gets one lazily-spawned stdio session.
  */
-export function defaultSquireMcpClient(): SquireMcpClientContract {
-  return new StdioSquireMcpClient();
+export function defaultSquireMcpClient(scope: SquireAgentScope): SquireMcpClientContract {
+  return new StdioSquireMcpClient({ scope });
 }
 
 /** The shape `connector-squire.ts` speaks, re-declared to avoid a cycle. */

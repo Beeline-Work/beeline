@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
+import { squireAgentIdentity } from './squire-host.js';
 
 /** A fake Squire MCP child: newline JSON-RPC in, scripted newline JSON-RPC out. */
 function fakeChild(handlers: Record<string, unknown>) {
@@ -50,6 +51,7 @@ describe('StdioSquireMcpClient', () => {
       'tools/call': { content: [{ type: 'text', text: 'ok' }] },
     });
     const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
       spawn: () => {
         calls.push('spawn');
         return child as never;
@@ -69,6 +71,7 @@ describe('StdioSquireMcpClient', () => {
       initialize: {},
     });
     const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
       spawn: () => {
         child.stdin.write = (chunk: string) => {
           const message = JSON.parse(chunk) as { id?: number; method: string; params?: any };
@@ -101,6 +104,7 @@ describe('StdioSquireMcpClient', () => {
   it('raises the tool error text when the server answers isError', async () => {
     const { child } = fakeChild({ initialize: {} });
     const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
       spawn: () => {
         child.stdin.write = (chunk: string) => {
           const message = JSON.parse(chunk) as { id?: number; method: string };
@@ -125,6 +129,7 @@ describe('StdioSquireMcpClient', () => {
   it('rejects a pending call when the server process exits', async () => {
     const { child } = fakeChild({ initialize: {} });
     const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
       spawn: () => child as never,
     });
     const pending = client.call('list_credentials');
@@ -148,6 +153,7 @@ describe('StdioSquireMcpClient', () => {
       'tools/call': { content: [{ type: 'text', text: 'ok' }] },
     });
     const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
       spawn: ((command: string, args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
         spawned.push([command, ...args]);
         spawnedEnv = options?.env;
@@ -174,6 +180,9 @@ describe('StdioSquireMcpClient', () => {
     expect(spawnedEnv?.XDG_CONFIG_HOME).toBe(join(home, '.config'));
     expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
       join(home, '.trusty-squire', 'broker.sock'),
+    );
+    expect(spawnedEnv?.TRUSTY_SQUIRE_AGENT_IDENTITY).toBe(
+      squireAgentIdentity({ agentId: 'agent-a', roomId: 'room-a' }),
     );
     client.close();
   });

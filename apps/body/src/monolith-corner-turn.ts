@@ -897,6 +897,7 @@ export class MonolithCornerTurnLoop {
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
+          squireScope: { agentId: this.agent.publicKey, roomId: this.options.cornerId },
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           grantedHostRoutes: mountedHostRoutes,
@@ -1125,6 +1126,7 @@ export class MonolithCornerTurnLoop {
       operatorHome,
       { ...hostDeclarations, ...registryHostDeclarations },
       resourceAuthFile,
+      { agentId: this.agent.publicKey, roomId: this.options.cornerId },
     );
     // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
     // `mcpServers`, so a corner on pi would have no `pr_checks_status` and

@@ -23,7 +23,7 @@ import {
   isCodeOwnedHostMcpName,
   MCP_ROUTE_CLASS_KEY,
 } from './mcp-route-class.js';
-import { squireFacadeLaunch } from './squire-host.js';
+import { squireFacadeLaunch, type SquireAgentScope } from './squire-host.js';
 
 export function grantedMcpServerNames(
   grants: readonly { kind: string; target: string }[] | undefined,
@@ -141,6 +141,7 @@ export function rewriteHostMcpDeclaration(
   declaration: Record<string, unknown>,
   hostHome: string,
   resourceAuthFile?: string,
+  squireScope?: SquireAgentScope,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...declaration };
   delete next[MCP_ROUTE_CLASS_KEY];
@@ -151,7 +152,9 @@ export function rewriteHostMcpDeclaration(
   const transportGate = next[MCP_RESOURCE_GATE_KEY] === MCP_RESOURCE_GATE_TRANSPORT;
   delete next[MCP_RESOURCE_TARGET_KEY];
   delete next[MCP_RESOURCE_GATE_KEY];
-  const launch = isSquireDeclaration(name, declaration) ? squireFacadeLaunch(hostHome) : undefined;
+  const launch = isSquireDeclaration(name, declaration)
+    ? squireFacadeLaunch(hostHome, requiredSquireScope(squireScope))
+    : undefined;
   const routeEnv = launch?.env ?? hostRouteEnv(hostHome);
   const gooseShape = 'cmd' in declaration && !('command' in declaration);
   if (launch) {
@@ -181,25 +184,35 @@ export function rewriteHostMcpDeclaration(
   return next;
 }
 
+function requiredSquireScope(scope: SquireAgentScope | undefined): SquireAgentScope {
+  if (!scope) throw new Error('Squire agent and Room scope is required');
+  return scope;
+}
+
 export function rewriteGrantedHostRoutes(
   declarations: Record<string, Record<string, unknown>>,
   granted: readonly string[],
   hostHome: string,
   resourceAuthFile?: string,
+  squireScope?: SquireAgentScope,
 ): Record<string, Record<string, unknown>> {
   const allowed = new Set(granted);
   const rewritten: Record<string, Record<string, unknown>> = {};
   for (const [name, declaration] of Object.entries(declarations)) {
     if (!allowed.has(name)) continue;
     if (classifyImportedMcpServer({ name, declaration }) !== 'host') continue;
-    rewritten[name] = rewriteHostMcpDeclaration(name, declaration, hostHome, resourceAuthFile);
+    rewritten[name] = rewriteHostMcpDeclaration(
+      name, declaration, hostHome, resourceAuthFile, squireScope,
+    );
   }
   // Code-owned host names are the route even when this harness has no
   // operator declaration (pi has none). Candy's standing squire grant
   // otherwise produced an empty rewrite and never mounted.
   for (const name of granted) {
     if (rewritten[name] || !isCodeOwnedHostMcpName(name)) continue;
-    rewritten[name] = rewriteHostMcpDeclaration(name, {}, hostHome, resourceAuthFile);
+    rewritten[name] = rewriteHostMcpDeclaration(
+      name, {}, hostHome, resourceAuthFile, squireScope,
+    );
   }
   return rewritten;
 }
@@ -210,13 +223,16 @@ export function grantedHostRouteWires(
   hostHome: string,
   declarations: Record<string, Record<string, unknown>> = {},
   resourceAuthFile?: string,
+  squireScope?: SquireAgentScope,
 ): Array<{
   name: string;
   command: string;
   args: string[];
   env?: Array<{ name: string; value: string }>;
 }> {
-  const routes = rewriteGrantedHostRoutes(declarations, granted, hostHome, resourceAuthFile);
+  const routes = rewriteGrantedHostRoutes(
+    declarations, granted, hostHome, resourceAuthFile, squireScope,
+  );
   return Object.entries(routes).flatMap(([name, declaration]) => {
     const command =
       (typeof declaration.command === 'string' && declaration.command) ||

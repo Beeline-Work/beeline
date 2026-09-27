@@ -1279,7 +1279,7 @@ describe('mounted imported MCP server names', () => {
         'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
       ].join('\n'),
     );
-    const input = { operatorHome, agentKind: 'codex' as const };
+    const input = { operatorHome, agentKind: 'codex' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
       ...input,
@@ -1321,7 +1321,7 @@ describe('mounted imported MCP server names', () => {
         },
       }),
     );
-    const input = { operatorHome, agentKind: 'pi' as const };
+    const input = { operatorHome, agentKind: 'pi' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(hostImportedMcpServerNames(input)).toEqual(['files', 'trusty-squire']);
     expect(

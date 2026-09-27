@@ -9,6 +9,7 @@
  * namespace. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -82,12 +83,23 @@ export function squireBrokerSocketReady(socketPath: string): boolean {
  * through tsx in a source checkout, or the bundled CLI plus its hidden flag —
  * the single-file release bundle has no sibling module to spawn.
  */
-export function squireFacadeLaunch(home: string): {
+export type SquireAgentScope = { readonly agentId: string; readonly roomId: string };
+
+/** Hash the structured IDs so arbitrary ID lengths and newlines cannot reach the child env. */
+export function squireAgentIdentity({ agentId, roomId }: SquireAgentScope): string {
+  if (!agentId || !roomId) throw new Error('Squire agent and Room IDs are required');
+  return `beeline:${createHash('sha256').update(JSON.stringify([agentId, roomId])).digest('hex')}`;
+}
+
+export function squireFacadeLaunch(home: string, scope: SquireAgentScope): {
   command: string;
   args: string[];
   env: Record<string, string>;
 } {
-  const env = squireHostRewriteEnv(home);
+  const env = {
+    ...squireHostRewriteEnv(home),
+    TRUSTY_SQUIRE_AGENT_IDENTITY: squireAgentIdentity(scope),
+  };
   const meta = import.meta.url;
   if (meta.startsWith('beeline:')) {
     const entry = process.argv[1];

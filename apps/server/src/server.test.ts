@@ -119,6 +119,31 @@ describe('server readiness', () => {
     });
   });
 
+  it('reports each pool separately while retaining the older app-pool health shape', async () => {
+    const app = {
+      query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      transaction: vi.fn(),
+      poolCounts: () => ({ total: 2, idle: 1, waiting: 0 }),
+      poolTelemetry: () => ({
+        checkouts: 4, checkoutFailures: 1, statementTimeouts: 0, deadlocks: 0,
+        waitMs: 17, maxWaitMs: 10,
+        activeMs: 25, maxActiveMs: 12, waitBuckets: [1, 2, 1, 0, 0, 0],
+      }),
+    };
+    const jobs = {
+      query: vi.fn(), transaction: vi.fn(),
+      poolCounts: () => ({ total: 1, idle: 0, waiting: 2 }),
+    };
+    const response = await get('/health', app, { databasePools: { app, jobs } });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.database.pool).toEqual({ size: 2, inUse: 1, waiting: 0 });
+    expect(body.database.pools).toEqual({
+      app: { size: 2, inUse: 1, waiting: 0, telemetry: app.poolTelemetry() },
+      jobs: { size: 1, inUse: 1, waiting: 2, telemetry: null },
+    });
+  });
+
   it('returns 503 when the database query fails', async () => {
     const response = await get('/readyz', {
       query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),
@@ -135,13 +160,15 @@ describe('server readiness', () => {
       .mockRejectedValueOnce(timeout)
       .mockRejectedValueOnce(timeout)
       .mockRejectedValueOnce(timeout)
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce({
+        query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+        release: vi.fn(),
+        once: vi.fn(),
+        removeListener: vi.fn(),
+      });
     const pool = {
       connect,
-      query: vi.fn(async () => {
-        await connect();
-        return { rows: [], rowCount: 0 };
-      }),
+      query: vi.fn(),
       on: vi.fn(),
       end: vi.fn(),
     } as unknown as Pool;

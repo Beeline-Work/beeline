@@ -84,6 +84,55 @@ function poolHandingOut(clients: unknown[]) {
   return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
 }
 
+function poolWithQuery(query: ReturnType<typeof vi.fn>): Pool {
+  const connect = vi.fn(async () => {
+    const client = stubClient();
+    client.query = query;
+    return client;
+  });
+  return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
+}
+
+describe('pool checkout telemetry', () => {
+  it('separates queued checkout time from checked-out query time and releases on failure', async () => {
+    const client = stubClient();
+    let grant!: (client: typeof client) => void;
+    const checkout = new Promise<typeof client>((resolve) => { grant = resolve; });
+    const pool = {
+      connect: vi.fn().mockReturnValueOnce(checkout).mockResolvedValue(client),
+      on: vi.fn(), end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 1, { pool });
+    const first = database.query('SELECT 1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    grant(client);
+    await first;
+    const afterFirst = database.poolTelemetry();
+    expect(afterFirst.checkouts).toBe(1);
+    expect(afterFirst.waitMs).toBeGreaterThanOrEqual(15);
+    expect(afterFirst.waitBuckets.reduce((sum, count) => sum + count, 0)).toBe(1);
+    expect(client.release).toHaveBeenCalledOnce();
+
+    client.query.mockRejectedValueOnce(Object.assign(new Error('statement timeout'), { code: '57014' }));
+    await expect(database.query('BROKEN')).rejects.toThrow('statement timeout');
+    const afterFailure = database.poolTelemetry();
+    expect(afterFailure.checkouts).toBe(2);
+    expect(afterFailure.statementTimeouts).toBe(1);
+    expect(afterFailure.activeMs).toBeGreaterThanOrEqual(afterFirst.activeMs);
+    expect(client.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts failed checkout attempts independently of successful checkouts', async () => {
+    const pool = {
+      connect: vi.fn().mockRejectedValue(new Error('pool exhausted')),
+      on: vi.fn(), end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 1, { pool });
+    await expect(database.query('SELECT 1')).rejects.toThrow('pool exhausted');
+    expect(database.poolTelemetry()).toMatchObject({ checkouts: 0, checkoutFailures: 1 });
+  });
+});
+
 describe('a terminated checked-out connection never wedges the pool', () => {
   it('frees a checked-out transaction client that errors while no query is pending, and the pool recovers', async () => {
     const dying = stubClient();
@@ -116,34 +165,26 @@ describe('a terminated checked-out connection never wedges the pool', () => {
   });
 
   it('releases and recovers when a pool query hits a terminated connection', async () => {
-    const pool = {
-      query: vi
+    const pool = poolWithQuery(vi
         .fn()
         .mockRejectedValueOnce(TERMINATED())
-        .mockResolvedValueOnce(result([{ answer: 2 }])),
-      on: vi.fn(),
-      connect: vi.fn(),
-      end: vi.fn(),
-    } as unknown as Pool;
+        .mockResolvedValueOnce(result([{ answer: 2 }])));
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query<{ answer: number }>('SELECT 2')).resolves.toEqual(
       result([{ answer: 2 }]),
     );
-    expect(pool.query).toHaveBeenCalledTimes(2);
     expect(database.queryProfiles().top).toMatchObject([{ calls: 1, errors: 0 }]);
+    expect(pool.connect).toHaveBeenCalledTimes(2);
   });
 
   it('announces recovery once after a failed pool read succeeds later', async () => {
-    const pool = {
-      query: vi.fn()
+    const pool = poolWithQuery(vi.fn()
         .mockRejectedValueOnce(TERMINATED())
         .mockRejectedValueOnce(TERMINATED())
         .mockRejectedValueOnce(TERMINATED())
         .mockRejectedValueOnce(TERMINATED())
-        .mockResolvedValue(result([{ answer: 2 }])),
-      on: vi.fn(), connect: vi.fn(), end: vi.fn(),
-    } as unknown as Pool;
+        .mockResolvedValue(result([{ answer: 2 }])));
     const database = new PostgresDatabase('', 2, { pool, pause: async () => {} });
     const recovered = vi.fn();
     const release = database.onRecovery(recovered);
@@ -554,7 +595,7 @@ describe('PostgresDatabase reconnects', () => {
       .fn()
       .mockRejectedValueOnce(new Error('Connection terminated unexpectedly'))
       .mockResolvedValueOnce(result([{ answer: 1 }]));
-    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const pool = poolWithQuery(query);
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query<{ answer: number }>('SELECT 1')).resolves.toEqual(
@@ -566,18 +607,17 @@ describe('PostgresDatabase reconnects', () => {
 
   it('retries pool checkout timeouts and stops after its bounded request attempts', async () => {
     const timeout = new Error('timeout exceeded when trying to connect');
-    const query = vi.fn().mockRejectedValue(timeout);
-    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const pool = { query: vi.fn(), on: vi.fn(), connect: vi.fn().mockRejectedValue(timeout), end: vi.fn() } as unknown as Pool;
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query('SELECT 1')).rejects.toBe(timeout);
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(pool.connect).toHaveBeenCalledTimes(4);
   });
 
   it('does not retry non-connection errors', async () => {
     const uniqueViolation = Object.assign(new Error('duplicate key'), { code: '23505' });
     const query = vi.fn().mockRejectedValue(uniqueViolation);
-    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const pool = poolWithQuery(query);
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query('SELECT 1')).rejects.toBe(uniqueViolation);

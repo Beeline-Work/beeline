@@ -67,6 +67,9 @@ export interface ServerOptions {
   backgroundHealth?: () => Record<string, unknown>;
   /** PostgreSQL notification projection pressure for this server instance. */
   liveBridgeHealth?: () => Record<string, unknown>;
+  /** Per-instance pool telemetry; the existing `database.pool` app shape is
+   * retained for older release probes. */
+  databasePools?: Partial<Record<'app' | 'enrichment' | 'diagnostics' | 'jobs', SqlDatabase>>;
   auth: TokenAuth;
   phone: PhoneService;
   daemon: DaemonService;
@@ -984,6 +987,17 @@ async function route(
     // so asking it would report the health check's own query rather than the
     // work that can actually be stuck.
     const oldestActiveQueryAgeMs = await options.database.oldestActiveQueryAgeMs?.();
+    const pools = options.databasePools && Object.fromEntries(
+      Object.entries(options.databasePools).map(([name, database]) => {
+        const counts = database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+        return [name, {
+          size: counts.total,
+          inUse: counts.total - counts.idle,
+          waiting: counts.waiting,
+          telemetry: database.poolTelemetry?.() ?? null,
+        }];
+      }),
+    );
     json(response, 200, {
       ok: true,
       database: {
@@ -995,7 +1009,7 @@ async function route(
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
         ...(options.database.queryProfiles ? { queryProfiles: options.database.queryProfiles() } : {}),
         ...(options.databaseBudget ? { budget: options.databaseBudget } : {}),
-        ...(options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
+        ...(pools ? { pools } : options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
           ? {
               pools: Object.fromEntries(
                 ([

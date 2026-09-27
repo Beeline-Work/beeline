@@ -11,14 +11,17 @@ import type { Pool } from 'pg';
  * that cannot fail is worse than none, so these tests assert it CAN.
  */
 function poolStub(gate: Promise<unknown>): Pool {
-  return {
+  const client = {
     query: async () => {
       await gate;
       return { rows: [], rowCount: 0 };
     },
-    connect: async () => {
-      throw new Error('not used');
-    },
+    release: () => undefined,
+    once: () => undefined,
+    removeListener: () => undefined,
+  };
+  return {
+    connect: async () => client,
     on: () => undefined,
     totalCount: 1,
     idleCount: 0,

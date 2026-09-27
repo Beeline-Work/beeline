@@ -484,10 +484,10 @@ describe('corner merge instructions', () => {
 });
 
 describe('corner close-request polling cadence', () => {
-  it('spreads the recovery poll with up to three seconds of jitter', () => {
+  it('spreads the recovery poll across five minutes', () => {
     expect(cornerClosePollMs(() => 0)).toBe(CORNER_CLOSE_POLL_BASE_MS);
     expect(cornerClosePollMs(() => 0.999)).toBeGreaterThan(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 3_000);
+    expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 5 * 60_000);
     expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
   });
 

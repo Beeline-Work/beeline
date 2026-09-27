@@ -553,7 +553,7 @@ export interface MonolithCornerTurnOptions {
 }
 
 /**
- * Close-request recovery poll: 10 min ± up to 3 s of jitter.
+ * Close-request recovery poll: 10 to 15 min, spread across corners.
  * `corner-complete` on the live socket closes immediately via `requestClose`.
  * The GET is the dropped-socket net: once at intake start, once after a turn
  * (a close during that turn must not wait the idle interval), then only every
@@ -561,7 +561,7 @@ export interface MonolithCornerTurnOptions {
  */
 export const CORNER_CLOSE_POLL_BASE_MS = 10 * 60_000;
 export function cornerClosePollMs(random: () => number = Math.random): number {
-  return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 3_000);
+  return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 5 * 60_000);
 }
 
 /** One write-enabled corner session, driven only by monolith transcript facts. */

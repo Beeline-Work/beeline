@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { DiscoveryWakes } from './room-runtime.js';
+import {
+  DiscoveryWakes,
+  DEFAULT_RECONCILE_HEARTBEAT_MS,
+  defaultReconcileHeartbeatMs,
+} from './room-runtime.js';
+
+it('spreads whole Workspace discovery across five minutes after startup', () => {
+  expect(defaultReconcileHeartbeatMs(() => 0)).toBe(DEFAULT_RECONCILE_HEARTBEAT_MS);
+  expect(defaultReconcileHeartbeatMs(() => 0.999)).toBeLessThan(
+    DEFAULT_RECONCILE_HEARTBEAT_MS + 5 * 60_000,
+  );
+  expect(defaultReconcileHeartbeatMs(() => 0.5)).not.toBe(defaultReconcileHeartbeatMs(() => 0.75));
+});
 
 /**
  * The #1369 wake latch, held to the semantics that make a corner opened while

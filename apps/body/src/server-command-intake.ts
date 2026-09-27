@@ -69,8 +69,8 @@ export function validateServerCommand(
 /**
  * Targeted commands -> claim -> local session mechanics. Inputs remain durable
  * and unclaimed while a session is busy. Stops are claimed even during a prompt.
- * Live traffic carries server-authorized commands. Durable reads recover every
- * second until push intake is acknowledged, then reconcile once per minute.
+ * Live traffic carries server-authorized commands. Unacknowledged push intake
+ * uses a bounded, jittered recovery sweep; acknowledged intake sweeps once per minute.
  */
 export async function runServerCommandIntake(options: {
   api: DaemonApiClient;
@@ -98,12 +98,14 @@ export async function runServerCommandIntake(options: {
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
   let pushIntakeAcknowledged = false;
+  let fallbackPolls = 0;
   let reconciliation: Promise<void> | undefined;
   let reconciliationError: unknown;
   let stopped = false;
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
   const notify = (commands: readonly AgentCommand[] = []) => {
+    if (commands.length) fallbackPolls = 0;
     for (const command of commands) if (!claimed.has(command.id)) pending.set(command.id, command);
     wake?.(false);
   };
@@ -133,6 +135,7 @@ export async function runServerCommandIntake(options: {
       const acknowledged = connected && capabilities?.pushIntake === true;
       if (pushIntakeAcknowledged !== acknowledged) {
         pushIntakeAcknowledged = acknowledged;
+        if (acknowledged) fallbackPolls = 0;
         // Re-arm the recovery timer at the cadence this connection proved it
         // supports. A disconnect still reconciles immediately.
         wake?.(!connected);
@@ -210,10 +213,10 @@ export async function runServerCommandIntake(options: {
         };
         const aborted = () => done(false);
         wake = done;
-        const timer = setTimeout(
-          () => done(true),
-          pushIntakeAcknowledged ? 60_000 : (options.pollMs ?? 1_000),
-        );
+        const timer = setTimeout(() => {
+          if (!pushIntakeAcknowledged) fallbackPolls += 1;
+          done(true);
+        }, pushIntakeAcknowledged ? 60_000 : fallbackPollDelayMs(fallbackPolls, options.pollMs));
         signal?.addEventListener('abort', aborted, { once: true });
         if (
           !busy &&
@@ -238,4 +241,14 @@ export async function runServerCommandIntake(options: {
     if (context.current) options.stop(context.current.turnRequestId);
     await busy;
   }
+}
+
+/** Empty fallback reads provide no evidence that push delivery works. */
+export function fallbackPollDelayMs(
+  emptyPolls: number,
+  pollMs = 1_000,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(30_000, pollMs * 2 ** Math.min(emptyPolls, 20));
+  return base + (emptyPolls === 0 ? 0 : Math.floor(base * 0.25 * random()));
 }

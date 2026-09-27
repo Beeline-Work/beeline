@@ -548,8 +548,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                   });
                 } catch (error) {
                   console.error('[presence] startup announcement failed', error);
-                  client.close(1011, 'startup announcement failed');
-                  return;
                 }
               if (client.readyState !== client.OPEN) return;
               client.send(

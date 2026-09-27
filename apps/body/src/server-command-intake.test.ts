@@ -6,6 +6,7 @@ import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CommandExecutionContext,
+  fallbackPollDelayMs,
   runServerCommandIntake,
   validateServerCommand,
 } from './server-command-intake.js';
@@ -199,6 +200,35 @@ describe('command intake mechanics', () => {
     await running;
     expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
     expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+  });
+  it('backs off empty fallback reads to thirty seconds and resets when a command arrives', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const controller = new AbortController();
+    let reads = 0;
+    const execute = vi.fn(async (name: string) =>
+      name === 'getAgentCommands'
+        ? { commandProtocol: 1, commands: ++reads === 6 ? [command()] : [] }
+        : { id: 'ok' },
+    );
+    const running = runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(async () => controller.abort()),
+      stop: vi.fn(),
+    });
+    const count = () => execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length;
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000 + 8_000 + 16_000);
+    expect(count()).toBe(6);
+    await running;
+    expect(fallbackPollDelayMs(5, 1_000, () => 0)).toBe(30_000);
+    expect(fallbackPollDelayMs(5, 1_000, () => 0.999)).toBeGreaterThan(30_000);
+    expect(fallbackPollDelayMs(1, 1_000, () => 0)).toBe(2_000);
+    expect(fallbackPollDelayMs(1, 1_000, () => 0.999)).toBeGreaterThan(2_000);
+    vi.restoreAllMocks();
   });
   it('uses a sixty-second recovery sweep only after push intake is acknowledged', async () => {
     vi.useFakeTimers();

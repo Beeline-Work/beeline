@@ -83,6 +83,18 @@ describe('server readiness', () => {
     });
   });
 
+  it('reports bounded query fingerprints without SQL or parameter values', async () => {
+    const response = await get('/health', {
+      query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      transaction: vi.fn(),
+      queryProfiles: () => ({ top: [{ fingerprint: 'abc123', calls: 2, totalMs: 8,
+        maxMs: 6, errors: 0, timeouts: 0, deadlocks: 0 }], overflow: 0 }),
+    });
+    expect((await response.json()).database.queryProfiles).toMatchObject({
+      top: [{ fingerprint: 'abc123', totalMs: 8 }], overflow: 0,
+    });
+  });
+
   it('returns 503 when the database query fails', async () => {
     const response = await get('/readyz', {
       query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),

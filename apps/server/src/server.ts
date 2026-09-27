@@ -985,6 +985,7 @@ async function route(
           waiting: pool.waiting,
         },
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
+        ...(options.database.queryProfiles ? { queryProfiles: options.database.queryProfiles() } : {}),
       },
       live: liveHealth(),
     });

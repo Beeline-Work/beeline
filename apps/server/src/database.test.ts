@@ -129,6 +129,7 @@ describe('a terminated checked-out connection never wedges the pool', () => {
       result([{ answer: 2 }]),
     );
     expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(database.queryProfiles().top).toMatchObject([{ calls: 1, errors: 0 }]);
   });
 
   it('announces recovery once after a failed pool read succeeds later', async () => {

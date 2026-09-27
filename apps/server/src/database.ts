@@ -16,6 +16,7 @@ import {
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+import { QueryProfiler } from './query-profile.js';
 
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
 export const APP_POOL_WAIT_TIMEOUT_MS = 2_000;
@@ -123,6 +124,7 @@ export interface SqlDatabase {
    *  the field was permanently null in production — a monitor that could not
    *  fail. This one is scoped to this process's own pool and says so. */
   oldestActiveQueryAgeMs?(): Promise<number | null>;
+  queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
   /** Fires once after an app-pool failure is followed by a successful read.
    * Live subscribers use it to retry discovery without closing their socket. */
   onRecovery?(listener: () => void): () => void;
@@ -184,6 +186,7 @@ export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = p
 
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
+  readonly #profiler = new QueryProfiler();
   readonly #pause: Pause;
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
@@ -215,14 +218,24 @@ export class PostgresDatabase implements ClosableDatabase {
     }
   }
 
-  async #timed<T>(work: () => Promise<T>): Promise<T> {
+  async #timed<T>(sql: string, work: () => Promise<T>): Promise<T> {
     const ticket = this.#nextTicket++;
-    this.#inFlight.set(ticket, Date.now());
+    const startedAt = Date.now();
+    this.#inFlight.set(ticket, startedAt);
+    let error: unknown;
     try {
       return await work();
+    } catch (caught) {
+      error = caught;
+      throw caught;
     } finally {
       this.#inFlight.delete(ticket);
+      this.#profiler.record(sql, Date.now() - startedAt, error);
     }
+  }
+
+  queryProfiles() {
+    return this.#profiler.snapshot();
   }
 
   constructor(
@@ -261,7 +274,7 @@ export class PostgresDatabase implements ClosableDatabase {
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
     try {
-      const raw = await this.#timed(() =>
+      const raw = await this.#timed(sql, () =>
         this.#retryTransientConnection(() =>
           values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
         ),
@@ -313,7 +326,7 @@ export class PostgresDatabase implements ClosableDatabase {
           sql: string,
           values: unknown[] = [],
         ) => {
-          const raw = await this.#timed(() =>
+          const raw = await this.#timed(sql, () =>
             values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
           );
           const result = Array.isArray(raw) ? raw.at(-1) : raw;

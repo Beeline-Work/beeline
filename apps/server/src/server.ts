@@ -24,6 +24,7 @@ import type { GoogleOAuth } from './google-oauth.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
+import { parseDashboardPlatforms, readOperatorDashboard } from './operator-dashboard.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -64,6 +65,8 @@ export interface ServerOptions {
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
   releaseNotify?: ReleaseNotifier;
+  /** Server-side secret for the private operator proxy only. */
+  dashboardSecret?: string;
   /** Diagnostics only: one DB-clock read after an authorized cross-process
    * delta is painted. Ordinary live delivery performs no extra query. */
   livePaintDiagnostics?: boolean;
@@ -95,6 +98,7 @@ function applyWebAppCors(
 }
 
 function isWebAppCorsPath(pathname: string): boolean {
+  if (pathname === '/v1/admin/dashboard') return false;
   return (
     pathname.startsWith('/v1/') ||
     pathname === '/auth/github/completion' ||
@@ -833,6 +837,30 @@ async function route(
       version: process.env.BEELINE_RELEASE_VERSION ?? 'development',
       sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
     });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/admin/dashboard') {
+    // Authentication happens before parsing the filter or reading any ledger.
+    // The browser never receives this key; the same-origin edge proxy supplies it.
+    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
+      json(response, 403, { error: 'access_denied' });
+      return;
+    }
+    const platforms = parseDashboardPlatforms(url.searchParams.get('platforms'));
+    if (!platforms || [...url.searchParams.keys()].some((key) => key !== 'platforms') || url.searchParams.getAll('platforms').length > 1) {
+      json(response, 400, { error: 'invalid_platforms' });
+      return;
+    }
+    json(response, 200, await readOperatorDashboard(
+      options.database, platforms,
+      process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ?? process.env.BEELINE_RELEASE_VERSION ?? 'development',
+      {
+        ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS && /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS)
+          ? { ios: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS) } : {}),
+        ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID && /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID)
+          ? { android: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID) } : {}),
+      },
+    ));
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/public/invite-preview') {

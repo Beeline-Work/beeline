@@ -8,7 +8,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { SOUL_HOUSE_RULE } from './response-directives.js';
+import { AGENT_PROSE_REFERENCE_RULE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
@@ -204,6 +204,7 @@ describe('Room turn voice', () => {
     // The house rule is said once and stands on its own.
     const { prompt } = await runTurn(false);
     expect(String(prompt)).toContain(SOUL_HOUSE_RULE);
+    expect(String(prompt)).toContain(AGENT_PROSE_REFERENCE_RULE);
     expect(String(prompt)).not.toContain('Soul instructions:');
   });
 });

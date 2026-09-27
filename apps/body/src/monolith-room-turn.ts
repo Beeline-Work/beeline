@@ -87,7 +87,11 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
+import {
+  AGENT_PROSE_REFERENCE_RULE,
+  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+  SOUL_HOUSE_RULE,
+} from './response-directives.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -962,6 +966,7 @@ export class MonolithRoomTurnLoop {
           ]
         : []),
       SOUL_HOUSE_RULE,
+      AGENT_PROSE_REFERENCE_RULE,
       ...(!directMessage
         ? [
             'Use inspect_corner for a member corner’s compact status; set mode to transcript and follow next.after/next.offset to read bounded transcript pages. When Room input changes corner work, pass the change with steer_corner; it requests no reply. For a specific question that needs one answer, use ask_corner. Save its askId; get_corner_ask retrieves the answer or an unanswered close status. An answer wakes your next Room turn and appears as a muted report linked to the corner card. Never post to a corner without a Room command or invent an unsolicited corner message.',

@@ -12,6 +12,7 @@ import {
   type DetectedAgentCommand,
   type AgentKind,
 } from './agent-command.js';
+import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { unwrapPrompt } from './clack-support.js';
 
 type SelectionOutput = Pick<NodeJS.WritableStream, 'write'>;
@@ -51,7 +52,7 @@ async function installAdapter(
   install: AdapterInstallCommand,
   opts: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
-  await runAdapterInstall(install, opts);
+  await withAdapterInstallLock(() => runAdapterInstall(install, opts), opts.env);
 }
 
 function errorMessage(error: unknown): string {

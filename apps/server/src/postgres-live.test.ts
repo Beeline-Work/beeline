@@ -317,6 +317,69 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('nudges the parent Room only when a corner status input changes', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const parent: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => parent.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+
+    const corner = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const agent = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      [corner, agent],
+    );
+    const nudges = () =>
+      parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
+    await eventually(() => nudges().length === 1);
+    parent.length = 0;
+
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r1',$2,'working')`,
+      [corner, agent],
+    );
+    await eventually(() => nudges().length === 1);
+    // A heartbeat that only restamps the running turn changes no status.
+    await database.query(
+      `UPDATE agent_turns SET created_at=now() WHERE room_id=$1 AND request_id='r1'`,
+      [corner],
+    );
+    await database.query(
+      `UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id='r1'`,
+      [corner],
+    );
+    await eventually(() => nudges().length === 2);
+    await database.query(
+      `UPDATE corner_facts SET lifecycle='{"lifecycle":"pr-open","checks":"pending"}'::jsonb
+       WHERE corner_id=$1`,
+      [corner],
+    );
+    await eventually(() => nudges().length === 3);
+    // A top-level Room's own turn has no parent to nudge.
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r2',$2,'working')`,
+      [ROOM, agent],
+    );
+    await eventually(() =>
+      parent.some(
+        (event) => event.type === 'invalidate' && event.reason === 'postgres:agent_turns',
+      ),
+    );
+    expect(nudges()).toHaveLength(3);
+    expect(nudges()).toEqual(
+      Array(3).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
+    );
+  });
+
   it('marks the one-way no-code lane change so every subscribed helper can restart', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

@@ -19,13 +19,17 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { NewCornerDialog } from '@/components/buzz/NewCornerDialog';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
-import { isDraftFrame } from '@/sync/transport/live-frames';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
+
+/** Parent-Room hints that change this list: a corner's status, a corner
+ *  opened, renamed, or closed, and the server's own resync. */
+const CORNER_LIST_REASONS = new Set(['corner-status', 'corner', 'resync']);
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -78,11 +82,23 @@ export default function BuzzCorners() {
       schedulerRef.current = scheduler;
       const transport = new BuzzRigTransport(identity);
       const relay = await transport.ensureClient();
-      const filters = cached?.watchFilters ?? [
-        { kinds: [9, 9000, 9001, 9007, 30078], '#h': [decodedId] },
-      ];
-      unsubscribe = await relay.surfaceSubscribe(filters, (event) => {
-        if (!isDraftFrame(event)) scheduler?.signal();
+      // The corner list payload carries no watch filters, so the parent Room is
+      // always the lane: the server nudges it whenever a corner's status
+      // inputs change. Chat traffic in the parent does not touch this list.
+      let handshakeSeen = false;
+      unsubscribe = await relay.surfaceSubscribe([{ '#h': [decodedId] }], (event) => {
+        if (!('monolithLive' in event)) return;
+        const live = (event as MonolithSurfaceEvent).monolithLive;
+        if (live.type === 'subscribed') {
+          // The first frame opens this watch; a later one is a reconnect, and
+          // one read closes whatever it missed.
+          if (handshakeSeen) scheduler?.force();
+          handshakeSeen = true;
+          return;
+        }
+        if (live.type === 'invalidate' && CORNER_LIST_REASONS.has(live.reason)) {
+          scheduler?.signal();
+        }
       });
       if (cancelled) return unsubscribe();
       await scheduler.startAfter(Promise.resolve());

@@ -7,3 +7,10 @@ export function isDraftFrame(event: NostrEvent | MonolithSurfaceEvent): boolean 
   const type = event.monolithLive.type;
   return type === 'draft' || type === 'thought' || type === 'retract';
 }
+
+/** A child corner's list status changed. Only a corner list re-reads for it. */
+export function isCornerStatusFrame(event: NostrEvent | MonolithSurfaceEvent): boolean {
+  if (!('monolithLive' in event)) return false;
+  const live = event.monolithLive;
+  return live.type === 'invalidate' && live.reason === 'corner-status';
+}

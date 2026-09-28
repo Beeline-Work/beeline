@@ -331,10 +331,16 @@ async function main() {
     },
   });
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
+  let repairedPromotedCorners = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
     jobsDatabase,
     async () => {
+      if (githubJobs && !repairedPromotedCorners) {
+        const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
+          githubJobs.repairPromotedCornerBranches());
+        repairedPromotedCorners = repair.ok;
+      }
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());

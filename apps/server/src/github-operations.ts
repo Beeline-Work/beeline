@@ -876,6 +876,108 @@ export class GitHubOperations {
     await this.syncInstallation(owner, install.id);
   }
 
+  /** One startup pass for promoted corners whose first GitHub events were missed. */
+  async repairPromotedCornerBranches(): Promise<void> {
+    const candidates = await this.database.query<{
+      corner_id: string;
+      repository: string;
+      repository_id: string;
+      installation_id: string;
+      branch: string;
+    }>(
+      `SELECT corner.id corner_id,github.full_name repository,
+              github.repository_id,github.installation_id,
+              'feature/corner-' || left(replace(corner.id::text,'-',''),12) branch
+       FROM rooms corner
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+       WHERE fact.lane='code' AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND parent.github_events_enabled AND fact.lifecycle->'pr' IS NULL
+         AND (fact.lifecycle->>'branch' IS NULL OR fact.lifecycle->>'branch'=
+           'feature/corner-' || left(replace(corner.id::text,'-',''),12))
+         AND fact.feature_branch IS DISTINCT FROM
+           'feature/corner-' || left(replace(corner.id::text,'-',''),12)`,
+    );
+    for (const candidate of candidates.rows) {
+      try {
+        const collisions = await this.database.query(
+          `SELECT 1 FROM rooms corner
+           JOIN rooms parent ON parent.id=corner.parent_id
+           WHERE corner.id<>$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+             AND parent.github_installation_id=$2
+             AND left(replace(corner.id::text,'-',''),12)=$3
+             AND lower(regexp_replace(regexp_replace(
+               COALESCE(parent.repository_remote,parent.repository_key,''),
+               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)
+           LIMIT 1`,
+          [candidate.corner_id, candidate.installation_id, candidate.branch.slice(-12), candidate.repository],
+        );
+        if (collisions.rowCount) continue;
+        const duplicate = await this.database.query(
+          `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+           JOIN rooms parent ON parent.id=corner.parent_id
+           WHERE fact.feature_branch=$1 AND fact.corner_id<>$2
+             AND parent.github_installation_id=$3
+             AND lower(regexp_replace(regexp_replace(
+               COALESCE(parent.repository_remote,parent.repository_key,''),
+               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)`,
+          [candidate.branch, candidate.corner_id, candidate.installation_id, candidate.repository],
+        );
+        if (duplicate.rowCount) continue;
+        const token = await this.app.installationToken(Number(candidate.installation_id), {
+          repositoryIds: [Number(candidate.repository_id)],
+        });
+        const headSha = await this.app.readBranchHead(token.token, candidate.repository, candidate.branch);
+        const numbers = await this.app.openPullRequestsForBranch(
+          token.token, candidate.repository, candidate.branch,
+        );
+        if (numbers.length > 1) continue;
+        const pr = numbers.length === 1
+          ? await this.app.readPullRequest(token.token, candidate.repository, numbers[0]!)
+          : undefined;
+        if (pr && (pr.headRef !== candidate.branch || pr.headSha !== headSha || !pr.baseRef))
+          continue;
+        const claimed = await this.database.query(
+          `UPDATE corner_facts SET feature_branch=$2,
+             lifecycle=jsonb_set(COALESCE(lifecycle,'{}'::jsonb),'{branch}',to_jsonb($2::text),true),
+             updated_at=now()
+           WHERE corner_id=$1 AND lifecycle->'pr' IS NULL
+             AND (lifecycle->>'branch' IS NULL OR lifecycle->>'branch'=$2)
+           RETURNING corner_id`,
+          [candidate.corner_id, candidate.branch],
+        );
+        if (!claimed.rowCount) continue;
+        if (pr) {
+          await this.processWebhook('pull_request', {
+            action: 'opened', installation: { id: Number(candidate.installation_id) },
+            repository: { full_name: candidate.repository },
+            pull_request: {
+              number: pr.number, html_url: pr.url, title: pr.title ?? 'Pull request',
+              head: { ref: pr.headRef, sha: pr.headSha },
+              base: { ref: pr.baseRef, sha: pr.baseSha },
+              mergeable_state: pr.mergeability,
+            },
+          });
+        }
+        await this.processWebhook('check_run', {
+          action: 'in_progress', installation: { id: Number(candidate.installation_id) },
+          repository: { full_name: candidate.repository },
+          check_run: {
+            name: 'GitHub checks', status: 'in_progress', head_sha: headSha,
+            check_suite: { head_branch: candidate.branch, head_sha: headSha },
+          },
+        });
+      } catch (error) {
+        if (error instanceof GitHubHttpError && error.status === 404) continue;
+        console.error(`[github] promoted corner ${candidate.corner_id} repair failed:`, error);
+      }
+    }
+  }
+
   /** Retry GitHub's asynchronous mergeability calculation for open corner PRs. */
   async refreshUnknownMergeability(cornerId?: string): Promise<void> {
     const rows = await this.database.query<{
@@ -1140,6 +1242,11 @@ export class GitHubOperations {
     const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
     const cardAction = merged ? 'merged' : action;
     const branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
+    const headRepository = event === 'pull_request'
+      ? text(record(record(subject?.head)?.repo)?.full_name)
+      : undefined;
+    const fallbackBranch = headRepository && headRepository.toLowerCase() !== repository.toLowerCase()
+      ? null : branch ?? null;
     const targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
     const card = {
       type: (event === 'issues' ? 'issue' : 'pull-request') as 'issue' | 'pull-request',
@@ -1171,9 +1278,12 @@ export class GitHubOperations {
          AND ($3::text IS NULL OR NOT EXISTS(
            SELECT 1 FROM rooms corner
            JOIN corner_facts fact ON fact.corner_id=corner.id
-           WHERE corner.parent_id=room.id AND fact.feature_branch=$3
+           WHERE corner.parent_id=room.id
+             AND (fact.feature_branch=$3 OR (fact.lane='code'
+               AND $4::text ~ '^feature/corner-[0-9a-f]{12}$'
+               AND left(replace(corner.id::text,'-',''),12)=right($4,12)))
          ))`,
-      [installationId, repository, branch ?? null],
+      [installationId, repository, branch ?? null, fallbackBranch],
     );
     for (const room of rooms.rows) {
       const note = await systemLine(this.database, {
@@ -1196,10 +1306,22 @@ export class GitHubOperations {
     const repository = repositoryName(body);
     const branch = branchForEvent(event, body);
     if (!repository || !branch) return;
-    const targets = await this.database.query<CornerWebhookTarget>(
+    const headRepository = event === 'pull_request'
+      ? text(record(record(record(body.pull_request)?.head)?.repo)?.full_name)
+      : undefined;
+    const cornerPrefix = headRepository && headRepository.toLowerCase() !== repository.toLowerCase()
+      ? null
+      : /^feature\/corner-([0-9a-f]{12})$/.exec(branch)?.[1] ?? null;
+    const matches = await this.database.query<CornerWebhookTarget & {
+      feature_branch: string | null;
+      lifecycle_branch: string | null;
+      has_pr: boolean;
+    }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
          COALESCE(owner.identity_id,corner.created_by,parent.created_by) author_id,
          fact.objective summary,
+         fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
+         fact.lifecycle->'pr' IS NOT NULL has_pr,
          github.repository_id,github.installation_id
        FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -1213,17 +1335,50 @@ export class GitHubOperations {
          ORDER BY (membership.role='owner') DESC,membership.joined_at LIMIT 1
        )owner ON true
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND parent.github_events_enabled AND fact.feature_branch=$3
+         AND parent.github_events_enabled
+         AND (fact.feature_branch=$3 OR (fact.lane='code' AND $4::text IS NOT NULL
+           AND left(replace(corner.id::text,'-',''),12)=$4))
          AND parent.github_installation_id=$1
          AND lower(regexp_replace(regexp_replace(
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
-      [installationId, repository, branch],
+      [installationId, repository, branch, cornerPrefix],
     );
+    const exact = matches.rows.filter((target) => target.feature_branch === branch);
+    let targets = exact;
+    if (!exact.length && cornerPrefix) {
+      const candidates = matches.rows.filter((target) =>
+        !target.has_pr && (!target.lifecycle_branch || target.lifecycle_branch === branch),
+      );
+      // A prefix is only a recovery hint. It must identify one corner in this
+      // installation and repository, and never displace another PR association.
+      if (matches.rows.length === 1 && candidates.length === 1) {
+        const candidate = candidates[0]!;
+        const assignedElsewhere = await database.query(
+          `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+           JOIN rooms parent ON parent.id=corner.parent_id
+           WHERE fact.feature_branch=$1 AND fact.corner_id<>$2
+             AND parent.github_installation_id=$3
+             AND lower(regexp_replace(regexp_replace(
+               COALESCE(parent.repository_remote,parent.repository_key,''),
+               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)
+           LIMIT 1`,
+          [branch, candidate.corner_id, installationId, repository],
+        );
+        if (!assignedElsewhere.rowCount) {
+          await database.query(
+            `UPDATE corner_facts SET feature_branch=$2,updated_at=now()
+             WHERE corner_id=$1 AND feature_branch IS DISTINCT FROM $2`,
+            [candidate.corner_id, branch],
+          );
+          targets = [candidate];
+        }
+      }
+    }
     const actorLogin = text(record(body.sender)?.login);
     const actor = (login?: string) =>
       login ? { kind: 'github' as const, name: login } : GITHUB_SUBJECT;
-    for (const target of targets.rows) {
+    for (const target of targets) {
       if (!target.author_id) continue;
       if (event === 'pull_request') {
         const pullRequest = record(body.pull_request);

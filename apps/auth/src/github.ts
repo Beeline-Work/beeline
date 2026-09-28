@@ -610,6 +610,34 @@ export class GitHubAppClient {
     return sha;
   }
 
+  /** One repository-owned branch can have at most one open PR for repair. */
+  async openPullRequestsForBranch(accessToken: string, fullName: string, branch: string) {
+    const owner = fullName.split('/')[0];
+    if (!owner) throw new Error('invalid GitHub repository');
+    const url = new URL(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls`);
+    url.searchParams.set('state', 'open');
+    url.searchParams.set('head', `${owner}:${branch}`);
+    url.searchParams.set('per_page', '100');
+    const response = await fetch(url, {
+      headers: githubHeaders(accessToken),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new GitHubHttpError('GitHub branch pull requests', response.status);
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) throw new Error('GitHub branch pull requests are invalid');
+    return body.flatMap((entry): number[] => {
+      const pr = entry && typeof entry === 'object'
+        ? entry as { number?: unknown; head?: { repo?: { full_name?: unknown } } }
+        : undefined;
+      const number = pr?.number;
+      return typeof number === 'number' && Number.isSafeInteger(number) && number > 0
+        && typeof pr?.head?.repo?.full_name === 'string'
+        && pr.head.repo.full_name.toLowerCase() === fullName.toLowerCase()
+        ? [number]
+        : [];
+    });
+  }
+
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */
   async readCommitCheckRollup(
     accessToken: string,
